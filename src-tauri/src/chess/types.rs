@@ -7,7 +7,7 @@ use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri_specta::Event;
-use vampirc_uci::uci::{Score, UciOptionConfig};
+use vampirc_uci::UciOptionConfig as VampircUciOptionConfig;
 
 /// Log entry for engine GUI or engine output.
 #[derive(Debug, Clone, Serialize, Type)]
@@ -15,6 +15,33 @@ use vampirc_uci::uci::{Score, UciOptionConfig};
 pub enum EngineLog {
     Gui(String),
     Engine(String),
+}
+
+/// UCI score value (centipawns or mate).
+#[derive(Clone, Serialize, Deserialize, Debug, Type, PartialEq, Eq)]
+#[serde(tag = "type", content = "value")]
+pub enum ScoreValue {
+    #[serde(rename = "cp")]
+    Cp(i32),
+    #[serde(rename = "mate")]
+    Mate(i32),
+}
+
+/// UCI score representation for UI and analysis.
+#[derive(Clone, Serialize, Deserialize, Debug, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Score {
+    pub value: ScoreValue,
+    pub wdl: Option<(u32, u32, u32)>,
+}
+
+impl Default for Score {
+    fn default() -> Self {
+        Self {
+            value: ScoreValue::Cp(0),
+            wdl: None,
+        }
+    }
 }
 
 /// UCI engine option (name-value pair).
@@ -124,6 +151,53 @@ pub struct AnalysisCacheKey {
 pub struct EngineConfig {
     pub name: String,
     pub options: Vec<UciOptionConfig>,
+}
+
+/// Represents a UCI option definition.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[serde(tag = "type", content = "value")]
+pub enum UciOptionConfig {
+    /// The option of type `check` (a boolean).
+    #[serde(rename = "check")]
+    Check { name: String, default: Option<bool> },
+    /// The option of type `spin` (a signed integer).
+    #[serde(rename = "spin")]
+    Spin {
+        name: String,
+        default: Option<i64>,
+        min: Option<i64>,
+        max: Option<i64>,
+    },
+    /// The option of type `combo` (a list of strings).
+    #[serde(rename = "combo")]
+    Combo {
+        name: String,
+        default: Option<String>,
+        var: Vec<String>,
+    },
+    /// The option of type `button` (an action).
+    #[serde(rename = "button")]
+    Button { name: String },
+    /// The option of type `string` (a string, unsurprisingly).
+    #[serde(rename = "string")]
+    String { name: String, default: Option<String> },
+}
+
+impl From<VampircUciOptionConfig> for UciOptionConfig {
+    fn from(value: VampircUciOptionConfig) -> Self {
+        match value {
+            VampircUciOptionConfig::Check { name, default } => Self::Check { name, default },
+            VampircUciOptionConfig::Spin { name, default, min, max } => Self::Spin {
+                name,
+                default,
+                min,
+                max,
+            },
+            VampircUciOptionConfig::Combo { name, default, var } => Self::Combo { name, default, var },
+            VampircUciOptionConfig::Button { name } => Self::Button { name },
+            VampircUciOptionConfig::String { name, default } => Self::String { name, default },
+        }
+    }
 }
 
 

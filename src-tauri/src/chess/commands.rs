@@ -154,7 +154,7 @@ pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
                     config.name = name; 
                 }
                 if let vampirc_uci::UciMessage::Option(opt) = parse_one(&line) { 
-                    config.options.push(opt); 
+                    config.options.push(UciOptionConfig::from(opt)); 
                 }
                 if let vampirc_uci::UciMessage::UciOk = parse_one(&line) { 
                     break; 

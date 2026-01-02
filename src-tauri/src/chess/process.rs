@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use tokio::io::AsyncWriteExt;
-use vampirc_uci::{uci::ScoreValue, UciInfoAttribute};
+use vampirc_uci::UciInfoAttribute;
 
 use crate::error::Error;
 
-use super::types::{BestMoves, EngineLog, EngineOptions, GoMode};
+use super::types::{BestMoves, EngineLog, EngineOptions, GoMode, Score, ScoreValue};
 use super::uci::UciCommunicator;
 use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, Position};
 
@@ -182,13 +182,16 @@ impl EngineProcess {
 }
 
 /// Invert a UCI score (for black's perspective).
-fn invert_score(score: vampirc_uci::uci::Score) -> vampirc_uci::uci::Score {
+fn invert_score(score: Score) -> Score {
     let new_value = match score.value {
         ScoreValue::Cp(x) => ScoreValue::Cp(-x),
         ScoreValue::Mate(x) => ScoreValue::Mate(-x),
     };
     let new_wdl = score.wdl.map(|(w, d, l)| (l, d, w));
-    vampirc_uci::uci::Score { value: new_value, wdl: new_wdl, ..score }
+    Score {
+        value: new_value,
+        wdl: new_wdl,
+    }
 }
 
 /// Parse UCI info attributes into a `BestMoves` struct for the current position.
@@ -239,13 +242,23 @@ pub fn parse_uci_attrs(
                 best_moves.nodes = nodes as u32;
             }
             UciInfoAttribute::Depth(depth) => {
-                best_moves.depth = depth;
+                best_moves.depth = depth as u32;
             }
             UciInfoAttribute::MultiPv(multipv) => {
                 best_moves.multipv = multipv;
             }
-            UciInfoAttribute::Score(score) => {
-                best_moves.score = score;
+            UciInfoAttribute::Score { cp, mate, .. } => {
+                best_moves.score = if let Some(mate) = mate {
+                    Score {
+                        value: ScoreValue::Mate(mate as i32),
+                        wdl: None,
+                    }
+                } else {
+                    Score {
+                        value: ScoreValue::Cp(cp.unwrap_or(0)),
+                        wdl: None,
+                    }
+                };
             }
             _ => (),
         }
