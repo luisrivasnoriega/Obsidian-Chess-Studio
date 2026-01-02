@@ -1,6 +1,6 @@
 {
-  "features.menu.pawnAppetit": "Pawn Appétit",
-  "features.menu.quit": "Quit Pawn Appétit",
+  "features.menu.pawnAppetit": "Obsidian Chess Studio",
+  "features.menu.quit": "Quit Obsidian Chess Studio",
   "features.menu.newAnalysisBoard": "New Analysis Board",
   "features.menu.newPlayBoard": "New Play Board",
   "features.menu.importPgn": "Import PGN",

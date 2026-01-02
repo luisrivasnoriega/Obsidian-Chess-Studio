@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Bienvenu chez Pawn Appétit!",
+        "firstOpen": "Bienvenu chez Obsidian Chess Studio!",
         "back": "Bon retour!",
         "desc": "Prêt à jouer votre prochain meilleur coup ?"
       },
@@ -713,7 +713,7 @@
       "filesDesc": "C'est ici que vos fichiers de parties seront sauvegardés"
     },
     "telemetry": "Télémétrie",
-    "telemetryDesc": "Contribuez à améliorer Pawn Appétit en partageant des données d'utilisation anonymes",
+    "telemetryDesc": "Contribuez à améliorer Obsidian Chess Studio en partageant des données d'utilisation anonymes",
     "moveNotation": "Notation des coups",
     "moveNotationDesc": "Choisissez comment afficher les pièces dans la notation",
     "symbols": "Symboles (♔♕♖♗♘)",

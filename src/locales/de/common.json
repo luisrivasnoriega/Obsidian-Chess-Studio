@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Willkommen bei Pawn Appétit!",
+        "firstOpen": "Willkommen bei Obsidian Chess Studio!",
         "back": "Willkommen zurück",
         "desc": "Bereit für Ihren nächsten besten Zug?"
       },
@@ -480,7 +480,7 @@
       },
       "remove": {
         "title": "Engine entfernen",
-        "message": "Bist du sicher, dass du diese Engine aus Pawn Appétit entfernen möchtest?"
+        "message": "Bist du sicher, dass du diese Engine aus Obsidian Chess Studio entfernen möchtest?"
       }
     },
     "databases": {
@@ -713,7 +713,7 @@
       "filesDesc": "Hier werden deine Spiele auf der Dateien-Seite gespeichert"
     },
     "telemetry": "Telemetry",
-    "telemetryDesc": "Helfen Sie, Pawn Appétit zu verbessern, indem Sie anonyme Nutzungsdaten teilen",
+    "telemetryDesc": "Helfen Sie, Obsidian Chess Studio zu verbessern, indem Sie anonyme Nutzungsdaten teilen",
     "moveNotation": "Zugnotation",
     "moveNotationDesc": "Wählen Sie, wie Figuren in der Notation angezeigt werden",
     "symbols": "Symbole (♔♕♖♗♘)",

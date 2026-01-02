@@ -38,14 +38,10 @@ export default function ErrorComponent({ error }: { error: unknown }) {
       <Text>
         {t("error.reportPrompt")}{" "}
         <Anchor
-          href="https://github.com/Pawn-Appetit/pawn-appetit/issues/new?assignees=&labels=bug&projects=&template=bug.yml"
+          href="https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/issues/new?template=bug_report.yml"
           target="_blank"
         >
           Github
-        </Anchor>{" "}
-        {t("error.reportOr")}{" "}
-        <Anchor href="https://discord.gg/8hk49G8ZbX" target="_blank">
-          Discord server
         </Anchor>
       </Text>
     </Stack>

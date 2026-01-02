@@ -71,17 +71,12 @@ export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
   useEffect(() => {
     const key = "obsidian-chess-studio.firstOpen";
-    const legacyKey = "pawn-appetit.firstOpen";
 
-    const hasSeen = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
+    const hasSeen = localStorage.getItem(key);
     if (!hasSeen) {
       localStorage.setItem(key, "true");
       setIsFirstOpen(true);
     } else {
-      // Migrate legacy key so we don't keep checking it forever
-      if (!localStorage.getItem(key) && localStorage.getItem(legacyKey)) {
-        localStorage.setItem(key, "true");
-      }
       setIsFirstOpen(false);
     }
   }, []);
@@ -261,7 +256,7 @@ export default function DashboardPage() {
         } else {
           // Fallback to localStorage for backward compatibility
           const storedDisplayName =
-            localStorage.getItem("obsidian-chess-studio.displayName") ?? localStorage.getItem("pawn-appetit.displayName");
+            localStorage.getItem("obsidian-chess-studio.displayName");
           if (storedDisplayName !== null) {
             setDisplayName(storedDisplayName);
           } else {
@@ -342,7 +337,7 @@ export default function DashboardPage() {
             setDisplayName(accountDisplayName);
           } else {
             const storedDisplayName =
-              localStorage.getItem("obsidian-chess-studio.displayName") ?? localStorage.getItem("pawn-appetit.displayName");
+              localStorage.getItem("obsidian-chess-studio.displayName");
             if (storedDisplayName !== null) {
               setDisplayName(storedDisplayName);
             } else {
@@ -1040,7 +1035,7 @@ export default function DashboardPage() {
                 await saveAccountDisplayName(mainAccountName, newDisplayName);
                 // Also save to localStorage for backward compatibility
                 localStorage.setItem("obsidian-chess-studio.displayName", newDisplayName);
-                localStorage.setItem("pawn-appetit.displayName", newDisplayName);
+                localStorage.setItem("obsidian-chess-studio.displayName", newDisplayName);
               }
 
               // Save Lichess token if provided

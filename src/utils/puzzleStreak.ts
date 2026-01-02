@@ -1,7 +1,6 @@
 type SolvesMap = Record<string, number>;
 
 const STORAGE_KEY = "obsidian-chess-studio.puzzle.solves";
-const LEGACY_STORAGE_KEY = "pawn-appetit.puzzle.solves";
 
 function pad2(n: number) {
   return n < 10 ? `0${n}` : String(n);
@@ -22,7 +21,7 @@ function addDays(d: Date, delta: number): Date {
 
 function readSolves(): SolvesMap {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") return parsed as SolvesMap;
@@ -35,7 +34,6 @@ function readSolves(): SolvesMap {
 function writeSolves(solves: SolvesMap) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(solves));
-    localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(solves));
   } catch {
     // ignore write errors (e.g., quota)
   }

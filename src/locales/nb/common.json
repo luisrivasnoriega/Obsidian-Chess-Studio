@@ -122,7 +122,7 @@
       "clearSavedData": "Fjern lagrede data",
       "openLogs": "Åpne logger",
       "checkUpdate": "Se etter oppdateringer",
-      "about": "Om Pawn Appétit"
+      "about": "Om Obsidian Chess Studio"
     },
     "sidebar": {
       "board": "Brett",
@@ -250,7 +250,7 @@
       },
       "remove": {
         "title": "Fjern computer",
-        "message": "Er du sikker på at du vil fjerne denne computeren fra Pawn Appétit?"
+        "message": "Er du sikker på at du vil fjerne denne computeren fra Obsidian Chess Studio?"
       }
     },
     "databases": {

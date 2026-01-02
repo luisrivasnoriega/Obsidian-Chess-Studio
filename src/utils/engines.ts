@@ -10,7 +10,7 @@ export const requiredEngineSettings = ["MultiPV", "Threads", "Hash"];
 
 /**
  * IMPORTANT:
- * - `bmi2` is used as a 2-way CPU switch in Pawn Appetit (bmi2 compatible vs not).
+ * - `bmi2` is used as a 2-way CPU switch in Obsidian Chess Studio (OCS) (bmi2 compatible vs not).
  * - For engines that offer AVX/AVX2 vs SSE builds, we map:
  *    bmi2=true  -> faster build (AVX/AVX2)
  *    bmi2=false -> safer build (SSE/SSE2/ancient)

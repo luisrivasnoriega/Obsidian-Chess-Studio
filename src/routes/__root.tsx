@@ -767,17 +767,10 @@ function RootLayout() {
         label: t("features.menu.help"),
         options: [
           {
-            label: t("features.menu.documentation"),
-            id: "documentation",
-            action: async () => {
-              await openPath("https://pawnappetit.com/docs");
-            },
-          },
-          {
             label: t("features.menu.reportIssue"),
             id: "report_issue",
             action: async () => {
-              await openPath("https://github.com/Pawn-Appetit/pawn-appetit/issues/new");
+              await openPath("https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/issues/new/choose");
             },
           },
           { label: "divider" },

@@ -588,7 +588,7 @@ impl<'a> MoveStream<'a> {
 }
 
 /// Find the next move played after a position matches the query
-/// This is the en-croissant version - simpler and more efficient
+/// Simplified version - smaller and more efficient
 #[inline]
 fn get_move_after_match(
     move_blob: &[u8],

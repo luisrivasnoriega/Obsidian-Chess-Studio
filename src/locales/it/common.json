@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Benvenuto su Pawn Appétit!",
+        "firstOpen": "Benvenuto su Obsidian Chess Studio!",
         "back": "Bentornato",
         "desc": "Pronto a fare la tua prossima mossa migliore?"
       },
@@ -480,7 +480,7 @@
       },
       "remove": {
         "title": "Rimuovi Motore",
-        "message": "Sei sicuro di voler rimuovere questo motore da Pawn Appétit?"
+        "message": "Sei sicuro di voler rimuovere questo motore da Obsidian Chess Studio?"
       }
     },
     "databases": {
@@ -717,7 +717,7 @@
       "filesDesc": "Qui vengono archiviati i tuoi giochi nella pagina File"
     },
     "telemetry": "Telemetry",
-    "telemetryDesc": "Aiuta a migliorare Pawn Appétit condividendo dati di utilizzo anonimi",
+    "telemetryDesc": "Aiuta a migliorare Obsidian Chess Studio condividendo dati di utilizzo anonimi",
     "moveNotation": "Notazione delle mosse",
     "moveNotationDesc": "Scegli come visualizzare i pezzi nella notazione",
     "symbols": "Simboli (♔♕♖♗♘)",

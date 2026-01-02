@@ -308,7 +308,7 @@
     "failedToClearData": "Failed to clear data",
     "openingLogs": "Opening Logs",
     "failedToOpenLogFile": "Failed to open log file",
-    "aboutTitle": "Pawn Appétit",
+    "aboutTitle": "Obsidian Chess Studio",
     "menuError": "Menu Error",
     "failedToCreateMenu": "Failed to create application menu",
     "versionReadyToInstall": "Version {{version}} is ready to install",
@@ -493,7 +493,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Welcome to Pawn Appétit!",
+        "firstOpen": "Welcome to Obsidian Chess Studio!",
         "back": "Welcome back",
         "desc": "Ready to make your next best move?"
       },
@@ -747,7 +747,7 @@
       },
       "remove": {
         "title": "Remove Engine",
-        "message": "Are you sure you want to remove this engine from Pawn Appétit?"
+        "message": "Are you sure you want to remove this engine from Obsidian Chess Studio?"
       }
     },
     "databases": {
@@ -1073,9 +1073,9 @@
       "filesDesc": "This is where your games in the Files page are stored"
     },
     "telemetry": "Telemetry",
-    "telemetryDesc": "Help improve Pawn Appétit by sharing anonymous usage data",
+    "telemetryDesc": "Help improve Obsidian Chess Studio by sharing anonymous usage data",
     "about": "About",
-    "aboutDesc": "Learn more about Pawn Appétit",
+    "aboutDesc": "Learn more about Obsidian Chess Studio",
     "moveNotation": "Move notation",
     "moveNotationDesc": "Choose how to display pieces in notation",
     "symbols": "Symbols (♔♕♖♗♘)",
@@ -1093,7 +1093,7 @@
     "interface": "Interface",
     "system": "System",
     "telemetryLoading": "Loading telemetry settings...",
-    "telemetryDetails": "Telemetry data is anonymous and helps us understand how Pawn Appétit is used to improve the experience. We never collect personal information or game content. Data is securely stored using Supabase.",
+    "telemetryDetails": "Telemetry data is anonymous and helps us understand how Obsidian Chess Studio is used to improve the experience. We never collect personal information or game content. Data is securely stored using Supabase.",
     "pickValue": "Pick value",
     "pressAnyKey": "Press any key"
   },
@@ -1113,7 +1113,7 @@
     "openFile": "Open File",
     "saveFile": "Save File",
     "appReload": "Reload",
-    "exitApp": "Exit Pawn Appétit",
+    "exitApp": "Exit Obsidian Chess Studio",
     "spotlightSearch": "Spotlight Search",
     "newBoardTab": "New board tab",
     "closeBoardTab": "Close board tab",

@@ -144,19 +144,19 @@ export async function createTempImportFile(
   pgn: string,
   filetype: "game" | "repertoire" | "tournament" | "puzzle" | "variants" | "other" = "game",
 ): Promise<FileMetadata> {
-  const tempDirName = "obsidian-chess-studio";
-  const legacyTempDirName = "pawn-appetit";
+  const primaryTempDirName = "obsidian-chess-studio";
+  const fallbackTempDirName = "ocs";
 
-  let actualTempDirName = tempDirName;
+  let actualTempDirName = primaryTempDirName;
 
   // Ensure temp directory exists
   try {
-    await mkdir(tempDirName, { baseDir: BaseDirectory.Temp });
+    await mkdir(primaryTempDirName, { baseDir: BaseDirectory.Temp });
   } catch {
-    // If creation fails (permissions/platform quirks), fall back to the legacy folder name.
-    actualTempDirName = legacyTempDirName;
+    // If creation fails (permissions/platform quirks), fall back to a shorter folder name.
+    actualTempDirName = fallbackTempDirName;
     try {
-      await mkdir(legacyTempDirName, { baseDir: BaseDirectory.Temp });
+      await mkdir(fallbackTempDirName, { baseDir: BaseDirectory.Temp });
     } catch {
       // ignore
     }

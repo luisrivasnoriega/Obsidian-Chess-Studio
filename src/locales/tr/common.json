@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Pawn Appétit'e Hoş Geldiniz!",
+        "firstOpen": "OCS'e Hoş Geldiniz!",
         "back": "Tekrar hoş geldiniz",
         "desc": "Bir sonraki en iyi hamlenizi yapmaya hazır mısınız?"
       },
@@ -480,7 +480,7 @@
       },
       "remove": {
         "title": "Motor Kaldır",
-        "message": "Bu motoru Pawn Appétit'tan kaldırmak istediğinize emin misiniz?"
+        "message": "Bu motoru OCS'tan kaldırmak istediğinize emin misiniz?"
       }
     },
     "databases": {
@@ -712,7 +712,7 @@
       "filesDesc": "Dosyalar sayfasındaki oyunlarınız burada saklanır"
     },
     "telemetry": "Telemetri",
-    "telemetryDesc": "Anonim kullanım verilerini paylaşarak Pawn Appétit’in geliştirilmesine yardımcı olun",
+    "telemetryDesc": "Anonim kullanım verilerini paylaşarak OCS'in geliştirilmesine yardımcı olun",
     "moveNotation": "Hamle gösterimi",
     "moveNotationDesc": "Taşların gösterim biçimini seçin",
     "symbols": "Semboller (♔♕♖♗♘)",

@@ -3,11 +3,10 @@ type PgnPuzzleProgressStore = Record<string, Record<string, true>>;
 export const PGN_PUZZLE_PROGRESS_UPDATED_EVENT = "pgn-puzzles:progress-updated";
 
 const STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnProgress";
-const LEGACY_STORAGE_KEY = "pawn-appetit.puzzle.pgnProgress";
 
 function readStore(): PgnPuzzleProgressStore {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
@@ -21,7 +20,6 @@ function writeStore(store: PgnPuzzleProgressStore) {
   try {
     const raw = JSON.stringify(store);
     localStorage.setItem(STORAGE_KEY, raw);
-    localStorage.setItem(LEGACY_STORAGE_KEY, raw);
   } catch {
     // ignore write errors (e.g., quota)
   }

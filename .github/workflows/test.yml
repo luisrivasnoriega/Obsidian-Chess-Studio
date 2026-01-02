@@ -1,4 +1,4 @@
-name: Test
+name: OCS Test
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
           version: 10.26.1
 
       - name: Setup Node.js and pnpm cache
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
           cache: "pnpm"

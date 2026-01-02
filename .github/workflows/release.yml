@@ -1,4 +1,4 @@
-name: Release
+name: OCS Release
 
 on:
   push:
@@ -67,8 +67,8 @@ jobs:
           CI: false
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: ${{ github.ref_name }}
-          releaseBody: "See the assets to download and install this version."
+          releaseName: Obsidian Chess Studio ${{ github.ref_name }}
+          releaseBody: "Obsidian Chess Studio (OCS) release ${{ github.ref_name }}. See the assets to download and install."
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

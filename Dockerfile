@@ -33,8 +33,8 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN npm install -g pnpm
 
 # Clone the app and set the working directory
-RUN git clone https://github.com/Pawn-Appetit/pawn-appetit.git /pawn-appetit
-WORKDIR /pawn-appetit
+RUN git clone https://github.com/luisrivasnoriega/Obsidian-Chess-Studio.git /obsidian-chess-studio
+WORKDIR /obsidian-chess-studio
 
 # Install dependencies
 RUN pnpm install
@@ -44,7 +44,7 @@ RUN pnpm tauri build
 
 # Copy built binary to /output
 RUN mkdir -p /output && \
-    cp ./src-tauri/target/release/pawn-appetit /output
+    cp ./src-tauri/target/release/obsidian-chess-studio /output
 
 # Optional: set default command
-CMD ["/output/pawn-appetit"]
+CMD ["/output/obsidian-chess-studio"]

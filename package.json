@@ -1,6 +1,6 @@
 {
-  "name": "pawn-appetit",
-  "version": "0.10.0",
+  "name": "obsidian-chess-studio",
+  "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@10.26.1",
   "scripts": {

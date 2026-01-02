@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "欢迎使用 Pawn Appétit！",
+        "firstOpen": "欢迎使用 Obsidian Chess Studio！",
         "back": "欢迎回来",
         "desc": "准备好走出你的下一步好棋了吗？"
       },
@@ -480,7 +480,7 @@
       },
       "remove": {
         "title": "移除引擎",
-        "message": "你确定要从 Pawn Appétit 中移除这个引擎吗？"
+        "message": "你确定要从 Obsidian Chess Studio 中移除这个引擎吗？"
       }
     },
     "databases": {
@@ -712,7 +712,7 @@
       "filesDesc": "这是你在文件页面中的对局存储的位置"
     },
     "telemetry": "遥测",
-    "telemetryDesc": "通过共享匿名使用数据来帮助改进 Pawn Appétit",
+    "telemetryDesc": "通过共享匿名使用数据来帮助改进 Obsidian Chess Studio",
     "moveNotation": "棋谱记法",
     "moveNotationDesc": "选择在记谱中显示棋子的方式",
     "symbols": "符号 (♔♕♖♗♘)",

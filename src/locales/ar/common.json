@@ -61,7 +61,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "مرحبًا بك في Pawn Appétit!",
+        "firstOpen": "مرحبًا بك في Obsidian Chess Studio!",
         "back": "مرحبًا بعودتك",
         "desc": "هل أنت مستعد للقيام بأفضل نقلة تالية؟"
       },

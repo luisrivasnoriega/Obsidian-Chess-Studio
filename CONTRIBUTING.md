@@ -18,15 +18,15 @@ When it comes to open source, there are different ways you can contribute, all o
 
 Before you start working on a contribution, please check the issues page. It's possible someone else is already working on something similar, or perhaps there is a reason that feature isn't implemented. The maintainers will point you in the right direction.
 
-> If you still have questions, please check [the Discord](https://discord.gg/8hk49G8ZbX)
+> If you still have questions, please open an issue or start a discussion in this repository.
 
 ## Development
 
 The following steps will get you setup to contribute changes to this repo:
 
 - Fork the repo
-- Clone your forked repository: `git clone git@github.com:{your_username}/pawn-appetit.git`
-- Enter the directory: `cd pawn-appetit`
+- Clone your forked repository: `git clone git@github.com:{your_username}/Obsidian-Chess-Studio.git`
+- Enter the directory: `cd Obsidian-Chess-Studio`
 - Create a new branch off the `master` branch: `git checkout -b your-feature-name`
 - Install dependencies `pnpm i`
 - Open the code in your preferred IDE and contribute your changes
@@ -115,7 +115,7 @@ i18n.use(initReactI18next).init({
 - Before submitting a PR, first build the app using `pnpm tauri build -b none` and check every feature you've contributed to.
 - Format and lint your code using `pnpm format` followed by `pnpm lint:fix`
 - If you're contributing translations, follow the steps in [Verifying and Finalizing Translation Changes](#verifying-and-finalizing-translation-changes)
-- Go to [the comparison page](https://github.com/Pawn-Appetit/pawn-appetit/compare) and select the branch you just pushed in the `compare:` dropdown
+- Go to [the comparison page](https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/compare) and select the branch you just pushed in the `compare:` dropdown
 - Submit the new PR. The maintainers will follow up ASAP.
 
 ## Extra Notes

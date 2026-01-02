@@ -1,9 +1,9 @@
 {
     "$schema":  "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName":  "Obsidian Chess Studio",
-    "version":  "0.10.0",
-    "mainBinaryName":  "pawn-appetit",
-    "identifier":  "com.pawnappetit",
+    "version":  "1.0.0",
+    "mainBinaryName":  "obsidian-chess-studio",
+    "identifier":  "com.luisrivasnoriega.ocs",
     "bundle":  {
                    "active":  true,
                    "category":  "BoardGame",
@@ -30,7 +30,7 @@
                                                   "bundleMediaFramework":  true
                                               }
                              },
-                   "publisher":  "Pawn-Appetit Team",
+                   "publisher":  "Obsidian Chess Studio",
                    "shortDescription":  "Ultimate Chess Toolkit",
                    "longDescription":  "",
                    "macOS":  {
@@ -67,7 +67,7 @@
                     "updater":  {
                                     "pubkey":  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBQUUwNEI2OTg2RjA5QzUKUldURkNXK1l0Z1N1eW9ldFQwV29oZVBGQVc0RFR6cml2WERFWXlhRDE4di8yaW1EbjRCUUY2bHEK",
                                     "endpoints":  [
-                                                      "https://github.com/Pawn-Appetit/pawn-appetit/releases/latest/download/latest.json"
+                                                      "https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest/download/latest.json"
                                                   ]
                                 }
                 },

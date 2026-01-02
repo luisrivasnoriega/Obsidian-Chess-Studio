@@ -248,7 +248,7 @@
     },
     "dashboard": {
       "welcome": {
-        "firstOpen": "Добро пожаловать в Pawn Appétit!",
+        "firstOpen": "Добро пожаловать в Obsidian Chess Studio!",
         "back": "С возвращением",
         "desc": "Готовы сделать лучший ход?"
       },
@@ -480,7 +480,7 @@
       },
       "remove": {
         "title": "Удалить движок",
-        "message": "Вы уверены, что хотите удалить этот движок из Pawn Appétit?"
+        "message": "Вы уверены, что хотите удалить этот движок из Obsidian Chess Studio?"
       }
     },
     "databases": {
@@ -712,7 +712,7 @@
       "filesDesc": "Здесь хранятся игровые файлы на странице файлов"
     },
     "telemetry": "Телеметрия",
-    "telemetryDesc": "Помогите улучшить Pawn Appétit, делясь анонимными данными об использовании",
+    "telemetryDesc": "Помогите улучшить Obsidian Chess Studio, делясь анонимными данными об использовании",
     "moveNotation": "Обозначение ходов",
     "moveNotationDesc": "Выберите, как отображать фигуры в нотации",
     "symbols": "Символы (♔♕♖♗♘)",

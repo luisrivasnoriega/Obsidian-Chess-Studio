@@ -15,7 +15,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{error::Error, AppState};
 
 fn create_client(redirect_url: RedirectUrl) -> BasicClient {
-    let client_id = ClientId::new("com.pawnappetit".to_string());
+    let client_id = ClientId::new("com.luisrivasnoriega.ocs".to_string());
     let auth_url = AuthUrl::new("https://lichess.org/oauth".to_string());
     let token_url = TokenUrl::new("https://lichess.org/api/token".to_string());
 

@@ -250,7 +250,7 @@
       },
       "remove": {
         "title": "Видалити движок",
-        "message": "Ви впевнені, що хочете видалити цей движок із Pawn Appétit?"
+        "message": "Ви впевнені, що хочете видалити цей движок із Obsidian Chess Studio?"
       }
     },
     "databases": {

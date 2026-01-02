@@ -318,7 +318,7 @@
       },
       "remove": {
         "title": "Usuń silnik",
-        "message": "Czy na pewno chcesz usunąć ten silnik z Pawn Appétit?"
+        "message": "Czy na pewno chcesz usunąć ten silnik z Obsidian Chess Studio?"
       }
     },
     "databases": {
