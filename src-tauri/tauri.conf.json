@@ -59,7 +59,7 @@
             ]
         },
         "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBQUUwNEI2OTg2RjA5QzUKUldURkNXK1l0Z1N1eW9ldFQwV29oZVBGQVc0RFR6cml2WERFWXlhRDE4di8yaW1EbjRCUUY2bHEK",
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMzQyOTBDMzIwMjUwRkIKUldUN1VBSXlEQ2swenI1dEFkQ1h2S05vUUx5VDdaKy9KdjRlMGJGem1jT1pQNUlJY3NUeVErZlgK",
             "endpoints": [
                 "https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest/download/latest.json"
             ]
