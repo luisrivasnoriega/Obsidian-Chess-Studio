@@ -1,0 +1,103 @@
+{
+    "$schema":  "../node_modules/@tauri-apps/cli/config.schema.json",
+    "productName":  "Obsidian Chess Studio",
+    "version":  "0.10.0",
+    "mainBinaryName":  "pawn-appetit",
+    "identifier":  "com.pawnappetit",
+    "bundle":  {
+                   "active":  true,
+                   "category":  "BoardGame",
+                   "copyright":  "",
+                   "windows":  {
+                                   "certificateThumbprint":  null,
+                                   "digestAlgorithm":  "sha256",
+                                   "timestampUrl":  ""
+                               },
+                   "icon":  [
+                                "icons/32x32.png",
+                                "icons/128x128.png",
+                                "icons/128x128@2x.png",
+                                "icons/icon.icns",
+                                "icons/icon.ico"
+                            ],
+                   "linux":  {
+                                 "deb":  {
+                                             "depends":  [
+
+                                                         ]
+                                         },
+                                 "appimage":  {
+                                                  "bundleMediaFramework":  true
+                                              }
+                             },
+                   "publisher":  "Pawn-Appetit Team",
+                   "shortDescription":  "Ultimate Chess Toolkit",
+                   "longDescription":  "",
+                   "macOS":  {
+                                 "entitlements":  null,
+                                 "exceptionDomain":  "",
+                                 "frameworks":  [
+
+                                                ],
+                                 "providerShortName":  null,
+                                 "signingIdentity":  "-"
+                             },
+                   "resources":  [
+
+                                 ],
+                   "targets":  "all",
+                   "createUpdaterArtifacts":  false
+               },
+    "build":  {
+                  "beforeDevCommand":  "pnpm start-vite",
+                  "beforeBuildCommand":  "pnpm build-vite",
+                  "frontendDist":  "../dist",
+                  "devUrl":  "http://localhost:1420"
+              },
+    "plugins":  {
+                    "cli":  {
+                                "args":  [
+                                             {
+                                                 "name":  "file",
+                                                 "index":  1,
+                                                 "takesValue":  true
+                                             }
+                                         ]
+                            },
+                    "updater":  {
+                                    "pubkey":  "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBQUUwNEI2OTg2RjA5QzUKUldURkNXK1l0Z1N1eW9ldFQwV29oZVBGQVc0RFR6cml2WERFWXlhRDE4di8yaW1EbjRCUUY2bHEK",
+                                    "endpoints":  [
+                                                      "https://github.com/Pawn-Appetit/pawn-appetit/releases/latest/download/latest.json"
+                                                  ]
+                                }
+                },
+    "app":  {
+                "withGlobalTauri":  true,
+                "windows":  [
+                                {
+                                    "label":  "main",
+                                    "title":  "Obsidian Chess Studio",
+                                    "maximized":  true,
+                                    "visible":  false,
+                                    "decorations":  false,
+                                    "minWidth":  1024,
+                                    "minHeight":  640,
+                                    "minimizable":  true,
+                                    "backgroundColor":  "#1a1b1e"
+                                }
+                            ],
+                "security":  {
+                                 "assetProtocol":  {
+                                                       "scope":  [
+                                                                     "$APPDATA/**",
+                                                                     "$APPCACHE/**",
+                                                                     "$APPLOCALDATA/**",
+                                                                     "$APPCONFIG/**",
+                                                                     "$RESOURCE/**"
+                                                                 ],
+                                                       "enable":  true
+                                                   },
+                                 "csp":  "default-src \u0027self\u0027; img-src \u0027self\u0027 asset: data: blob: https: http:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; connect-src \u0027self\u0027 https://github.com https://api.chess.com https://www.chess.com https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://www.chessdb.cn"
+                             }
+            }
+}

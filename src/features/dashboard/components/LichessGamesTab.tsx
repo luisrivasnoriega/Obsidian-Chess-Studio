@@ -1,0 +1,450 @@
+import { ActionIcon, Avatar, Box, Button, Group, Loader, Pagination, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { IconSortAscending, IconSortDescending, IconStar, IconStarFilled } from "@tabler/icons-react";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { AnalysisPreview } from "@/components/AnalysisPreview";
+import { getAnalyzedGamesBulk, getGameStatsBulk } from "@/utils/analyzedGames";
+import type { FavoriteGame } from "@/utils/favoriteGames";
+
+interface LichessGame {
+  id: string;
+  players: {
+    white: { user?: { name: string } };
+    black: { user?: { name: string } };
+  };
+  speed: string;
+  createdAt: number;
+  winner?: string;
+  status: string;
+  pgn?: string;
+  lastFen: string;
+}
+
+interface GameStats {
+  accuracy: number;
+  acpl: number;
+  estimatedElo?: number;
+}
+
+interface LichessGamesTabProps {
+  games: LichessGame[];
+  lichessUsernames: string[];
+  selectedUser?: string | null;
+  isLoading?: boolean;
+  onAnalyzeGame: (game: LichessGame) => void;
+  onAnalyzeAll?: () => void;
+  onToggleFavorite?: (gameId: string) => Promise<void>;
+  favoriteGames?: FavoriteGame[];
+}
+
+export function LichessGamesTab({
+  games,
+  lichessUsernames,
+  selectedUser,
+  isLoading = false,
+  onAnalyzeGame,
+  onAnalyzeAll,
+  onToggleFavorite,
+  favoriteGames = [],
+}: LichessGamesTabProps) {
+  const { t } = useTranslation();
+  const [gameStats, setGameStats] = useState<Map<string, GameStats>>(new Map());
+  const [analyzedPgns, setAnalyzedPgns] = useState<Map<string, string>>(new Map());
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 25;
+  const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const showAccountColumn = !selectedUser || selectedUser === "all";
+
+  // Debug: log when isLoading changes
+  useEffect(() => {
+    // Trigger re-render when isLoading changes
+  }, [isLoading]);
+
+  // Load stats for games - use saved stats only (no calculation)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStats = async () => {
+      if (games.length === 0) {
+        setGameStats(new Map());
+        return;
+      }
+      const ids = games.map((g) => g.id);
+      const stats = await getGameStatsBulk(ids);
+      if (!cancelled) setGameStats(stats);
+    };
+
+    loadStats().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [games]); // Games array reference change is sufficient - no need to serialize PGNs
+
+  // Calculate move count from PGN if available
+  const getMoveCount = (game: LichessGame): number => {
+    if (!game.pgn) return 0;
+    try {
+      const moves = game.pgn.match(/\d+\.\s+\S+/g) || [];
+      return moves.length;
+    } catch {
+      return 0;
+    }
+  };
+
+  // Sort and paginate games
+  const sortedAndPaginatedGames = useMemo(() => {
+    const sortedGames = [...games];
+
+    if (sortBy === "elo") {
+      sortedGames.sort((a, b) => {
+        const statsA = gameStats.get(a.id);
+        const statsB = gameStats.get(b.id);
+        const eloA = statsA?.estimatedElo || 0;
+        const eloB = statsB?.estimatedElo || 0;
+        return sortDirection === "asc" ? eloA - eloB : eloB - eloA;
+      });
+    } else if (sortBy === "date") {
+      sortedGames.sort((a, b) => {
+        return sortDirection === "asc" ? a.createdAt - b.createdAt : b.createdAt - a.createdAt;
+      });
+    }
+
+    const start = (page - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return sortedGames.slice(start, end);
+  }, [games, page, itemsPerPage, sortBy, sortDirection, gameStats]);
+
+  // Load analyzed PGNs for preview (only for the visible page)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAnalyzedPgns = async () => {
+      if (sortedAndPaginatedGames.length === 0) return;
+
+      const idsToLoad = sortedAndPaginatedGames.map((g) => g.id).filter((id) => !analyzedPgns.has(id));
+      if (idsToLoad.length === 0) return;
+
+      const analyzed = await getAnalyzedGamesBulk(idsToLoad);
+      if (cancelled) return;
+
+      setAnalyzedPgns((prev) => {
+        const next = new Map(prev);
+        for (const game of sortedAndPaginatedGames) {
+          if (next.has(game.id)) continue;
+          const analyzedPgn = analyzed.get(game.id);
+          if (analyzedPgn) {
+            next.set(game.id, analyzedPgn);
+          } else if (game.pgn) {
+            next.set(game.id, game.pgn);
+          }
+        }
+        return next;
+      });
+    };
+
+    loadAnalyzedPgns().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sortedAndPaginatedGames, analyzedPgns]);
+
+  // Calculate averages for footer
+  const averages = useMemo(() => {
+    const gamesWithStats = games.filter((g) => {
+      const stats = gameStats.get(g.id);
+      return stats && stats.acpl > 0;
+    });
+
+    if (gamesWithStats.length === 0) {
+      return { accuracy: 0, acpl: 0, elo: 0 };
+    }
+
+    let totalAccuracy = 0;
+    let totalAcpl = 0;
+    let totalElo = 0;
+    let count = 0;
+    let eloCount = 0;
+
+    gamesWithStats.forEach((g) => {
+      const stats = gameStats.get(g.id);
+      if (stats && stats.acpl > 0) {
+        totalAccuracy += stats.accuracy;
+        totalAcpl += stats.acpl;
+        if (stats.estimatedElo !== undefined) {
+          totalElo += stats.estimatedElo;
+          eloCount++;
+        }
+        count++;
+      }
+    });
+
+    return {
+      accuracy: count > 0 ? totalAccuracy / count : 0,
+      acpl: count > 0 ? totalAcpl / count : 0,
+      elo: eloCount > 0 ? totalElo / eloCount : 0,
+    };
+  }, [games, gameStats]);
+
+  const handleSort = (field: "elo" | "date") => {
+    if (sortBy === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(field);
+      setSortDirection("desc");
+    }
+    setPage(1); // Reset to first page when sorting changes
+  };
+
+  const totalPages = Math.ceil(games.length / itemsPerPage);
+
+  // Reset to page 1 when games change
+  useEffect(() => {
+    setPage(1);
+  }, [games.length]);
+
+  if (isLoading) {
+    return (
+      <Stack gap="xs" align="center" justify="center" style={{ minHeight: "200px" }}>
+        <Loader size="md" />
+        <Text size="sm" c="dimmed">
+          Loading...
+        </Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
+        <Table striped highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Opponent</Table.Th>
+              <Table.Th>Color</Table.Th>
+              <Table.Th>Result</Table.Th>
+              <Table.Th>Accuracy</Table.Th>
+              <Table.Th>ACPL</Table.Th>
+              <Table.Th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("elo")}>
+                <Group gap="xs" wrap="nowrap">
+                  {t("dashboard.estimatedElo")}
+                  {sortBy === "elo" &&
+                    (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
+                </Group>
+              </Table.Th>
+              <Table.Th>Moves</Table.Th>
+              {showAccountColumn && <Table.Th>Account</Table.Th>}
+              <Table.Th style={{ cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
+                <Group gap="xs" wrap="nowrap">
+                  Date
+                  {sortBy === "date" &&
+                    (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
+                </Group>
+              </Table.Th>
+              <Table.Th>Favorite</Table.Th>
+              <Table.Th>
+                {onAnalyzeAll && (
+                  <Button size="xs" variant="light" onClick={onAnalyzeAll}>
+                    Analyze All
+                  </Button>
+                )}
+              </Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {sortedAndPaginatedGames.map((g) => {
+              // If a specific user is selected, use that user to determine account vs opponent
+              // Otherwise, use the lichessUsernames list
+              const gameWhiteName = g.players.white.user?.name || "";
+              const gameBlackName = g.players.black.user?.name || "";
+              const accountUsername =
+                selectedUser && selectedUser !== "all"
+                  ? selectedUser
+                  : lichessUsernames.find(
+                      (u) =>
+                        u.toLowerCase() === gameWhiteName.toLowerCase() ||
+                        u.toLowerCase() === gameBlackName.toLowerCase(),
+                    ) || gameWhiteName;
+
+              const isUserWhite = (gameWhiteName || "").toLowerCase() === (accountUsername || "").toLowerCase();
+              const opponent = isUserWhite ? g.players.black : g.players.white;
+              const userAccount = isUserWhite ? g.players.white : g.players.black;
+              const color = isUserWhite ? "white" : "black";
+              const stats = gameStats.get(g.id);
+
+              // Translate status
+              const getTranslatedStatus = (status: string) => {
+                if (status === "white") return t("chess.white");
+                if (status === "black") return t("chess.black");
+                if (status === "draw") return t("chess.draw");
+                return status;
+              };
+
+              // Determine if user won
+              const userWon = g.winner === (isUserWhite ? "white" : "black");
+
+              const resultColor = userWon
+                ? "var(--mantine-color-blue-6)"
+                : g.winner
+                  ? "var(--mantine-color-red-6)"
+                  : "var(--mantine-color-gray-5)";
+
+              return (
+                <Table.Tr key={g.id}>
+                  <Table.Td>
+                    <Group gap="xs">
+                      <Avatar size={24} radius="xl">
+                        {opponent.user?.name[0].toUpperCase()}
+                      </Avatar>
+                      <Text>{opponent.user?.name}</Text>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Box
+                      aria-label={color}
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        backgroundColor: color === "white" ? "#ffffff" : "#000000",
+                        border: color === "white" ? "1px solid #666666" : "1px solid #000000",
+                        marginLeft: 4,
+                      }}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Box
+                      aria-label={getTranslatedStatus(g.status)}
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        backgroundColor: resultColor,
+                        border: "1px solid rgba(0,0,0,0.2)",
+                        marginLeft: 4,
+                      }}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    {stats ? (
+                      <Text size="xs" fw={500}>
+                        {stats.accuracy.toFixed(1)}%
+                      </Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        -
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {stats ? (
+                      <Text size="xs" fw={500}>
+                        {stats.acpl.toFixed(1)}
+                      </Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        -
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {stats && stats.estimatedElo !== undefined ? (
+                      <Text size="xs" fw={500}>
+                        {stats.estimatedElo}
+                      </Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        -
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs">{getMoveCount(g)}</Text>
+                  </Table.Td>
+                  {showAccountColumn && (
+                    <Table.Td>
+                      <Text size="xs">{userAccount.user?.name}</Text>
+                    </Table.Td>
+                  )}
+                  <Table.Td c="dimmed">
+                    {t("formatters.dateFormat", {
+                      date: new Date(g.createdAt),
+                      interpolation: { escapeValue: false },
+                    })}
+                  </Table.Td>
+                  <Table.Td>
+                    {onToggleFavorite && (
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color={favoriteGames.some((f) => f.gameId === g.id && f.source === "lichess") ? "yellow" : "gray"}
+                        onClick={() => onToggleFavorite(g.id)}
+                        title="Toggle favorite"
+                      >
+                        {favoriteGames.some((f) => f.gameId === g.id && f.source === "lichess") ? (
+                          <IconStarFilled size={16} />
+                        ) : (
+                          <IconStar size={16} />
+                        )}
+                      </ActionIcon>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs" wrap="nowrap">
+                      <AnalysisPreview pgn={analyzedPgns.get(g.id) || g.pgn || null}>
+                        <Button size="xs" variant="light" onClick={() => onAnalyzeGame(g)} disabled={!g.pgn}>
+                          Analyze
+                        </Button>
+                      </AnalysisPreview>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        component="a"
+                        href={`https://lichess.org/${g.id}`}
+                        target="_blank"
+                      >
+                        View Online
+                      </Button>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
+          </Table.Tbody>
+          <Table.Tfoot>
+            <Table.Tr>
+              <Table.Td colSpan={3}>
+                <Text size="xs" fw={600}>
+                  Average
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" fw={500}>
+                  {averages.accuracy > 0 ? `${averages.accuracy.toFixed(1)}%` : "-"}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" fw={500}>
+                  {averages.acpl > 0 ? averages.acpl.toFixed(1) : "-"}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs" fw={500}>
+                  {averages.elo > 0 ? Math.round(averages.elo) : "-"}
+                </Text>
+              </Table.Td>
+              <Table.Td colSpan={showAccountColumn ? 6 : 5}></Table.Td>
+            </Table.Tr>
+          </Table.Tfoot>
+        </Table>
+      </ScrollArea>
+      {totalPages > 1 && (
+        <Group justify="center" mt="xs">
+          <Pagination value={page} onChange={setPage} total={totalPages} size="sm" />
+        </Group>
+      )}
+    </Stack>
+  );
+}

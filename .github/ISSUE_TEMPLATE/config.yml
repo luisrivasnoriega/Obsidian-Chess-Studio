@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🚀 Feature Request
+    url: https://github.com/Pawn-Appetit/pawn-appetit/discussions/new/choose
+    about: Suggest a new feature or improvement for Pawn Appétit
+  - name: 💬 Discord Community
+    url: https://discord.gg/8hk49G8ZbX
+    about: Join our Discord server for real-time help, discussions, and community support

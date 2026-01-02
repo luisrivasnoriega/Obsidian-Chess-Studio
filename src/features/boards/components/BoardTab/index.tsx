@@ -1,0 +1,120 @@
+import { ActionIcon, Button, Menu } from "@mantine/core";
+import { useClickOutside, useHotkeys, useToggle } from "@mantine/hooks";
+import { IconCopy, IconEdit, IconWindowMaximize, IconX } from "@tabler/icons-react";
+import cx from "clsx";
+import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { ContentEditable } from "@/components/ContentEditable";
+import type { Tab } from "@/utils/tabs";
+import * as classes from "./styles.css";
+
+export function BoardTab({
+  tab,
+  setActiveTab,
+  closeTab,
+  renameTab,
+  duplicateTab,
+  openInNewWindow,
+  selected,
+}: {
+  tab: Tab;
+  setActiveTab: (v: string) => void;
+  closeTab: (v: string) => void;
+  renameTab: (v: string, n: string) => void;
+  duplicateTab: (v: string) => void;
+  openInNewWindow?: (tab: Tab) => void;
+  selected: boolean;
+}) {
+  const [open, toggleOpen] = useToggle();
+  const [renaming, toggleRenaming] = useToggle();
+  const ref = useClickOutside(() => {
+    toggleOpen(false);
+    toggleRenaming(false);
+  });
+  const { t } = useTranslation();
+
+  useHotkeys([
+    [
+      "F2",
+      () => {
+        if (selected) toggleRenaming();
+      },
+    ],
+  ]);
+
+  useEffect(() => {
+    if (renaming) ref.current?.focus();
+  }, [renaming, ref]);
+
+  return (
+    <Menu opened={open} shadow="md" width={200} closeOnClickOutside>
+      <Menu.Target>
+        <Button
+          component="div"
+          className={cx(classes.tab, { [classes.selected]: selected })}
+          variant="default"
+          fw="normal"
+          data-tauri-drag-region={false}
+          rightSection={
+            <ActionIcon
+              component="div"
+              className={classes.closeTabBtn}
+              data-tauri-drag-region={false}
+              onClick={(e) => {
+                closeTab(tab.value);
+                e.stopPropagation();
+              }}
+              size="0.875rem"
+            >
+              <IconX />
+            </ActionIcon>
+          }
+          onPointerDown={(e) => {
+            if (e.button === 0) {
+              setActiveTab(tab.value);
+            }
+          }}
+          onDoubleClick={() => toggleRenaming(true)}
+          onAuxClick={(e) => {
+            // middle button click
+            if (e.button === 1) {
+              closeTab(tab.value);
+            }
+          }}
+          onContextMenu={(e) => {
+            toggleOpen();
+            e.preventDefault();
+          }}
+        >
+          <ContentEditable
+            innerRef={ref}
+            disabled={!renaming}
+            html={tab.name}
+            className={classes.input}
+            data-tauri-drag-region={false}
+            onChange={(e) => renameTab(tab.value, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") toggleRenaming(false);
+            }}
+          />
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {openInNewWindow ? (
+          <Menu.Item leftSection={<IconWindowMaximize size="0.875rem" />} onClick={() => openInNewWindow(tab)}>
+            {t("common.openTabInNewWindow")}
+          </Menu.Item>
+        ) : null}
+        <Menu.Item leftSection={<IconCopy size="0.875rem" />} onClick={() => duplicateTab(tab.value)}>
+          {t("common.duplicateTab")}
+        </Menu.Item>
+        <Menu.Item leftSection={<IconEdit size="0.875rem" />} onClick={() => toggleRenaming(true)}>
+          {t("common.renameTab")}
+        </Menu.Item>
+        <Menu.Item color="red" leftSection={<IconX size="0.875rem" />} onClick={() => closeTab(tab.value)}>
+          {t("common.closeTab")}
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}

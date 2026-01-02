@@ -1,0 +1,2058 @@
+import type { MantineColor } from "@mantine/core";
+import { Grid, Stack } from "@mantine/core";
+import { modals } from "@mantine/modals";
+import { notifications } from "@mantine/notifications";
+import { IconBolt, IconChess, IconClock, IconStopwatch } from "@tabler/icons-react";
+import { useNavigate } from "@tanstack/react-router";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
+import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { useAtom, useAtomValue } from "jotai";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { commands, type GoMode } from "@/bindings";
+import { activeTabAtom, enginesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import { getAllAnalyzedGames, getAnalyzedGame, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
+import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
+import type { ChessComGame } from "@/utils/chess.com/api";
+import { downloadChessCom, getChessComAccount } from "@/utils/chess.com/api";
+import { getAllFavoriteGames, isFavoriteGame, removeFavoriteGame, saveFavoriteGame, type FavoriteGame } from "@/utils/favoriteGames";
+import { getDatabases, query_games } from "@/utils/db";
+import { calculateEstimatedElo } from "@/utils/eloEstimation";
+import type { LocalEngine } from "@/utils/engines";
+import {
+  deleteFideProfile,
+  deleteFideProfileById,
+  type FideProfile,
+  loadFideProfile,
+  loadFideProfileById,
+  saveFideProfile,
+} from "@/utils/fideProfile";
+import { createFile } from "@/utils/files";
+import {
+  deleteGameRecord,
+  type GameRecord,
+  type GameStats,
+  getRecentGames,
+  updateGameRecord,
+} from "@/utils/gameRecords";
+import {
+  getAccountDisplayName,
+  getAccountFideId,
+  loadMainAccount,
+  saveAccountDisplayName,
+  saveMainAccount,
+  updateMainAccountFideId,
+} from "@/utils/mainAccount";
+import { getPuzzleStats } from "@/utils/puzzleStreak";
+import { createTab, genID, type Tab } from "@/utils/tabs";
+import type { TreeState } from "@/utils/treeReducer";
+import { unwrap } from "@/utils/unwrap";
+import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
+import { type AnalyzeAllConfig, AnalyzeAllModal } from "./components/AnalyzeAllModal";
+import { PlayerStatsModal } from "./components/PlayerStatsModal";
+import { GamesHistoryCard } from "./components/GamesHistoryCard";
+import { PuzzleStatsCard } from "./components/PuzzleStatsCard";
+import { PuzzleVariantsCard } from "./components/PuzzleVariantsCard";
+import { QuickActionsGrid } from "./components/QuickActionsGrid";
+import { UserProfileCard } from "./components/UserProfileCard";
+import { WelcomeCard } from "./components/WelcomeCard";
+import { calculateOnlineRating } from "./utils/calculateOnlineRating";
+import { getChessTitle } from "./utils/chessTitle";
+import {
+  convertNormalizedToChessComGame,
+  convertNormalizedToLichessGame,
+  createChessComGameHeaders,
+  createLichessGameHeaders,
+  createLocalGameHeaders,
+  createPGNFromMoves,
+} from "./utils/gameHelpers";
+
+export default function DashboardPage() {
+  const [isFirstOpen, setIsFirstOpen] = useState(false);
+  useEffect(() => {
+    const key = "obsidian-chess-studio.firstOpen";
+    const legacyKey = "pawn-appetit.firstOpen";
+
+    const hasSeen = localStorage.getItem(key) ?? localStorage.getItem(legacyKey);
+    if (!hasSeen) {
+      localStorage.setItem(key, "true");
+      setIsFirstOpen(true);
+    } else {
+      // Migrate legacy key so we don't keep checking it forever
+      if (!localStorage.getItem(key) && localStorage.getItem(legacyKey)) {
+        localStorage.setItem(key, "true");
+      }
+      setIsFirstOpen(false);
+    }
+  }, []);
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+
+  const [_tabs, setTabs] = useAtom(tabsAtom);
+  const [_activeTab, setActiveTab] = useAtom(activeTabAtom);
+
+  const [sessions, setSessions] = useAtom(sessionsAtom);
+  const engines = useAtomValue(enginesAtom);
+  const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
+  const defaultEngine = localEngines.length > 0 ? localEngines[0] : null;
+
+  const hasAutoSyncedAccountsRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoSyncedAccountsRef.current) return;
+    if (sessions.length === 0) return;
+    hasAutoSyncedAccountsRef.current = true;
+
+    const run = async () => {
+      try {
+        const dbDir = await resolve(await appDataDir(), "db");
+        await mkdir(dbDir, { recursive: true });
+      } catch {
+        // Best-effort; downloads/conversion will surface errors if this fails.
+      }
+
+      const getDbSyncState = async (dbFile: string): Promise<{ lastGameDate: number | null; count: number }> => {
+        try {
+          const games = await query_games(dbFile, {
+            options: {
+              page: 1,
+              pageSize: 1,
+              sort: "date",
+              direction: "desc",
+              skipCount: false,
+            },
+          });
+          const count = games.count ?? 0;
+          if (count > 0 && games.data[0]?.date && games.data[0]?.time) {
+            const [year, month, day] = games.data[0].date.split(".").map(Number);
+            const [hour, minute, second] = games.data[0].time.split(":").map(Number);
+            const d = Date.UTC(year, month - 1, day, hour, minute, second);
+            return { lastGameDate: d, count };
+          }
+          return { lastGameDate: null, count };
+        } catch {
+          return { lastGameDate: null, count: 0 };
+        }
+      };
+
+      for (const session of sessions) {
+        if (session.lichess) {
+          try {
+            const username = session.lichess.username;
+            const token = session.lichess.accessToken;
+
+            const updatedAccount = await getLichessAccount({ token, username });
+            if (updatedAccount) {
+              setSessions((prev) =>
+                prev.map((s) =>
+                  s.lichess?.username === username
+                    ? { ...s, updatedAt: Date.now(), lichess: { ...s.lichess, account: updatedAccount } }
+                    : s,
+                ),
+              );
+            }
+
+            const dbPath = await resolve(await appDataDir(), "db", `${username}_lichess.db3`);
+            const { lastGameDate, count } = await getDbSyncState(dbPath);
+            const totalGames = updatedAccount?.count?.all ?? session.lichess.account.count?.all ?? 0;
+            const gamesToDownload = Math.max(0, totalGames - count);
+
+            await downloadLichess(username, lastGameDate, gamesToDownload, () => {}, token);
+
+            const pgnPath = await resolve(await appDataDir(), "db", `${username}_lichess.pgn`);
+            unwrap(
+              await commands.convertPgn(
+                pgnPath,
+                dbPath,
+                lastGameDate ? lastGameDate / 1000 : null,
+                `${username} Lichess`,
+                null,
+              ),
+            );
+          } catch {
+            // Best-effort: keep processing other accounts.
+          }
+        }
+
+        if (session.chessCom) {
+          try {
+            const username = session.chessCom.username;
+
+            const updatedStats = await getChessComAccount(username);
+            if (updatedStats) {
+              setSessions((prev) =>
+                prev.map((s) =>
+                  s.chessCom?.username === username
+                    ? { ...s, updatedAt: Date.now(), chessCom: { ...s.chessCom, stats: updatedStats } }
+                    : s,
+                ),
+              );
+            }
+
+            const dbPath = await resolve(await appDataDir(), "db", `${username}_chesscom.db3`);
+            const { lastGameDate } = await getDbSyncState(dbPath);
+
+            await downloadChessCom(username, lastGameDate);
+
+            const pgnPath = await resolve(await appDataDir(), "db", `${username}_chesscom.pgn`);
+            unwrap(
+              await commands.convertPgn(
+                pgnPath,
+                dbPath,
+                lastGameDate ? lastGameDate / 1000 : null,
+                `${username} Chess.com`,
+                null,
+              ),
+            );
+          } catch {
+            // Best-effort: keep processing other accounts.
+          }
+        }
+      }
+    };
+
+    void run();
+  }, [sessions, setSessions]);
+
+  const [mainAccountName, setMainAccountName] = useState<string | null>(null);
+  const [activeGamesTab, setActiveGamesTab] = useState<string | null>("local");
+  const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
+  const [analyzeAllGameType, setAnalyzeAllGameType] = useState<"local" | "chesscom" | "lichess" | null>(null);
+  const [unanalyzedGameCount, setUnanalyzedGameCount] = useState<number | null>(null);
+  const [playerStatsModalOpened, setPlayerStatsModalOpened] = useState(false);
+  const [playerStatsResult, setPlayerStatsResult] = useState<any | null>(null);
+  const [playerStatsDebugPgns, setPlayerStatsDebugPgns] = useState<string | null>(null);
+  const [playerStatsGameType, setPlayerStatsGameType] = useState<"local" | "chesscom" | "lichess" | null>(null);
+  const [playerStatsAccountName, setPlayerStatsAccountName] = useState<string | null>(null);
+
+  // FIDE player information
+  const [fideId, setFideId] = useState<string | null>(null);
+  const [fidePlayer, setFidePlayer] = useState<{
+    name: string;
+    firstName: string;
+    gender: "male" | "female";
+    title?: string;
+    standardRating?: number;
+    rapidRating?: number;
+    blitzRating?: number;
+    worldRank?: number;
+    nationalRank?: number;
+    photo?: string;
+    age?: number;
+    birthYear?: number;
+  } | null>(null);
+
+  // Display name - independent of FIDE ID
+  const [displayName, setDisplayName] = useState<string>("");
+  // Lichess token for main account
+  const [lichessToken, setLichessToken] = useState<string>("");
+
+  // Function to load main account and FIDE data
+  const loadMainAccountData = useCallback(async () => {
+    try {
+      // Load main account (with FIDE ID if available)
+      const account = await loadMainAccount();
+      if (account) {
+        setMainAccountName(account.name);
+
+        // Load display name for this account
+        const accountDisplayName = account.displayName || (await getAccountDisplayName(account.name));
+        if (accountDisplayName) {
+          setDisplayName(accountDisplayName);
+        } else {
+          // Fallback to localStorage for backward compatibility
+          const storedDisplayName =
+            localStorage.getItem("obsidian-chess-studio.displayName") ?? localStorage.getItem("pawn-appetit.displayName");
+          if (storedDisplayName !== null) {
+            setDisplayName(storedDisplayName);
+          } else {
+            setDisplayName("");
+          }
+        }
+
+        // Load Lichess token for this account
+        if (account.lichessToken) {
+          setLichessToken(account.lichessToken);
+        } else {
+          setLichessToken("");
+        }
+
+        // Load FIDE ID for this account (from account_fide_ids.json or from account.fideId)
+        const accountFideId = account.fideId || (await getAccountFideId(account.name));
+
+        if (accountFideId) {
+          setFideId(accountFideId);
+
+          // Load profile by FIDE ID (supports multiple profiles - each account can have its own FIDE profile)
+          // Retry logic to handle potential file write delays
+          let profile: FideProfile | null = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) {
+              await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+            }
+            profile = await loadFideProfileById(accountFideId);
+            if (profile) {
+              break;
+            }
+          }
+
+          if (profile) {
+            const playerData = {
+              name: profile.name,
+              firstName: profile.firstName,
+              gender: profile.gender,
+              title: profile.title,
+              standardRating: profile.standardRating,
+              rapidRating: profile.rapidRating,
+              blitzRating: profile.blitzRating,
+              worldRank: profile.worldRank,
+              nationalRank: profile.nationalRank,
+              photo: profile.photo,
+              age: profile.age,
+              birthYear: profile.birthYear,
+            };
+            // Force a new object reference to ensure React detects the change
+            setFidePlayer({ ...playerData });
+
+            // If there's no saved displayName but there's a firstName from FIDE, use it as fallback
+            if (!accountDisplayName && profile.firstName) {
+              setDisplayName(profile.firstName);
+              await saveAccountDisplayName(account.name, profile.firstName);
+            }
+          } else {
+            // No FIDE profile found for this FIDE ID, clear FIDE data
+            setFideId(null);
+            setFidePlayer(null);
+          }
+        } else {
+          // No FIDE ID for this account, clear FIDE data
+          setFideId(null);
+          setFidePlayer(null);
+        }
+      } else {
+        // Fallback to localStorage for backward compatibility
+        const stored = localStorage.getItem("mainAccount");
+        if (stored) {
+          setMainAccountName(stored);
+          // Save to new format
+          await saveMainAccount({ name: stored });
+
+          // Load display name for this account
+          const accountDisplayName = await getAccountDisplayName(stored);
+          if (accountDisplayName) {
+            setDisplayName(accountDisplayName);
+          } else {
+            const storedDisplayName =
+              localStorage.getItem("obsidian-chess-studio.displayName") ?? localStorage.getItem("pawn-appetit.displayName");
+            if (storedDisplayName !== null) {
+              setDisplayName(storedDisplayName);
+            } else {
+              setDisplayName("");
+            }
+          }
+
+          // Try to load FIDE ID for this account
+          const fideId = await getAccountFideId(stored);
+          if (fideId) {
+            setFideId(fideId);
+            // Load profile by FIDE ID (supports multiple profiles - each account can have its own FIDE profile)
+            // Retry logic to handle potential file write delays
+            let profile: FideProfile | null = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              if (attempt > 0) {
+                await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+              }
+              profile = await loadFideProfileById(fideId);
+              if (profile) {
+                break;
+              }
+            }
+
+            if (profile) {
+              const playerData = {
+                name: profile.name,
+                firstName: profile.firstName,
+                gender: profile.gender,
+                title: profile.title,
+                standardRating: profile.standardRating,
+                rapidRating: profile.rapidRating,
+                blitzRating: profile.blitzRating,
+                worldRank: profile.worldRank,
+                nationalRank: profile.nationalRank,
+                photo: profile.photo,
+                age: profile.age,
+                birthYear: profile.birthYear,
+              };
+              // Force a new object reference to ensure React detects the change
+              setFidePlayer({ ...playerData });
+            } else {
+              setFideId(null);
+              setFidePlayer(null);
+            }
+          } else {
+            setFideId(null);
+            setFidePlayer(null);
+          }
+        } else {
+          setFideId(null);
+          setFidePlayer(null);
+          setDisplayName("");
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadMainAccountData();
+
+    // Listen for main account changes
+    const handleMainAccountChange = (event: CustomEvent) => {
+      loadMainAccountData();
+    };
+
+    window.addEventListener("mainAccountChanged", handleMainAccountChange as EventListener);
+
+    // Also listen to localStorage changes (for backward compatibility)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "mainAccount") {
+        loadMainAccountData();
+      }
+    };
+
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      window.removeEventListener("mainAccountChanged", handleMainAccountChange as EventListener);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, [loadMainAccountData]);
+
+  // Also listen for changes in mainAccountName from localStorage (polling as fallback)
+  useEffect(() => {
+    const checkMainAccountChange = () => {
+      const stored = localStorage.getItem("mainAccount");
+      if (stored && stored !== mainAccountName) {
+        loadMainAccountData();
+      }
+    };
+
+    // Check periodically to catch changes (fallback if events don't work)
+    // Reduced frequency to avoid performance issues
+    const interval = setInterval(checkMainAccountChange, 1000);
+
+    return () => clearInterval(interval);
+  }, [mainAccountName, loadMainAccountData]);
+
+  // Find the main session - prioritize exact username matches over player name matches
+  // This ensures we get the correct session for the main account
+  const mainSession = useMemo(() => {
+    if (!mainAccountName) return undefined;
+
+    // First, try to find by exact username match (most reliable)
+    const usernameMatch = sessions.find(
+      (s) => s.lichess?.username === mainAccountName || s.chessCom?.username === mainAccountName,
+    );
+
+    if (usernameMatch) {
+      return usernameMatch;
+    }
+
+    // If no username match, try by player name
+    const playerMatches = sessions.filter((s) => s.player === mainAccountName);
+
+    if (playerMatches.length === 0) return undefined;
+
+    // If multiple player name matches, take the most recent one (by updatedAt)
+    return playerMatches.reduce((latest, current) => {
+      return current.updatedAt > latest.updatedAt ? current : latest;
+    });
+  }, [sessions, mainAccountName]);
+
+  // Calculate average online rating based on time controls with more than 10 games
+  const averageOnlineRating = calculateOnlineRating(mainSession);
+
+  let user = {
+    name: mainAccountName ?? t("dashboard.noMainAccount"),
+    handle: "",
+    rating: averageOnlineRating,
+  };
+  let ratingHistory: { classical?: number; rapid?: number; blitz?: number; bullet?: number } = {};
+  let platform: "lichess" | "chesscom" | null = null;
+  if (mainSession?.lichess?.account) {
+    platform = "lichess";
+    const acc = mainSession.lichess.account;
+    user = {
+      name: acc.username,
+      handle: `@${acc.username}`,
+      rating: averageOnlineRating,
+    };
+    const classical = acc.perfs?.classical?.rating;
+    const rapid = acc.perfs?.rapid?.rating;
+    const blitz = acc.perfs?.blitz?.rating;
+    const bullet = acc.perfs?.bullet?.rating;
+    ratingHistory = { classical, rapid, blitz, bullet };
+  } else if (mainSession?.chessCom?.stats) {
+    platform = "chesscom";
+    const stats = mainSession.chessCom.stats;
+    user = {
+      name: mainSession.chessCom.username,
+      handle: `@${mainSession.chessCom.username}`,
+      rating: averageOnlineRating,
+    };
+    const rapid = stats.chess_rapid?.last?.rating;
+    const blitz = stats.chess_blitz?.last?.rating;
+    const bullet = stats.chess_bullet?.last?.rating;
+    ratingHistory = { rapid, blitz, bullet };
+  }
+
+  // Memoize fideInfo to ensure WelcomeCard updates when fidePlayer changes
+  const fideInfo = useMemo(() => {
+    if (!fidePlayer) return undefined;
+    return {
+      title: fidePlayer.title,
+      standardRating: fidePlayer.standardRating,
+      rapidRating: fidePlayer.rapidRating,
+      blitzRating: fidePlayer.blitzRating,
+      worldRank: fidePlayer.worldRank,
+      nationalRank: fidePlayer.nationalRank,
+      photo: fidePlayer.photo,
+      age: fidePlayer.age,
+    };
+  }, [fidePlayer]);
+
+  const lichessUsernames = useMemo(
+    () => [...new Set(sessions.map((s) => s.lichess?.username).filter(Boolean) as string[])],
+    [sessions],
+  );
+  const chessComUsernames = useMemo(
+    () => [...new Set(sessions.map((s) => s.chessCom?.username).filter(Boolean) as string[])],
+    [sessions],
+  );
+
+  const [selectedLichessUser, setSelectedLichessUser] = useState<string | null>("all");
+  const [selectedChessComUser, setSelectedChessComUser] = useState<string | null>("all");
+
+  const [recentGames, setRecentGames] = useState<GameRecord[]>([]);
+  const [gameHistoryLimit, setGameHistoryLimit] = useState(100);
+
+  const loadGames = useCallback(async () => {
+    try {
+      const games = await getRecentGames(gameHistoryLimit);
+      // Filter out games with less than 5 moves
+      const filteredGames = games.filter((g) => {
+        // Filter out games with no moves or less than 5 moves
+        if (!g.moves || g.moves.length === 0) return false;
+        return g.moves.length >= 5;
+      });
+      setRecentGames(filteredGames);
+    } catch {}
+  }, [gameHistoryLimit]);
+
+  useEffect(() => {
+    loadGames();
+
+    // Listen for games:updated event to refresh local games after analysis
+    const handleGamesUpdated = () => {
+      loadGames();
+    };
+    window.addEventListener("games:updated", handleGamesUpdated);
+
+    return () => {
+      window.removeEventListener("games:updated", handleGamesUpdated);
+    };
+  }, [loadGames]);
+
+  const [lichessGames, setLichessGames] = useState<
+    Array<{
+      id: string;
+      players: {
+        white: { user?: { name: string } };
+        black: { user?: { name: string } };
+      };
+      speed: string;
+      createdAt: number;
+      winner?: string;
+      status: string;
+      pgn?: string;
+      lastFen: string;
+    }>
+  >([]);
+  const [isLoadingLichessGames, setIsLoadingLichessGames] = useState(false);
+  useEffect(() => {
+    const loadGamesFromDatabase = async () => {
+      const usersToFetch =
+        selectedLichessUser === "all" ? lichessUsernames : selectedLichessUser ? [selectedLichessUser] : [];
+
+      // Clear games and set loading immediately when filter changes
+      setLichessGames([]);
+      setIsLoadingLichessGames(true);
+
+      if (usersToFetch.length > 0) {
+        // Small delay to ensure React renders the loader
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        try {
+          // Get all databases
+          const databases = await getDatabases();
+
+          // Find databases for the selected users
+          const allGames: Array<{
+            id: string;
+            players: {
+              white: { user?: { name: string } };
+              black: { user?: { name: string } };
+            };
+            speed: string;
+            createdAt: number;
+            winner?: string;
+            status: string;
+            pgn?: string;
+            lastFen: string;
+          }> = [];
+
+          for (const username of usersToFetch) {
+            // Find database for this user (format: {username}_lichess.db3)
+            const dbInfo = databases.find(
+              (db) =>
+                db.type === "success" &&
+                (db.filename === `${username}_lichess.db3` ||
+                  db.filename.toLowerCase() === `${username}_lichess.db3`.toLowerCase()),
+            );
+
+            if (dbInfo && dbInfo.type === "success") {
+              try {
+                // Query games from database, sorted by date descending, limit 100
+                const queryResult = await query_games(dbInfo.file, {
+                  options: {
+                    page: 1,
+                    pageSize: 100,
+                    sort: "date",
+                    direction: "desc",
+                    skipCount: true,
+                  },
+                });
+
+                if (queryResult.data) {
+                  // Convert NormalizedGame to LichessGame format
+                  const convertedGames = queryResult.data.map(convertNormalizedToLichessGame);
+
+                  // Filter games to only include those that belong to the selected user
+                  const filteredGames = convertedGames.filter((game) => {
+                    if (selectedLichessUser === "all") return true;
+                    const gameWhiteName = (game.players.white.user?.name || "").toLowerCase();
+                    const gameBlackName = (game.players.black.user?.name || "").toLowerCase();
+                    const selectedUserLower = (selectedLichessUser || "").toLowerCase();
+                    return gameWhiteName === selectedUserLower || gameBlackName === selectedUserLower;
+                  });
+
+                  allGames.push(...filteredGames);
+                }
+              } catch {}
+            }
+          }
+
+          // Sort all games by createdAt descending and limit to 100
+          allGames.sort((a, b) => b.createdAt - a.createdAt);
+          // Filter out games with less than 5 moves
+          const gamesWithEnoughMoves = allGames.filter((game) => {
+            if (!game.pgn) return false; // Filter out games without PGN
+            try {
+              // Extract moves section (after headers)
+              const movesSection = game.pgn.split(/\n\n/)[1] || game.pgn;
+              // Remove comments, annotations, and variations
+              const cleanMoves = movesSection
+                .replace(/\[[^\]]*\]/g, '') // Remove comments in brackets
+                .replace(/\{[^\}]*\}/g, '') // Remove comments in braces
+                .replace(/\([^)]*\)/g, ''); // Remove variations
+              // Count all SAN moves (half-moves)
+              // Pattern matches: e4, Nf3, O-O, e8=Q, etc.
+              const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+              const matches = cleanMoves.match(movePattern) || [];
+              // Filter out games with less than 5 half-moves
+              return matches.length >= 5;
+            } catch {
+              return false; // Filter out games if we can't count moves
+            }
+          });
+          const games = gamesWithEnoughMoves.slice(0, gameHistoryLimit);
+
+          // Load analyzed PGNs from storage
+          const analyzedGames = await getAllAnalyzedGames();
+          // Create a new array to ensure React detects the change
+          const gamesWithAnalysis = games.map((game) => {
+            if (analyzedGames[game.id]) {
+              return { ...game, pgn: analyzedGames[game.id] };
+            }
+            return game;
+          });
+
+          setLichessGames(gamesWithAnalysis);
+        } catch {
+        } finally {
+          setIsLoadingLichessGames(false);
+        }
+      } else {
+        setIsLoadingLichessGames(false);
+      }
+    };
+    loadGamesFromDatabase();
+
+    // Listen for lichess:games:updated event to refresh Lichess games after analysis
+    const handleLichessGamesUpdated = async () => {
+      setIsLoadingLichessGames(true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await loadGamesFromDatabase();
+    };
+    window.addEventListener("lichess:games:updated", handleLichessGamesUpdated);
+
+    return () => {
+      window.removeEventListener("lichess:games:updated", handleLichessGamesUpdated);
+    };
+  }, [lichessUsernames, selectedLichessUser, gameHistoryLimit]);
+
+  const [chessComGames, setChessComGames] = useState<ChessComGame[]>([]);
+  const [isLoadingChessComGames, setIsLoadingChessComGames] = useState(false);
+  useEffect(() => {
+    const loadGamesFromDatabase = async () => {
+      const usersToFetch =
+        selectedChessComUser === "all" ? chessComUsernames : selectedChessComUser ? [selectedChessComUser] : [];
+
+      // Clear games and set loading immediately when filter changes
+      setChessComGames([]);
+      setIsLoadingChessComGames(true);
+
+      if (usersToFetch.length > 0) {
+        // Small delay to ensure React renders the loader
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        try {
+          // Get all databases
+          const databases = await getDatabases();
+
+          // Find databases for the selected users
+          const allGames: ChessComGame[] = [];
+
+          for (const username of usersToFetch) {
+            // Find database for this user (format: {username}_chesscom.db3)
+            const dbInfo = databases.find(
+              (db) =>
+                db.type === "success" &&
+                (db.filename === `${username}_chesscom.db3` ||
+                  db.filename.toLowerCase() === `${username}_chesscom.db3`.toLowerCase()),
+            );
+
+            if (dbInfo && dbInfo.type === "success") {
+              try {
+                // Query games from database, sorted by date descending, limit 100
+                const queryResult = await query_games(dbInfo.file, {
+                  options: {
+                    page: 1,
+                    pageSize: gameHistoryLimit,
+                    sort: "date",
+                    direction: "desc",
+                    skipCount: true,
+                  },
+                });
+
+                if (queryResult.data) {
+                  // Convert NormalizedGame to ChessComGame format
+                  const convertedGames = queryResult.data.map(convertNormalizedToChessComGame);
+
+                  // Filter games to only include those that belong to the selected user
+                  const filteredGames = convertedGames.filter((game) => {
+                    if (selectedChessComUser === "all") return true;
+                    const gameWhiteName = (game.white.username || "").toLowerCase();
+                    const gameBlackName = (game.black.username || "").toLowerCase();
+                    const selectedUserLower = (selectedChessComUser || "").toLowerCase();
+                    return gameWhiteName === selectedUserLower || gameBlackName === selectedUserLower;
+                  });
+
+                  allGames.push(...filteredGames);
+                }
+              } catch {}
+            }
+          }
+
+          // Sort all games by end_time descending and limit to 100
+          allGames.sort((a, b) => b.end_time - a.end_time);
+          // Filter out games with less than 5 moves
+          const gamesWithEnoughMoves = allGames.filter((game) => {
+            if (!game.pgn) return false; // Filter out games without PGN
+            try {
+              // Extract moves section (after headers)
+              const movesSection = game.pgn.split(/\n\n/)[1] || game.pgn;
+              // Remove comments, annotations, and variations
+              const cleanMoves = movesSection
+                .replace(/\[[^\]]*\]/g, '') // Remove comments in brackets
+                .replace(/\{[^\}]*\}/g, '') // Remove comments in braces
+                .replace(/\([^)]*\)/g, ''); // Remove variations
+              // Count all SAN moves (half-moves)
+              // Pattern matches: e4, Nf3, O-O, e8=Q, etc.
+              const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+              const matches = cleanMoves.match(movePattern) || [];
+              // Filter out games with less than 5 half-moves
+              return matches.length >= 5;
+            } catch {
+              return false; // Filter out games if we can't count moves
+            }
+          });
+          const games = gamesWithEnoughMoves.slice(0, gameHistoryLimit);
+
+          // Load analyzed PGNs from storage
+          const analyzedGames = await getAllAnalyzedGames();
+          // Create a new array to ensure React detects the change
+          const gamesWithAnalysis = games.map((game) => {
+            if (analyzedGames[game.url]) {
+              return { ...game, pgn: analyzedGames[game.url] };
+            }
+            return game;
+          });
+
+          setChessComGames(gamesWithAnalysis);
+        } catch {
+        } finally {
+          setIsLoadingChessComGames(false);
+        }
+      } else {
+        setIsLoadingChessComGames(false);
+      }
+    };
+    loadGamesFromDatabase();
+
+    // Listen for chesscom:games:updated event to refresh Chess.com games after analysis
+    const handleChessComGamesUpdated = async () => {
+      setIsLoadingChessComGames(true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await loadGamesFromDatabase();
+    };
+    window.addEventListener("chesscom:games:updated", handleChessComGamesUpdated);
+
+    return () => {
+      window.removeEventListener("chesscom:games:updated", handleChessComGamesUpdated);
+    };
+  }, [chessComUsernames, selectedChessComUser, gameHistoryLimit]);
+
+  const [puzzleStats, setPuzzleStats] = useState(() => getPuzzleStats());
+  const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
+
+  // Load favorite games
+  const loadFavoriteGames = useCallback(async () => {
+    try {
+      const favorites = await getAllFavoriteGames();
+      setFavoriteGames(favorites);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadFavoriteGames();
+
+    const handleFavoritesUpdated = () => {
+      loadFavoriteGames();
+    };
+    window.addEventListener("favorites:updated", handleFavoritesUpdated);
+
+    return () => {
+      window.removeEventListener("favorites:updated", handleFavoritesUpdated);
+    };
+  }, [loadFavoriteGames]);
+  useEffect(() => {
+    const update = () => setPuzzleStats(getPuzzleStats());
+    const onVisibility = () => {
+      if (!document.hidden) update();
+    };
+    window.addEventListener("storage", update);
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("storage", update);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  const PLAY_CHESS = {
+    icon: <IconChess size={50} />,
+    title: t("features.dashboard.cards.playChess.title"),
+    description: t("features.dashboard.cards.playChess.desc"),
+    label: t("features.dashboard.cards.playChess.button"),
+    onClick: () => {
+      const uuid = genID();
+      setTabs((prev: Tab[]) => {
+        return [
+          ...prev,
+          {
+            value: uuid,
+            name: t("features.dashboard.newGame"),
+            type: "play",
+          },
+        ];
+      });
+      setActiveTab(uuid);
+      navigate({ to: "/play" });
+    },
+  };
+
+  const quickActions: {
+    icon: React.ReactNode;
+    title: string;
+    description: string;
+    onClick: () => void;
+    color: MantineColor;
+  }[] = [
+    {
+      icon: <IconClock />,
+      title: t("chess.timeControl.classical"),
+      description: t("dashboard.timeControlCards.classicalDesc"),
+      onClick: () => {
+        const uuid = genID();
+        setTabs((prev: Tab[]) => {
+          return [
+            ...prev,
+            {
+              value: uuid,
+              name: t("chess.timeControl.classical"),
+              type: "play",
+              meta: {
+                timeControl: {
+                  seconds: 30 * 60 * 1000,
+                  increment: 0,
+                },
+              },
+            },
+          ];
+        });
+        setActiveTab(uuid);
+        navigate({ to: "/play" });
+      },
+      color: "blue.6",
+    },
+    {
+      icon: <IconStopwatch />,
+      title: t("chess.timeControl.rapid"),
+      description: t("dashboard.timeControlCards.rapidDesc"),
+      onClick: () => {
+        const uuid = genID();
+        setTabs((prev: Tab[]) => {
+          return [
+            ...prev,
+            {
+              value: uuid,
+              name: t("chess.timeControl.rapid"),
+              type: "play",
+              meta: {
+                timeControl: {
+                  seconds: 10 * 60 * 1000,
+                  increment: 0,
+                },
+              },
+            },
+          ];
+        });
+        setActiveTab(uuid);
+        navigate({ to: "/play" });
+      },
+      color: "teal.6",
+    },
+    {
+      icon: <IconBolt />,
+      title: t("chess.timeControl.blitz"),
+      description: t("dashboard.timeControlCards.blitzDesc"),
+      onClick: () => {
+        const uuid = genID();
+        setTabs((prev: Tab[]) => {
+          return [
+            ...prev,
+            {
+              value: uuid,
+              name: t("chess.timeControl.blitz"),
+              type: "play",
+              meta: {
+                timeControl: {
+                  seconds: 3 * 60 * 1000,
+                  increment: 0,
+                },
+              },
+            },
+          ];
+        });
+        setActiveTab(uuid);
+        navigate({ to: "/play" });
+      },
+      color: "yellow.6",
+    },
+    {
+      icon: <IconBolt />,
+      title: t("chess.timeControl.bullet"),
+      description: t("dashboard.timeControlCards.bulletDesc"),
+      onClick: () => {
+        const uuid = genID();
+        setTabs((prev: Tab[]) => {
+          return [
+            ...prev,
+            {
+              value: uuid,
+              name: t("chess.timeControl.bullet"),
+              type: "play",
+              meta: {
+                timeControl: {
+                  seconds: 1 * 60 * 1000,
+                  increment: 0,
+                },
+              },
+            },
+          ];
+        });
+        setActiveTab(uuid);
+        navigate({ to: "/play" });
+      },
+      color: "blue.6",
+    },
+  ];
+
+  return (
+    <Stack p="md" gap="md">
+      <WelcomeCard
+        isFirstOpen={isFirstOpen}
+        onPlayChess={PLAY_CHESS.onClick}
+        onImportGame={() => {
+          navigate({ to: "/analysis" });
+          modals.openContextModal({
+            modal: "importModal",
+            innerProps: {},
+          });
+        }}
+        playerFirstName={displayName || fidePlayer?.firstName || undefined}
+        playerGender={fidePlayer?.gender}
+        fideInfo={fideInfo}
+      />
+
+      <Grid>
+        <Grid.Col span={{ base: 12, sm: 12, md: 4, lg: 3, xl: 3 }}>
+          <UserProfileCard
+            name={user.name}
+            handle={user.handle}
+            title={fidePlayer?.title || getChessTitle(user.rating)}
+            ratingHistory={ratingHistory}
+            customName={displayName}
+            platform={platform}
+            onFideUpdate={async (newFideId, newFidePlayer, newDisplayName, newLichessToken) => {
+              // Save display name if provided (can be empty string)
+              if (newDisplayName !== undefined && mainAccountName) {
+                setDisplayName(newDisplayName);
+                // Save display name for this account
+                await saveAccountDisplayName(mainAccountName, newDisplayName);
+                // Also save to localStorage for backward compatibility
+                localStorage.setItem("obsidian-chess-studio.displayName", newDisplayName);
+                localStorage.setItem("pawn-appetit.displayName", newDisplayName);
+              }
+
+              // Save Lichess token if provided
+              if (newLichessToken !== undefined && mainAccountName) {
+                setLichessToken(newLichessToken);
+                // Load current account and update with token
+                const account = await loadMainAccount();
+                if (account) {
+                  account.lichessToken = newLichessToken || undefined;
+                  await saveMainAccount(account);
+                }
+              }
+
+              if (newFidePlayer && newFideId) {
+                // Save FIDE profile first
+                const profileToSave = {
+                  fideId: newFideId,
+                  name: newFidePlayer.name,
+                  firstName: newFidePlayer.firstName,
+                  lastName: "", // Will be filled if available
+                  gender: newFidePlayer.gender,
+                  title: newFidePlayer.title,
+                  standardRating: newFidePlayer.standardRating,
+                  rapidRating: newFidePlayer.rapidRating,
+                  blitzRating: newFidePlayer.blitzRating,
+                  worldRank: newFidePlayer.worldRank,
+                  nationalRank: newFidePlayer.nationalRank,
+                  photo: newFidePlayer.photo,
+                  age: newFidePlayer.age,
+                  birthYear: newFidePlayer.birthYear,
+                };
+                await saveFideProfile(profileToSave);
+
+                // Update main account with FIDE ID after profile is saved
+                if (mainAccountName) {
+                  await updateMainAccountFideId(newFideId);
+                }
+
+                // Update state after saving - this triggers re-render
+                // Force a new object reference to ensure React detects the change
+                setFideId(newFideId);
+                setFidePlayer(newFidePlayer ? { ...newFidePlayer } : null);
+              } else {
+                // No FIDE player or ID, clear everything
+                if (mainAccountName) {
+                  await updateMainAccountFideId(null);
+                }
+
+                // Delete the specific FIDE profile if we have a FIDE ID
+                if (fideId) {
+                  await deleteFideProfileById(fideId);
+                } else {
+                  await deleteFideProfile();
+                }
+
+                setFideId(null);
+                setFidePlayer(null);
+              }
+
+              // Note: We don't need to reload here since we've already updated the state
+              // The state updates will trigger a re-render with the new data
+            }}
+            fidePlayer={fidePlayer}
+            currentFideId={fideId || undefined}
+            currentLichessToken={lichessToken}
+          />
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, sm: 12, md: 8, lg: 9, xl: 9 }}>
+          <QuickActionsGrid actions={quickActions} />
+        </Grid.Col>
+      </Grid>
+
+      <Grid>
+        <Grid.Col span={12}>
+          <GamesHistoryCard
+            activeTab={activeGamesTab}
+            onTabChange={setActiveGamesTab}
+            localGames={recentGames}
+            gameHistoryLimit={gameHistoryLimit}
+            onGameHistoryLimitChange={setGameHistoryLimit}
+            onDeleteLocalGame={async (gameId: string) => {
+              await deleteGameRecord(gameId);
+              const updatedGames = await getRecentGames(gameHistoryLimit);
+              const filteredGames = updatedGames.filter((g) => g.moves.length >= 5);
+              setRecentGames(filteredGames);
+            }}
+            chessComGames={chessComGames}
+            lichessGames={lichessGames}
+            chessComUsernames={chessComUsernames}
+            lichessUsernames={lichessUsernames}
+            selectedChessComUser={selectedChessComUser}
+            selectedLichessUser={selectedLichessUser}
+            onChessComUserChange={setSelectedChessComUser}
+            onLichessUserChange={setSelectedLichessUser}
+            onAnalyzeLocalGame={(game) => {
+              const headers = createLocalGameHeaders(game);
+              // Determine which color the user played
+              const isUserWhite = game.white.type === "human";
+              headers.orientation = isUserWhite ? "white" : "black";
+              // Use saved PGN if available, otherwise reconstruct from moves with initial FEN
+              const pgn = game.pgn || createPGNFromMoves(game.moves, game.result, game.initialFen);
+              createTab({
+                tab: {
+                  name: `${headers.white} - ${headers.black}`,
+                  type: "analysis",
+                },
+                setTabs,
+                setActiveTab,
+                pgn,
+                headers,
+                initialAnalysisTab: "analysis",
+                initialAnalysisSubTab: "report",
+                initialNotationView: "report",
+              }).then((tabId) => {
+                // Store the gameId in sessionStorage so we can update it when analysis completes
+                 if (tabId && typeof window !== "undefined") {
+                   sessionStorage.setItem(`${tabId}_localGameId`, game.id);
+                 }
+               });
+            }}
+            onAnalyzeChessComGame={(game) => {
+              if (game.pgn) {
+                const headers = createChessComGameHeaders(game);
+                // Determine which username is the user's account
+                const accountUsername =
+                  selectedChessComUser && selectedChessComUser !== "all"
+                    ? selectedChessComUser
+                    : chessComUsernames.find(
+                        (u) =>
+                          u.toLowerCase() === game.white.username.toLowerCase() ||
+                          u.toLowerCase() === game.black.username.toLowerCase(),
+                      ) || game.white.username;
+                // Determine which color the user played
+                const isUserWhite = game.white.username.toLowerCase() === accountUsername.toLowerCase();
+                headers.orientation = isUserWhite ? "white" : "black";
+                createTab({
+                  tab: {
+                    name: `${game.white.username} - ${game.black.username}`,
+                    type: "analysis",
+                  },
+                  setTabs,
+                  setActiveTab,
+                  pgn: game.pgn,
+                  headers,
+                  initialAnalysisTab: "analysis",
+                  initialNotationView: "report",
+                }).then((tabId) => {
+                  // Store the game URL and username in sessionStorage so we can save the analyzed PGN when analysis completes
+                   if (tabId && typeof window !== "undefined") {
+                     sessionStorage.setItem(`${tabId}_chessComGameUrl`, game.url);
+                     sessionStorage.setItem(`${tabId}_chessComUsername`, accountUsername);
+                   }
+                 });
+              }
+            }}
+            onAnalyzeLichessGame={(game) => {
+              if (game.pgn) {
+                const headers = createLichessGameHeaders(game);
+                // Determine which username is the user's account
+                const gameWhiteName = game.players.white.user?.name || "";
+                const gameBlackName = game.players.black.user?.name || "";
+                const accountUsername =
+                  selectedLichessUser && selectedLichessUser !== "all"
+                    ? selectedLichessUser
+                    : lichessUsernames.find(
+                        (u) =>
+                          u.toLowerCase() === gameWhiteName.toLowerCase() ||
+                          u.toLowerCase() === gameBlackName.toLowerCase(),
+                      ) || gameWhiteName;
+                // Determine which color the user played
+                const isUserWhite = gameWhiteName.toLowerCase() === accountUsername.toLowerCase();
+                headers.orientation = isUserWhite ? "white" : "black";
+                createTab({
+                  tab: {
+                    name: `${headers.white} - ${headers.black}`,
+                    type: "analysis",
+                  },
+                  setTabs,
+                  setActiveTab,
+                  pgn: game.pgn,
+                  headers,
+                  initialAnalysisTab: "analysis",
+                  initialNotationView: "report",
+                }).then((tabId) => {
+                  // Store the game ID and username in sessionStorage so we can save the analyzed PGN when analysis completes
+                   if (tabId && typeof window !== "undefined") {
+                     sessionStorage.setItem(`${tabId}_lichessGameId`, game.id);
+                     sessionStorage.setItem(`${tabId}_lichessUsername`, accountUsername);
+                   }
+                 });
+              }
+            }}
+            onAnalyzeAllLocal={async () => {
+              setAnalyzeAllGameType("local");
+              // Calculate unanalyzed games count (with same filter as gameCount)
+              const analyzedGames = await getAllAnalyzedGames();
+              // Apply same filter as gameCount: games with 5+ moves
+              const allGames = recentGames.filter((g) => {
+                if (!g.moves || g.moves.length === 0) return false;
+                return g.moves.length >= 5;
+              });
+              const unanalyzed = allGames.filter((game) => {
+                const gameRecord = game as GameRecord;
+                if (!gameRecord.pgn) return true;
+                const hasAnalysis = /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(gameRecord.pgn);
+                return !hasAnalysis;
+              });
+              setUnanalyzedGameCount(unanalyzed.length);
+              setAnalyzeAllModalOpened(true);
+            }}
+            onAnalyzeAllChessCom={async () => {
+              setAnalyzeAllGameType("chesscom");
+              // Calculate unanalyzed games count (with same filter as gameCount)
+              const analyzedGames = await getAllAnalyzedGames();
+              // Apply same filter as gameCount: games with PGN and 5+ moves
+              const allGames = chessComGames.filter((g) => {
+                if (!g.pgn) return false;
+                try {
+                  const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                  const cleanMoves = movesSection
+                    .replace(/\[[^\]]*\]/g, '')
+                    .replace(/\{[^\}]*\}/g, '')
+                    .replace(/\([^)]*\)/g, '');
+                  const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                  const matches = cleanMoves.match(movePattern) || [];
+                  return matches.length >= 5;
+                } catch {
+                  return false;
+                }
+              });
+              const unanalyzed = allGames.filter((game) => {
+                const chessComGame = game as ChessComGame;
+                return !analyzedGames[chessComGame.url];
+              });
+              setUnanalyzedGameCount(unanalyzed.length);
+              setAnalyzeAllModalOpened(true);
+            }}
+            onAnalyzeAllLichess={async () => {
+              setAnalyzeAllGameType("lichess");
+              // Calculate unanalyzed games count (with same filter as gameCount)
+              const analyzedGames = await getAllAnalyzedGames();
+              // Apply same filter as gameCount: games with PGN and 5+ moves
+              const allGames = lichessGames.filter((g) => {
+                if (!g.pgn) return false;
+                try {
+                  const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                  const cleanMoves = movesSection
+                    .replace(/\[[^\]]*\]/g, '')
+                    .replace(/\{[^\}]*\}/g, '')
+                    .replace(/\([^)]*\)/g, '');
+                  const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                  const matches = cleanMoves.match(movePattern) || [];
+                  return matches.length >= 5;
+                } catch {
+                  return false;
+                }
+              });
+              const unanalyzed = allGames.filter((game) => {
+                const lichessGame = game as (typeof lichessGames)[0];
+                return !analyzedGames[lichessGame.id];
+              });
+              setUnanalyzedGameCount(unanalyzed.length);
+              setAnalyzeAllModalOpened(true);
+            }}
+            onToggleFavoriteLocal={async (gameId: string) => {
+              const isFavorite = await isFavoriteGame(gameId, "local");
+              if (isFavorite) {
+                await removeFavoriteGame(gameId, "local");
+              } else {
+                await saveFavoriteGame(gameId, "local");
+              }
+              loadFavoriteGames();
+            }}
+            onToggleFavoriteChessCom={async (gameId: string) => {
+              const isFavorite = await isFavoriteGame(gameId, "chesscom");
+              if (isFavorite) {
+                await removeFavoriteGame(gameId, "chesscom");
+              } else {
+                await saveFavoriteGame(gameId, "chesscom");
+              }
+              loadFavoriteGames();
+            }}
+            onToggleFavoriteLichess={async (gameId: string) => {
+              const isFavorite = await isFavoriteGame(gameId, "lichess");
+              if (isFavorite) {
+                await removeFavoriteGame(gameId, "lichess");
+              } else {
+                await saveFavoriteGame(gameId, "lichess");
+              }
+              loadFavoriteGames();
+            }}
+            favoriteGames={favoriteGames}
+            onGenerateStats={async (playerName: string, gameType: "local" | "chesscom" | "lichess") => {
+              try {
+                setPlayerStatsGameType(gameType);
+                setPlayerStatsAccountName(playerName);
+                notifications.show({
+                  title: t("features.dashboard.generatingStats"),
+                  message: t("features.dashboard.generatingStatsMessage"),
+                  color: "blue",
+                });
+
+                const analyzedGames = await getAllAnalyzedGames();
+                let analyzedPgns: string[] = [];
+
+                if (gameType === "local") {
+                  // Get analyzed games for local games
+                  const playerGames = recentGames.filter((game) => {
+                    const gameRecord = game as GameRecord;
+                    if (!gameRecord.pgn) return false;
+                    // Check if the player name matches White or Black
+                    const whiteMatch = gameRecord.white.name?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(gameRecord.white.name?.toLowerCase() || "");
+                    const blackMatch = gameRecord.black.name?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(gameRecord.black.name?.toLowerCase() || "");
+                    return whiteMatch || blackMatch;
+                  });
+
+                  for (const game of playerGames) {
+                    const analyzedPgn = await getAnalyzedGame(game.id);
+                    if (analyzedPgn) {
+                      analyzedPgns.push(analyzedPgn);
+                    }
+                  }
+                } else if (gameType === "chesscom") {
+                  // Get analyzed games for Chess.com games
+                  const playerGames = chessComGames.filter((game) => {
+                    if (!game.pgn) return false;
+                    const whiteMatch = game.white.username?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(game.white.username?.toLowerCase() || "");
+                    const blackMatch = game.black.username?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(game.black.username?.toLowerCase() || "");
+                    return whiteMatch || blackMatch;
+                  });
+
+                  for (const game of playerGames) {
+                    const analyzedPgn = analyzedGames[game.url];
+                    if (analyzedPgn) {
+                      analyzedPgns.push(analyzedPgn);
+                    }
+                  }
+                } else if (gameType === "lichess") {
+                  // Get analyzed games for Lichess games
+                  const playerGames = lichessGames.filter((game) => {
+                    if (!game.pgn) return false;
+                    const whiteMatch = game.players.white.user?.name?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(game.players.white.user?.name?.toLowerCase() || "");
+                    const blackMatch = game.players.black.user?.name?.toLowerCase().includes(playerName.toLowerCase()) || 
+                                     playerName.toLowerCase().includes(game.players.black.user?.name?.toLowerCase() || "");
+                    return whiteMatch || blackMatch;
+                  });
+
+                  for (const game of playerGames) {
+                    const analyzedPgn = analyzedGames[game.id];
+                    if (analyzedPgn) {
+                      analyzedPgns.push(analyzedPgn);
+                    }
+                  }
+                }
+
+                // Process normally (cache disabled for now)
+                // Add opening headers (ECO, Opening, Variation) to each PGN
+                const { addOpeningHeadersToPgns } = await import("@/utils/pgnWithOpenings");
+                const enrichedPgns = await addOpeningHeadersToPgns(analyzedPgns);
+                const combinedPgn = enrichedPgns.join("\n\n");
+
+                // Store debug PGNs
+                setPlayerStatsDebugPgns(combinedPgn);
+
+                // Analyze using playerMistakes
+                const { generateAnalysisResult } = await import("@/utils/playerMistakes");
+                const result = generateAnalysisResult(combinedPgn, playerName);
+
+                // Store result and open modal
+                setPlayerStatsResult(result);
+                setPlayerStatsModalOpened(true);
+                
+                notifications.show({
+                  title: t("features.dashboard.statsGenerated"),
+                  message: t("features.dashboard.statsGeneratedMessage", {
+                    gamesMatchedPlayer: result.gamesMatchedPlayer,
+                    issuesCount: result.issues.length,
+                  }),
+                  color: "green",
+                });
+              } catch {
+                notifications.show({
+                  title: t("features.dashboard.statsError"),
+                  message: t("features.dashboard.statsErrorMessage"),
+                  color: "red",
+                });
+              }
+            }}
+            selectedPlayerName={
+              activeGamesTab === "local"
+                ? displayName || mainAccountName || null
+                : activeGamesTab === "chesscom" && selectedChessComUser && selectedChessComUser !== "all"
+                  ? selectedChessComUser
+                  : null
+            }
+          />
+        </Grid.Col>
+      </Grid>
+
+      <Grid>
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <PuzzleStatsCard
+            stats={puzzleStats}
+            onStartPuzzles={() => {
+              createTab({
+                tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
+                setTabs,
+                setActiveTab,
+              });
+              navigate({ to: "/puzzles" });
+            }}
+          />
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 6 }}>
+          <PuzzleVariantsCard />
+        </Grid.Col>
+      </Grid>
+
+      <PlayerStatsModal
+        opened={playerStatsModalOpened}
+        onClose={() => {
+          setPlayerStatsModalOpened(false);
+          setPlayerStatsResult(null);
+          setPlayerStatsDebugPgns(null);
+        }}
+        result={playerStatsResult}
+        debugPgns={playerStatsDebugPgns || undefined}
+        statsGameType={playerStatsGameType || undefined}
+        statsAccountName={playerStatsAccountName || undefined}
+      />
+
+      <AnalyzeAllModal
+        opened={analyzeAllModalOpened}
+        onClose={() => {
+          setAnalyzeAllModalOpened(false);
+          setAnalyzeAllGameType(null);
+          setUnanalyzedGameCount(null);
+        }}
+        onAnalyze={async (config, onProgress, isCancelled) => {
+          if (!defaultEngine) {
+            notifications.show({
+              title: t("features.dashboard.noEngineAvailable"),
+              message: t("features.dashboard.noEngineAvailableMessage"),
+              color: "red",
+            });
+            return;
+          }
+
+          // Get all analyzed games to filter out already analyzed ones if needed
+          const analyzedGames = await getAllAnalyzedGames();
+
+          const allGames =
+            analyzeAllGameType === "local"
+              ? recentGames.filter((g) => {
+                  // Filter games with 5+ moves (same logic as gameCount)
+                  if (!g.moves || g.moves.length === 0) return false;
+                  return g.moves.length >= 5;
+                })
+              : analyzeAllGameType === "chesscom"
+                ? chessComGames.filter((g) => {
+                    if (!g.pgn) return false;
+                    try {
+                      // Use same counting method as gameCount
+                      const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                      const cleanMoves = movesSection
+                        .replace(/\[[^\]]*\]/g, '')
+                        .replace(/\{[^\}]*\}/g, '')
+                        .replace(/\([^)]*\)/g, '');
+                      const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                      const matches = cleanMoves.match(movePattern) || [];
+                      return matches.length >= 5;
+                    } catch {
+                      return false;
+                    }
+                  })
+                : analyzeAllGameType === "lichess"
+                  ? lichessGames.filter((g) => {
+                      if (!g.pgn) return false;
+                      try {
+                        // Use same counting method as gameCount
+                        const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                        const cleanMoves = movesSection
+                          .replace(/\[[^\]]*\]/g, '')
+                          .replace(/\{[^\}]*\}/g, '')
+                          .replace(/\([^)]*\)/g, '');
+                        const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                        const matches = cleanMoves.match(movePattern) || [];
+                        return matches.length >= 5;
+                      } catch {
+                        return false;
+                      }
+                    })
+                  : [];
+
+          // Filter to only unanalyzed games if requested
+          const gamesToAnalyze =
+            config.analyzeMode === "unanalyzed"
+              ? allGames.filter((game) => {
+                  if (analyzeAllGameType === "local") {
+                    const gameRecord = game as GameRecord;
+                    // For local games, check if PGN exists and has analysis annotations
+                    // If PGN exists but doesn't have analysis markers, consider it unanalyzed
+                    if (!gameRecord.pgn) return true;
+                    // Check if PGN has analysis annotations (evaluation comments, NAGs, etc.)
+                    const hasAnalysis = /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(gameRecord.pgn);
+                    return !hasAnalysis;
+                  } else if (analyzeAllGameType === "chesscom") {
+                    const chessComGame = game as ChessComGame;
+                    // Check if this game has been analyzed
+                    return !analyzedGames[chessComGame.url];
+                  } else {
+                    // Lichess
+                    const lichessGame = game as (typeof lichessGames)[0];
+                    // Check if this game has been analyzed
+                    return !analyzedGames[lichessGame.id];
+                  }
+                })
+              : allGames;
+
+          if (gamesToAnalyze.length === 0) {
+            notifications.show({
+              title: "No Games to Analyze",
+              message:
+                config.analyzeMode === "unanalyzed"
+                  ? "No unanalyzed games available to analyze."
+                  : "No games with PGN data available to analyze.",
+              color: "orange",
+            });
+            return;
+          }
+
+          const goMode: GoMode = { t: "Depth", c: config.depth };
+          const engineSettings = (defaultEngine.settings ?? []).map((s) => ({
+            ...s,
+            value: s.value?.toString() ?? "",
+          }));
+
+          // Detect available CPU threads and calculate parallel analysis count (25% of available threads)
+          const availableThreads = navigator.hardwareConcurrency || 4;
+          const parallelAnalyses = Math.max(1, Math.floor(availableThreads / 4));
+
+          // Force Threads to 1 for each individual analysis, regardless of engine configuration
+          const threadsSetting = engineSettings.find((s) => s.name.toLowerCase() === "threads");
+          if (threadsSetting) {
+            threadsSetting.value = "1";
+          } else {
+            // Add Threads setting if it doesn't exist
+            engineSettings.push({ name: "Threads", value: "1" });
+          }
+
+          // Create directory for analyzed games
+          const baseDir = await appDataDir();
+          const analyzedDir = await resolve(baseDir, "analyzed-games");
+          await mkdir(analyzedDir, { recursive: true });
+
+          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const folderName = `${analyzedDir}/${analyzeAllGameType}-analyzed-${timestamp}`;
+          await mkdir(folderName, { recursive: true });
+
+          notifications.show({
+            title: t("features.dashboard.analysisStarted"),
+            message: `Analyzing ${gamesToAnalyze.length} games...`,
+            color: "blue",
+          });
+
+          let successCount = 0;
+          let failCount = 0;
+          const activeAnalysisIds = new Set<string>();
+          let completedCount = 0;
+
+          // Process games in parallel batches
+          const processGame = async (game: (typeof gamesToAnalyze)[0], index: number): Promise<void> => {
+            const analysisId = `analyze_all_${analyzeAllGameType}_${index}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            activeAnalysisIds.add(analysisId);
+
+            try {
+              let tree: TreeState;
+              let moves: string[];
+              let initialFen: string;
+              let gameHeaders: ReturnType<
+                typeof createLocalGameHeaders | typeof createChessComGameHeaders | typeof createLichessGameHeaders
+              >;
+
+              if (analyzeAllGameType === "local") {
+                // For local games, use PGN if available, otherwise reconstruct from moves
+                const gameRecord = game as GameRecord;
+                const pgn =
+                  gameRecord.pgn || createPGNFromMoves(gameRecord.moves, gameRecord.result, gameRecord.initialFen);
+                tree = await parsePGN(pgn, gameRecord.initialFen);
+                moves = gameRecord.moves;
+                initialFen = gameRecord.initialFen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                gameHeaders = createLocalGameHeaders(gameRecord);
+              } else {
+                // For Chess.com and Lichess games, parse PGN
+                const pgn = (game as ChessComGame | (typeof lichessGames)[0]).pgn!;
+                tree = await parsePGN(pgn);
+                // Extract UCI moves from the main line using getMainLine
+                const is960 = tree.headers?.variant === "Chess960";
+                moves = getMainLine(tree.root, is960);
+                initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                gameHeaders =
+                  analyzeAllGameType === "chesscom"
+                    ? createChessComGameHeaders(game as ChessComGame)
+                    : createLichessGameHeaders(game as (typeof lichessGames)[0]);
+              }
+
+              // Check if cancelled before starting analysis
+              if (isCancelled()) {
+                activeAnalysisIds.delete(analysisId);
+                return;
+              }
+
+              // Analyze the game
+              const analysisPromise = commands.analyzeGame(
+                analysisId,
+                defaultEngine.path,
+                goMode,
+                {
+                  annotateNovelties: false,
+                  fen: initialFen,
+                  referenceDb: null,
+                  reversed: false,
+                  moves,
+                },
+                engineSettings,
+              );
+
+              // Check for cancellation while analysis is running
+              let analysisCancelled = false;
+              const cancellationCheckInterval = setInterval(() => {
+                if (isCancelled()) {
+                  analysisCancelled = true;
+                  // Stop the engine immediately
+                  commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                    // Ignore errors when stopping
+                  });
+                  clearInterval(cancellationCheckInterval);
+                }
+              }, 50); // Check more frequently for faster cancellation
+
+              let analysisResult;
+              try {
+                analysisResult = await analysisPromise;
+              } catch (error) {
+                clearInterval(cancellationCheckInterval);
+                // If cancelled, stop the engine and return
+                if (analysisCancelled || isCancelled()) {
+                  try {
+                    await commands.stopEngine(defaultEngine.path, analysisId);
+                  } catch {
+                    // Ignore errors when stopping
+                  }
+                  activeAnalysisIds.delete(analysisId);
+                  return;
+                }
+                throw error;
+              }
+
+              clearInterval(cancellationCheckInterval);
+
+              // Check again if cancelled after analysis
+              if (isCancelled() || analysisCancelled) {
+                activeAnalysisIds.delete(analysisId);
+                return;
+              }
+
+              const analysis = unwrap(analysisResult);
+
+              // Use the same addAnalysis function from the store to ensure consistency
+              const { addAnalysis } = await import("@/state/store/tree");
+
+              // Apply analysis using the same function used in individual analysis
+              addAnalysis(tree, analysis);
+
+              // Update tree headers with gameHeaders to ensure names are included
+              tree.headers = {
+                ...tree.headers,
+                ...gameHeaders,
+                fen: tree.headers.fen || gameHeaders.fen, // Preserve FEN from parsed PGN
+              };
+
+              // Check if cancelled before saving
+              if (isCancelled()) {
+                activeAnalysisIds.delete(analysisId);
+                return;
+              }
+
+              // Generate PGN with analysis
+              let analyzedPgn = getPGN(tree.root, {
+                headers: tree.headers,
+                comments: true,
+                extraMarkups: true,
+                glyphs: true,
+                variations: true,
+              });
+
+              // Validate and fix PGN before saving
+              if (!analyzedPgn || analyzedPgn.trim().length === 0) {
+                activeAnalysisIds.delete(analysisId);
+                return;
+              }
+
+              // Ensure PGN has a result (required for valid PGN)
+              const hasResult =
+                /\[Result\s+"[^"]+"\]/.test(analyzedPgn) || /\s+(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(analyzedPgn);
+              if (!hasResult && tree.headers?.result) {
+                analyzedPgn = analyzedPgn.trim() + ` ${tree.headers.result}`;
+              } else if (!hasResult) {
+                analyzedPgn = analyzedPgn.trim() + ` *`;
+              }
+
+              // Only save if analysis was not cancelled
+              if (!isCancelled() && !analysisCancelled) {
+                // Save analyzed PGN to file
+                const fileName = `${gameHeaders.white}-${gameHeaders.black}-${index + 1}`.replace(/[<>:"/\\|?*]/g, "_");
+                const filePath = await resolve(folderName, `${fileName}.pgn`);
+
+                await writeTextFile(filePath, analyzedPgn);
+
+                // Calculate stats from the analyzed game
+                const reportStats = getGameStats(tree.root);
+
+                // Update the game object with the analyzed PGN and stats
+                if (analyzeAllGameType === "local") {
+                  const gameRecord = game as GameRecord;
+
+                  // Determine which color the user played
+                  const isUserWhite = gameRecord.white.type === "human";
+                  const userColor = isUserWhite ? "white" : "black";
+
+                  // Get stats for the user's color from the report
+                  const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
+                  const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
+
+                  // Calculate estimated Elo
+                  let calculatedStats: GameStats | null = null;
+                  if (accuracy > 0 || acpl > 0) {
+                    calculatedStats = {
+                      accuracy,
+                      acpl,
+                      estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
+                    };
+                  }
+
+                  // Update the game record with analyzed PGN and stats
+                  if (calculatedStats) {
+                    await updateGameRecord(gameRecord.id, { pgn: analyzedPgn, stats: calculatedStats });
+                  } else {
+                    await updateGameRecord(gameRecord.id, { pgn: analyzedPgn });
+                  }
+                } else if (analyzeAllGameType === "chesscom") {
+                  const chessComGame = game as ChessComGame;
+                  chessComGame.pgn = analyzedPgn;
+                  // Persist the analyzed PGN
+                  await saveAnalyzedGame(chessComGame.url, analyzedPgn);
+
+                  // Calculate and save stats
+                  const whiteUsername = chessComGame.white.username.toLowerCase();
+                  const blackUsername = chessComGame.black.username.toLowerCase();
+                  const accountUsername =
+                    selectedChessComUser && selectedChessComUser !== "all"
+                      ? selectedChessComUser.toLowerCase()
+                      : chessComUsernames
+                          .find((u) => u.toLowerCase() === whiteUsername || u.toLowerCase() === blackUsername)
+                          ?.toLowerCase() || whiteUsername;
+
+                  const isUserWhite = whiteUsername === accountUsername;
+                  const userColor = isUserWhite ? "white" : "black";
+
+                  const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
+                  const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
+
+                  if (accuracy > 0 || acpl > 0) {
+                    const stats: GameStats = {
+                      accuracy,
+                      acpl,
+                      estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
+                    };
+                    await saveGameStats(chessComGame.url, stats);
+                  }
+
+                  // Update the games array to trigger re-render and stats recalculation
+                  setChessComGames((prev) => {
+                    const updated = [...prev];
+                    const index = updated.findIndex((g) => g.url === chessComGame.url);
+                    if (index >= 0) {
+                      const gameWhiteName = (chessComGame.white.username || "").toLowerCase();
+                      const gameBlackName = (chessComGame.black.username || "").toLowerCase();
+                      const selectedUserLower = (selectedChessComUser || "").toLowerCase();
+                      const belongsToSelectedUser =
+                        selectedChessComUser === "all" ||
+                        !selectedChessComUser ||
+                        gameWhiteName === selectedUserLower ||
+                        gameBlackName === selectedUserLower;
+                      if (belongsToSelectedUser) {
+                        updated[index] = { ...chessComGame };
+                      } else {
+                        updated.splice(index, 1);
+                      }
+                    }
+                    return updated;
+                  });
+                } else if (analyzeAllGameType === "lichess") {
+                  const lichessGame = game as (typeof lichessGames)[0];
+                  lichessGame.pgn = analyzedPgn;
+                  // Persist the analyzed PGN
+                  await saveAnalyzedGame(lichessGame.id, analyzedPgn);
+
+                  // Calculate and save stats
+                  const whiteUsername = (lichessGame.players.white.user?.name || "").toLowerCase();
+                  const blackUsername = (lichessGame.players.black.user?.name || "").toLowerCase();
+                  const accountUsername =
+                    selectedLichessUser && selectedLichessUser !== "all"
+                      ? selectedLichessUser.toLowerCase()
+                      : lichessUsernames
+                          .find((u) => u.toLowerCase() === whiteUsername || u.toLowerCase() === blackUsername)
+                          ?.toLowerCase() || whiteUsername;
+
+                  const isUserWhite = whiteUsername === accountUsername;
+                  const userColor = isUserWhite ? "white" : "black";
+
+                  const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
+                  const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
+
+                  if (accuracy > 0 || acpl > 0) {
+                    const stats: GameStats = {
+                      accuracy,
+                      acpl,
+                      estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
+                    };
+                    await saveGameStats(lichessGame.id, stats);
+                  }
+
+                  // Update the games array to trigger re-render and stats recalculation
+                  setLichessGames((prev) => {
+                    const updated = [...prev];
+                    const index = updated.findIndex((g) => g.id === lichessGame.id);
+                    if (index >= 0) {
+                      const gameWhiteName = (lichessGame.players.white.user?.name || "").toLowerCase();
+                      const gameBlackName = (lichessGame.players.black.user?.name || "").toLowerCase();
+                      const selectedUserLower = (selectedLichessUser || "").toLowerCase();
+                      const belongsToSelectedUser =
+                        selectedLichessUser === "all" ||
+                        !selectedLichessUser ||
+                        gameWhiteName === selectedUserLower ||
+                        gameBlackName === selectedUserLower;
+                      if (belongsToSelectedUser) {
+                        updated[index] = { ...lichessGame };
+                      } else {
+                        updated.splice(index, 1);
+                      }
+                    }
+                    return updated;
+                  });
+                }
+
+                successCount++;
+              }
+            } catch (error) {
+              failCount++;
+            } finally {
+              activeAnalysisIds.delete(analysisId);
+              completedCount++;
+
+              // Update progress
+              onProgress(completedCount, gamesToAnalyze.length);
+
+              // Update notifications less frequently
+              if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
+                notifications.show({
+                  title: t("features.dashboard.analysisProgress"),
+                  message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,
+                  color: "blue",
+                });
+              }
+            }
+          };
+
+          // Process games in parallel batches
+          for (let i = 0; i < gamesToAnalyze.length; i += parallelAnalyses) {
+            // Check if analysis was cancelled
+            if (isCancelled()) {
+              // Stop all active engines
+              for (const analysisId of activeAnalysisIds) {
+                try {
+                  await commands.stopEngine(defaultEngine.path, analysisId);
+                } catch {
+                  // Ignore errors when stopping
+                }
+              }
+              notifications.show({
+                title: t("features.dashboard.analysisCancelled"),
+                message: `Analysis stopped. ${successCount} games analyzed successfully.`,
+                color: "yellow",
+              });
+              break;
+            }
+
+            // Get batch of games to process in parallel
+            const batch = gamesToAnalyze.slice(i, i + parallelAnalyses);
+
+            // Process batch in parallel
+            const batchPromises = batch.map((game, batchIndex) => processGame(game, i + batchIndex));
+            
+            // Wait for all games in batch to complete or be cancelled
+            // Use allSettled so we can check cancellation status after each completes
+            await Promise.allSettled(batchPromises);
+            
+            // Check cancellation after batch completes - if cancelled, stop all engines immediately
+            if (isCancelled()) {
+              // Stop all remaining active engines immediately
+              const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
+                commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                  // Ignore errors when stopping
+                }),
+              );
+              await Promise.all(stopPromises);
+              activeAnalysisIds.clear();
+              notifications.show({
+                title: t("features.dashboard.analysisCancelled"),
+                message: `Analysis stopped. ${successCount} games analyzed successfully.`,
+                color: "yellow",
+              });
+              break;
+            }
+          }
+
+          // Only show completion message if not cancelled
+          if (!isCancelled()) {
+            // Stop any remaining active engines
+            for (const analysisId of activeAnalysisIds) {
+              try {
+                await commands.stopEngine(defaultEngine.path, analysisId);
+              } catch {
+                // Ignore errors when stopping
+              }
+            }
+
+            // Final progress update
+            onProgress(gamesToAnalyze.length, gamesToAnalyze.length);
+
+            // Refresh games to update stats
+            if (analyzeAllGameType === "local") {
+              const updatedGames = await getRecentGames(gameHistoryLimit);
+              const filteredGames = updatedGames.filter((g) => g.moves.length >= 5);
+              setRecentGames(filteredGames);
+            }
+
+            notifications.show({
+              title: t("features.dashboard.analysisComplete"),
+              message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
+              color: "green",
+            });
+          } else {
+            // If cancelled, make sure all engines are stopped
+            for (const analysisId of activeAnalysisIds) {
+              try {
+                await commands.stopEngine(defaultEngine.path, analysisId);
+              } catch {
+                // Ignore errors when stopping
+              }
+            }
+          }
+        }}
+        gameCount={
+          analyzeAllGameType === "local"
+            ? recentGames.filter((g) => {
+                if (!g.moves || g.moves.length === 0) return false;
+                return g.moves.length >= 5;
+              }).length
+            : analyzeAllGameType === "chesscom"
+              ? chessComGames.filter((g) => {
+                  if (!g.pgn) return false;
+                  try {
+                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                    const cleanMoves = movesSection
+                      .replace(/\[[^\]]*\]/g, '')
+                      .replace(/\{[^\}]*\}/g, '')
+                      .replace(/\([^)]*\)/g, '');
+                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                    const matches = cleanMoves.match(movePattern) || [];
+                    return matches.length >= 5;
+                  } catch {
+                    return false;
+                  }
+                }).length
+              : analyzeAllGameType === "lichess"
+                ? lichessGames.filter((g) => {
+                    if (!g.pgn) return false;
+                    try {
+                      const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                      const cleanMoves = movesSection
+                        .replace(/\[[^\]]*\]/g, '')
+                        .replace(/\{[^\}]*\}/g, '')
+                        .replace(/\([^)]*\)/g, '');
+                      const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                      const matches = cleanMoves.match(movePattern) || [];
+                      return matches.length >= 5;
+                    } catch {
+                      return false;
+                    }
+                  }).length
+                : 0
+        }
+        unanalyzedGameCount={unanalyzedGameCount ?? undefined}
+      />
+    </Stack>
+  );
+}
