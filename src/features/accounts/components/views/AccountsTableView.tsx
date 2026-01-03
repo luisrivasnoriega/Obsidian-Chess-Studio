@@ -34,8 +34,13 @@ import { capitalize, parseDate } from "@/utils/format";
 import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
 import { getAccountFideId, saveMainAccount } from "@/utils/mainAccount";
 import type { Session } from "@/utils/session";
-import { query_games } from "@/utils/db";
+
+import { getProfileDbPath, profileDbFilename } from "@/utils/profileDb";
+import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
 import { unwrap } from "@/utils/unwrap";
+import { getAccountPgnPath } from "@/utils/accountPgnPaths";
+import { getAccountKey } from "@/utils/accountKeys";
+import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
 import LichessLogo from "../LichessLogo";
 
 interface AccountsTableViewProps {
@@ -91,6 +96,7 @@ function AccountsTableView({
   const [mainAccount, setMainAccount] = useState<string | null>(null);
   const [editingAccount, setEditingAccount] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [downloadedCounts, setDownloadedCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const stored = localStorage.getItem("mainAccount");
@@ -154,43 +160,43 @@ function AccountsTableView({
     [filteredSessions, playerNames],
   );
 
-  const getLastGameDate = useCallback(async (db: DatabaseInfo): Promise<number | null> => {
-    const games = await query_games(db.file, {
-      options: {
-        page: 1,
-        pageSize: 1,
-        sort: "date",
-        direction: "desc",
-        skipCount: false,
-      },
-    });
-    const count = games.count ?? 0;
-    if (count > 0 && games.data[0].date && games.data[0].time) {
-      const [year, month, day] = games.data[0].date.split(".").map(Number);
-      const [hour, minute, second] = games.data[0].time.split(":").map(Number);
-      return Date.UTC(year, month - 1, day, hour, minute, second);
-    }
-    return null;
-  }, []);
-
   const handleDownload = useCallback(
     async (row: Row) => {
-      const lastGameDate = row.database && row.database.type === "success" ? await getLastGameDate(row.database) : null;
+      const profileId = row.session.profileId;
+      if (!profileId) return;
+
+      const profileDbPath = await getProfileDbPath(profileId);
+      const accountKey = getAccountKey(row.type, row.username);
+      const { lastGameDate, count } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
+
+      const appDir = await appDataDir();
+      const pgnPath = await getAccountPgnPath({
+        appDataDir: appDir,
+        profileId,
+        platform: row.type,
+        username: row.username,
+      });
+      const downloadId = `${row.type}_${profileId}_${row.username}`;
 
       if (row.type === "lichess") {
         const token = row.session.lichess?.accessToken;
-        const gamesToDownload = Math.max(0, row.totalGames - row.downloadedGames);
-        await downloadLichess(row.username, lastGameDate, gamesToDownload, () => {}, token);
+        const gamesToDownload = Math.max(0, row.totalGames - count);
+        await downloadLichess(row.username, lastGameDate, gamesToDownload, () => {}, token, pgnPath, downloadId);
       } else {
-        await downloadChessCom(row.username, lastGameDate);
+        await downloadChessCom(row.username, lastGameDate, pgnPath, downloadId);
       }
 
-      const dbDir = await resolve(await appDataDir(), "db");
-      const pgnPath = await resolve(dbDir, `${row.username}_${row.type}.pgn`);
-      const dbPath = await resolve(dbDir, `${row.username}_${row.type}.db3`);
-      const displayTitle = `${row.username}${row.type === "lichess" ? " Lichess" : " Chess.com"}`;
-
-      unwrap(await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, displayTitle, null));
+      await rewritePgnAccountTags(pgnPath, row.type, row.username);
+      unwrap(
+        await commands.convertPgn(pgnPath, profileDbPath, lastGameDate ? lastGameDate / 1000 : null, row.name, null),
+      );
+      try {
+        const { count: nextCount } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
+        setDownloadedCounts((prev) => ({
+          ...prev,
+          [`${profileId}:${accountKey}`]: nextCount,
+        }));
+      } catch {}
 
       // Refresh database list so counts are updated in the table.
       try {
@@ -198,8 +204,35 @@ function AccountsTableView({
         setDatabases(await getDatabases());
       } catch {}
     },
-    [getLastGameDate, setDatabases],
+    [setDatabases],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCounts = async () => {
+      const entries = await Promise.all(
+        filteredSessions.map(async (session) => {
+          const type = session.lichess ? "lichess" : "chesscom";
+          const username = session.lichess?.username ?? session.chessCom?.username ?? "";
+          const profileId = session.profileId;
+          const key = `${profileId ?? "no-profile"}:${getAccountKey(type, username)}`;
+          if (!profileId || !username) return [key, 0] as const;
+          const profileDbPath = await getProfileDbPath(profileId);
+          const { count } = await getAccountSyncStateFromProfileDb(
+            profileDbPath,
+            getAccountKey(type, username),
+          );
+          return [key, count] as const;
+        }),
+      );
+      if (cancelled) return;
+      setDownloadedCounts(Object.fromEntries(entries));
+    };
+    loadCounts().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredSessions, databases]);
 
   // Memoize filtered and sorted results
   const filteredAndSorted = useMemo<PlayerSessions[]>(() => {
@@ -231,14 +264,18 @@ function AccountsTableView({
     playerSessions.map((session): Row => {
       const type = session.lichess ? "lichess" : "chesscom";
       const username = session.lichess?.username ?? session.chessCom?.username ?? "";
-      // Try to find database with exact match first, then try case-insensitive match
-      let database = databases.find((db) => db.filename === `${username}_${type}.db3`) ?? null;
-      if (!database) {
-        // Try case-insensitive match
-        database =
-          databases.find((db) => db.filename.toLowerCase() === `${username}_${type}.db3`.toLowerCase()) ?? null;
+      const profileDb = session.profileId ? profileDbFilename(session.profileId) : null;
+      let database = profileDb ? (databases.find((db) => db.filename === profileDb) ?? null) : null;
+      if (!database && profileDb) {
+        database = databases.find((db) => db.filename.toLowerCase() === profileDb.toLowerCase()) ?? null;
       }
-      const downloadedGames = database?.type === "success" ? database.game_count : 0;
+      const accountKey = getAccountKey(type, username);
+      const downloadKey = `${session.profileId ?? "no-profile"}:${accountKey}`;
+      const downloadedGames = session.profileId
+        ? downloadedCounts[downloadKey] ?? 0
+        : database?.type === "success"
+          ? database.game_count
+          : 0;
 
       let totalGames = 0;
       const stats: StatItem[] = [];
@@ -293,7 +330,7 @@ function AccountsTableView({
       const percentage = totalGames === 0 ? 0 : Math.min(100, Math.max(0, (downloadedGames / totalGames) * 100));
 
       return {
-        key: session.lichess?.account.id ?? `${type}:${username}`,
+        key: `${session.profileId ?? "no-profile"}:${type}:${session.lichess?.account.id ?? username}`,
         name,
         username,
         type: type as "lichess" | "chesscom",
@@ -309,6 +346,7 @@ function AccountsTableView({
   );
 
   async function handleReload(session: Session) {
+    const profileId = session.profileId ?? null;
     if (session.lichess) {
       const account = await getLichessAccount({
         token: session.lichess.accessToken,
@@ -319,7 +357,7 @@ function AccountsTableView({
       const lichessAccessToken = session.lichess.accessToken;
       setSessions((sessions) =>
         sessions.map((s) =>
-          s.lichess?.account.id === account.id
+          (s.profileId ?? null) === profileId && s.lichess?.username === lichessUsername
             ? {
                 ...s,
                 lichess: {
@@ -338,7 +376,7 @@ function AccountsTableView({
       const chessComUsername = session.chessCom.username;
       setSessions((sessions) =>
         sessions.map((s) =>
-          s.chessCom?.username === chessComUsername
+          (s.profileId ?? null) === profileId && s.chessCom?.username === chessComUsername
             ? {
                 ...s,
                 chessCom: {
@@ -354,28 +392,30 @@ function AccountsTableView({
   }
 
   async function handleRemove(session: Session) {
+    const profileId = session.profileId ?? null;
     if (session.lichess) {
       const username = session.lichess.username;
 
-      // Delete database file and PGN file for this account
+      // Delete PGN file for this account (profile databases are shared)
       const dbDir = await appDataDir();
-      const dbPath = await resolve(dbDir, "db", `${username}_lichess.db3`);
-      const pgnPath = await resolve(dbDir, "db", `${username}_lichess.pgn`);
+      const pgnPath = await getAccountPgnPath({
+        appDataDir: dbDir,
+        profileId,
+        platform: "lichess",
+        username,
+      });
+      const legacyPgnPath = await resolve(dbDir, "db", `${username}_lichess.pgn`);
 
       try {
-        // Delete database file if it exists
-        try {
-          await commands.deleteDatabase(dbPath);
-        } catch {
-          // Database file might not exist, ignore
-        }
-
         // Delete PGN file if it exists
         try {
           await remove(pgnPath);
         } catch {
           // PGN file might not exist, ignore
         }
+        try {
+          await remove(legacyPgnPath);
+        } catch {}
 
         // Delete analyzed games for this account
         try {
@@ -385,29 +425,32 @@ function AccountsTableView({
       } catch {}
 
       // Remove session
-      setSessions((sessions) => sessions.filter((s) => s.lichess?.account.id !== session.lichess?.account.id));
+      setSessions((sessions) =>
+        sessions.filter((s) => !((s.profileId ?? null) === profileId && s.lichess?.username === username)),
+      );
     } else if (session.chessCom) {
       const username = session.chessCom.username;
 
-      // Delete database file and PGN file for this account
+      // Delete PGN file for this account (profile databases are shared)
       const dbDir = await appDataDir();
-      const dbPath = await resolve(dbDir, "db", `${username}_chesscom.db3`);
-      const pgnPath = await resolve(dbDir, "db", `${username}_chesscom.pgn`);
+      const pgnPath = await getAccountPgnPath({
+        appDataDir: dbDir,
+        profileId,
+        platform: "chesscom",
+        username,
+      });
+      const legacyPgnPath = await resolve(dbDir, "db", `${username}_chesscom.pgn`);
 
       try {
-        // Delete database file if it exists
-        try {
-          await commands.deleteDatabase(dbPath);
-        } catch {
-          // Database file might not exist, ignore
-        }
-
         // Delete PGN file if it exists
         try {
           await remove(pgnPath);
         } catch {
           // PGN file might not exist, ignore
         }
+        try {
+          await remove(legacyPgnPath);
+        } catch {}
 
         // Delete analyzed games for this account
         try {
@@ -417,13 +460,19 @@ function AccountsTableView({
       } catch {}
 
       // Remove session
-      setSessions((sessions) => sessions.filter((s) => s.chessCom?.username !== session.chessCom?.username));
+      setSessions((sessions) =>
+        sessions.filter((s) => !((s.profileId ?? null) === profileId && s.chessCom?.username === username)),
+      );
     }
   }
 
-  function handleSaveEdit(username: string, type: "lichess" | "chesscom") {
+  function handleSaveEdit(session: Session) {
+    const profileId = session.profileId ?? null;
+    const type = session.lichess ? "lichess" : "chesscom";
+    const username = session.lichess?.username ?? session.chessCom?.username ?? "";
     setSessions((prev) =>
       prev.map((s) => {
+        if ((s.profileId ?? null) !== profileId) return s;
         if (type === "lichess" && s.lichess?.username === username) {
           return { ...s, player: editValue };
         } else if (type === "chesscom" && s.chessCom?.username === username) {
@@ -499,7 +548,7 @@ function AccountsTableView({
                   </Tooltip>
                 </Table.Td>
                 <Table.Td>
-                  {editingAccount === `${row.type}_${row.username}` ? (
+                  {editingAccount === `${row.type}_${row.session.profileId ?? "no-profile"}_${row.username}` ? (
                     <Group gap="xs">
                       <input
                         value={editValue}
@@ -513,7 +562,7 @@ function AccountsTableView({
                         color="green"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleSaveEdit(row.username, row.type);
+                          handleSaveEdit(row.session);
                         }}
                       >
                         <IconCheck size="1rem" />
@@ -540,7 +589,7 @@ function AccountsTableView({
                         variant="subtle"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setEditingAccount(`${row.type}_${row.username}`);
+                          setEditingAccount(`${row.type}_${row.session.profileId ?? "no-profile"}_${row.username}`);
                           setEditValue(row.name);
                         }}
                       >

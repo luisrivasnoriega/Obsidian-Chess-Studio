@@ -571,6 +571,7 @@
                                      "dashboard":  "Dashboard",
                                      "board":  "Tablero",
                                      "accounts":  "Cuentas",
+                                     "profiles":  "Perfiles",
                                      "files":  "Archivos",
                                      "databases":  "Bases de datos",
                                      "engines":  "Motores",
@@ -1827,6 +1828,33 @@
                     "depthHelper":  "Selecciona cuantas jugadas incluir (max {{max}})",
                     "depthLabel":  "Profundidad"
                 },
+    "profiles":  {
+                     "title":  "Perfiles",
+                     "searchPlaceholder":  "Buscar perfiles o cuentas...",
+                     "add":  "Agregar perfil",
+                     "listTitle":  "Perfiles",
+                     "active":  "Activo",
+                     "profile":  "Perfil",
+                     "selectProfile":  "Seleccionar perfil",
+                     "accountsCount":  "{{count}} cuentas",
+                     "linkAccountsTitle":  "Vincular cuentas",
+                     "linkAccountsHint":  "Asigna cada cuenta a un perfil. Todos los juegos se guardan en la base de datos del perfil.",
+                     "noAccounts":  "No hay cuentas. Primero agrega cuentas en la p gina de Cuentas.",
+                     "createTitle":  "Crear perfil",
+                     "editTitle":  "Editar perfil",
+                     "namePlaceholder":  "p. ej. Magnus Carlsen",
+                     "fideId":  "FIDE ID",
+                     "fideIdPlaceholder":  "Opcional",
+                     "created":  "Perfil creado.",
+                     "updated":  "Perfil actualizado.",
+                     "deleted":  "Perfil eliminado.",
+                     "activeSet":  "Perfil activo actualizado.",
+                     "errors":  {
+                                    "missingName":  "El nombre del perfil es obligatorio.",
+                                    "duplicateName":  "Ya existe un perfil con ese nombre.",
+                                    "cannotDeleteLinked":  "Desvincula las cuentas de este perfil antes de eliminarlo."
+                                }
+                 },
     "maya":  {
                  "nav":  {
                              "playVsPc":  "Jugar vs PC",

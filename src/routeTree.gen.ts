@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TournamentsRouteImport } from './routes/tournaments'
 import { Route as PuzzlesRouteImport } from './routes/puzzles'
+import { Route as ProfilesRouteImport } from './routes/profiles'
 import { Route as PlayRouteImport } from './routes/play'
 import { Route as FilesRouteImport } from './routes/files'
 import { Route as EnginesRouteImport } from './routes/engines'
@@ -35,6 +36,11 @@ const TournamentsRoute = TournamentsRouteImport.update({
 const PuzzlesRoute = PuzzlesRouteImport.update({
   id: '/puzzles',
   path: '/puzzles',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfilesRoute = ProfilesRouteImport.update({
+  id: '/profiles',
+  path: '/profiles',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlayRoute = PlayRouteImport.update({
@@ -123,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/engines': typeof EnginesRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
+  '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
@@ -140,6 +147,7 @@ export interface FileRoutesByTo {
   '/engines': typeof EnginesRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
+  '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/engines': typeof EnginesRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
+  '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
     | '/engines'
     | '/files'
     | '/play'
+    | '/profiles'
     | '/puzzles'
     | '/tournaments'
     | '/databases/$databaseId'
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/engines'
     | '/files'
     | '/play'
+    | '/profiles'
     | '/puzzles'
     | '/tournaments'
     | '/databases/$databaseId'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/engines'
     | '/files'
     | '/play'
+    | '/profiles'
     | '/puzzles'
     | '/tournaments'
     | '/databases/$databaseId'
@@ -237,6 +249,7 @@ export interface RootRouteChildren {
   EnginesRoute: typeof EnginesRoute
   FilesRoute: typeof FilesRoute
   PlayRoute: typeof PlayRoute
+  ProfilesRoute: typeof ProfilesRoute
   PuzzlesRoute: typeof PuzzlesRoute
   TournamentsRoute: typeof TournamentsRoute
   DatabasesDatabaseIdRoute: typeof DatabasesDatabaseIdRoute
@@ -257,6 +270,13 @@ declare module '@tanstack/react-router' {
       path: '/puzzles'
       fullPath: '/puzzles'
       preLoaderRoute: typeof PuzzlesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profiles': {
+      id: '/profiles'
+      path: '/profiles'
+      fullPath: '/profiles'
+      preLoaderRoute: typeof ProfilesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/play': {
@@ -406,6 +426,7 @@ const rootRouteChildren: RootRouteChildren = {
   EnginesRoute: EnginesRoute,
   FilesRoute: FilesRoute,
   PlayRoute: PlayRoute,
+  ProfilesRoute: ProfilesRoute,
   PuzzlesRoute: PuzzlesRoute,
   TournamentsRoute: TournamentsRoute,
   DatabasesDatabaseIdRoute: DatabasesDatabaseIdRoute,

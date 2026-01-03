@@ -100,6 +100,9 @@ function BoardVariants() {
   const masterOptions = useAtomValue(masterOptionsAtom);
   const referenceDatabase = useAtomValue(referenceDbAtom);
 
+  // NEW: cache for opening names by FEN identity
+  const openingNameCacheRef = useRef<Map<string, string | null>>(new Map());
+
   const saveFile = useCallback(
     async (showNotification = true) => {
       try {
@@ -830,6 +833,10 @@ function BoardVariants() {
     const fenKeyOwners = new Map<string, string>();
     const requestedMs = Math.max(1, Math.floor(treeBuilderEngineMs));
     let persistentCacheUnavailable = false;
+
+    // NEW: numbering cache by pathKey (only increments on rival branching levels)
+    const variantPrefixByPathKey = new Map<string, string>();
+
     const reportPersistentCacheError = (error: unknown) => {
       if (persistentCacheUnavailable) return;
       persistentCacheUnavailable = true;
@@ -855,6 +862,94 @@ function BoardVariants() {
     };
 
     const getPathKey = (path: number[]) => path.join(",");
+
+    // NEW: best-effort "set comment" helper (works even if store API differs)
+    const upsertMoveComment = (path: number[], commentText: string) => {
+      const state: any = store.getState();
+      const node = getNodeAtPath(state.root, path) as any;
+      const existing: string =
+        (typeof node?.comment === "string" ? node.comment : "") ||
+        (typeof node?.commentAfter === "string" ? node.commentAfter : "") ||
+        "";
+
+      // prevent duplicates
+      if (existing && existing.includes(commentText)) return;
+
+      const next = existing ? `${existing} ${commentText}` : commentText;
+
+      // If the store exposes a comment setter, use it
+      if (typeof state.setNodeComment === "function") {
+        try {
+          state.setNodeComment(path, next);
+          return;
+        } catch {}
+      }
+      if (typeof state.setComment === "function") {
+        try {
+          state.setComment(path, next);
+          return;
+        } catch {}
+      }
+
+      // Fallback: mutate node + try to trigger an update
+      try {
+        node.comment = next;
+        node.commentAfter = next;
+      } catch {}
+
+      if (typeof state.setState === "function") {
+        try {
+          state.setState({ root: state.root });
+        } catch {}
+      } else if (typeof setStoreState === "function") {
+        try {
+          setStoreState({ root: state.root } as any);
+        } catch {}
+      }
+    };
+
+    // NEW: opening name lookup (cached by FEN identity).
+    // Uses master explorer first (good theoretical naming), then lichess explorer as fallback.
+    const getOpeningNameForFen = async (fen: string): Promise<string | null> => {
+      const key = getFenIdentityKey(fen);
+      if (!key) return null;
+
+      const cached = openingNameCacheRef.current.get(key);
+      if (cached !== undefined) return cached;
+
+      const safeSet = (value: string | null) => {
+        openingNameCacheRef.current.set(key, value);
+        return value;
+      };
+
+      try {
+        const data: any = await runExclusive(() => getMasterGames(fen, masterOptions));
+        const name =
+          (typeof data?.opening?.name === "string" && data.opening.name.trim()) ||
+          (typeof data?.opening?.eco === "string" && data.opening.eco.trim()) ||
+          null;
+        if (name) return safeSet(name);
+      } catch {}
+
+      try {
+        const data: any = await runExclusive(() => getLichessGames(fen, lichessOptions));
+        const name =
+          (typeof data?.opening?.name === "string" && data.opening.name.trim()) ||
+          (typeof data?.opening?.eco === "string" && data.opening.eco.trim()) ||
+          null;
+        return safeSet(name || null);
+      } catch {
+        return safeSet(null);
+      }
+    };
+
+    // NEW: formats "1. Ruy Lopez." vs "1.2 Berlin Defense."
+    const formatTheoreticalLineComment = (variantPrefix: string, openingName: string) => {
+      const prefix = variantPrefix.includes(".") ? variantPrefix : `${variantPrefix}.`;
+      const name = openingName.trim();
+      const end = name.endsWith(".") ? "" : ".";
+      return `${prefix} ${name}${end}`;
+    };
 
     const pickEngineMoveUci = async (
       fen: string,
@@ -946,6 +1041,7 @@ function BoardVariants() {
 
       return primary;
     };
+
     try {
       if (dbType === "local" && !localOptions.path && !referenceDatabase) {
         notifications.show({
@@ -961,6 +1057,10 @@ function BoardVariants() {
       if (!startNode?.fen) {
         throw new Error(t("errors.missingPosition"));
       }
+
+      // NEW: start prefix is empty (numbering begins at the first rival branching level)
+      variantPrefixByPathKey.set(getPathKey(startPath), "");
+
       seedFenOwners();
       const myColor = boardOrientation === "black" ? "black" : "white";
       const maxDepth = Math.max(1, Math.floor(treeBuilderDepth) * 2);
@@ -1042,6 +1142,12 @@ function BoardVariants() {
         if (!moves.length || treeBuilderCancelRef.current) return;
 
         const seenSans = new Set<string>();
+
+        // NEW: prefix rules
+        const parentPrefix = variantPrefixByPathKey.get(pathKey) ?? "";
+        const isRivalExpansion = sideToMove !== myColor; // "rival generates variants"
+        let rivalOrdinal = 0;
+
         for (const move of moves) {
           if (treeBuilderCancelRef.current) break;
           const activeState = store.getState();
@@ -1050,6 +1156,16 @@ function BoardVariants() {
             continue;
           }
           seenSans.add(san);
+
+          // Compute child prefix:
+          // - If rival expansion: append ordinal (1,2,3...) to parent prefix (=> 1, 1.1, 1.2, 2, 2.1...)
+          // - If my move: inherit same prefix (do NOT add an extra level)
+          let childPrefix = parentPrefix;
+          if (isRivalExpansion) {
+            rivalOrdinal += 1;
+            childPrefix = parentPrefix ? `${parentPrefix}.${rivalOrdinal}` : `${rivalOrdinal}`;
+          }
+
           const parentBefore = getNodeAtPath(activeState.root, path);
           const beforeCount = parentBefore.children.length;
           activeState.goToMove([...path]);
@@ -1064,12 +1180,17 @@ function BoardVariants() {
           if (childIndex === -1) {
             continue;
           }
+
           const newPath = [...path, childIndex];
           expandedAny = true;
 
           const createdChild = getNodeAtPath(store.getState().root, newPath);
           const childFenKey = createdChild?.fen ? getFenIdentityKey(createdChild.fen) : null;
           const newPathKey = getPathKey(newPath);
+
+          // NEW: store prefix for future sub-branching
+          variantPrefixByPathKey.set(newPathKey, childPrefix);
+
           if (childFenKey) {
             const childOwner = fenKeyOwners.get(childFenKey);
             if (!childOwner) {
@@ -1077,6 +1198,13 @@ function BoardVariants() {
             } else if (childOwner !== newPathKey) {
               continue;
             }
+          }
+
+          // NEW: annotate rival-generated variants with theoretical line name
+          if (isRivalExpansion && createdChild?.fen) {
+            const openingName = (await getOpeningNameForFen(createdChild.fen)) ?? san;
+            const comment = formatTheoreticalLineComment(childPrefix, openingName);
+            upsertMoveComment(newPath, comment);
           }
 
           store.getState().goToMove([...newPath]);
@@ -1097,7 +1225,7 @@ function BoardVariants() {
           color: "red",
         });
       }
- 
+
       if (!treeBuilderCancelRef.current) {
         notifications.show({
           title: t("common.success"),
@@ -1123,18 +1251,20 @@ function BoardVariants() {
       setTreeBuilderRunning(false);
     }
   }, [
+    activeTab,
     boardOrientation,
     dbType,
     getDbOpeningsForFen,
     getEngineBestLines,
     getWinrateCandidates,
+    lichessOptions,
     localOptions.path,
+    masterOptions,
     normalizeDbMove,
     referenceDatabase,
     selectCoverageMoves,
     selectedEngine,
-    activeTab,
-    store,
+    setStoreState,
     t,
     treeBuilderCoverage,
     treeBuilderDepth,

@@ -405,15 +405,17 @@ export async function downloadLichess(
   games: number,
   _setProgress: (progress: number) => void,
   token?: string,
+  outputPath?: string,
+  downloadId?: string,
 ) {
   let url = `${baseURL}/games/user/${player}`;
   if (timestamp) {
     url += `?since=${timestamp}`;
   }
-  const path = await resolve(await appDataDir(), "db", `${player}_lichess.pgn`);
+  const path = outputPath ?? (await resolve(await appDataDir(), "db", `${player}_lichess.pgn`));
 
   await commands.downloadFile(
-    `lichess_${player}`,
+    downloadId ?? `lichess_${player}`,
     url,
     path,
     token ?? null,

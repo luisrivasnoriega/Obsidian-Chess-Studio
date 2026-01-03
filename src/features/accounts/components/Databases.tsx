@@ -1,39 +1,19 @@
 import { Flex, Paper, Progress, Select, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { DatabaseInfo as PlainDatabaseInfo, PlayerGameInfo } from "@/bindings";
+import type { PlayerGameInfo } from "@/bindings";
 import { commands, events } from "@/bindings";
 import { sessionsAtom } from "@/state/atoms";
-import { getDatabases, query_players } from "@/utils/db";
+import { query_players } from "@/utils/db";
+import { getProfileDbPath } from "@/utils/profileDb";
 import type { Session } from "@/utils/session";
 import { unwrap } from "@/utils/unwrap";
 import PersonalPlayerCard from "./PersonalCard";
 
-type DatabaseInfo = PlainDatabaseInfo & {
-  username?: string;
-};
-
-function getSessionUsername(session: Session): string {
-  const username = session.lichess?.account.username || session.chessCom?.username;
-  if (username === undefined) {
-    throw new Error("Session does not have a username");
-  }
-  return username;
-}
-
-function isDatabaseFromSession(db: DatabaseInfo, sessions: Session[]) {
-  const session = sessions.find((session) => db.filename.includes(getSessionUsername(session)));
-
-  if (session !== undefined) {
-    db.username = getSessionUsername(session);
-  }
-  return session !== undefined;
-}
-
 interface PersonalInfo {
-  db: DatabaseInfo;
+  session: Session;
   info: PlayerGameInfo;
 }
 
@@ -41,70 +21,72 @@ function Databases({ initialPlayer }: { initialPlayer?: string }) {
   const { t } = useTranslation();
   const sessions = useAtomValue(sessionsAtom);
 
+  const profilesByName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of sessions) {
+      const playerName = s.player || s.lichess?.username || s.chessCom?.username || "";
+      if (!playerName) continue;
+      if (!s.profileId) continue;
+      if (!map.has(playerName)) map.set(playerName, s.profileId);
+    }
+    return map;
+  }, [sessions]);
+
   const players = Array.from(
     new Set(sessions.map((s) => s.player || s.lichess?.username || s.chessCom?.username || "")),
   ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  const playerDbNames = players.map((name) => ({
-    name,
-    databases: sessions
-      .filter((s) => s.player === name || s.lichess?.username === name || s.chessCom?.username === name)
-      .map((s) => (s.chessCom ? `${s.chessCom.username} Chess.com` : `${s.lichess?.username} Lichess`)),
-  }));
 
   const [name, setName] = useState("");
   useEffect(() => {
     if (sessions.length === 0) return;
-    const fallback = sessions[0].player || getSessionUsername(sessions[0]);
+    const fallback = sessions[0].player || sessions[0].lichess?.username || sessions[0].chessCom?.username || "";
     const next = initialPlayer && players.includes(initialPlayer) ? initialPlayer : fallback;
     setName(next);
   }, [initialPlayer, players, sessions]);
-
-  const { data: databases } = useQuery<DatabaseInfo[]>({
-    queryKey: ["personalDatabases", sessions],
-    queryFn: async () => {
-      const dbs = (await getDatabases()).filter((db) => db.type === "success");
-      return dbs.filter((db) => isDatabaseFromSession(db, sessions));
-    },
-    staleTime: Infinity,
-    enabled: sessions.length > 0,
-  });
 
   const {
     data: personalInfo,
     isLoading,
     error,
   } = useQuery<PersonalInfo[]>({
-    queryKey: ["personalInfo", name, databases],
+    queryKey: ["personalInfo", name, sessions],
     queryFn: async () => {
-      const playerDbs = playerDbNames.find((p) => p.name === name)?.databases;
-      if (!databases || !playerDbs) return [];
+      const profileId = profilesByName.get(name);
+      if (!profileId) return [];
+      const dbPath = await getProfileDbPath(profileId);
+
+      const playerSessions = sessions.filter(
+        (s) => s.profileId === profileId && (s.lichess?.username || s.chessCom?.username),
+      );
+
       const results = await Promise.allSettled(
-        databases
-          .filter((db) => playerDbs.includes((db.type === "success" && db.title) || ""))
-          .map(async (db) => {
-            const players = await query_players(db.file, {
-              name: db.username,
-              options: {
-                pageSize: 1,
-                direction: "asc",
-                sort: "id",
-                skipCount: false,
-              },
-            });
-            if (players.data.length === 0) {
-              throw new Error("Player not found in database");
-            }
-            const player = players.data[0];
-            const info = unwrap(await commands.getPlayersGameInfo(db.file, player.id));
-            return { db, info };
-          }),
+        playerSessions.map(async (session) => {
+          const username = session.lichess?.username ?? session.chessCom?.username;
+          if (!username) throw new Error("Session does not have a username");
+
+          const players = await query_players(dbPath, {
+            name: username,
+            options: {
+              pageSize: 10,
+              direction: "asc",
+              sort: "id",
+              skipCount: false,
+            },
+          });
+          const player =
+            players.data.find((p) => (p.name ?? "").toLowerCase() === username.toLowerCase()) ?? players.data[0];
+          if (!player) throw new Error("Player not found in database");
+
+          const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
+          return { session, info };
+        }),
       );
       return results
         .filter((r) => r.status === "fulfilled")
         .map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
     },
     staleTime: Infinity,
-    enabled: !!databases && !!name,
+    enabled: !!name && sessions.length > 0,
   });
 
   const [progress, setProgress] = useState(0);

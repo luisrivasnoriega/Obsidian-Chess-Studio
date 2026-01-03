@@ -116,6 +116,21 @@ export const blindfoldAtom = atomWithStorage<boolean>("blindfold-mode", false);
 export const primaryColorAtom = atomWithStorage<MantineColor>("mantine-primary-color", "blue");
 export const sessionsAtom = atomWithStorage<Session[]>("sessions", []);
 
+export type Profile = {
+  id: string;
+  name: string;
+  fideId?: string;
+  displayName?: string;
+  lichessToken?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export const profilesAtom = atomWithStorage<Profile[]>("profiles", [], undefined, { getOnInit: true });
+export const activeProfileIdAtom = atomWithStorage<string | null>("activeProfileId", null, undefined, {
+  getOnInit: true,
+});
+
 // Database
 
 export const referenceDbAtom = atomWithStorage<string | null>("reference-database", null);

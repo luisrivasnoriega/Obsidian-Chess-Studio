@@ -171,11 +171,11 @@ export async function fetchLastChessComGames(
   }
 }
 
-export async function downloadChessCom(player: string, timestamp: number | null) {
+export async function downloadChessCom(player: string, timestamp: number | null, outputPath?: string, downloadId?: string) {
   const timestampDate = new Date(timestamp ?? 0);
   const approximateDate = new Date(timestampDate.getFullYear(), timestampDate.getMonth(), 1);
   const archives = await getGameArchives(player);
-  const file = await resolve(await appDataDir(), "db", `${player}_chesscom.pgn`);
+  const file = outputPath ?? (await resolve(await appDataDir(), "db", `${player}_chesscom.pgn`));
   info(`Found ${archives.archives.length} archives for ${player}`);
   await writeTextFile(file, "", {
     append: false,
@@ -186,12 +186,20 @@ export async function downloadChessCom(player: string, timestamp: number | null)
     return archiveDate >= approximateDate;
   });
 
+  const seenUrls = new Set<string>();
+  const minTimestamp = timestamp ?? 0;
+
   for (const archive of filteredArchives) {
     info(`Fetching games for ${player} from ${archive}`);
     const response = await fetch(archive, {
       headers,
       method: "GET",
     });
+    if (!response.ok) {
+      if (response.status === 404) continue;
+      error(`Failed to fetch Chess.com games: ${response.status} ${response.url}`);
+      continue;
+    }
     const games = ChessComGames.safeParse(await response.json());
 
     if (!games.success) {
@@ -202,22 +210,40 @@ export async function downloadChessCom(player: string, timestamp: number | null)
         color: "red",
         icon: <IconX />,
       });
-    if (response.status === 404) continue;
-    return;
-  }
+      return;
+    }
 
-    await writeTextFile(file, games.data.games.map((g) => g.pgn).join("\n"), {
+    const dedupedPgns = games.data.games
+      .filter((g) => g.pgn && g.url)
+      .filter((g) => (minTimestamp > 0 ? g.end_time * 1000 > minTimestamp : true))
+      .filter((g) => {
+        if (seenUrls.has(g.url)) return false;
+        seenUrls.add(g.url);
+        return true;
+      })
+      .map((g) => g.pgn as string);
+
+    if (dedupedPgns.length === 0) {
+      events.downloadProgress.emit({
+        finished: false,
+        id: downloadId ?? `chesscom_${player}`,
+        progress: (filteredArchives.indexOf(archive) / filteredArchives.length) * 100,
+      });
+      continue;
+    }
+
+    await writeTextFile(file, dedupedPgns.join("\n"), {
       append: true,
     });
     events.downloadProgress.emit({
       finished: false,
-      id: `chesscom_${player}`,
+      id: downloadId ?? `chesscom_${player}`,
       progress: (filteredArchives.indexOf(archive) / filteredArchives.length) * 100,
     });
   }
   events.downloadProgress.emit({
     finished: false,
-    id: `chesscom_${player}`,
+    id: downloadId ?? `chesscom_${player}`,
     progress: 100,
   });
 }

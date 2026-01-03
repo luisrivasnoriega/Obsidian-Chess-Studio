@@ -224,6 +224,14 @@ async convertPgn(file: string, dbPath: string, timestamp: number | null, title: 
     else return { status: "error", error: e  as any };
 }
 },
+async initProfileDb(dbPath: string, title: string, description: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("init_profile_db", { dbPath, title, description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getPlayer(file: string, id: number) : Promise<Result<Player | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_player", { file, id }) };
@@ -884,20 +892,14 @@ export type QueryResponse<T> = { data: T; count: number | null }
  * Event payload for reporting analysis progress.
  */
 export type ReportProgress = { progress: number; id: string; finished: boolean }
-export type Score = { value: ScoreValue; 
 /**
- * The probability of each result (win, draw, loss).
+ * UCI score representation for UI and analysis.
  */
-wdl: [number, number, number] | null }
-export type ScoreValue = 
+export type Score = { value: ScoreValue; wdl: [number, number, number] | null }
 /**
- * The score in centipawns.
+ * UCI score value (centipawns or mate).
  */
-{ type: "cp"; value: number } | 
-/**
- * Mate coming up in this many moves. Negative value means the engine is getting mated.
- */
-{ type: "mate"; value: number }
+export type ScoreValue = { type: "cp"; value: number } | { type: "mate"; value: number }
 export type Sides = "BlackWhite" | "WhiteBlack" | "Any"
 export type SiteStatsData = { site: string; player: string; data: StatsData[] }
 export type SortDirection = "asc" | "desc"
@@ -921,71 +923,23 @@ export type UciOptionConfig =
 /**
  * The option of type `check` (a boolean).
  */
-{ type: "check"; value: { 
-/**
- * The name of the option.
- */
-name: string; 
-/**
- * The default value of this `bool` property.
- */
-default: boolean | null } } | 
+{ type: "check"; value: { name: string; default: boolean | null } } | 
 /**
  * The option of type `spin` (a signed integer).
  */
-{ type: "spin"; value: { 
-/**
- * The name of the option.
- */
-name: string; 
-/**
- * The default value of this integer property.
- */
-default: bigint | null; 
-/**
- * The minimal value of this integer property.
- */
-min: bigint | null; 
-/**
- * The maximal value of this integer property.
- */
-max: bigint | null } } | 
+{ type: "spin"; value: { name: string; default: bigint | null; min: bigint | null; max: bigint | null } } | 
 /**
  * The option of type `combo` (a list of strings).
  */
-{ type: "combo"; value: { 
-/**
- * The name of the option.
- */
-name: string; 
-/**
- * The default value for this list of strings.
- */
-default: string | null; 
-/**
- * The list of acceptable strings.
- */
-var: string[] } } | 
+{ type: "combo"; value: { name: string; default: string | null; var: string[] } } | 
 /**
  * The option of type `button` (an action).
  */
-{ type: "button"; value: { 
-/**
- * The name of the option.
- */
-name: string } } | 
+{ type: "button"; value: { name: string } } | 
 /**
  * The option of type `string` (a string, unsurprisingly).
  */
-{ type: "string"; value: { 
-/**
- * The name of the option.
- */
-name: string; 
-/**
- * The default value of this string option.
- */
-default: string | null } }
+{ type: "string"; value: { name: string; default: string | null } }
 export type UpdateGame = { fen: string; event: string; site: string; date?: string | null; time?: string | null; round?: string | null; white: string; white_elo?: number | null; black: string; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
 export type VariantPosition = { fen: string; engine: string; recommended_move: string; ms: bigint }
 

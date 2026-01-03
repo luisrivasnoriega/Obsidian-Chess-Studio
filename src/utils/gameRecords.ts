@@ -6,6 +6,7 @@ import { calculateEstimatedElo } from "@/utils/eloEstimation";
 
 export interface GameRecord {
   id: string;
+  profileId?: string;
   white: {
     type: "human" | "engine";
     name?: string;
@@ -28,9 +29,15 @@ export interface GameRecord {
 }
 
 const FILENAME = "played_games.json";
+const ACTIVE_PROFILE_STORAGE_KEY = "activeProfileId";
 
 export async function saveGameRecord(record: GameRecord) {
   try {
+    if (!record.profileId && typeof window !== "undefined") {
+      const activeProfileId = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
+      if (activeProfileId) record.profileId = activeProfileId;
+    }
+
     const dir = await appDataDir();
     info(`[gameRecords] Saving game record to directory: ${dir}`);
 
@@ -134,6 +141,30 @@ export async function getRecentGames(limit = 20): Promise<GameRecord[]> {
   } catch (err) {
     error(`[gameRecords] Failed to get recent games: ${err}`);
     return [];
+  }
+}
+
+export async function migrateLegacyGameRecordsProfileId(profileId: string): Promise<void> {
+  const dir = await appDataDir();
+  const file = await resolve(dir, FILENAME);
+  if (!(await exists(file))) return;
+
+  try {
+    const text = await readTextFile(file);
+    const records: GameRecord[] = JSON.parse(text);
+    let changed = false;
+    const migrated = records.map((r) => {
+      if (r && !r.profileId) {
+        changed = true;
+        return { ...r, profileId };
+      }
+      return r;
+    });
+    if (changed) {
+      await writeTextFile(file, JSON.stringify(migrated));
+    }
+  } catch {
+    // best-effort
   }
 }
 

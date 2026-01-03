@@ -1,4 +1,5 @@
 import type { NormalizedGame, Outcome } from "@/bindings";
+import { stripAccountKey } from "@/utils/accountKeys";
 import type { ChessComGame } from "@/utils/chess.com/api";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import type { GameRecord } from "@/utils/gameRecords";
@@ -39,13 +40,15 @@ export function createLocalGameHeaders(game: GameRecord): GameHeaders {
 }
 
 export function createChessComGameHeaders(game: ChessComGame): GameHeaders {
+  const whiteName = stripAccountKey(game.white.username);
+  const blackName = stripAccountKey(game.black.username);
   return {
     id: 0,
     event: "Online Game",
     site: "Chess.com",
     date: formatDateToPGN(game.end_time * 1000) ?? "",
-    white: game.white.username,
-    black: game.black.username,
+    white: whiteName,
+    black: blackName,
     result: (game.white.result === "win" ? "1-0" : game.black.result === "win" ? "0-1" : "1/2-1/2") as Outcome,
     fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   };
@@ -61,13 +64,15 @@ export function createLichessGameHeaders(game: {
   winner?: string;
   lastFen: string;
 }): GameHeaders {
+  const whiteName = stripAccountKey(game.players.white.user?.name || "Unknown");
+  const blackName = stripAccountKey(game.players.black.user?.name || "Unknown");
   return {
     id: 0,
     event: `Rated ${game.speed} game`,
     site: "Lichess.org",
     date: formatDateToPGN(game.createdAt) ?? "",
-    white: game.players.white.user?.name || "Unknown",
-    black: game.players.black.user?.name || "Unknown",
+    white: whiteName,
+    black: blackName,
     result: (game.winner === "white" ? "1-0" : game.winner === "black" ? "0-1" : "1/2-1/2") as Outcome,
     fen: game.lastFen ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   };
@@ -225,8 +230,8 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
   return {
     id: gameId,
     players: {
-      white: { user: { name: game.white } },
-      black: { user: { name: game.black } },
+      white: { user: { name: stripAccountKey(game.white) } },
+      black: { user: { name: stripAccountKey(game.black) } },
     },
     speed: speed,
     createdAt: createdAt,
@@ -289,12 +294,12 @@ export function convertNormalizedToChessComGame(game: NormalizedGame): ChessComG
     white: {
       rating: game.white_elo || 0,
       result: whiteResult,
-      username: game.white,
+      username: stripAccountKey(game.white),
     },
     black: {
       rating: game.black_elo || 0,
       result: blackResult,
-      username: game.black,
+      username: stripAccountKey(game.black),
     },
   };
 }

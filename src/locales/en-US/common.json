@@ -345,6 +345,33 @@
                                          "cancelEdit":  "Cancel edit"
                                      }
                  },
+    "profiles":  {
+                     "title":  "Profiles",
+                     "searchPlaceholder":  "Search profiles or accounts...",
+                     "add":  "Add Profile",
+                     "listTitle":  "Profiles",
+                     "active":  "Active",
+                     "profile":  "Profile",
+                     "selectProfile":  "Select profile",
+                     "accountsCount":  "{{count}} accounts",
+                     "linkAccountsTitle":  "Link accounts",
+                     "linkAccountsHint":  "Assign each account to a profile. All games will be stored in the profile database.",
+                     "noAccounts":  "No accounts found. Add accounts first in the Accounts page.",
+                     "createTitle":  "Create profile",
+                     "editTitle":  "Edit profile",
+                     "namePlaceholder":  "e.g. Magnus Carlsen",
+                     "fideId":  "FIDE ID",
+                     "fideIdPlaceholder":  "Optional",
+                     "created":  "Profile created.",
+                     "updated":  "Profile updated.",
+                     "deleted":  "Profile deleted.",
+                     "activeSet":  "Active profile updated.",
+                     "errors":  {
+                                    "missingName":  "Profile name is required.",
+                                    "duplicateName":  "A profile with this name already exists.",
+                                    "cannotDeleteLinked":  "Unlink accounts from this profile before deleting it."
+                                }
+                 },
     "practice":  {
                      "noPositionsYet":  "no positions yet",
                      "noLogsYet":  "No logs yet",
@@ -586,6 +613,7 @@
                                      "dashboard":  "Dashboard",
                                      "board":  "Board",
                                      "accounts":  "Accounts",
+                                     "profiles":  "Profiles",
                                      "files":  "Files",
                                      "databases":  "Databases",
                                      "engines":  "Engines",

@@ -7,7 +7,7 @@ import { useAtom, useAtomValue } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { activeTabAtom, fontSizeAtom, pieceSetAtom, tabsAtom } from "./state/atoms";
+import { activeProfileIdAtom, activeTabAtom, fontSizeAtom, pieceSetAtom, profilesAtom, sessionsAtom, tabsAtom } from "./state/atoms";
 import { ensurePieceSetCss } from "./utils/pieceSetCss";
 
 import "@mantine/charts/styles.css";
@@ -35,6 +35,8 @@ import { routeTree } from "./routeTree.gen";
 import type { VersionCheckResult } from "./services/version-checker";
 import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
+import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
+import { ensureProfilesInitialized } from "./utils/profiles";
 
 export type Dirs = {
   documentDir: string;
@@ -300,6 +302,9 @@ export default function App() {
   const { t } = useTranslation();
   const pieceSet = useAtomValue(pieceSetAtom);
   const fontSize = useAtomValue(fontSizeAtom);
+  const [sessions, setSessions] = useAtom(sessionsAtom);
+  const [profiles, setProfiles] = useAtom(profilesAtom);
+  const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
 
   const [updateModalData, setUpdateModalData] = useState<VersionCheckResult | null>(null);
 
@@ -372,6 +377,28 @@ export default function App() {
     rootElement.setAttribute("dir", direction);
     rootElement.classList.toggle("rtl", direction === "rtl");
   }, []);
+
+  useEffect(() => {
+    const res = ensureProfilesInitialized({ sessions, profiles, activeProfileId });
+
+    const profilesChanged =
+      res.profiles.length !== profiles.length ||
+      res.profiles.some((p, i) => p.id !== profiles[i]?.id || p.name !== profiles[i]?.name);
+
+    const sessionsChanged =
+      res.sessions.length !== sessions.length ||
+      res.sessions.some((s, i) => s.profileId !== sessions[i]?.profileId || s.player !== sessions[i]?.player);
+
+    if (profilesChanged) setProfiles(res.profiles);
+    if (sessionsChanged) setSessions(res.sessions);
+    if (res.activeProfileId !== activeProfileId) setActiveProfileId(res.activeProfileId);
+  }, [activeProfileId, profiles, sessions, setActiveProfileId, setProfiles, setSessions]);
+
+  useEffect(() => {
+    if (activeProfileId) {
+      migrateLegacyGameRecordsProfileId(activeProfileId).catch(() => {});
+    }
+  }, [activeProfileId]);
 
   if (initState === "loading") {
     return <AppLoading />;

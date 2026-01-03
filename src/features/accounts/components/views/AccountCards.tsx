@@ -5,13 +5,14 @@ import { remove } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DatabaseInfo } from "@/bindings";
-import { commands } from "@/bindings";
 import type { SortState } from "@/components/GenericHeader";
 import { sessionsAtom } from "@/state/atoms";
 import { getChessComAccount, getStats } from "@/utils/chess.com/api";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { getAccountFideId, saveMainAccount } from "@/utils/mainAccount";
 import type { Session } from "@/utils/session";
+import { profileDbFilename } from "@/utils/profileDb";
+import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { AccountCard } from "../AccountCard";
 
 function AccountCards({
@@ -213,11 +214,10 @@ function LichessOrChessCom({
     const lichessSession = session.lichess;
     let totalGames = account.count?.all ?? 0;
 
-    // Try to find database with exact match first, then try case-insensitive match
-    let database = databases.find((db) => db.filename === `${account.username}_lichess.db3`) ?? null;
-    if (!database) {
-      database =
-        databases.find((db) => db.filename.toLowerCase() === `${account.username}_lichess.db3`.toLowerCase()) ?? null;
+    const profileDb = session.profileId ? profileDbFilename(session.profileId) : null;
+    let database = profileDb ? (databases.find((db) => db.filename === profileDb) ?? null) : null;
+    if (!database && profileDb) {
+      database = databases.find((db) => db.filename.toLowerCase() === profileDb.toLowerCase()) ?? null;
     }
 
     // Ensure totalGames is at least equal to downloadedGames
@@ -251,8 +251,9 @@ function LichessOrChessCom({
 
     return (
       <AccountCard
-        key={account.id}
+        key={`${session.profileId ?? "no-profile"}:lichess:${account.id}`}
         name={name}
+        profileId={session.profileId ?? null}
         token={lichessSession.accessToken}
         type="lichess"
         database={database}
@@ -261,25 +262,26 @@ function LichessOrChessCom({
         total={totalGames}
         setSessions={setSessions}
         logout={async () => {
-          // Delete database file and PGN file for this account
+          // Delete PGN file for this account (profile databases are shared)
           const dbDir = await appDataDir();
-          const dbPath = await resolve(dbDir, "db", `${account.username}_lichess.db3`);
-          const pgnPath = await resolve(dbDir, "db", `${account.username}_lichess.pgn`);
+          const pgnPath = await getAccountPgnPath({
+            appDataDir: dbDir,
+            profileId: session.profileId ?? null,
+            platform: "lichess",
+            username: account.username,
+          });
+          const legacyPgnPath = await resolve(dbDir, "db", `${account.username}_lichess.pgn`);
 
           try {
-            // Delete database file if it exists
-            try {
-              await commands.deleteDatabase(dbPath);
-            } catch {
-              // Database file might not exist, ignore
-            }
-
             // Delete PGN file if it exists
             try {
               await remove(pgnPath);
             } catch {
               // PGN file might not exist, ignore
             }
+            try {
+              await remove(legacyPgnPath);
+            } catch {}
 
             // Delete analyzed games for this account
             try {
@@ -289,7 +291,11 @@ function LichessOrChessCom({
           } catch {}
 
           // Remove session
-          setSessions((sessions) => sessions.filter((s) => s.lichess?.account.id !== account.id));
+          setSessions((sessions) =>
+            sessions.filter(
+              (s) => !((s.profileId ?? null) === (session.profileId ?? null) && s.lichess?.username === account.username),
+            ),
+          );
         }}
         setDatabases={setDatabases}
         reload={async () => {
@@ -300,7 +306,7 @@ function LichessOrChessCom({
           if (!account) return;
           setSessions((sessions) =>
             sessions.map((s) =>
-              s.lichess?.account.id === account.id
+              (s.profileId ?? null) === (session.profileId ?? null) && s.lichess?.username === lichessSession.username
                 ? {
                     ...s,
                     lichess: {
@@ -329,13 +335,10 @@ function LichessOrChessCom({
       }
     }
 
-    // Try to find database with exact match first, then try case-insensitive match
-    let database = databases.find((db) => db.filename === `${session.chessCom?.username}_chesscom.db3`) ?? null;
-    if (!database) {
-      database =
-        databases.find(
-          (db) => db.filename.toLowerCase() === `${session.chessCom?.username}_chesscom.db3`.toLowerCase(),
-        ) ?? null;
+    const profileDb = session.profileId ? profileDbFilename(session.profileId) : null;
+    let database = profileDb ? (databases.find((db) => db.filename === profileDb) ?? null) : null;
+    if (!database && profileDb) {
+      database = databases.find((db) => db.filename.toLowerCase() === profileDb.toLowerCase()) ?? null;
     }
 
     // Ensure totalGames is at least equal to downloadedGames
@@ -346,8 +349,9 @@ function LichessOrChessCom({
     }
     return (
       <AccountCard
-        key={session.chessCom.username}
+        key={`${session.profileId ?? "no-profile"}:chesscom:${session.chessCom.username}`}
         name={name}
+        profileId={session.profileId ?? null}
         type="chesscom"
         title={session.chessCom.username}
         database={database}
@@ -358,25 +362,26 @@ function LichessOrChessCom({
         logout={async () => {
           if (!session.chessCom) return;
 
-          // Delete database file and PGN file for this account
+          // Delete PGN file for this account (profile databases are shared)
           const dbDir = await appDataDir();
-          const dbPath = await resolve(dbDir, "db", `${session.chessCom.username}_chesscom.db3`);
-          const pgnPath = await resolve(dbDir, "db", `${session.chessCom.username}_chesscom.pgn`);
+          const pgnPath = await getAccountPgnPath({
+            appDataDir: dbDir,
+            profileId: session.profileId ?? null,
+            platform: "chesscom",
+            username: session.chessCom.username,
+          });
+          const legacyPgnPath = await resolve(dbDir, "db", `${session.chessCom.username}_chesscom.pgn`);
 
           try {
-            // Delete database file if it exists
-            try {
-              await commands.deleteDatabase(dbPath);
-            } catch {
-              // Database file might not exist, ignore
-            }
-
             // Delete PGN file if it exists
             try {
               await remove(pgnPath);
             } catch {
               // PGN file might not exist, ignore
             }
+            try {
+              await remove(legacyPgnPath);
+            } catch {}
 
             // Delete analyzed games for this account
             try {
@@ -386,7 +391,15 @@ function LichessOrChessCom({
           } catch {}
 
           // Remove session
-          setSessions((sessions) => sessions.filter((s) => s.chessCom?.username !== session.chessCom?.username));
+          setSessions((sessions) =>
+            sessions.filter(
+              (s) =>
+                !(
+                  (s.profileId ?? null) === (session.profileId ?? null) &&
+                  s.chessCom?.username === session.chessCom?.username
+                ),
+            ),
+          );
         }}
         reload={async () => {
           if (!session.chessCom) return;
@@ -394,7 +407,9 @@ function LichessOrChessCom({
           if (!stats) return;
           setSessions((sessions) =>
             sessions.map((s) =>
-              session.chessCom && s.chessCom?.username === session.chessCom?.username
+              (s.profileId ?? null) === (session.profileId ?? null) &&
+              session.chessCom &&
+              s.chessCom?.username === session.chessCom?.username
                 ? {
                     ...s,
                     chessCom: {

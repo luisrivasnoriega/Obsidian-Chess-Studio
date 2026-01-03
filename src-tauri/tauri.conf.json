@@ -3,7 +3,7 @@
     "productName": "Obsidian Chess Studio",
     "version": "1.0.0",
     "mainBinaryName": "obsidian-chess-studio",
-    "identifier": "com.luisrivasnoriega.ocs",
+    "identifier": "ocs",
     "bundle": {
         "active": true,
         "category": "BoardGame",

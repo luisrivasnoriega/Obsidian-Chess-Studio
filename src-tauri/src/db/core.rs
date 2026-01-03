@@ -84,12 +84,11 @@ pub fn normalize_game(
 pub fn add_game(
     conn: &mut SqliteConnection,
     game: NewGame,
-) -> Result<Game> {
+) -> Result<bool> {
     use crate::db::schema::games;
 
-    Ok(diesel::insert_or_ignore_into(games::table)
-        .values(&game)
-        .get_result(conn)?)
+    let inserted = diesel::insert_or_ignore_into(games::table).values(&game).execute(conn)?;
+    Ok(inserted > 0)
 }
 
 
@@ -177,6 +176,6 @@ mod tests {
 
         let query = sql_query(GAMES_CHECK_INDEXES);
         let indexes: Vec<IndexInfo> = query.load(&mut db).unwrap();
-        assert!(indexes.is_empty());
+        assert!(indexes.iter().any(|i| i._name == "Games_Dedupe_UQ"));
     }
 }

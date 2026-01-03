@@ -114,47 +114,63 @@ function normalizeRange(range?: [number, number] | null): [number, number] | und
 }
 
 export async function query_games(db: string, query: GameQuery): Promise<QueryResponse<NormalizedGame[]>> {
-  return unwrap(
-    await commands.getGames(db, {
-      player1: query.player1,
-      range1: normalizeRange(query.range1),
-      player2: query.player2,
-      range2: normalizeRange(query.range2),
-      tournament_id: query.tournament_id,
-      sides: query.sides,
-      outcome: query.outcome,
-      start_date: query.start_date,
-      end_date: query.end_date,
-      position: null,
-      // Always include game_details_limit - use null if undefined
-      // The Rust deserializer with deserialize_option should handle null correctly
-      game_details_limit: query.game_details_limit ?? null,
-      wanted_result: query.wanted_result ?? null,
-      options: {
-        skipCount: query.options?.skipCount ?? false,
-        page: query.options?.page,
-        pageSize: query.options?.pageSize,
-        sort: query.options?.sort || "id",
-        direction: query.options?.direction || "desc",
-      },
-    }),
-  );
+  try {
+    return unwrap(
+      await commands.getGames(db, {
+        player1: query.player1,
+        range1: normalizeRange(query.range1),
+        player2: query.player2,
+        range2: normalizeRange(query.range2),
+        tournament_id: query.tournament_id,
+        sides: query.sides,
+        outcome: query.outcome,
+        start_date: query.start_date,
+        end_date: query.end_date,
+        position: null,
+        // Always include game_details_limit - use null if undefined
+        // The Rust deserializer with deserialize_option should handle null correctly
+        game_details_limit: query.game_details_limit ?? null,
+        wanted_result: query.wanted_result ?? null,
+        options: {
+          skipCount: query.options?.skipCount ?? false,
+          page: query.options?.page,
+          pageSize: query.options?.pageSize,
+          sort: query.options?.sort || "id",
+          direction: query.options?.direction || "desc",
+        },
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("no such table") && message.toLowerCase().includes("games")) {
+      return { data: [], count: 0 };
+    }
+    throw error;
+  }
 }
 
 export async function query_players(db: string, query: PlayerQuery): Promise<QueryResponse<Player[]>> {
-  return unwrap(
-    await commands.getPlayers(db, {
-      options: {
-        skipCount: query.options.skipCount || false,
-        page: query.options.page,
-        pageSize: query.options.pageSize,
-        sort: query.options.sort,
-        direction: query.options.direction,
-      },
-      name: query.name,
-      range: normalizeRange(query.range),
-    }),
-  );
+  try {
+    return unwrap(
+      await commands.getPlayers(db, {
+        options: {
+          skipCount: query.options.skipCount || false,
+          page: query.options.page,
+          pageSize: query.options.pageSize,
+          sort: query.options.sort,
+          direction: query.options.direction,
+        },
+        name: query.name,
+        range: normalizeRange(query.range),
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("no such table") && message.toLowerCase().includes("players")) {
+      return { data: [], count: 0 };
+    }
+    throw error;
+  }
 }
 
 export async function getDatabases(): Promise<DatabaseInfo[]> {

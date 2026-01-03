@@ -47,3 +47,8 @@ CREATE TABLE Games (
     FOREIGN KEY(WhiteID) REFERENCES Players,
     FOREIGN KEY(BlackID) REFERENCES Players
 );
+
+-- Prevent duplicate games across repeated imports.
+-- Matches the same criteria used by database/queries/games/delete_duplicates.sql
+CREATE UNIQUE INDEX IF NOT EXISTS Games_Dedupe_UQ
+ON Games (EventID, SiteID, Round, WhiteID, BlackID, Moves, Date, UTCTime);

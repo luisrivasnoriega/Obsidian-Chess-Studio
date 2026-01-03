@@ -14,6 +14,7 @@ import {
   IconSettings,
   IconTrophy,
   IconUpload,
+  IconUserCircle,
   IconUsers,
 } from "@tabler/icons-react";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
@@ -87,6 +88,7 @@ export const linksdata = [
   },
   { icon: IconFiles, label: "files", url: "/files" },
   { icon: IconUsers, label: "accounts", url: "/accounts" },
+  { icon: IconUserCircle, label: "profiles", url: "/profiles" },
   { icon: IconTrophy, label: "tournaments", url: "/tournaments" },
 ];
 

@@ -16,5 +16,6 @@ export type Session = {
   lichess?: LichessSession;
   chessCom?: ChessComSession;
   player?: string;
+  profileId?: string;
   updatedAt: number;
 };

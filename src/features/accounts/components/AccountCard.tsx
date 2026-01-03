@@ -36,15 +36,21 @@ import type { DatabaseInfo } from "@/bindings";
 import { commands, events } from "@/bindings";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { downloadChessCom } from "@/utils/chess.com/api";
-import { getDatabases, query_games } from "@/utils/db";
+import { getDatabases } from "@/utils/db";
 import { capitalize, parseDate } from "@/utils/format";
 import { downloadLichess } from "@/utils/lichess/api";
+import { getProfileDbPath, profileDbFilename } from "@/utils/profileDb";
+import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
+import { getAccountPgnPath } from "@/utils/accountPgnPaths";
+import { getAccountKey } from "@/utils/accountKeys";
+import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
 import type { Session } from "@/utils/session";
 import { unwrap } from "@/utils/unwrap";
 import LichessLogo from "./LichessLogo";
 
 interface AccountCardProps {
   name: string;
+  profileId: string | null;
   type: "lichess" | "chesscom";
   database: DatabaseInfo | null;
   title: string;
@@ -67,6 +73,7 @@ interface AccountCardProps {
 
 export function AccountCard({
   name,
+  profileId,
   type,
   database,
   title,
@@ -133,17 +140,16 @@ export function AccountCard({
   const [progress, setProgress] = useState<number | null>(null);
   const [edit, setEdit] = useState(false);
   const [text, setText] = useState(name);
+  const [downloadedGames, setDownloadedGames] = useState(0);
+  const accountKey = getAccountKey(type, title);
+  const downloadId = profileId ? `${type}_${profileId}_${title}` : `${type}_${title}`;
   useEffect(() => {
     setText(name);
   }, [name]);
 
-  async function convert(filepath: string, timestamp: number | null) {
+  async function convert(filepath: string, dbPath: string, timestamp: number | null) {
     info(`converting ${filepath} ${timestamp}`);
-    const filename = title + (type === "lichess" ? " Lichess" : " Chess.com");
-    // Ensure the database filename matches the expected format: ${title}_${type}.db3
-    // This is critical - the filename must match what we search for later
-    const expectedDbFilename = `${title}_${type}.db3`;
-    const dbPath = await resolve(await appDataDir(), "db", expectedDbFilename);
+    const filename = name;
     info(`Converting PGN to database: ${filepath} -> ${dbPath}`);
     try {
       unwrap(await commands.convertPgn(filepath, dbPath, timestamp ? timestamp / 1000 : null, filename, null));
@@ -155,7 +161,7 @@ export function AccountCard({
       throw err;
     }
     events.downloadProgress.emit({
-      id: `${type}_${title}`,
+      id: downloadId,
       progress: 100,
       finished: true,
     });
@@ -167,26 +173,28 @@ export function AccountCard({
   // Update currentDatabase when database prop changes or when databases are refreshed
   useEffect(() => {
     const findDatabase = async () => {
+      const expectedDbFilename = profileId ? profileDbFilename(profileId) : `${title}_${type}.db3`;
       const dbs = await getDatabases();
-      const found = dbs.find((db) => db.filename === `${title}_${type}.db3`) ?? null;
+      const found = dbs.find((db) => db.filename === expectedDbFilename) ?? null;
       if (!found) {
         // Try case-insensitive match
         const foundCaseInsensitive =
-          dbs.find((db) => db.filename.toLowerCase() === `${title}_${type}.db3`.toLowerCase()) ?? null;
+          dbs.find((db) => db.filename.toLowerCase() === expectedDbFilename.toLowerCase()) ?? null;
         setCurrentDatabase(foundCaseInsensitive);
       } else {
         setCurrentDatabase(found);
       }
     };
     findDatabase();
-  }, [database, type, title]);
+  }, [database, profileId, type, title]);
 
   useEffect(() => {
     const unlisten = events.downloadProgress.listen(async (e) => {
-      if (e.payload.id === `${type}_${title}`) {
+      if (e.payload.id === downloadId) {
         setProgress(e.payload.progress);
         if (e.payload.finished) {
           setLoading(false);
+          const expectedDbFilename = profileId ? profileDbFilename(profileId) : `${title}_${type}.db3`;
           // Wait a bit more to ensure database is fully written and indexed
           await new Promise((resolve) => setTimeout(resolve, 1000));
           // Refresh databases list multiple times to ensure we get the latest data
@@ -194,11 +202,11 @@ export function AccountCard({
           setDatabases(updatedDatabases);
 
           // Try to find the database, with retries if not found immediately
-          let found = updatedDatabases.find((db) => db.filename === `${title}_${type}.db3`) ?? null;
+          let found = updatedDatabases.find((db) => db.filename === expectedDbFilename) ?? null;
           if (!found) {
             // Try case-insensitive match
             found =
-              updatedDatabases.find((db) => db.filename.toLowerCase() === `${title}_${type}.db3`.toLowerCase()) ?? null;
+              updatedDatabases.find((db) => db.filename.toLowerCase() === expectedDbFilename.toLowerCase()) ?? null;
           }
 
           // If still not found, retry after a short delay
@@ -206,10 +214,10 @@ export function AccountCard({
             await new Promise((resolve) => setTimeout(resolve, 1000));
             updatedDatabases = await getDatabases();
             setDatabases(updatedDatabases);
-            found = updatedDatabases.find((db) => db.filename === `${title}_${type}.db3`) ?? null;
+            found = updatedDatabases.find((db) => db.filename === expectedDbFilename) ?? null;
             if (!found) {
               found =
-                updatedDatabases.find((db) => db.filename.toLowerCase() === `${title}_${type}.db3`.toLowerCase()) ??
+                updatedDatabases.find((db) => db.filename.toLowerCase() === expectedDbFilename.toLowerCase()) ??
                 null;
             }
           }
@@ -218,9 +226,16 @@ export function AccountCard({
             info(`Found database after download: ${found.filename} with ${found.game_count} games`);
             setCurrentDatabase(found);
           } else {
-            info(`Database not found after download: ${title}_${type}.db3`);
+            info(`Database not found after download: ${expectedDbFilename}`);
             // Log all available databases for debugging
             info(`Available databases: ${updatedDatabases.map((db) => db.filename).join(", ")}`);
+          }
+          if (profileId) {
+            try {
+              const dbPath = await getProfileDbPath(profileId);
+              const { count } = await getAccountSyncStateFromProfileDb(dbPath, accountKey);
+              setDownloadedGames(count);
+            } catch {}
           }
         } else {
           setLoading(true);
@@ -230,10 +245,26 @@ export function AccountCard({
     return () => {
       unlisten.then((f) => f());
     };
-  }, [setDatabases, type, title]);
+  }, [accountKey, downloadId, profileId, setDatabases, type, title]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCount = async () => {
+      if (!profileId) {
+        setDownloadedGames(currentDatabase?.type === "success" ? currentDatabase.game_count : 0);
+        return;
+      }
+      const dbPath = await getProfileDbPath(profileId);
+      const { count } = await getAccountSyncStateFromProfileDb(dbPath, accountKey);
+      if (!cancelled) setDownloadedGames(count);
+    };
+    loadCount().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accountKey, currentDatabase?.game_count, currentDatabase?.type, profileId]);
 
   // Use currentDatabase instead of database prop to ensure we have the latest data
-  const downloadedGames = currentDatabase?.type === "success" ? currentDatabase.game_count : 0;
   // If total is 0 or less than downloadedGames, use downloadedGames as minimum total
   // This handles cases where account.count.all might not be available or is outdated
   // If we have downloaded games, the total should be at least equal to downloadedGames
@@ -242,26 +273,6 @@ export function AccountCard({
   // Cap percentage at 100% to handle edge cases
   const percentage =
     effectiveTotal === 0 ? "0" : Math.min(100, Math.max(0, (downloadedGames / effectiveTotal) * 100)).toFixed(2);
-
-  async function getLastGameDate({ database: db }: { database: DatabaseInfo }) {
-    const games = await query_games(db.file, {
-      options: {
-        page: 1,
-        pageSize: 1,
-        sort: "date",
-        direction: "desc",
-        skipCount: false,
-      },
-    });
-    const count = games.count ?? 0;
-    if (count > 0 && games.data[0].date && games.data[0].time) {
-      const [year, month, day] = games.data[0].date.split(".").map(Number);
-      const [hour, minute, second] = games.data[0].time.split(":").map(Number);
-      const d = Date.UTC(year, month - 1, day, hour, minute, second);
-      return d;
-    }
-    return null;
-  }
 
   return (
     <Card
@@ -488,17 +499,35 @@ export function AccountCard({
                     onClick={async (e) => {
                       e.stopPropagation();
                       setLoading(true);
-                      const lastGameDate = currentDatabase
-                        ? await getLastGameDate({ database: currentDatabase })
-                        : null;
+                      const dbPath = profileId
+                        ? await getProfileDbPath(profileId)
+                        : await resolve(await appDataDir(), "db", `${title}_${type}.db3`);
+                      const { lastGameDate, count } = await getAccountSyncStateFromProfileDb(dbPath, accountKey);
+                      const appDir = await appDataDir();
+                      const pgnPath = await getAccountPgnPath({
+                        appDataDir: appDir,
+                        profileId: profileId ?? null,
+                        platform: type,
+                        username: title,
+                      });
                       if (type === "lichess") {
-                        await downloadLichess(title, lastGameDate, total - downloadedGames, setProgress, token);
+                        await downloadLichess(
+                          title,
+                          lastGameDate,
+                          Math.max(0, total - count),
+                          setProgress,
+                          token,
+                          pgnPath,
+                          downloadId,
+                        );
                       } else {
-                        await downloadChessCom(title, lastGameDate);
+                        await downloadChessCom(title, lastGameDate, pgnPath, downloadId);
                       }
-                      const p = await resolve(await appDataDir(), "db", `${title}_${type}.pgn`);
+                      await rewritePgnAccountTags(pgnPath, type, title);
                       try {
-                        await convert(p, lastGameDate);
+                        await convert(pgnPath, dbPath, lastGameDate);
+                        const { count: nextCount } = await getAccountSyncStateFromProfileDb(dbPath, accountKey);
+                        setDownloadedGames(nextCount);
                       } catch (e) {
                         notifications.show({
                           title: t("common.error"),

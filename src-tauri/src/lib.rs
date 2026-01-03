@@ -35,7 +35,7 @@ use crate::chess::{
     get_best_moves, analyze_game, get_engine_config, get_engine_logs, kill_engine, kill_engines, stop_engine
 };
 use crate::db::{
-    clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games,
+    clear_games, convert_pgn, init_profile_db, create_indexes, delete_database, delete_db_game, delete_empty_games,
     delete_indexes, export_to_pgn, export_position_games_to_pgn, export_selected_games_to_pgn, get_player, get_players_game_info, get_tournaments,
     precache_openings, search_position, download_position_cache,
 };
@@ -125,6 +125,7 @@ pub async fn run() {
             get_file_metadata,
             merge_players,
             convert_pgn,
+            init_profile_db,
             get_player,
             count_pgn_games,
             read_games,

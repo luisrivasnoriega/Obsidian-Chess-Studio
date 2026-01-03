@@ -71,6 +71,8 @@ const PRAGMA_PERFORMANCE: &str = include_str!("../../../database/pragmas/perform
 // Games queries
 const GAMES_CHECK_INDEXES: &str = include_str!("../../../database/queries/games/check_indexes.sql");
 const GAMES_DELETE_DUPLICATES: &str = include_str!("../../../database/queries/games/delete_duplicates.sql");
+const GAMES_CREATE_DEDUPE_UNIQUE_INDEX: &str =
+    include_str!("../../../database/queries/games/create_dedupe_unique_index.sql");
 
 const WHITE_PAWN: Piece = Piece {
     color: shakmaty::Color::White,
@@ -235,7 +237,7 @@ pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
         pawn_home: pawn_home as i32,
     };
 
-    core::add_game(db, new_game)?;
+    let _inserted = core::add_game(db, new_game)?;
 
     Ok(())
 }
@@ -293,6 +295,12 @@ pub async fn convert_pgn(
         }
         core::init_db(db, &title, &description)?;
     }
+
+    // Ensure dedupe protections are present even on existing databases.
+    // 1) Remove any existing duplicates (allows creating the unique index).
+    // 2) Create a unique index so INSERT OR IGNORE can reliably skip duplicates.
+    db.batch_execute(GAMES_DELETE_DUPLICATES)?;
+    db.batch_execute(GAMES_CREATE_DEDUPE_UNIQUE_INDEX)?;
 
     let file = File::open(&file)?;
 
@@ -379,6 +387,46 @@ pub async fn convert_pgn(
             .do_update()
             .set(info::value.eq(c.1.to_string()))
             .execute(db)?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn init_profile_db(
+    db_path: PathBuf,
+    title: String,
+    description: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let description = description.unwrap_or_default();
+    let db_exists = db_path.exists();
+
+    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+
+    let tables_exist = {
+        #[derive(QueryableByName)]
+        struct TableInfo {
+            #[diesel(sql_type = Text, column_name = "name")]
+            _name: String,
+        }
+
+        let result: std::result::Result<Vec<TableInfo>, _> = sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Players'",
+        )
+        .load(db);
+
+        result.is_ok() && !result.unwrap().is_empty()
+    };
+
+    let needs_init = !db_exists || !tables_exist;
+    if needs_init {
+        if !tables_exist && db_exists {
+            info!("Database file exists but tables are missing, reinitializing...");
+        }
+        core::init_db(db, &title, &description)?;
+        let _ = db.batch_execute(INDEXES_SQL);
     }
 
     Ok(())

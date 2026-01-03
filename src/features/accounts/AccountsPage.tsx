@@ -1,6 +1,7 @@
 import { Button, SegmentedControl, Stack } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconPlus } from "@tabler/icons-react";
+import { IconUserCircle } from "@tabler/icons-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader, { type SortState } from "@/components/GenericHeader";
@@ -9,11 +10,11 @@ import DatabaseDrawer from "./components/drawers/DatabaseDrawer";
 
 function AccountsPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [databasesOpened, { open: openDatabases, close: closeDatabases }] = useDisclosure(false);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortState>({ field: "name", direction: "asc" });
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
-  const [openModal, setOpenModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [platformFilter, setPlatformFilter] = useState<"all" | "lichess" | "chesscom">("all");
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
@@ -54,16 +55,14 @@ function AccountsPage() {
           />
         }
         actions={
-          <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={() => setOpenModal(true)}>
-            Add Account
+          <Button size="xs" variant="default" leftSection={<IconUserCircle size="1rem" />} onClick={() => navigate({ to: "/profiles" })}>
+            {t("profiles.title", { defaultValue: "Profiles" })}
           </Button>
         }
       />
 
       <Stack flex={1} style={{ overflow: "hidden" }} px="md" pb="md">
         <Accounts
-          open={openModal}
-          setOpen={setOpenModal}
           view={viewMode}
           query={query}
           sortBy={sortBy}
