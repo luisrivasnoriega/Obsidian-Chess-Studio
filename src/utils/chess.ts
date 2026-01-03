@@ -485,17 +485,57 @@ export function parseKeyboardMove(san: string, fen: string) {
   return null;
 }
 
+const openingLookupCache = new Map<string, string | null>();
+
 export async function getOpening(root: TreeNode, position: number[]): Promise<string> {
-  const tree = getNodeAtPath(root, position);
-  if (tree === null) {
-    return "";
+  const lookup = async (fen: string): Promise<string | null> => {
+    const cached = openingLookupCache.get(fen);
+    if (cached !== undefined) return cached;
+
+    const remember = (value: string | null) => {
+      openingLookupCache.set(fen, value);
+      return value;
+    };
+
+    try {
+      const res = await commands.getOpeningFromFen(fen);
+      if (res.status === "ok" && res.data) {
+        return remember(res.data);
+      }
+    } catch {
+      // ignore and try fallback
+    }
+
+    try {
+      const resInfo = await commands.getOpeningInfoFromFen(fen);
+      if (resInfo.status === "ok" && resInfo.data) {
+        const { opening, variation } = resInfo.data;
+        const full = variation && variation.trim().length > 0 ? `${opening}: ${variation}` : opening;
+        return remember(full);
+      }
+    } catch {
+      // ignore
+    }
+
+    return remember(null);
+  };
+
+  // Walk backwards along the current line until we find the most specific opening match.
+  let path = [...position];
+  while (path.length >= 0) {
+    const node = getNodeAtPath(root, path);
+    if (!node) break;
+
+    const opening = await lookup(node.fen);
+    if (opening && opening !== "") {
+      return opening;
+    }
+
+    if (path.length === 0) break;
+    path = path.slice(0, -1);
   }
-  // Directly search by FEN without backtracking - this ensures we match by position, not move order
-  const res = await commands.getOpeningFromFen(tree.fen);
-  if (res.status === "error") {
-    return "";
-  }
-  return res.data;
+
+  return "";
 }
 
 function innerParsePGN(tokens: Token[], fen: string = INITIAL_FEN, halfMoves = 0, isVariantsMode = false): TreeState {

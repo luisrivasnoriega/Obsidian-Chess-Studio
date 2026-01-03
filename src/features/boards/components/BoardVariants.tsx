@@ -299,18 +299,32 @@ function BoardVariants() {
       // We traverse the tree and only generate puzzles at positions where there are actual variations
       const MAX_DEPTH = 80; // increase if you want to traverse longer lines
 
-      const buildSolutionText = (moves: TreeNode[]) => {
-        return moves
-          .map((move, index) =>
-            getMoveText(move, {
-              glyphs: false,
-              comments: false,
-              extraMarkups: false,
-              isFirst: index === 0 || move.halfMoves % 2 === 0,
-            }),
-          )
-          .join("")
-          .trim();
+      const buildSolutionText = (startFen: string, moves: TreeNode[]) => {
+        const parts = startFen.trim().split(/\s+/);
+        const fullmove = Number(parts[5]) || 1;
+        const startHalfMove = (fullmove - 1) * 2 + (parts[1] === "b" ? 1 : 0);
+
+        const [pos] = positionFromFen(startFen);
+        if (!pos) return "";
+
+        let halfMove = startHalfMove;
+        const sanParts: string[] = [];
+
+        for (const move of moves) {
+          const parsedMove = move.move ?? parseSanOrUci(pos, move.san ?? "");
+          if (!parsedMove) return "";
+
+          const san = makeSan(pos, parsedMove);
+          const isBlack = halfMove % 2 === 1;
+          const moveNumber = Math.floor(halfMove / 2) + 1;
+          const prefix = isBlack ? `${moveNumber}... ` : `${moveNumber}. `;
+
+          sanParts.push(`${prefix}${san}`);
+          pos.play(parsedMove);
+          halfMove += 1;
+        }
+
+        return sanParts.join(" ").trim();
       };
 
       const memoMaxFromNode = new WeakMap<TreeNode, number>();
@@ -376,7 +390,7 @@ function BoardVariants() {
           const lines = collectLinesFromPosition(node);
           for (const line of lines) {
             if (line.length === 0) continue;
-            const solution = buildSolutionText(line);
+            const solution = buildSolutionText(node.fen, line);
             if (!solution) continue;
 
             puzzleCounter++;
@@ -885,8 +899,15 @@ function BoardVariants() {
         } catch {}
       }
       if (typeof state.setComment === "function") {
+        const previousPosition = Array.isArray(state.position) ? [...state.position] : null;
         try {
-          state.setComment(path, next);
+          if (typeof state.goToMove === "function") {
+            state.goToMove([...path]);
+          }
+          state.setComment(next);
+          if (previousPosition && typeof state.goToMove === "function") {
+            state.goToMove(previousPosition);
+          }
           return;
         } catch {}
       }

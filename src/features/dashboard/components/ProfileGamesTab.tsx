@@ -11,7 +11,6 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { getAnalyzedGamesBulk, getGameStatsBulk } from "@/utils/analyzedGames";
 import { stripAccountKey } from "@/utils/accountKeys";
 import type { ChessComGame } from "@/utils/chess.com/api";
@@ -451,17 +450,6 @@ export function ProfileGamesTab({
                       >
                         {t("features.dashboard.analyze") || "Analyze"}
                       </Button>
-                      <AnalysisPreview pgn={pgn}>
-                        <Button
-                          size="xs"
-                          variant="light"
-                          leftSection={<IconChartLine size={16} />}
-                          onClick={() => handleAnalyze(item)}
-                          disabled={!pgn && item.type !== "local"}
-                        >
-                          Report
-                        </Button>
-                      </AnalysisPreview>
                     </Group>
                   </Table.Td>
                 </Table.Tr>

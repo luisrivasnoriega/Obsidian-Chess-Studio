@@ -1179,7 +1179,7 @@ export default function DashboardPage() {
             return;
           }
 
-          const goMode: GoMode = { t: "Depth", c: config.depth };
+          const goMode: GoMode = { t: "Time", c: config.timeMs };
           const engineSettings = (defaultEngine.settings ?? []).map((s) => ({
             ...s,
             value: s.value?.toString() ?? "",

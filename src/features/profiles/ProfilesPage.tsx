@@ -1,4 +1,4 @@
-import {
+﻿import {
   ActionIcon,
   Badge,
   Button,
@@ -267,11 +267,12 @@ export default function ProfilesPage() {
   const startBackgroundSync = useCallback(
     (profile: Profile, session: Session) => {
       const username = session.lichess?.username ?? session.chessCom?.username ?? "account";
+      const meta = sessionMeta(session);
       const id = `sync:${profile.id}:${username}`;
       notifications.show({
         id,
         title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-        message: `${profile.name} · ${username}`,
+        message: `${profile.name} - ${username} (${meta.platform}) procesado`,
         loading: true,
         autoClose: false,
       });
@@ -284,10 +285,15 @@ export default function ProfilesPage() {
           notifications.update({
             id,
             title: t("common.success", { defaultValue: "Success" }),
-            message: `${profile.name} · ${username}`,
+            message: `${profile.name} - ${username} (${meta.platform}) procesado`,
             color: "green",
             loading: false,
             autoClose: 2500,
+          });
+          notifications.show({
+            title: t("common.success", { defaultValue: "Success" }),
+            message: `Termino de procesar la cuenta ${meta.platform} de ${username}`,
+            color: "green",
           });
         })
         .catch(() => {
@@ -636,3 +642,9 @@ export default function ProfilesPage() {
     </>
   );
 }
+
+
+
+
+
+

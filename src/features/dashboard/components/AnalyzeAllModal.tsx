@@ -3,20 +3,20 @@ import { useForm } from "@mantine/form";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-export type AnalysisSpeed = "express" | "swift" | "focused" | "advanced" | "deepdive";
+export type AnalysisSpeed = "t500" | "t1000" | "t1500" | "t2500" | "t3500";
 
 export interface AnalyzeAllConfig {
   speed: AnalysisSpeed;
-  depth: number;
+  timeMs: number;
   analyzeMode: "all" | "unanalyzed";
 }
 
-const getAnalysisOptions = (t: (key: string) => string): Record<AnalysisSpeed, { label: string; depth: number }> => ({
-  express: { label: t("features.dashboard.analysisSpeeds.express"), depth: 12 },
-  swift: { label: t("features.dashboard.analysisSpeeds.swift"), depth: 16 },
-  focused: { label: t("features.dashboard.analysisSpeeds.focused"), depth: 20 },
-  advanced: { label: t("features.dashboard.analysisSpeeds.advanced"), depth: 28 },
-  deepdive: { label: t("features.dashboard.analysisSpeeds.deepdive"), depth: 36 },
+const getAnalysisOptions = (): Record<AnalysisSpeed, { label: string; timeMs: number }> => ({
+  t500: { label: "500 ms", timeMs: 500 },
+  t1000: { label: "1000 ms", timeMs: 1000 },
+  t1500: { label: "1500 ms", timeMs: 1500 },
+  t2500: { label: "2500 ms", timeMs: 2500 },
+  t3500: { label: "3500 ms", timeMs: 3500 },
 });
 
 interface AnalyzeAllModalProps {
@@ -41,15 +41,15 @@ export function AnalyzeAllModal({
   analyzeMode = "unanalyzed",
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
-  const ANALYSIS_OPTIONS = getAnalysisOptions(t);
+  const ANALYSIS_OPTIONS = getAnalysisOptions();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const cancelledRef = useRef(false);
 
   const form = useForm<AnalyzeAllConfig>({
     initialValues: {
-      speed: "focused",
-      depth: 20,
+      speed: "t1000",
+      timeMs: 1000,
       analyzeMode: analyzeMode,
     },
   });
@@ -70,7 +70,7 @@ export function AnalyzeAllModal({
       await onAnalyze(
         {
           speed: form.values.speed,
-          depth: selectedOption.depth,
+          timeMs: selectedOption.timeMs,
           analyzeMode: form.values.analyzeMode,
         },
         (current, total) => {
@@ -108,8 +108,8 @@ export function AnalyzeAllModal({
     } else {
       // Reset form to initial values when modal opens
       form.setValues({
-        speed: "focused",
-        depth: 20,
+        speed: "t1000",
+        timeMs: 1000,
         analyzeMode: analyzeMode,
       });
     }

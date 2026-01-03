@@ -15,7 +15,6 @@ import {
   IconTrophy,
   IconUpload,
   IconUserCircle,
-  IconUsers,
 } from "@tabler/icons-react";
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
@@ -23,7 +22,7 @@ import { useAtom } from "jotai";
 import { useTranslation } from "react-i18next";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { createTab } from "@/utils/tabs";
+import { createTab, type Tab } from "@/utils/tabs";
 import * as classes from "./Sidebar.css";
 
 interface NavbarLinkProps {
@@ -87,7 +86,6 @@ export const linksdata = [
     url: "/databases",
   },
   { icon: IconFiles, label: "files", url: "/files" },
-  { icon: IconUsers, label: "accounts", url: "/accounts" },
   { icon: IconUserCircle, label: "profiles", url: "/profiles" },
   { icon: IconTrophy, label: "tournaments", url: "/tournaments" },
 ];
@@ -99,6 +97,29 @@ export function SideBar() {
   const [, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const { layout } = useResponsiveLayout();
+  const openTabAndNavigate = async ({
+    tab,
+    route,
+    initialAnalysisTab,
+    initialAnalysisSubTab,
+    initialNotationView,
+  }: {
+    tab: Omit<Tab, "value">;
+    route: "/play" | "/analysis" | "/puzzles";
+    initialAnalysisTab?: string;
+    initialAnalysisSubTab?: string;
+    initialNotationView?: "mainline" | "variations" | "repertoire" | "report";
+  }) => {
+    await createTab({
+      tab,
+      setTabs,
+      setActiveTab,
+      initialAnalysisTab,
+      initialAnalysisSubTab,
+      initialNotationView,
+    });
+    navigate({ to: route });
+  };
 
   const dashboardLinkData = linksdata.find((link) => link.url === "/")!;
   const dashboardLink = (
@@ -119,12 +140,10 @@ export function SideBar() {
       icon={IconPlayerPlay}
       label={t("maya.nav.playVsPc")}
       onClick={() => {
-        createTab({
+        void openTabAndNavigate({
           tab: { name: t("features.tabs.playBoard.title"), type: "play" },
-          setTabs,
-          setActiveTab,
+          route: "/play",
         });
-        navigate({ to: "/play" });
       }}
     />,
     <MayaActionLink
@@ -132,15 +151,13 @@ export function SideBar() {
       icon={IconChartLine}
       label={t("maya.nav.analysis")}
       onClick={() => {
-        createTab({
+        void openTabAndNavigate({
           tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
-          setTabs,
-          setActiveTab,
           initialAnalysisTab: "analysis",
           initialAnalysisSubTab: "report",
           initialNotationView: "report" as const,
+          route: "/analysis",
         });
-        navigate({ to: "/analysis" });
       }}
     />,
     <MayaActionLink
@@ -148,12 +165,10 @@ export function SideBar() {
       icon={IconPuzzle}
       label={t("maya.nav.puzzles")}
       onClick={() => {
-        createTab({
+        void openTabAndNavigate({
           tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
-          setTabs,
-          setActiveTab,
+          route: "/puzzles",
         });
-        navigate({ to: "/puzzles" });
       }}
     />,
     <MayaActionLink
