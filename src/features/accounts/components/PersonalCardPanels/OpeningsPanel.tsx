@@ -1,4 +1,4 @@
-import { Badge, Box, Card, Divider, Group, ScrollArea, Select, Stack, Text } from "@mantine/core";
+import { Box, Divider, Group, Select, Stack, Text } from "@mantine/core";
 import { useNavigate } from "@tanstack/react-router";
 import type { Color } from "chessops";
 import { useAtom } from "jotai";
@@ -8,12 +8,16 @@ import type { PlayerGameInfo } from "@/bindings";
 import { commands, type GameOutcome } from "@/bindings";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
-import { analyzePlayerStyle } from "@/utils/playerStyle";
 import { createTab } from "@/utils/tabs";
+import { getTimeControl } from "@/utils/timeControl";
 import { countMainPly, defaultTree } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
+import { DateRange } from "./DateRangeTabs";
 import * as classes from "./OpeningsPanel.css";
+import PlayerSidebarCard, { normalizePlatform, type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
 type OpeningStats = {
   name: string;
@@ -22,6 +26,24 @@ type OpeningStats = {
   draw: number;
   lost: number;
 };
+
+type OpeningSort = "games_desc" | "score_desc" | "score_asc";
+
+function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): number {
+  const lastDate = ratingDates[ratingDates.length - 1];
+  switch (dateRange) {
+    case DateRange.SevenDays:
+      return lastDate - 7 * MILLISECONDS_PER_DAY;
+    case DateRange.ThirtyDays:
+      return lastDate - 30 * MILLISECONDS_PER_DAY;
+    case DateRange.NinetyDays:
+      return lastDate - 90 * MILLISECONDS_PER_DAY;
+    case DateRange.OneYear:
+      return lastDate - 365 * MILLISECONDS_PER_DAY;
+    default:
+      return Math.min(...ratingDates);
+  }
+}
 
 function aggregateOpenings(
   data: { opening: string; result: GameOutcome; is_player_white: boolean }[],
@@ -40,9 +62,24 @@ function aggregateOpenings(
         });
         return acc;
       }, new Map()),
-  )
-    .map(([name, { won, draw, lost, total }]) => ({ name, games: total, won, draw, lost }))
-    .sort((a, b) => b.games - a.games);
+  ).map(([name, { won, draw, lost, total }]) => ({ name, games: total, won, draw, lost }));
+}
+
+function getScoreRate(opening: OpeningStats): number {
+  if (opening.games <= 0) return 0;
+  return (opening.won + opening.draw * 0.5) / opening.games;
+}
+
+function sortOpenings(openings: OpeningStats[], sortBy: OpeningSort): OpeningStats[] {
+  const sorted = [...openings];
+  switch (sortBy) {
+    case "score_asc":
+      return sorted.sort((a, b) => getScoreRate(a) - getScoreRate(b));
+    case "score_desc":
+      return sorted.sort((a, b) => getScoreRate(b) - getScoreRate(a));
+    default:
+      return sorted.sort((a, b) => b.games - a.games);
+  }
 }
 
 function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerGameInfo }) {
@@ -55,17 +92,14 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
           opening: g.opening,
           result: g.result,
           is_player_white: g.is_player_white,
-          player_elo: g.player_elo,
           opponent_elo: g.opponent_elo,
           site: d.site,
           time_control: g.time_control,
-          account: d.player,
+          date: g.date,
         })),
       ) ?? [],
     [info?.site_stats_data],
   );
-
-  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
 
   const opponentEloOptions = useMemo(() => {
     const buckets = new Set<number>();
@@ -82,121 +116,137 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
   }, [openingData, t]);
 
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
+  const [platform, setPlatform] = useState<PlatformFilter>("all");
+  const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
+  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
+  const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
+
+  const dates = useMemo(() => {
+    const timezoneOffset = new Date().getTimezoneOffset() * 60 * 1000; // milliseconds
+    const localDate = new Date(Date.now() - timezoneOffset);
+    const todayString = localDate.toISOString().slice(0, 10);
+    const today = new Date(todayString).getTime();
+
+    const gameDates = openingData
+      .map((game) => {
+        if (!game.date) return null;
+        return new Date(game.date.replaceAll(".", "-")).getTime();
+      })
+      .filter((date): date is number => Number.isFinite(date));
+
+    return Array.from(new Set([today, ...gameDates])).sort((a, b) => a - b);
+  }, [openingData]);
 
   const filteredOpeningData = useMemo(() => {
-    if (opponentEloBucket === "all") return openingData;
-    const start = Number.parseInt(opponentEloBucket, 10);
-    if (!Number.isFinite(start)) return openingData;
-    const end = start + 199;
-    return openingData.filter(
-      (g) => typeof g.opponent_elo === "number" && g.opponent_elo >= start && g.opponent_elo <= end,
-    );
-  }, [openingData, opponentEloBucket]);
+    let data = openingData;
 
-  const accountStats = useMemo(() => {
-    const map = new Map<string, { games: number; elo: number; site: string; account: string }>();
-    for (const g of filteredOpeningData) {
-      const accountName = g.account || "Unknown";
-      const key = `${g.site}:${accountName}`;
-      const prev = map.get(key) ?? { games: 0, elo: 0, site: g.site, account: accountName };
-      map.set(key, {
-        account: accountName,
-        games: prev.games + 1,
-        elo: typeof g.player_elo === "number" ? Math.max(prev.elo, g.player_elo) : prev.elo,
-        site: g.site,
+    if (platform !== "all") {
+      data = data.filter((g) => normalizePlatform(g.site) === platform);
+    }
+    if (timeControl !== "any") {
+      data = data.filter((g) => getTimeControl(g.site, g.time_control) === timeControl);
+    }
+    if (opponentEloBucket !== "all") {
+      const start = Number.parseInt(opponentEloBucket, 10);
+      if (Number.isFinite(start)) {
+        const end = start + 199;
+        data = data.filter(
+          (g) => typeof g.opponent_elo === "number" && g.opponent_elo >= start && g.opponent_elo <= end,
+        );
+      }
+    }
+
+    if (dateRange && dates.length > 0) {
+      const earliestDate = calculateEarliestDate(dateRange, dates);
+      data = data.filter((g) => {
+        if (!g.date) return false;
+        const gameDate = new Date(g.date.replaceAll(".", "-")).getTime();
+        return gameDate >= earliestDate;
       });
     }
-    return Array.from(map.entries())
-      .map(([key, val]) => ({ key, ...val }))
-      .sort((a, b) => b.games - a.games || a.site.localeCompare(b.site));
-  }, [filteredOpeningData]);
+
+    return data;
+  }, [openingData, opponentEloBucket, platform, timeControl, dateRange, dates]);
 
   const whiteGames = filteredOpeningData.filter((g) => g.is_player_white).length;
   const blackGames = filteredOpeningData.filter((g) => !g.is_player_white).length;
 
   const whiteOpenings = aggregateOpenings(filteredOpeningData, "white");
   const blackOpenings = aggregateOpenings(filteredOpeningData, "black");
-  const rowCount = Math.max(whiteOpenings.length, blackOpenings.length);
+  const sortedWhiteOpenings = useMemo(() => sortOpenings(whiteOpenings, sortBy), [whiteOpenings, sortBy]);
+  const sortedBlackOpenings = useMemo(() => sortOpenings(blackOpenings, sortBy), [blackOpenings, sortBy]);
+  const rowCount = Math.max(sortedWhiteOpenings.length, sortedBlackOpenings.length);
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
-      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
-        <Card
-          withBorder
-          radius="md"
-          shadow="sm"
-          bg="var(--mantine-color-dark-6)"
-          h="100%"
-          style={{ overflow: "hidden" }}
-        >
-          <ScrollArea h="100%" offsetScrollbars>
-            <Stack gap="sm">
-              <Text fz="lg" fw={700} ta="center">
-                {playerName}
-              </Text>
-              <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
-                {t(playerStyle.label)}
-              </Badge>
-              <Text fz="xs" c="dimmed" ta="center">
-                {t(playerStyle.description)}
-              </Text>
-              <Divider />
-              <Select
-                label={t("accounts.opponentElo", { defaultValue: "Opponent Elo" })}
-                data={opponentEloOptions}
-                value={opponentEloBucket}
-                onChange={(v) => setOpponentEloBucket(v || "all")}
-                clearable={false}
-                searchable
-                size="xs"
-              />
-              <Divider />
-              <Stack gap="xs">
-                <Text fw={600}>{t("common.elo", { defaultValue: "Elo" })}</Text>
-                {accountStats.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    {t("common.noData", { defaultValue: "No data" })}
-                  </Text>
-                ) : (
-                  accountStats.map(({ key, games, elo, site, account }) => (
-                    <Group key={key} justify="space-between" align="flex-start" wrap="nowrap">
-                      <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                        <Text fw={600} style={{ wordBreak: "break-all" }}>
-                          {account}
-                        </Text>
-                        <Text size="xs" c="dimmed" style={{ wordBreak: "break-word" }}>
-                          {site}
-                        </Text>
-                      </Stack>
-                      <Text fw={700} style={{ whiteSpace: "nowrap" }}>
-                        {elo > 0 ? elo : "-"} - {games} {t("common.games.other", { count: games })}
-                      </Text>
-                    </Group>
-                  ))
-                )}
-              </Stack>
-            </Stack>
-          </ScrollArea>
-        </Card>
+    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0, width: "100%" }}>
+      <Box
+        style={{
+          flex: "0 0 auto",
+          width: "clamp(280px, 28%, 360px)",
+          minWidth: 280,
+          maxWidth: 360,
+          minHeight: 0,
+        }}
+      >
+        <PlayerSidebarCard
+          playerName={playerName}
+          info={info}
+          platform={platform}
+          onPlatformChange={setPlatform}
+          timeControl={timeControl}
+          onTimeControlChange={setTimeControl}
+          opponentEloOptions={opponentEloOptions}
+          opponentEloBucket={opponentEloBucket}
+          onOpponentEloChange={setOpponentEloBucket}
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
+        />
       </Box>
 
-      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+      {/* RIGHT */}
+      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", width: "100%" }}>
+        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", width: "100%" }}>
+          <Group justify="flex-end" p="md" pb={0}>
+            <Select
+              label={t("common.sort", { defaultValue: "Sort" })}
+              size="xs"
+              value={sortBy}
+              data={[
+                { value: "games_desc", label: t("accounts.openings.sort.gamesDesc", { defaultValue: "Most games" }) },
+                {
+                  value: "score_desc",
+                  label: t("accounts.openings.sort.scoreDesc", { defaultValue: "Score (high to low)" }),
+                },
+                {
+                  value: "score_asc",
+                  label: t("accounts.openings.sort.scoreAsc", { defaultValue: "Score (low to high)" }),
+                },
+              ]}
+              onChange={(value) => setSortBy((value as OpeningSort) || "games_desc")}
+              clearable={false}
+            />
+          </Group>
           {rowCount === 0 ? (
             <Text size="sm" c="dimmed" p="md">
               {t("common.noData", { defaultValue: "No data" })}
             </Text>
           ) : (
-            <Stack gap={0} style={{ minWidth: 0 }}>
+            <Stack gap="md" p="md" style={{ minWidth: 0, minHeight: 0, width: "100%" }}>
               {Array.from({ length: rowCount }, (_, index) => {
-                const white = whiteOpenings[index];
-                const black = blackOpenings[index];
+                const white = sortedWhiteOpenings[index];
+                const black = sortedBlackOpenings[index];
                 const key = `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
+
                 return (
-                  <Box key={key}>
-                    <Group grow>
-                      {white ? <OpeningDetail opening={white} totalGames={whiteGames} color="white" /> : <div />}
-                      {black ? <OpeningDetail opening={black} totalGames={blackGames} color="black" /> : <div />}
+                  <Box key={key} style={{ minWidth: 0 }}>
+                    {/* Two fixed columns that can shrink properly */}
+                    <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        {white ? <OpeningDetail opening={white} totalGames={whiteGames} color="white" /> : <div />}
+                      </Box>
+                      <Box style={{ flex: 1, minWidth: 0 }}>
+                        {black ? <OpeningDetail opening={black} totalGames={blackGames} color="black" /> : <div />}
+                      </Box>
                     </Group>
                     <Divider />
                   </Box>
@@ -216,17 +266,20 @@ function OpeningDetail({ opening, totalGames, color }: { opening: OpeningStats; 
   const navigate = useNavigate();
 
   const openingRate = opening.games / Math.max(totalGames, 1);
+
   return (
-    <Stack py="sm" justify="space-between">
-      <Group justify="space-between" wrap="nowrap">
+    <Stack py="sm" justify="space-between" style={{ minWidth: 0, height: "100%" }}>
+      <Group justify="space-between" wrap="nowrap" gap="xs" style={{ minWidth: 0 }}>
         <Text
           lineClamp={2}
+          style={{ flex: 1, minWidth: 0 }} // <- critical: allow shrink + clamp
           className={classes.link}
           onClick={async () => {
             const pgn = unwrap(await commands.getOpeningFromName(opening.name));
             const headers = defaultTree().headers;
             const tree = await parsePGN(pgn);
             headers.orientation = color;
+
             createTab({
               tab: { name: opening.name, type: "analysis" },
               pgn,
@@ -235,13 +288,16 @@ function OpeningDetail({ opening, totalGames, color }: { opening: OpeningStats; 
               setActiveTab,
               position: Array(countMainPly(tree.root)).fill(0),
             });
+
             navigate({ to: "/analysis" });
           }}
         >
           {opening.name}
         </Text>
-        <Text>{(openingRate * 100).toFixed(2)}%</Text>
+
+        <Text style={{ flex: "0 0 auto" }}>{(openingRate * 100).toFixed(2)}%</Text>
       </Group>
+
       <ResultsChart won={opening.won} draw={opening.draw} lost={opening.lost} size="1.5rem" />
     </Stack>
   );

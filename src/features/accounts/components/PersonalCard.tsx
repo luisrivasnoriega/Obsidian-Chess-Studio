@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Box, Flex, Paper, Select, Tabs, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Box, Flex, Paper, Select, Tabs, Tooltip } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useContext, useEffect, useMemo, useState } from "react";
@@ -9,7 +9,6 @@ import { DatabaseViewStateContext } from "@/features/databases/components/Databa
 import FideInfo from "@/features/databases/components/drawers/FideInfo";
 import { sessionsAtom } from "@/state/atoms";
 import type { DatabaseViewStore } from "@/state/store/database";
-import { analyzePlayerStyle } from "@/utils/playerStyle";
 import OpeningsPanel from "./PersonalCardPanels/OpeningsPanel";
 import OverviewPanel from "./PersonalCardPanels/OverviewPanel";
 import RatingsPanel from "./PersonalCardPanels/RatingsPanel";
@@ -43,13 +42,12 @@ function PersonalPlayerCard({
     new Set(sessions.map((s) => s.player || s.lichess?.username || s.chessCom?.username || "")),
   ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
-  // Analyze player style from openings
-  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
   const allowedTabs = useMemo<PlayerTabs>(() => {
     const defaults: PlayerTabs = ["overview", "ratings", "openings"];
     return defaults.filter((tab) => visibleTabs.includes(tab));
   }, [visibleTabs]);
   const isOpeningsTab = (activeTab ?? allowedTabs[0]) === "openings";
+  const showHeaderSelector = !isOpeningsTab && showPlayerSelector && setName != null;
 
   useEffect(() => {
     if (!allowedTabs.includes((activeTab ?? "overview") as PlayerTabs[number])) {
@@ -66,7 +64,7 @@ function PersonalPlayerCard({
       style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
     >
       <FideInfo key={name} opened={opened} setOpened={setOpened} name={name} />
-      {!isOpeningsTab && (
+      {!isOpeningsTab && showPlayerSelector && setName && (
         <Box pos="relative">
           {name !== "Stats" && (
             <Tooltip label={t("accounts.personalCard.fideInfo")}>
@@ -75,50 +73,26 @@ function PersonalPlayerCard({
               </ActionIcon>
             </Tooltip>
           )}
-          {setName && showPlayerSelector ? (
-            <Flex justify="center" direction="column" gap="xs">
-              <Select
-                value={name}
-                data={players}
-                onChange={(e) => setName(e || "")}
-                clearable={false}
-                fw="bold"
-                styles={{
-                  input: {
-                    textAlign: "center",
-                    fontSize: "1.25rem",
-                  },
-                }}
-              />
-              <Flex direction="column" gap={4} align="center">
-                <Badge color={playerStyle.color} variant="light" size="lg">
-                  {t(playerStyle.label)}
-                </Badge>
-                <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
-                  {t(playerStyle.description)}
-                </Text>
-              </Flex>
-            </Flex>
-          ) : (
-            <Flex direction="column" gap="xs" align="center">
-              <Text fz="lg" fw={500} ta="center">
-                {name}
-              </Text>
-              <Flex direction="column" gap={4} align="center">
-                <Badge color={playerStyle.color} variant="light" size="lg">
-                  {t(playerStyle.label)}
-                </Badge>
-                <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
-                  {t(playerStyle.description)}
-                </Text>
-              </Flex>
-            </Flex>
-          )}
+          <Flex justify="center" direction="column" gap="xs">
+            <Select
+              value={name}
+              data={players}
+              onChange={(e) => setName(e || "")}
+              clearable={false}
+              fw="bold"
+              styles={{
+                input: {
+                  textAlign: "center",
+                  fontSize: "1.25rem",
+                },
+              }}
+            />
+          </Flex>
         </Box>
       )}
       {allowedTabs.length > 1 ? (
         <Tabs
-          mt="xs"
+          mt={showHeaderSelector ? "xs" : 0}
           keepMounted={false}
           value={activeTab}
           onChange={(v) => setActiveTab(v as DatabaseViewStore["players"]["activeTab"])}
@@ -128,6 +102,7 @@ function PersonalPlayerCard({
             overflow: "hidden",
             display: "flex",
             flexDirection: "column",
+            minHeight: 0,
           }}
         >
           <Tabs.List>
@@ -163,7 +138,10 @@ function PersonalPlayerCard({
         <>
           {allowedTabs.includes("overview") && <OverviewPanel playerName={name} info={info} />}
           {allowedTabs.includes("openings") && (
-            <Box mt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+            <Box
+              mt={showHeaderSelector ? "xs" : 0}
+              style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}
+            >
               <OpeningsPanel playerName={name} info={info} />
             </Box>
           )}

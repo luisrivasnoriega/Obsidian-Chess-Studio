@@ -1,12 +1,15 @@
 ﻿import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Card,
+  Center,
   Divider,
   Flex,
   Group,
   Modal,
+  Pagination,
   ScrollArea,
   Select,
   Stack,
@@ -70,6 +73,8 @@ export default function ProfilesPage() {
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftFideId, setDraftFideId] = useState("");
+  const [profilesPage, setProfilesPage] = useState(1);
+  const profilesPerPage = 5;
 
   const sessionsByProfileId = useMemo(() => {
     const map = new Map<string, Session[]>();
@@ -94,6 +99,24 @@ export default function ProfilesPage() {
     list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     return list;
   }, [filteredProfiles]);
+
+  const totalProfilePages = useMemo(
+    () => Math.max(1, Math.ceil(sortedProfiles.length / profilesPerPage)),
+    [sortedProfiles.length],
+  );
+
+  useEffect(() => {
+    setProfilesPage(1);
+  }, [profileQuery]);
+
+  useEffect(() => {
+    setProfilesPage((page) => Math.min(page, totalProfilePages));
+  }, [totalProfilePages]);
+
+  const pagedProfiles = useMemo(() => {
+    const start = (profilesPage - 1) * profilesPerPage;
+    return sortedProfiles.slice(start, start + profilesPerPage);
+  }, [profilesPage, sortedProfiles]);
 
   const profilesSelectData = useMemo(() => profiles.map((p) => ({ value: p.id, label: p.name })), [profiles]);
   const activeProfile = useMemo(
@@ -491,266 +514,287 @@ export default function ProfilesPage() {
         actions={undefined}
       />
 
-      <Stack flex={1} px="md" pb="md" style={{ overflow: "hidden" }}>
-        <Card withBorder radius="md" p="md">
-          <Flex gap="sm" justify="space-between" align="flex-end" wrap="wrap">
-            <Stack gap={2}>
-              <Group gap="xs" wrap="nowrap">
-                <Text fw={700}>{t("profiles.listTitle", { defaultValue: "Profiles" })}</Text>
-                <Badge variant="light" color="gray">
-                  {sortedProfiles.length}
-                </Badge>
-              </Group>
-              <Text size="sm" c="dimmed">
-                {t("profiles.linkAccountsHint", {
-                  defaultValue: "Assign each account to a profile. All games will be stored in the profile database.",
-                })}
-              </Text>
-            </Stack>
-            <Group gap="xs" wrap="nowrap">
-              <Button size="xs" variant="default" leftSection={<IconPlus size="1rem" />} onClick={openAddAccountModal}>
-                {t("accounts.addAccount", { defaultValue: "Add Account" })}
-              </Button>
-              <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
-                {t("profiles.add", { defaultValue: "Add Profile" })}
-              </Button>
-            </Group>
-          </Flex>
+      <Stack flex={1} style={{ minHeight: 0 }}>
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack px="md" pb="xl">
+            <Card withBorder radius="md" p="md">
+              <Flex gap="sm" justify="space-between" align="flex-end" wrap="wrap">
+                <Stack gap={2}>
+                  <Group gap="xs" wrap="nowrap">
+                    <Text fw={700}>{t("profiles.listTitle", { defaultValue: "Profiles" })}</Text>
+                    <Badge variant="light" color="gray">
+                      {sortedProfiles.length}
+                    </Badge>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    {t("profiles.linkAccountsHint", {
+                      defaultValue:
+                        "Assign each account to a profile. All games will be stored in the profile database.",
+                    })}
+                  </Text>
+                </Stack>
+                <Group gap="xs" wrap="nowrap">
+                  <Button
+                    size="xs"
+                    variant="default"
+                    leftSection={<IconPlus size="1rem" />}
+                    onClick={openAddAccountModal}
+                  >
+                    {t("accounts.addAccount", { defaultValue: "Add Account" })}
+                  </Button>
+                  <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
+                    {t("profiles.add", { defaultValue: "Add Profile" })}
+                  </Button>
+                </Group>
+              </Flex>
 
-          <Divider my="sm" />
+              <Divider my="sm" />
 
-          <TextInput
-            placeholder={t("profiles.searchPlaceholder", { defaultValue: "Search profiles..." })}
-            value={profileQuery}
-            onChange={(e) => setProfileQuery(e.currentTarget.value)}
-            size="xs"
-          />
+              <TextInput
+                placeholder={t("profiles.searchPlaceholder", { defaultValue: "Search profiles..." })}
+                value={profileQuery}
+                onChange={(e) => setProfileQuery(e.currentTarget.value)}
+                size="xs"
+              />
 
-          <Divider my="sm" />
+              <Divider my="sm" />
 
-          <ScrollArea mah="55vh" type="auto" offsetScrollbars>
-            <Table withTableBorder highlightOnHover striped>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th style={{ width: 240 }}>{t("profiles.profile", { defaultValue: "Profile" })}</Table.Th>
-                  <Table.Th style={{ width: 120 }}>{t("profiles.fideId", { defaultValue: "FIDE ID" })}</Table.Th>
-                  <Table.Th>{t("accounts.title", { defaultValue: "Accounts" })}</Table.Th>
-                  <Table.Th style={{ width: 160 }}>{t("common.actions", { defaultValue: "Actions" })}</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {sortedProfiles.map((profile) => {
-                  const isActive = profile.id === activeProfileId;
-                  const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
-
-                  return (
-                    <Table.Tr
-                      key={profile.id}
-                      style={{
-                        background: isActive ? "var(--mantine-color-dark-6)" : undefined,
-                      }}
-                    >
-                      <Table.Td>
-                        <Group gap="xs" wrap="nowrap">
-                          <Text fw={700} truncate>
-                            {profile.name}
-                          </Text>
-                          {isActive && (
-                            <Badge size="xs" color="teal" variant="light">
-                              {t("profiles.active", { defaultValue: "Active" })}
-                            </Badge>
-                          )}
-                        </Group>
-                        <Text size="xs" c="dimmed">
-                          {t("profiles.accountsCount", {
-                            defaultValue: "{{count}} accounts",
-                            count: linkedSessions.length,
-                          })}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">{profile.fideId || "-"}</Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Stack gap={6}>
-                          {linkedSessions.map((session) => {
-                            const meta = sessionMeta(session);
-                            const sessionIndex = sessions.indexOf(session);
-                            if (sessionIndex < 0) return null;
-                            return (
-                              <Group
-                                key={`${profile.id}:${meta.platform}:${meta.username}`}
-                                gap="xs"
-                                wrap="nowrap"
-                                justify="space-between"
-                              >
-                                <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                                  <Badge size="xs" variant="light" color={meta.platform === "lichess" ? "red" : "blue"}>
-                                    {meta.platform === "chesscom" ? "Chess.com" : meta.platform}
-                                  </Badge>
-                                  <Text size="sm" truncate>
-                                    {meta.username}
-                                  </Text>
-                                </Group>
-                                <Group gap="xs" wrap="nowrap">
-                                  <Select
-                                    size="xs"
-                                    data={profilesSelectData}
-                                    value={profile.id}
-                                    onChange={(value) => {
-                                      if (!value) return;
-                                      assignSessionToProfile(sessionIndex, value);
-                                    }}
-                                    searchable
-                                    clearable={false}
-                                    w={180}
-                                  />
-                                  <ActionIcon
-                                    size="sm"
-                                    color="red"
-                                    variant="subtle"
-                                    onClick={() => void removeSession(session)}
-                                    title={t("common.delete", { defaultValue: "Delete" })}
-                                  >
-                                    <IconTrash size={16} />
-                                  </ActionIcon>
-                                </Group>
-                              </Group>
-                            );
-                          })}
-                          {linkedSessions.length === 0 ? (
-                            <Text size="sm" c="dimmed">
-                              {t("profiles.noAccounts", { defaultValue: "No accounts linked to this profile yet." })}
-                            </Text>
-                          ) : null}
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>
-                        <Group gap={4} wrap="nowrap" justify="flex-end">
-                          {!isActive && (
-                            <ActionIcon
-                              variant="subtle"
-                              onClick={() => setActiveProfile(profile.id)}
-                              title={t("profiles.setActive", { defaultValue: "Set active" })}
-                            >
-                              <IconCheck size={16} />
-                            </ActionIcon>
-                          )}
-                          <ActionIcon
-                            variant="subtle"
-                            onClick={() => openAddAccountModalForProfile(profile.id)}
-                            title={t("accounts.addAccount", { defaultValue: "Add Account" })}
-                          >
-                            <IconPlus size={16} />
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="subtle"
-                            onClick={() => openEditModal(profile)}
-                            title={t("common.edit", { defaultValue: "Edit" })}
-                          >
-                            <IconEdit size={16} />
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="subtle"
-                            color="red"
-                            onClick={() => deleteProfile(profile)}
-                            title={t("common.delete", { defaultValue: "Delete" })}
-                          >
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </Group>
-                      </Table.Td>
+              <Box>
+                <Table withTableBorder highlightOnHover striped>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th style={{ width: 240 }}>{t("profiles.profile", { defaultValue: "Profile" })}</Table.Th>
+                      <Table.Th style={{ width: 120 }}>{t("profiles.fideId", { defaultValue: "FIDE ID" })}</Table.Th>
+                      <Table.Th>{t("accounts.title", { defaultValue: "Accounts" })}</Table.Th>
+                      <Table.Th style={{ width: 160 }}>{t("common.actions", { defaultValue: "Actions" })}</Table.Th>
                     </Table.Tr>
-                  );
-                })}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        </Card>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {pagedProfiles.map((profile) => {
+                      const isActive = profile.id === activeProfileId;
+                      const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
 
-        <Card withBorder radius="md" p="md">
-          <Tabs defaultValue="database" keepMounted={false}>
-            <Tabs.List>
-              <Tabs.Tab value="database">{t("profiles.tabs.database", { defaultValue: "Database" })}</Tabs.Tab>
-              <Tabs.Tab value="overview">
-                {t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" })}
-              </Tabs.Tab>
-              <Tabs.Tab value="ratings">
-                {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
-              </Tabs.Tab>
-              <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
-              <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
-              <Tabs.Tab value="pawnStructures">
-                {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
-              </Tabs.Tab>
-            </Tabs.List>
-
-            <Tabs.Panel value="database" pt="sm">
-              {!activeProfileId ? (
-                <Text size="sm" c="dimmed">
-                  {t("profiles.selectProfile", { defaultValue: "Select profile" })}
-                </Text>
-              ) : dbLoading ? (
-                <Text size="sm" c="dimmed">
-                  {t("common.loading", { defaultValue: "Loading..." })}
-                </Text>
-              ) : !profileDatabase ? (
-                <Text size="sm" c="dimmed">
-                  {t("profiles.tabs.databaseMissing", { defaultValue: "No database found for this profile." })}
-                </Text>
-              ) : (
-                <DatabaseDetails
-                  selectedDatabase={profileDatabase}
-                  isReference={referenceDb === profileDatabase.file}
-                  onChangeReference={changeReferenceDatabase}
-                  mutate={mutateDatabases}
-                  exportLoading={exportLoading}
-                  setExportLoading={setExportLoading}
-                  convertLoading={convertLoading}
-                  setConvertLoading={setConvertLoading}
-                  onSelect={() => {}}
-                  refreshPuzzleDatabases={refreshPuzzleDatabases}
-                />
+                      return (
+                        <Table.Tr
+                          key={profile.id}
+                          style={{
+                            background: isActive ? "var(--mantine-color-dark-6)" : undefined,
+                          }}
+                        >
+                          <Table.Td>
+                            <Group gap="xs" wrap="nowrap">
+                              <Text fw={700} truncate>
+                                {profile.name}
+                              </Text>
+                              {isActive && (
+                                <Badge size="xs" color="teal" variant="light">
+                                  {t("profiles.active", { defaultValue: "Active" })}
+                                </Badge>
+                              )}
+                            </Group>
+                            <Text size="xs" c="dimmed">
+                              {t("profiles.accountsCount", {
+                                defaultValue: "{{count}} accounts",
+                                count: linkedSessions.length,
+                              })}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm">{profile.fideId || "-"}</Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Stack gap={6}>
+                              {linkedSessions.map((session) => {
+                                const meta = sessionMeta(session);
+                                const sessionIndex = sessions.indexOf(session);
+                                if (sessionIndex < 0) return null;
+                                return (
+                                  <Group
+                                    key={`${profile.id}:${meta.platform}:${meta.username}`}
+                                    gap="xs"
+                                    wrap="nowrap"
+                                    justify="space-between"
+                                  >
+                                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                                      <Badge
+                                        size="xs"
+                                        variant="light"
+                                        color={meta.platform === "lichess" ? "red" : "blue"}
+                                      >
+                                        {meta.platform === "chesscom" ? "Chess.com" : meta.platform}
+                                      </Badge>
+                                      <Text size="sm" truncate>
+                                        {meta.username}
+                                      </Text>
+                                    </Group>
+                                    <Group gap="xs" wrap="nowrap">
+                                      <Select
+                                        size="xs"
+                                        data={profilesSelectData}
+                                        value={profile.id}
+                                        onChange={(value) => {
+                                          if (!value) return;
+                                          assignSessionToProfile(sessionIndex, value);
+                                        }}
+                                        searchable
+                                        clearable={false}
+                                        w={180}
+                                      />
+                                      <ActionIcon
+                                        size="sm"
+                                        color="red"
+                                        variant="subtle"
+                                        onClick={() => void removeSession(session)}
+                                        title={t("common.delete", { defaultValue: "Delete" })}
+                                      >
+                                        <IconTrash size={16} />
+                                      </ActionIcon>
+                                    </Group>
+                                  </Group>
+                                );
+                              })}
+                              {linkedSessions.length === 0 ? (
+                                <Text size="sm" c="dimmed">
+                                  {t("profiles.noAccounts", {
+                                    defaultValue: "No accounts linked to this profile yet.",
+                                  })}
+                                </Text>
+                              ) : null}
+                            </Stack>
+                          </Table.Td>
+                          <Table.Td>
+                            <Group gap={4} wrap="nowrap" justify="flex-end">
+                              {!isActive && (
+                                <ActionIcon
+                                  variant="subtle"
+                                  onClick={() => setActiveProfile(profile.id)}
+                                  title={t("profiles.setActive", { defaultValue: "Set active" })}
+                                >
+                                  <IconCheck size={16} />
+                                </ActionIcon>
+                              )}
+                              <ActionIcon
+                                variant="subtle"
+                                onClick={() => openAddAccountModalForProfile(profile.id)}
+                                title={t("accounts.addAccount", { defaultValue: "Add Account" })}
+                              >
+                                <IconPlus size={16} />
+                              </ActionIcon>
+                              <ActionIcon
+                                variant="subtle"
+                                onClick={() => openEditModal(profile)}
+                                title={t("common.edit", { defaultValue: "Edit" })}
+                              >
+                                <IconEdit size={16} />
+                              </ActionIcon>
+                              <ActionIcon
+                                variant="subtle"
+                                color="red"
+                                onClick={() => deleteProfile(profile)}
+                                title={t("common.delete", { defaultValue: "Delete" })}
+                              >
+                                <IconTrash size={16} />
+                              </ActionIcon>
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Box>
+              {totalProfilePages > 1 && (
+                <Center mt="sm">
+                  <Pagination value={profilesPage} onChange={setProfilesPage} total={totalProfilePages} size="sm" />
+                </Center>
               )}
-            </Tabs.Panel>
-            <Tabs.Panel value="overview" pt="sm" style={{ minHeight: 320 }}>
-              <Databases
-                profileId={activeProfile?.id}
-                initialPlayer={activeProfile?.name}
-                visibleTabs={["overview"]}
-                showPlayerSelector={false}
-              />
-            </Tabs.Panel>
-            <Tabs.Panel value="ratings" pt="sm" style={{ minHeight: 320 }}>
-              <Databases
-                profileId={activeProfile?.id}
-                initialPlayer={activeProfile?.name}
-                visibleTabs={["ratings"]}
-                showPlayerSelector={false}
-              />
-            </Tabs.Panel>
-            <Tabs.Panel value="openings" pt="sm" style={{ minHeight: 320 }}>
-              <div style={{ height: "65vh", minHeight: 320, overflow: "hidden" }}>
-                <Databases
-                  profileId={activeProfile?.id}
-                  initialPlayer={activeProfile?.name}
-                  visibleTabs={["openings"]}
-                  showPlayerSelector={false}
-                />
-              </div>
-            </Tabs.Panel>
-            <Tabs.Panel value="stats" pt="sm">
-              <Text size="sm" c="dimmed">
-                {t("profiles.tabs.statsDesc", { defaultValue: "Stats content coming soon." })}
-              </Text>
-            </Tabs.Panel>
-            <Tabs.Panel value="pawnStructures" pt="sm">
-              <Text size="sm" c="dimmed">
-                {t("profiles.tabs.pawnStructuresDesc", { defaultValue: "Pawn structures content coming soon." })}
-              </Text>
-            </Tabs.Panel>
-          </Tabs>
-        </Card>
+            </Card>
+
+            <Card withBorder radius="md" p="md">
+              <Tabs defaultValue="database" keepMounted={false}>
+                <Tabs.List>
+                  <Tabs.Tab value="database">{t("profiles.tabs.database", { defaultValue: "Database" })}</Tabs.Tab>
+                  <Tabs.Tab value="overview">
+                    {t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" })}
+                  </Tabs.Tab>
+                  <Tabs.Tab value="ratings">
+                    {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
+                  </Tabs.Tab>
+                  <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
+                  <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
+                  <Tabs.Tab value="pawnStructures">
+                    {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
+                  </Tabs.Tab>
+                </Tabs.List>
+
+                <Tabs.Panel value="database" pt="sm">
+                  {!activeProfileId ? (
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.selectProfile", { defaultValue: "Select profile" })}
+                    </Text>
+                  ) : dbLoading ? (
+                    <Text size="sm" c="dimmed">
+                      {t("common.loading", { defaultValue: "Loading..." })}
+                    </Text>
+                  ) : !profileDatabase ? (
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.tabs.databaseMissing", { defaultValue: "No database found for this profile." })}
+                    </Text>
+                  ) : (
+                    <DatabaseDetails
+                      selectedDatabase={profileDatabase}
+                      isReference={referenceDb === profileDatabase.file}
+                      onChangeReference={changeReferenceDatabase}
+                      mutate={mutateDatabases}
+                      exportLoading={exportLoading}
+                      setExportLoading={setExportLoading}
+                      convertLoading={convertLoading}
+                      setConvertLoading={setConvertLoading}
+                      onSelect={() => {}}
+                      refreshPuzzleDatabases={refreshPuzzleDatabases}
+                    />
+                  )}
+                </Tabs.Panel>
+                <Tabs.Panel value="overview" pt="sm" style={{ minHeight: 320 }}>
+                  <Databases
+                    profileId={activeProfile?.id}
+                    initialPlayer={activeProfile?.name}
+                    visibleTabs={["overview"]}
+                    showPlayerSelector={false}
+                  />
+                </Tabs.Panel>
+                <Tabs.Panel value="ratings" pt="sm" style={{ minHeight: 320 }}>
+                  <Databases
+                    profileId={activeProfile?.id}
+                    initialPlayer={activeProfile?.name}
+                    visibleTabs={["ratings"]}
+                    showPlayerSelector={false}
+                  />
+                </Tabs.Panel>
+                <Tabs.Panel value="openings" pt="sm" style={{ minHeight: 320 }}>
+                  <div style={{ height: "65vh", minHeight: 320, overflow: "hidden" }}>
+                    <Databases
+                      profileId={activeProfile?.id}
+                      initialPlayer={activeProfile?.name}
+                      visibleTabs={["openings"]}
+                      showPlayerSelector={false}
+                    />
+                  </div>
+                </Tabs.Panel>
+                <Tabs.Panel value="stats" pt="sm">
+                  <Text size="sm" c="dimmed">
+                    {t("profiles.tabs.statsDesc", { defaultValue: "Stats content coming soon." })}
+                  </Text>
+                </Tabs.Panel>
+                <Tabs.Panel value="pawnStructures" pt="sm">
+                  <Text size="sm" c="dimmed">
+                    {t("profiles.tabs.pawnStructuresDesc", { defaultValue: "Pawn structures content coming soon." })}
+                  </Text>
+                </Tabs.Panel>
+              </Tabs>
+            </Card>
+          </Stack>
+        </ScrollArea>
       </Stack>
 
       <Modal

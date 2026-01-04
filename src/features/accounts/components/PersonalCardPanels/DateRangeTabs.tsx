@@ -18,12 +18,12 @@ const DEFAULT_TIME_RANGES = [
 
 interface DateRangeTabsProps {
   timeRange: DateRange | null;
-  onTimeRangeChange: (value: string | null) => void;
+  onTimeRangeChange: (value: DateRange | null) => void;
 }
 
 const DateRangeTabs = ({ timeRange, onTimeRangeChange }: DateRangeTabsProps) => {
   return (
-    <Tabs pt="md" value={timeRange} onChange={onTimeRangeChange}>
+    <Tabs pt="md" value={timeRange} onChange={(value) => onTimeRangeChange(value as DateRange | null)}>
       <Tabs.List
         style={{
           display: "flex",

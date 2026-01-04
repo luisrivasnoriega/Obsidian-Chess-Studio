@@ -1,15 +1,13 @@
-import { Badge, Box, Card, Divider, Group, ScrollArea, Stack, Text } from "@mantine/core";
+import { Box, Group, Stack, Text } from "@mantine/core";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, type TooltipProps, XAxis, YAxis } from "recharts";
 import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import type { PlayerGameInfo, StatsData } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
-import { analyzePlayerStyle } from "@/utils/playerStyle";
 import { getTimeControl } from "@/utils/timeControl";
+import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter, normalizePlatform } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
-import TimeControlSelector from "./TimeControlSelector";
-import WebsiteAccountSelector from "./WebsiteAccountSelector";
 
 function fillMissingMonths(data: { name: string; count: number }[]): { name: string; count: number }[] {
   if (data.length === 0) return data;
@@ -74,104 +72,63 @@ function extractGameStats(games: StatsData[]) {
 
 function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerGameInfo }) {
   const { t } = useTranslation();
-  const [website, setWebsite] = useState<string | null>(null);
-  const [account, setAccount] = useState<string | null>("All accounts");
-  const [timeControl, setTimeControl] = useState<string | null>(null);
-  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
+  const [platform, setPlatform] = useState<PlatformFilter>("all");
+  const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
+  const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
 
-  const siteElo = useMemo(() => {
-    const map = new Map<string, { games: number; elo: number }>();
-    for (const site of info.site_stats_data ?? []) {
-      const games = site.data.length;
-      const maxElo = site.data.reduce(
-        (max, g) => (typeof g.player_elo === "number" ? Math.max(max, g.player_elo) : max),
-        0,
-      );
-      map.set(site.site, {
-        games: (map.get(site.site)?.games ?? 0) + games,
-        elo: Math.max(map.get(site.site)?.elo ?? 0, maxElo),
-      });
+  const opponentEloOptions = useMemo(() => {
+    const buckets = new Set<number>();
+    for (const site of info?.site_stats_data ?? []) {
+      for (const game of site.data) {
+        if (typeof game.opponent_elo !== "number") continue;
+        buckets.add(Math.floor(game.opponent_elo / 200) * 200);
+      }
     }
-    return Array.from(map.entries()).sort((a, b) => b[1].games - a[1].games || a[0].localeCompare(b[0]));
-  }, [info.site_stats_data]);
+    const sorted = Array.from(buckets).sort((a, b) => a - b);
+    return [
+      { value: "all", label: t("common.all", { defaultValue: "All" }) },
+      ...sorted.map((start) => ({ value: String(start), label: `${start}-${start + 199}` })),
+    ];
+  }, [info?.site_stats_data, t]);
 
   const games = useMemo(() => {
-    return (
+    let data =
       info?.site_stats_data
-        ?.filter((d) => !website || d.site === website)
-        .filter((d) => account === "All accounts" || d.player === account)
-        .flatMap((d) => d.data.map((game) => ({ ...game, site: d.site })))
-        .filter(
-          (game) =>
-            !timeControl || timeControl === "any" || getTimeControl(game.site, game.time_control) === timeControl,
-        ) ?? []
-    );
-  }, [account, info?.site_stats_data, timeControl, website]);
+        ?.filter((d) => platform === "all" || normalizePlatform(d.site) === platform)
+        .flatMap((d) => d.data.map((game) => ({ ...game, site: d.site }))) ?? [];
+
+    if (timeControl !== "any") {
+      data = data.filter((game) => getTimeControl(game.site, game.time_control) === timeControl);
+    }
+
+    if (opponentEloBucket !== "all") {
+      const start = Number.parseInt(opponentEloBucket, 10);
+      if (Number.isFinite(start)) {
+        const end = start + 199;
+        data = data.filter(
+          (game) => typeof game.opponent_elo === "number" && game.opponent_elo >= start && game.opponent_elo <= end,
+        );
+      }
+    }
+
+    return data;
+  }, [info?.site_stats_data, opponentEloBucket, platform, timeControl]);
   const { total, won, draw, lost, dataPerMonth } = extractGameStats(games);
 
   return (
     <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
       <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
-        <Card
-          withBorder
-          radius="md"
-          shadow="sm"
-          bg="var(--mantine-color-dark-6)"
-          h="100%"
-          style={{ overflow: "hidden" }}
-        >
-          <ScrollArea h="100%" offsetScrollbars>
-            <Stack gap="xs">
-              <Text fz="lg" fw={700} ta="center">
-                {playerName}
-              </Text>
-              <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
-                {t(playerStyle.label)}
-              </Badge>
-              <Text c="dimmed" fz="xs" ta="center">
-                {t(playerStyle.description)}
-              </Text>
-              <Divider />
-              <Stack gap={4}>
-                <Text fw={600} fz="sm">
-                  {t("common.filters", { defaultValue: "Filters" })}
-                </Text>
-                <WebsiteAccountSelector
-                  playerName={playerName}
-                  onWebsiteChange={(nextWebsite) => {
-                    setWebsite(nextWebsite);
-                    if (!nextWebsite) setTimeControl(null);
-                    else if (timeControl === null) setTimeControl("any");
-                  }}
-                  onAccountChange={setAccount}
-                  allowAll
-                />
-                {website && <TimeControlSelector website={website} onTimeControlChange={setTimeControl} allowAll />}
-              </Stack>
-              <Divider />
-              <Stack gap={4}>
-                <Text fw={600} fz="sm">
-                  {t("common.elo", { defaultValue: "Elo" })} /{" "}
-                  {t("common.games.other", { defaultValue: "Games", count: 0 })}
-                </Text>
-                {siteElo.length === 0 ? (
-                  <Text size="sm" c="dimmed">
-                    No data
-                  </Text>
-                ) : (
-                  siteElo.map(([site, { games, elo }]) => (
-                    <Group key={site} justify="space-between">
-                      <Text>{site}</Text>
-                      <Text fw={700}>
-                        {elo > 0 ? elo : "-"} - {games} games
-                      </Text>
-                    </Group>
-                  ))
-                )}
-              </Stack>
-            </Stack>
-          </ScrollArea>
-        </Card>
+        <PlayerSidebarCard
+          playerName={playerName}
+          info={info}
+          platform={platform}
+          onPlatformChange={setPlatform}
+          timeControl={timeControl}
+          onTimeControlChange={setTimeControl}
+          opponentEloOptions={opponentEloOptions}
+          opponentEloBucket={opponentEloBucket}
+          onOpponentEloChange={setOpponentEloBucket}
+        />
       </Box>
 
       <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
