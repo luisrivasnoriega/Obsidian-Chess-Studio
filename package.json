@@ -18,6 +18,7 @@
     "lint:fix": "npx @biomejs/biome check --write src",
     "update-readme": "npx tsx scripts/update-readme.ts",
     "update-missing-translations": "npx tsx scripts/update-missing-translations.ts",
+    "merge-missing-translations": "node scripts/merge-missing-translations.cjs",
     "update-version": "node scripts/update-version.cjs"
   },
   "dependencies": {
