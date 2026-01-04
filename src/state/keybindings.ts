@@ -27,12 +27,27 @@ const baseKeys: Record<string, KeyDef> = {
   BOARD_TAB_EIGHT: { name: "keybindings.boardTabEight", keys: "ctrl+alt+8" },
   BOARD_TAB_LAST: { name: "keybindings.boardTabLast", keys: "ctrl+alt+9" },
 
-  // === Mode Switching ===
+  // === Navigation - Primary Section ===
+  GO_TO_DASHBOARD: { name: "keybindings.goToDashboard", keys: "mod+shift+d" },
+  GO_TO_PROFILES: { name: "keybindings.goToProfiles", keys: "mod+shift+p" },
+
+  // === Navigation - Primary Actions ===
   PLAY_BOARD: { name: "keybindings.playBoard", keys: "mod+1" },
   ANALYZE_BOARD: { name: "keybindings.analyzeBoard", keys: "mod+2" },
   TRAIN_BOARD: { name: "keybindings.trainBoard", keys: "mod+3" },
 
+  // === Navigation - Secondary Section ===
+  GO_TO_DATABASES: { name: "keybindings.goToDatabases", keys: "mod+shift+b" },
+  GO_TO_ENGINES: { name: "keybindings.goToEngines", keys: "mod+alt+e" },
+  GO_TO_FILES: { name: "keybindings.goToFiles", keys: "mod+alt+f" },
+
+  // === Navigation - Tertiary Section ===
+  GO_TO_TOURNAMENTS: { name: "keybindings.goToTournaments", keys: "mod+alt+t" },
   IMPORT_BOARD: { name: "keybindings.importBoard", keys: "mod+i" },
+
+  // === Navigation - Additional ===
+  GO_TO_ACCOUNTS: { name: "keybindings.goToAccounts", keys: "mod+shift+a" },
+  GO_TO_LEARN: { name: "keybindings.goToLearn", keys: "mod+shift+l" },
 
   // === Copy/Paste & PGN Operations ===
   COPY_FEN: { name: "keybindings.copyFen", keys: "mod+shift+f" },
@@ -102,7 +117,7 @@ const baseKeys: Record<string, KeyDef> = {
   // === Search & Database ===
   FIND_POSITION: { name: "keybindings.findPosition", keys: "mod+f" },
   QUICK_SEARCH: { name: "keybindings.quickSearch", keys: "mod+shift+k" },
-  FILTER_GAMES: { name: "keybindings.filterGames", keys: "mod+shift+f" },
+  FILTER_GAMES: { name: "keybindings.filterGames", keys: "ctrl+shift+f" },
 
   // === Window & Panel Management ===
   TOGGLE_SIDEBAR: { name: "keybindings.toggleSidebar", keys: "mod+\\" },

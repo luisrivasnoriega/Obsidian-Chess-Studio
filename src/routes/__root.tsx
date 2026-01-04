@@ -372,6 +372,10 @@ function RootLayout() {
     () =>
       [
         [keyMap.NEW_BOARD_TAB.keys, createNewTab],
+        // Navigation - Primary Section
+        [keyMap.GO_TO_DASHBOARD.keys, () => navigate({ to: "/" })],
+        [keyMap.GO_TO_PROFILES.keys, () => navigate({ to: "/profiles" })],
+        // Navigation - Primary Actions
         [
           keyMap.PLAY_BOARD.keys,
           () => {
@@ -398,16 +402,6 @@ function RootLayout() {
           },
         ],
         [
-          keyMap.IMPORT_BOARD.keys,
-          () => {
-            navigate({ to: "/analysis" });
-            modals.openContextModal({
-              modal: "importModal",
-              innerProps: {},
-            });
-          },
-        ],
-        [
           keyMap.TRAIN_BOARD.keys,
           () => {
             navigate({ to: "/puzzles" });
@@ -418,9 +412,30 @@ function RootLayout() {
             });
           },
         ],
+        // Navigation - Secondary Section
+        [keyMap.GO_TO_DATABASES.keys, () => navigate({ to: "/databases" })],
+        [keyMap.GO_TO_ENGINES.keys, () => navigate({ to: "/engines" })],
+        [keyMap.GO_TO_FILES.keys, () => navigate({ to: "/files" })],
+        // Navigation - Tertiary Section
+        [keyMap.GO_TO_TOURNAMENTS.keys, () => navigate({ to: "/tournaments" })],
+        [
+          keyMap.IMPORT_BOARD.keys,
+          () => {
+            navigate({ to: "/analysis" });
+            modals.openContextModal({
+              modal: "importModal",
+              innerProps: {},
+            });
+          },
+        ],
+        // Navigation - Additional
+        [keyMap.GO_TO_ACCOUNTS.keys, () => navigate({ to: "/accounts" })],
+        [keyMap.GO_TO_LEARN.keys, () => navigate({ to: "/learn" })],
+        // File Operations
         [keyMap.OPEN_FILE.keys, openNewFile],
         [keyMap.APP_RELOAD.keys, () => location.reload()],
         [keyMap.EXIT_APP.keys, () => exit(0)],
+        // Settings
         [keyMap.OPEN_SETTINGS.keys, () => navigate({ to: "/settings" })],
         [keyMap.SHOW_KEYBINDINGS.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],
         [keyMap.TOGGLE_HELP.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],

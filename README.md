@@ -96,13 +96,177 @@ Whether you're preparing for tournaments, analyzing your games, or building open
 
 ## Features
 
-* Game Management - Store and analyze your games from lichess.org and chess.com
-* Multi-Engine Analysis - Supports all UCI chess engines for deep position evaluation
-* Repertoire Training - Prepare openings and train them with spaced repetition
-* Engine & Database Management - Simple installation and management of engines and databases
-* Position Search - Absolute or partial position search in your database
-* Cross-Platform - Available on Windows, macOS, and Linux
-* Customizable Interface - Tailor the app to your preferences
+### 🎯 Core Features
+
+**Game Management**
+- Store and analyze games from Lichess.org and Chess.com
+- Import games from PGN files
+- Support for physical over-the-board games
+- Automatic synchronization of online accounts
+- Game history and favorites system
+
+**Multi-Engine Analysis**
+- Support for all UCI-compatible chess engines
+- Simultaneous multi-engine analysis
+- Real-time position evaluation
+- Configurable depth and time controls
+- Engine reordering and priority management
+- Analysis logs and engine status monitoring
+- Tablebase integration (Syzygy endgame databases)
+
+**Repertoire Training**
+- Create and manage opening repertoires
+- Automatic variant book generation from databases
+- Spaced repetition training system
+- Repertoire gap analysis (missing moves detection)
+- Tree visualization of variations
+- Repertoire statistics and coverage metrics
+
+**Database Management**
+- SQLite-based game databases
+- Exact and partial position search
+- Advanced filtering (player, opening, date, rating, result)
+- Opening statistics and frequency analysis
+- Game export to PGN format
+- Database conversion tools
+- Opening precaching for faster searches
+
+### 📊 Advanced Analysis
+
+**Deep Game Analysis**
+- Automatic mistake detection and classification
+- Error categorization (tactical, positional, opening, etc.)
+- Severity analysis (blunder, mistake, inaccuracy)
+- Thematic pattern detection
+- Accuracy and ACPL (Average Centipawn Loss) calculation
+- Estimated Elo rating based on performance
+- Alternative move suggestions with centipawn gains
+
+**Player Statistics**
+- Multi-platform statistics (Lichess, Chess.com)
+- Time control breakdown (bullet, blitz, rapid, classical)
+- Opponent rating-based analysis
+- Progress charts over time
+- Opening performance statistics
+- Pawn structure analysis
+- King safety evaluation
+- Piece development tracking
+- Space control metrics
+
+**Pawn Structure Analysis**
+- Automatic pawn structure identification
+- Frequency and win rate statistics
+- Pawn structure visualization
+- Island, isolated, doubled, and passed pawn analysis
+- Structure-based game filtering
+
+**Opening Analysis**
+- ECO code classification
+- Opening performance metrics
+- Variation tree exploration
+- Reference database comparison
+- Missing move detection in repertoires
+
+### 🧩 Training & Learning
+
+**Puzzle System**
+- Adaptive puzzle difficulty based on player rating
+- Custom Elo rating system for puzzles
+- Puzzle statistics and progress tracking
+- Streak tracking and achievements
+- Puzzle database integration
+- Variant analysis in puzzles
+
+**Interactive Learning**
+- Structured lessons from beginner to advanced
+- Adaptive practice exercises
+- Progress tracking with points and streaks
+- Intelligent recommendations based on performance
+- Adaptive difficulty adjustment
+- Multiple practice categories (tactical, positional, etc.)
+
+### 👤 Profile Management
+
+**Multi-Profile System**
+- Create and manage multiple player profiles
+- Link multiple online accounts (Lichess, Chess.com) to profiles
+- Automatic game synchronization
+- FIDE ID integration for official data
+- Per-profile database storage
+- Session management for multiple game sessions
+
+**Account Integration**
+- Lichess account connection with OAuth
+- Chess.com account integration
+- Automatic game download and conversion
+- Account statistics aggregation
+- Cross-platform rating calculation
+
+### 🔍 Search & Database
+
+**Position Search**
+- Exact position search by FEN
+- Partial position search (material and configuration)
+- Player-based filtering
+- Opening-based filtering (ECO codes)
+- Date range filtering
+- Result-based filtering
+- Rating-based filtering
+- Fast cached searches
+
+**Game Database Features**
+- Tournament management
+- Player database organization
+- Game preview and detailed view
+- PGN import/export with annotations
+- Database statistics and metrics
+
+### 🎨 Customization
+
+**Visual Customization**
+- Multiple visual themes
+- 30+ piece sets (alpha, cburnett, merida, staunty, etc.)
+- Customizable board styles
+- Multiple sound sets (futuristic, lisp, nes, piano, robot, standard, woodland)
+- Customizable font sizes
+
+**Interface Options**
+- Fully customizable keyboard shortcuts
+- Responsive layout (mobile and desktop)
+- Multiple notation views (mainline, variations, repertoire, report)
+- Multi-tab system for simultaneous boards
+- Context menus and tooltips
+
+### 🛠️ Additional Features
+
+**Game Import/Export**
+- PGN file import
+- Lichess game import
+- Chess.com game import
+- PGN export with full annotations
+- Batch import/export operations
+
+**Analysis Tools**
+- Variant analysis with multiple lines
+- Best move suggestions
+- Position evaluation graphs
+- Move annotations (!!, !, !?, ?!, ?, ??)
+- Game reports with detailed analysis
+
+**Play Features**
+- Play against engines with configurable strength
+- Analysis mode for deep position study
+- Game notation and move history
+- Time control support
+
+**Technical Features**
+- Cross-platform (Windows, macOS, Linux)
+- High-performance Rust backend
+- Modern React/TypeScript frontend
+- Efficient SQLite storage
+- Advanced indexing for fast searches
+- Caching system for frequent queries
+- Chess960 (Fischer Random) support
 
 ## Screenshots
 

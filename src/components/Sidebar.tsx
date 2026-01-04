@@ -77,17 +77,29 @@ function MayaActionLink({
   );
 }
 
-export const linksdata = [
+// Sección principal (uso diario)
+const primaryLinks = [
   { icon: IconLayoutDashboard, label: "dashboard", url: "/" },
-  { icon: IconCpu, label: "engines", url: "/engines" },
-  {
-    icon: IconDatabase,
-    label: "databases",
-    url: "/databases",
-  },
-  { icon: IconFiles, label: "files", url: "/files" },
   { icon: IconUserCircle, label: "profiles", url: "/profiles" },
+];
+
+// Sección secundaria (uso regular)
+const secondaryLinksData = [
+  { icon: IconDatabase, label: "databases", url: "/databases" },
+  { icon: IconCpu, label: "engines", url: "/engines" },
+  { icon: IconFiles, label: "files", url: "/files" },
+];
+
+// Sección terciaria (configuración/avanzado)
+const tertiaryLinksData = [
   { icon: IconTrophy, label: "tournaments", url: "/tournaments" },
+];
+
+// Mantener linksdata para compatibilidad
+export const linksdata = [
+  ...primaryLinks,
+  ...secondaryLinksData,
+  ...tertiaryLinksData,
 ];
 
 export function SideBar() {
@@ -121,20 +133,13 @@ export function SideBar() {
     navigate({ to: route });
   };
 
-  const dashboardLinkData = linksdata.find((link) => link.url === "/")!;
-  const dashboardLink = (
-    <NavbarLink
-      key={dashboardLinkData.label}
-      {...dashboardLinkData}
-      label={t(`features.sidebar.${dashboardLinkData.label}`)}
-    />
-  );
+  // Sección principal: Dashboard y Profiles
+  const primaryNavLinks = primaryLinks.map((link) => (
+    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
+  ));
 
-  const secondaryLinks = linksdata
-    .filter((link) => link.url !== "/")
-    .map((link) => <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />);
-
-  const actionLinks: React.ReactNode[] = [
+  // Acciones principales: Play, Analysis, Puzzles
+  const primaryActionLinks: React.ReactNode[] = [
     <MayaActionLink
       key="play"
       icon={IconPlayerPlay}
@@ -171,6 +176,20 @@ export function SideBar() {
         });
       }}
     />,
+  ];
+
+  // Sección secundaria: Databases, Engines, Files
+  const secondaryNavLinks = secondaryLinksData.map((link) => (
+    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
+  ));
+
+  // Sección terciaria: Tournaments
+  const tertiaryNavLinks = tertiaryLinksData.map((link) => (
+    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
+  ));
+
+  // Acción terciaria: Import
+  const tertiaryActionLink = (
     <MayaActionLink
       key="import"
       icon={IconUpload}
@@ -179,8 +198,13 @@ export function SideBar() {
         navigate({ to: "/analysis" });
         modals.openContextModal({ modal: "importModal", innerProps: {} });
       }}
-    />,
-  ];
+    />
+  );
+
+  // Para compatibilidad con código existente (footer/mobile)
+  const dashboardLink = primaryNavLinks[0];
+  const secondaryLinks = [...secondaryNavLinks, ...tertiaryNavLinks];
+  const actionLinks = [...primaryActionLinks, tertiaryActionLink];
 
   if (layout.sidebar.position === "footer") {
     // Show only first 4 links on mobile
@@ -263,10 +287,18 @@ export function SideBar() {
   return (
     <AppShellSection grow>
       <Stack justify="flex-start" gap={0} pt="xs" h="100%">
-        {dashboardLink}
-        {layout.sidebar.position === "navbar" && actionLinks}
-        {secondaryLinks}
+        {/* Sección principal: Dashboard y Profiles */}
+        {primaryNavLinks}
+        {/* Acciones principales: Play, Analysis, Puzzles */}
+        {primaryActionLinks}
+        {/* Sección secundaria: Databases, Engines, Files */}
+        {secondaryNavLinks}
+        {/* Sección terciaria: Tournaments */}
+        {tertiaryNavLinks}
+        {/* Acción terciaria: Import */}
+        {tertiaryActionLink}
 
+        {/* Sección final: Keyboard Shortcuts y Settings */}
         <Stack justify="flex-end" gap={0} mt="auto" visibleFrom="sm">
           <Tooltip label={t("features.sidebar.keyboardShortcuts")} position="right">
             <Link

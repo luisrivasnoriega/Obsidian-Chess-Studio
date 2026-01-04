@@ -82,44 +82,44 @@
     "puzzlesGeneratedSuccessfully": "{{count}} puzzles generated successfully",
     "failedToGeneratePuzzles": "Failed to generate puzzles",
     "generatePuzzles": "Generate Puzzles",
-    "by": "by",
-    "deleteComponentTheme": "Delete component theme",
-    "initializationErrorTitle": "Initialization Error",
-    "initializationErrorDescription": "The application encountered an error during startup:",
-    "reloadApplication": "Reload Application",
-    "generate": "Generate",
-    "success": "Success",
-    "search": "Search",
-    "annotation": "Annotation",
-    "importing": "Importing",
-    "noRecordsFound": "No records found",
+    "by": "av",
+    "deleteComponentTheme": "Slett komponenttema",
+    "initializationErrorTitle": "Initialiseringsfeil",
+    "initializationErrorDescription": "Applikasjonen støtte på en feil under oppstart:",
+    "reloadApplication": "Last inn applikasjon på nytt",
+    "generate": "Generer",
+    "success": "Suksess",
+    "search": "Søk",
+    "annotation": "Annotasjon",
+    "importing": "Importerer",
+    "noRecordsFound": "Ingen poster funnet",
     "elo": "ELO",
-    "years": "years",
-    "back": "Back",
-    "again": "Again",
-    "analyze": "Analyze",
-    "flip": "Flip",
-    "resign": "Resign",
-    "clocks": "Clocks",
-    "controls": "Controls",
-    "opening": "Opening",
+    "years": "år",
+    "back": "Tilbake",
+    "again": "Igjen",
+    "analyze": "Analyser",
+    "flip": "Vend",
+    "resign": "Gi opp",
+    "clocks": "Klokker",
+    "controls": "Kontroller",
+    "opening": "Åpning",
     "pgn": "PGN",
     "fenAbbr": "FEN",
-    "gameInfo": "Game info",
-    "gamePanel": "Game panel",
-    "duplicateTab": "Duplicate Tab",
-    "renameTab": "Rename Tab",
-    "closeTab": "Close Tab",
-    "openTabInNewWindow": "Open tab in new window",
-    "centerGraph": "Center graph",
-    "copiedFenToClipboard": "Copied FEN to clipboard",
-    "copiedPgnToClipboard": "Copied PGN to clipboard",
-    "pastedFenFromClipboard": "Pasted FEN from clipboard",
-    "gameExportedSuccessfully": "Game exported successfully",
-    "positionResetToStart": "Position reset to start",
-    "enginesStopped": "Engines stopped",
-    "variationPromoted": "Variation promoted",
-    "variationDeleted": "Variation deleted"
+    "gameInfo": "Spillinfo",
+    "gamePanel": "Spillpanel",
+    "duplicateTab": "Dupliser fane",
+    "renameTab": "Gi nytt navn til fane",
+    "closeTab": "Lukk fane",
+    "openTabInNewWindow": "Åpne fane i nytt vindu",
+    "centerGraph": "Senter graf",
+    "copiedFenToClipboard": "FEN kopiert til utklippstavlen",
+    "copiedPgnToClipboard": "PGN kopiert til utklippstavlen",
+    "pastedFenFromClipboard": "FEN limt fra utklippstavlen",
+    "gameExportedSuccessfully": "Spill eksportert vellykket",
+    "positionResetToStart": "Posisjon tilbakestilt til start",
+    "enginesStopped": "Motorer stoppet",
+    "variationPromoted": "Variasjon forfremmet",
+    "variationDeleted": "Variasjon slettet"
   },
   "chess": {
     "checkmate": "Sjakkmatt",
@@ -158,8 +158,8 @@
       "onlyMove": "Eneste trekk",
       "zugzwang": "Zugzwang",
       "none": "None",
-      "great": "Great",
-      "best": "Best"
+      "great": "Flott",
+      "best": "Beste"
     },
     "timeControl": {
       "ultraBullet": "UltraBullet",
@@ -169,15 +169,15 @@
       "classical": "Klassisk",
       "correspondence": "Fjernsjakk"
     },
-    "draw": "Draw",
+    "draw": "Remis",
     "random": "Random",
     "any": "Any",
-    "player": "Player",
-    "opponent": "Opponent",
+    "player": "Spiller",
+    "opponent": "Motstander",
     "outcome": {
       "outcome": "Result",
       "selectOutcome": "Select result",
-      "draw": "Draw",
+      "draw": "Remis",
       "whiteWins": "White wins",
       "blackWins": "Black wins",
       "unknown": "Unknown"
@@ -210,10 +210,10 @@
       "invalidFen": "Invalid FEN",
       "invalidFullmoves": "Invalid fullmove number",
       "invalidHaldmoves": "Invalid halfmove number",
-      "invalidPockets": "Invalid pockets",
-      "invalidRemainingChecks": "Invalid remaining checks",
+      "invalidPockets": "Ugyldige lommer",
+      "invalidRemainingChecks": "Ugyldige gjenværende sjakker",
       "invalidTurn": "Invalid turn",
-      "unknown": "Unknown error"
+      "unknown": "Ukjent feil"
     }
   },
   "features": {
@@ -276,7 +276,7 @@
       "minimize": "Minimize",
       "zoom": "Zoom",
       "toggleFullScreen": "Toggle Full Screen",
-      "closeTab": "Close Tab",
+      "closeTab": "Lukk fane",
       "closeAllTabs": "Close All Tabs",
       "reportIssue": "Report Issue",
       "markAsStart": "Mark as start",
@@ -332,7 +332,7 @@
         "analyze": {
           "title": "Board Analysis",
           "desc": "Analyze positions, games, and variations with powerful chess engines.",
-          "button": "Analyze"
+          "button": "Analyser"
         },
         "database": {
           "title": "Database Access",
@@ -375,7 +375,7 @@
       "analyzeAllGames": "Analyze All Games",
       "selectAnalysisDepth_one": "Select analysis depth for {{count}} game. This will analyze games shown in the dashboard using the default engine.",
       "selectAnalysisDepth_other": "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the default engine.",
-      "analyze": "Analyze",
+      "analyze": "Analyser",
       "onlyUnanalyzedGames": "Only unanalyzed games",
       "allGamesReanalyze": "All games (re-analyze)",
       "analysisDepth": "Analysis Depth",
@@ -388,7 +388,7 @@
         "advanced": "Advanced / depth 20",
         "deepdive": "Deep / depth 24"
       },
-      "deleteGame": "Delete game",
+      "deleteGame": "Slett spill",
       "allAccounts": "All Accounts",
       "noEngineAvailable": "No Engine Available",
       "noEngineAvailableMessage": "Please install an engine first in the Engines page.",
@@ -407,7 +407,7 @@
         "enterFideId": "Please enter a FIDE ID",
         "playerNotFound": "Player not found. Please verify the FIDE ID.",
         "searchError": "Error searching for player. Please try again.",
-        "search": "Search",
+        "search": "Søk",
         "name": "Name",
         "firstName": "First Name",
         "customName": "Display Name",
@@ -423,7 +423,7 @@
         "note": "Note: FIDE player search may not be available. You can still save the FIDE ID manually.",
         "ratings": "FIDE Ratings",
         "standard": "Standard",
-        "rapid": "Rapid",
+        "rapid": "Hurtig",
         "blitz": "Blitz"
       },
       "welcome": {
@@ -442,11 +442,11 @@
       "filterByColor": "Filter by Color",
       "all": "All",
       "any": "Any",
-      "white": "White",
-      "black": "Black",
+      "white": "Hvit",
+      "black": "Svart",
       "overview": "Overview",
       "view": "View",
-      "search": "Search",
+      "search": "Søk",
       "actions": "Actions",
       "show": "Show",
       "hide": "Hide",
@@ -458,7 +458,7 @@
       "pgnsCopied": "PGNs copied to clipboard",
       "fen": "FEN",
       "game": "Game",
-      "games": "Games",
+      "games": "Spill",
       "move": "Move",
       "moveNumber": "Move number",
       "bestLine": "Best line",
@@ -522,7 +522,7 @@
       "debugPgns": "Debug PGNs",
       "debugPgnsDescription": "PGNs passed to the analysis function:",
       "noDebugPgns": "No debug PGNs available",
-      "showing": "Showing",
+      "showing": "Viser",
       "count": "Count",
       "maxGames": "Max games",
       "mostCommonSchemes": "Most common schemes",
@@ -541,7 +541,7 @@
       "analysisBoard": {
         "title": "Analysis Board",
         "desc": "Analyze a game or position",
-        "button": "Analyze"
+        "button": "Analyser"
       },
       "importGame": {
         "title": "Import Game",
@@ -568,7 +568,7 @@
         "generalError": "Import error",
         "gameError": "Error in game {{gameIndex}}",
         "importedFiles": "Imported Files",
-        "analyzeFile": "Analyze"
+        "analyzeFile": "Analyser"
       },
       "puzzle": {
         "title": "Puzzles",
@@ -655,7 +655,7 @@
       "actions": {
         "togglePawnStructureView": "Toggle Pawn Structure View",
         "takeSnapshot": "Take Snapshot",
-        "analyzeGame": "Analyze game",
+        "analyzeGame": "Analyser spill",
         "playFromHere": "Play from here",
         "clearDrawings": "Clear Drawings",
         "editPosition": "Edit Position",
@@ -673,7 +673,7 @@
           "mode": "Best move for my side",
           "engine": "Current engine",
           "winrate": "Highest win rate",
-          "engineSelect": "Select engine",
+          "engineSelect": "Velg motor",
           "engineTime": "Time per move (ms)",
           "dbMoves": "Moves from database",
           "coverage": "Coverage %",
@@ -764,7 +764,7 @@
         "message": "Er du sikker på at du vil sletter databasen?"
       },
       "category": {
-        "games": "Games",
+        "games": "Spill",
         "puzzles": "Puzzles"
       },
       "source": {
@@ -840,7 +840,7 @@
     },
     "tournaments": {
       "import": "Import",
-      "search": "Search",
+      "search": "Søk",
       "create": "Create",
       "importTab": {
         "title": "Import Tournament from Lichess",
@@ -1292,74 +1292,74 @@
     "score": "{{score, score}}"
   },
   "error": {
-    "title": "An error occurred",
-    "unexpectedError": "Unexpected Error:",
-    "copyStackTrace": "Copy stack trace",
-    "reportPrompt": "Please report this on",
-    "reportOr": "or on the"
+    "title": "En feil oppstod",
+    "unexpectedError": "Uventet feil:",
+    "copyStackTrace": "Kopier stakksporing",
+    "reportPrompt": "Vennligst rapporter dette på",
+    "reportOr": "eller på"
   },
   "analysis": {
-    "noEnginesInstalled": "No engines installed. Please",
-    "addEngine": "Add an engine",
-    "first": "first.",
-    "checkOpponentThreat": "Check the opponent's threat",
-    "engineSpeed": "How fast the engine is running",
-    "killEngine": "Kill engine",
-    "enableWDL": "Enable WDL"
+    "noEnginesInstalled": "Ingen motorer installert. Vennligst",
+    "addEngine": "Legg til motor",
+    "first": "først.",
+    "checkOpponentThreat": "Sjekk motstanderens trussel",
+    "engineSpeed": "Hvor raskt motoren kjører",
+    "killEngine": "Stopp motor",
+    "enableWDL": "Aktiver WDL"
   },
   "logs": {
     "filterAll": "All",
     "filterGUI": "GUI",
     "filterEngine": "Engine",
-    "noEnginesLoaded": "No engines loaded",
-    "noLogsFor": "No logs for",
-    "engine": "engine"
+    "noEnginesLoaded": "Ingen motorer lastet",
+    "noLogsFor": "Ingen logger for",
+    "engine": "motor"
   },
   "moves": {
-    "transposition": "Transposition"
+    "transposition": "Transposisjon"
   },
   "game": {
-    "timeSettings": "Time Settings",
+    "timeSettings": "Tidsinnstillinger",
     "timeControl": "Time",
-    "unlimited": "Unlimited",
+    "unlimited": "Ubegrenset",
     "time": "Time",
-    "increment": "Increment",
-    "sameTimeControl": "Same time control",
-    "noEnginesAvailable": "No Chess Engines Available",
-    "noEnginesAvailableDesc": "No chess engines are currently installed or detected on your system. To play against an engine, you'll need to install one first.",
-    "installEngine": "Install Engine",
-    "selectEngine": "Select engine",
-    "openingFor": "opening for",
-    "startingPosition": "Starting Position",
-    "fen": "FEN Position",
-    "fenDescription": "Enter a FEN position or leave empty for standard starting position",
-    "applyFen": "Apply FEN",
-    "resetFen": "Reset to initial position",
-    "invalidFen": "Invalid FEN position"
+    "increment": "Inkrement",
+    "sameTimeControl": "Samme tidskontroll",
+    "noEnginesAvailable": "Ingen sjakkmotorer tilgjengelig",
+    "noEnginesAvailableDesc": "Ingen sjakkmotorer er for øyeblikket installert eller oppdaget på systemet ditt. For å spille mot en motor, må du først installere en.",
+    "installEngine": "Installer motor",
+    "selectEngine": "Velg motor",
+    "openingFor": "åpning for",
+    "startingPosition": "Startposisjon",
+    "fen": "FEN-posisjon",
+    "fenDescription": "Skriv inn en FEN-posisjon eller la stå tomt for standard startposisjon",
+    "applyFen": "Bruk FEN",
+    "resetFen": "Tilbakestill til startposisjon",
+    "invalidFen": "Ugyldig FEN-posisjon"
   },
   "databases": {
-    "selectDatabasePrompt": "Select a database",
-    "doubleclickTip": "Double-click on a database to select it",
-    "loadError": "Error loading database",
-    "reason": "Reason",
-    "checkFileError": "Check if the file exists and you have permission to read it",
-    "noTournamentSelected": "No tournament selected",
-    "noPlayerSelected": "No player selected",
-    "processingPlayerData": "Processing Player Data",
-    "searchPlaceholder": "Search databases...",
-    "noDatabasesFound": "No databases found",
-    "player1": "Player 1",
-    "player2": "Player 2",
+    "selectDatabasePrompt": "Velg en database",
+    "doubleclickTip": "Dobbeltklikk på en database for å velge den",
+    "loadError": "Feil ved lasting av database",
+    "reason": "Årsak",
+    "checkFileError": "Sjekk om filen eksisterer og om du har tillatelse til å lese den",
+    "noTournamentSelected": "Ingen turnering valgt",
+    "noPlayerSelected": "Ingen spiller valgt",
+    "processingPlayerData": "Behandler spillerdata",
+    "searchPlaceholder": "Søk i databaser...",
+    "noDatabasesFound": "Ingen databaser funnet",
+    "player1": "Spiller 1",
+    "player2": "Spiller 2",
     "on": "On",
     "off": "Off",
-    "analyzeGame": "Analyze game",
-    "deleteGame": "Delete game",
+    "analyzeGame": "Analyser spill",
+    "deleteGame": "Slett spill",
     "fideInfo": {
-      "title": "FIDE Player Info",
-      "sex": "Sex: {{sex}}",
-      "born": "Born: {{birthday}}",
+      "title": "FIDE-spillerinfo",
+      "sex": "Kjønn: {{sex}}",
+      "born": "Født: {{birthday}}",
       "standard": "Standard",
-      "rapid": "Rapid",
+      "rapid": "Hurtig",
       "blitz": "Blitz"
     },
     "playerTable": {
@@ -1368,8 +1368,8 @@
     },
     "tournamentCard": {
       "tabs": {
-        "games": "Games",
-        "leaderboard": "Leaderboard"
+        "games": "Spill",
+        "leaderboard": "Ledertavle"
       }
     }
   },
@@ -1377,7 +1377,7 @@
     "title": "Accounts",
     "viewDatabases": "View Player Databases",
     "processingGames": "Processing Games...",
-    "databaseLoadError": "Error loading database",
+    "databaseLoadError": "Feil ved lasting av database",
     "searchPlaceholder": "Search accounts...",
     "addAccount": "Add Account",
     "name": "Name",
@@ -1486,7 +1486,7 @@
       "lichess": "Lichess"
     },
     "tableHeaders": {
-      "opponent": "Opponent",
+      "opponent": "Motstander",
       "color": "Color",
       "result": "Result",
       "accuracy": "Accuracy",
@@ -1496,13 +1496,13 @@
     }
   },
   "databaseOptions": {
-    "player": "Player",
-    "search": "Search",
+    "player": "Spiller",
+    "search": "Søk",
     "color": "Color",
     "result": "Result",
     "any": "Any",
     "whiteWon": "White Won",
-    "draw": "Draw",
+    "draw": "Remis",
     "blackWon": "Black Won",
     "from": "From",
     "to": "To",
@@ -1527,7 +1527,7 @@
     "unknownEvent": "Unknown Event",
     "unknownSite": "Unknown Site",
     "unknownElo": "Unknown ELO",
-    "openingFor": "opening for",
+    "openingFor": "åpning for",
     "unknownPlaceholder": "?",
     "unknownDate": "????.??.??"
   },
@@ -1599,7 +1599,7 @@
     "boardTabEight": "Go to board tab eight",
     "boardTabLast": "Go to rightmost board tab",
     "playBoard": "Play",
-    "analyzeBoard": "Analyze",
+    "analyzeBoard": "Analyser",
     "trainBoard": "Train",
     "importBoard": "Import",
     "copyFen": "Copy FEN",
@@ -1664,7 +1664,7 @@
     "undo": "Undo",
     "redo": "Redo",
     "newGame": "New Game",
-    "duplicateTab": "Duplicate Tab",
+    "duplicateTab": "Dupliser fane",
     "openSettings": "Open Settings",
     "showKeybindings": "Show Keybindings",
     "toggleHelp": "Toggle Help",
@@ -1679,7 +1679,7 @@
     "failedToInitializeChessBoard": "Failed to initialize chess board",
     "failedToLoadMobileBoardLayout": "Failed to load mobile board layout",
     "defaultLayout": "Default Layout",
-    "unexpectedError": "Unexpected Error:",
+    "unexpectedError": "Uventet feil:",
     "invalidMove": "Invalid move",
     "failedToInitializeListener": "Failed to initialize engine listener",
     "failedToCopyFen": "Failed to copy FEN",
@@ -1693,7 +1693,7 @@
     "missingEngine": "Missing engine",
     "missingPosition": "Missing position",
     "variantPositionsCacheUnavailable": "Variant positions cache unavailable: {{message}}",
-    "unknownError": "Unknown error",
+    "unknownError": "Ukjent feil",
     "puzzleDepthTooDeep": "Depth cannot exceed the available puzzle depth (max {{max}})"
   },
   "window": {
