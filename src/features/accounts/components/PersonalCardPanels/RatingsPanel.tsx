@@ -1,4 +1,4 @@
-import { Badge, Card, Divider, Grid, Group, Stack, Text } from "@mantine/core";
+import { Badge, Box, Card, Divider, Group, ScrollArea, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -154,68 +154,74 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
   }, [info.site_stats_data]);
 
   return (
-    <Grid gutter="md" h="100%" style={{ minHeight: 0 }}>
-      <Grid.Col span={{ base: 12, md: 3 }}>
-        <Card withBorder radius="md" shadow="sm" bg="var(--mantine-color-dark-6)">
-          <Stack gap="xs">
-            <Text fz="lg" fw={700} ta="center">
-              {playerName}
-            </Text>
-            <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
-              {t(playerStyle.label)}
-            </Badge>
-            <Text fz="xs" c="dimmed" ta="center">
-              {t(playerStyle.description)}
-            </Text>
-            <Divider />
-            <Stack gap={4}>
-              <Text fw={600} fz="sm">
-                {t("common.filters", { defaultValue: "Filters" })}
+    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
+      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
+        <Card
+          withBorder
+          radius="md"
+          shadow="sm"
+          bg="var(--mantine-color-dark-6)"
+          h="100%"
+          style={{ overflow: "hidden" }}
+        >
+          <ScrollArea h="100%" offsetScrollbars>
+            <Stack gap="xs">
+              <Text fz="lg" fw={700} ta="center">
+                {playerName}
               </Text>
-              <WebsiteAccountSelector
-                playerName={playerName}
-                onWebsiteChange={setWebsite}
-                onAccountChange={setAccount}
-                allowAll
-              />
-              <TimeControlSelector onTimeControlChange={setTimeControl} website={website} allowAll={false} />
-              <DateRangeTabs
-                timeRange={dateRange}
-                onTimeRangeChange={(value) => setDateRange(value as DateRange | null)}
-              />
-            </Stack>
-            <Divider />
-            <Stack gap={4}>
-              <Text fw={600} fz="sm">
-                {t("common.elo", { defaultValue: "Elo" })} /{" "}
-                {t("common.games.other", { defaultValue: "Games", count: 0 })}
+              <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
+                {t(playerStyle.label)}
+              </Badge>
+              <Text fz="xs" c="dimmed" ta="center">
+                {t(playerStyle.description)}
               </Text>
-              {siteElo.length === 0 ? (
-                <Text size="sm" c="dimmed">
-                  No data
+              <Divider />
+              <Stack gap={4}>
+                <Text fw={600} fz="sm">
+                  {t("common.filters", { defaultValue: "Filters" })}
                 </Text>
-              ) : (
-                siteElo.map(([site, { games, elo }]) => (
-                  <Group key={site} justify="space-between">
-                    <Text>{site}</Text>
-                    <Text fw={700}>
-                      {elo > 0 ? elo : "—"} · {games} games
-                    </Text>
-                  </Group>
-                ))
-              )}
+                <WebsiteAccountSelector
+                  playerName={playerName}
+                  onWebsiteChange={setWebsite}
+                  onAccountChange={setAccount}
+                  allowAll
+                />
+                <TimeControlSelector onTimeControlChange={setTimeControl} website={website} allowAll={false} />
+                <DateRangeTabs
+                  timeRange={dateRange}
+                  onTimeRangeChange={(value) => setDateRange(value as DateRange | null)}
+                />
+              </Stack>
+              <Divider />
+              <Stack gap={4}>
+                <Text fw={600} fz="sm">
+                  {t("common.elo", { defaultValue: "Elo" })} /{" "}
+                  {t("common.games.other", { defaultValue: "Games", count: 0 })}
+                </Text>
+                {siteElo.length === 0 ? (
+                  <Text size="sm" c="dimmed">
+                    No data
+                  </Text>
+                ) : (
+                  siteElo.map(([site, { games, elo }]) => (
+                    <Group key={site} justify="space-between">
+                      <Text>{site}</Text>
+                      <Text fw={700}>
+                        {elo > 0 ? elo : "-"} - {games} games
+                      </Text>
+                    </Group>
+                  ))
+                )}
+              </Stack>
             </Stack>
-          </Stack>
+          </ScrollArea>
         </Card>
-      </Grid.Col>
-      <Grid.Col span={{ base: 12, md: 9 }} style={{ minHeight: 0 }}>
-        <Stack style={{ minHeight: 0 }}>
-          <Text pt="md" fw="bold" fz="lg" ta="center">
-            {summary.games === 1 && t("common.games.one", { count: summary.games || 0 })}
-            {summary.games > 1 && t("common.games.other", { count: summary.games || 0 })}
-          </Text>
-          {dates.length > 1 && (
-            <>
+      </Box>
+
+      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
+        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+          {dates.length > 1 ? (
+            <Stack style={{ minHeight: 0 }} p="md">
               {summary.games > 0 && (
                 <ResultsChart won={summary.won} draw={summary.draw} lost={summary.lost} size="2rem" />
               )}
@@ -264,11 +270,15 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
                   setTimeRange(range);
                 }}
               />
-            </>
+            </Stack>
+          ) : (
+            <Text size="sm" c="dimmed" p="md">
+              {t("common.noData", { defaultValue: "No data" })}
+            </Text>
           )}
-        </Stack>
-      </Grid.Col>
-    </Grid>
+        </Box>
+      </Box>
+    </Group>
   );
 }
 

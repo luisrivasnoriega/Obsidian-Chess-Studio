@@ -1,100 +1,86 @@
 {
-    "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-    "productName": "Obsidian Chess Studio",
-    "version": "1.0.0",
-    "mainBinaryName": "obsidian-chess-studio",
-    "identifier": "ocs",
-    "bundle": {
-        "active": true,
-        "category": "BoardGame",
-        "copyright": "",
-        "windows": {
-            "certificateThumbprint": null,
-            "digestAlgorithm": "sha256",
-            "timestampUrl": ""
-        },
-        "icon": [
-            "icons/32x32.png",
-            "icons/128x128.png",
-            "icons/128x128@2x.png",
-            "icons/icon.icns",
-            "icons/icon.ico"
-        ],
-        "linux": {
-            "deb": {
-                "depends": []
-            },
-            "appimage": {
-                "bundleMediaFramework": true
-            }
-        },
-        "publisher": "Obsidian Chess Studio",
-        "shortDescription": "Ultimate Chess Toolkit",
-        "longDescription": "",
-        "macOS": {
-            "entitlements": null,
-            "exceptionDomain": "",
-            "frameworks": [],
-            "providerShortName": null,
-            "signingIdentity": "-"
-        },
-        "resources": [],
-        "targets": "all",
-        "createUpdaterArtifacts": true
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Obsidian Chess Studio",
+  "version": "1.0.3",
+  "mainBinaryName": "obsidian-chess-studio",
+  "identifier": "ocs",
+  "bundle": {
+    "active": true,
+    "category": "BoardGame",
+    "copyright": "",
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
     },
-    "build": {
-        "beforeDevCommand": "pnpm start-vite",
-        "beforeBuildCommand": "pnpm build-vite",
-        "frontendDist": "../dist",
-        "devUrl": "http://localhost:1420"
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
     },
-    "plugins": {
-        "cli": {
-            "args": [
-                {
-                    "name": "file",
-                    "index": 1,
-                    "takesValue": true
-                }
-            ]
-        },
-        "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMzQyOTBDMzIwMjUwRkIKUldUN1VBSXlEQ2swenI1dEFkQ1h2S05vUUx5VDdaKy9KdjRlMGJGem1jT1pQNUlJY3NUeVErZlgK",
-            "endpoints": [
-                "https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest/download/latest.json"
-            ]
+    "publisher": "Obsidian Chess Studio",
+    "shortDescription": "Ultimate Chess Toolkit",
+    "longDescription": "",
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": "-"
+    },
+    "resources": [],
+    "targets": "all",
+    "createUpdaterArtifacts": true
+  },
+  "build": {
+    "beforeDevCommand": "pnpm start-vite",
+    "beforeBuildCommand": "pnpm build-vite",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420"
+  },
+  "plugins": {
+    "cli": {
+      "args": [
+        {
+          "name": "file",
+          "index": 1,
+          "takesValue": true
         }
+      ]
     },
-    "app": {
-        "withGlobalTauri": true,
-        "windows": [
-            {
-                "label": "main",
-                "title": "Obsidian Chess Studio",
-                "center": true,
-                "width": 1280,
-                "height": 800,
-                "maximized": false,
-                "visible": false,
-                "decorations": false,
-                "minWidth": 1024,
-                "minHeight": 640,
-                "minimizable": true,
-                "backgroundColor": "#1a1b1e"
-            }
-        ],
-        "security": {
-            "assetProtocol": {
-                "scope": [
-                    "$APPDATA/**",
-                    "$APPCACHE/**",
-                    "$APPLOCALDATA/**",
-                    "$APPCONFIG/**",
-                    "$RESOURCE/**"
-                ],
-                "enable": true
-            },
-            "csp": "default-src \u0027self\u0027; img-src \u0027self\u0027 asset: data: blob: https: http:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; connect-src \u0027self\u0027 https://github.com https://api.chess.com https://www.chess.com https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://www.chessdb.cn"
-        }
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMzQyOTBDMzIwMjUwRkIKUldUN1VBSXlEQ2swenI1dEFkQ1h2S05vUUx5VDdaKy9KdjRlMGJGem1jT1pQNUlJY3NUeVErZlgK",
+      "endpoints": ["https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest/download/latest.json"]
     }
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Obsidian Chess Studio",
+        "center": true,
+        "width": 1280,
+        "height": 800,
+        "maximized": false,
+        "visible": false,
+        "decorations": false,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "minimizable": true,
+        "backgroundColor": "#1a1b1e"
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "scope": ["$APPDATA/**", "$APPCACHE/**", "$APPLOCALDATA/**", "$APPCONFIG/**", "$RESOURCE/**"],
+        "enable": true
+      },
+      "csp": "default-src \u0027self\u0027; img-src \u0027self\u0027 asset: data: blob: https: http:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; connect-src \u0027self\u0027 https://github.com https://api.github.com https://api.chess.com https://www.chess.com https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://www.chessdb.cn"
+    }
+  }
 }

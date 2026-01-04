@@ -1,6 +1,6 @@
 {
   "name": "obsidian-chess-studio",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "type": "module",
   "packageManager": "pnpm@10.26.1",
   "scripts": {
@@ -18,7 +18,7 @@
     "lint:fix": "npx @biomejs/biome check --write src",
     "update-readme": "npx tsx scripts/update-readme.ts",
     "update-missing-translations": "npx tsx scripts/update-missing-translations.ts",
-    "update-version": "npx tsx scripts/update-version.ts"
+    "update-version": "node scripts/update-version.cjs"
   },
   "dependencies": {
     "@badrap/result": "^0.3.1",

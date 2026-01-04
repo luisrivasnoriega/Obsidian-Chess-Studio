@@ -58,6 +58,9 @@ jobs:
       - name: Install app dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Sync app version to tag
+        run: pnpm update-version ${{ github.ref_name }}
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
