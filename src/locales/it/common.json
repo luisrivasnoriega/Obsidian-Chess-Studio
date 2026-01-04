@@ -56,7 +56,32 @@
     "loading": "Loading...",
     "continue": "Continua",
     "review": "Rivedi",
-    "noGameSelected": "No game selected"
+    "noGameSelected": "No game selected",
+    "pgnFiles": "PGN files",
+    "clickToSelectMultiplePGN": "Click to select PGN files (multiple selection supported)",
+    "multipleFiles": "{{count}} files selected",
+    "grid": "Grid",
+    "table": "Table",
+    "sort": "Sort",
+    "sortDirection": "Sort Direction",
+    "view": "View",
+    "importMore": "Import More",
+    "close": "Close",
+    "import": "Import",
+    "all": "All",
+    "convert": "Convert",
+    "copied": "Copied",
+    "copy": "Copy",
+    "update": "Update",
+    "reload": "Reload",
+    "reloadFile": "Reload file",
+    "namePlaceholder": "Name",
+    "details": "Details",
+    "fileSavedSuccessfully": "File saved successfully",
+    "failedToSaveFile": "Failed to save file",
+    "puzzlesGeneratedSuccessfully": "{{count}} puzzles generated successfully",
+    "failedToGeneratePuzzles": "Failed to generate puzzles",
+    "generatePuzzles": "Generate Puzzles"
   },
   "chess": {
     "checkmate": "Scacco matto",
@@ -98,7 +123,9 @@
       "timeTrouble": "Poco tempo",
       "withIdea": "Con idea",
       "onlyMove": "Mossa unica",
-      "zugzwang": "Zugzwang"
+      "zugzwang": "Zugzwang",
+      "great": "Great",
+      "best": "Best"
     },
     "timeControl": {
       "ultraBullet": "UltraBullet",
@@ -148,7 +175,8 @@
       "invalidRemainingChecks": "Numero di scacchi rimanenti non valido",
       "invalidTurn": "Turno non valido",
       "unknown": "Errore sconosciuto"
-    }
+    },
+    "draw": "Draw"
   },
   "units": {
     "count": "{{count, number}}",
@@ -233,7 +261,39 @@
       "promoteToMainLine": "Promuovi a linea principale",
       "promoteVariation": "Promuovi variante",
       "copyVariationPGN": "Copia PGN della variante",
-      "deleteMove": "Elimina mossa"
+      "deleteMove": "Elimina mossa",
+      "pawnAppetit": "Obsidian Chess Studio",
+      "quit": "Quit Obsidian Chess Studio",
+      "newAnalysisBoard": "New Analysis Board",
+      "newPlayBoard": "New Play Board",
+      "importPgn": "Import PGN",
+      "settings": "Settings",
+      "edit": "Edit",
+      "undo": "Undo",
+      "redo": "Redo",
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste",
+      "selectAll": "Select All",
+      "commandPalette": "Command Palette",
+      "forceReload": "Force Reload",
+      "go": "Go",
+      "goToDashboard": "Go to Dashboard",
+      "goToBoards": "Go to Boards",
+      "goToAccounts": "Go to Accounts",
+      "goToFiles": "Go to Files",
+      "goToDatabases": "Go to Databases",
+      "goToEngines": "Go to Engines",
+      "goToLearn": "Go to Learn",
+      "goToSettings": "Go to Settings",
+      "goToKeyboardShortcuts": "Go to Keyboard Shortcuts",
+      "window": "Window",
+      "minimize": "Minimize",
+      "zoom": "Zoom",
+      "toggleFullScreen": "Toggle Full Screen",
+      "closeTab": "Close Tab",
+      "closeAllTabs": "Close All Tabs",
+      "reportIssue": "Report Issue"
     },
     "sidebar": {
       "dashboard": "Dashboard",
@@ -244,13 +304,22 @@
       "engines": "Motori",
       "learn": "Impara",
       "settings": "Impostazioni",
-      "keyboardShortcuts": "Scorciatoie da tastiera"
+      "keyboardShortcuts": "Scorciatoie da tastiera",
+      "puzzles": "Puzzles",
+      "tournaments": "Tournaments"
     },
     "dashboard": {
       "welcome": {
         "firstOpen": "Benvenuto su Obsidian Chess Studio!",
         "back": "Bentornato",
-        "desc": "Pronto a fare la tua prossima mossa migliore?"
+        "desc": "Pronto a fare la tua prossima mossa migliore?",
+        "backWithName": {
+          "male": "Welcome back, {{name}}!",
+          "female": "Welcome back, {{name}}!"
+        },
+        "fideTitle": "FIDE Title",
+        "worldRank": "World Rank",
+        "nationalRank": "National Rank"
       },
       "cards": {
         "learn": {
@@ -303,6 +372,77 @@
           "desc": "Carica e modifica file PGN per analizzare le tue partite o studiare posizioni specifiche con pieno controllo.",
           "button": "Importa"
         }
+      },
+      "suggestedForYou": "Suggested for you",
+      "dailyGoals": "Daily goals",
+      "dayStreak": "day streak",
+      "thisWeek": "This week",
+      "tags": {
+        "lessons": "Lessons",
+        "openings": "Openings",
+        "endgames": "Endgames",
+        "tactics": "Tactics"
+      },
+      "start": "Start",
+      "streak": "Streak",
+      "achievement": "Achievement",
+      "startPuzzleStreak": "Start today's puzzle streak",
+      "keepStreak": "Keep the streak: solve more puzzles",
+      "win": "Win",
+      "loss": "Loss",
+      "analyzeAllGames": "Analyze All Games",
+      "selectAnalysisDepth_one": "Select analysis depth for {{count}} game. This will analyze games shown in the dashboard using the default engine.",
+      "selectAnalysisDepth_other": "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the default engine.",
+      "analyze": "Analyze",
+      "onlyUnanalyzedGames": "Only unanalyzed games",
+      "allGamesReanalyze": "All games (re-analyze)",
+      "analysisDepth": "Analysis Depth",
+      "analyzingGames": "Analyzing {{current}} of {{total}} games...",
+      "stopAnalysis": "Stop Analysis",
+      "analysisSpeeds": {
+        "express": "Express / depth 8",
+        "swift": "Fast / depth 12",
+        "focused": "Intermediate / depth 16",
+        "advanced": "Advanced / depth 20",
+        "deepdive": "Deep / depth 24"
+      },
+      "deleteGame": "Delete game",
+      "allAccounts": "All Accounts",
+      "noEngineAvailable": "No Engine Available",
+      "noEngineAvailableMessage": "Please install an engine first in the Engines page.",
+      "analysisStarted": "Analysis Started",
+      "analysisCancelled": "Analysis Cancelled",
+      "analysisProgress": "Analysis Progress",
+      "analysisComplete": "Analysis Complete",
+      "newGame": "New Game",
+      "unknown": "Unknown",
+      "engine": "Engine",
+      "editProfile": {
+        "title": "FIDE Title",
+        "fideIdLabel": "FIDE ID",
+        "fideIdPlaceholder": "Enter your FIDE ID",
+        "invalidFideId": "FIDE ID must be a number",
+        "enterFideId": "Please enter a FIDE ID",
+        "playerNotFound": "Player not found. Please verify the FIDE ID.",
+        "searchError": "Error searching for player. Please try again.",
+        "search": "Search",
+        "name": "Name",
+        "firstName": "First Name",
+        "customName": "Display Name",
+        "customNamePlaceholder": "Enter your preferred name",
+        "customNameDescription": "This name will be shown in the dashboard",
+        "lichessToken": "Lichess Token",
+        "lichessTokenPlaceholder": "Enter your Lichess API token",
+        "lichessTokenDescription": "Required for creating tournaments on Lichess. Get your token from https://lichess.org/account/oauth/token/create",
+        "gender": "Gender",
+        "male": "Male",
+        "female": "Female",
+        "error": "Error",
+        "note": "Note: FIDE player search may not be available. You can still save the FIDE ID manually.",
+        "ratings": "FIDE Ratings",
+        "standard": "Standard",
+        "rapid": "Rapid",
+        "blitz": "Blitz"
       }
     },
     "tabs": {
@@ -325,13 +465,33 @@
         "saveToCollection": "Salva nella collezione",
         "online": "Online",
         "importing": "Importazione...",
-        "import": "Importa"
+        "import": "Importa",
+        "importComplete": "Import Complete",
+        "gamesImported": {
+          "one": "{{count}} game imported",
+          "other": "{{count}} games imported"
+        },
+        "errorCount": {
+          "one": "{{count}} error",
+          "other": "{{count}} errors"
+        },
+        "allGamesImported": "All games were imported successfully!",
+        "partialImport": "{{imported}} of {{total}} games imported successfully",
+        "showErrors": "Show errors",
+        "fileError": "Error in file: {{file}}",
+        "generalError": "Import error",
+        "gameError": "Error in game {{gameIndex}}",
+        "importedFiles": "Imported Files",
+        "analyzeFile": "Analyze"
       },
       "puzzle": {
         "title": "Puzzle",
         "desc": "Allenati con gli scacchi",
         "button": "Allenati"
-      }
+      },
+      "limitReached": "Maximum Tabs Reached",
+      "limitReachedDesc": "You can have up to {{max}} tabs open at once. Please close some tabs before opening new ones.",
+      "maxTabsReached": "Maximum of {{max}} tabs reached"
     },
     "board": {
       "actions": {
@@ -343,7 +503,8 @@
         "editPosition": "Modifica posizione",
         "savePGN": "Salva PGN ({{key}})",
         "addGame": "Aggiungi partita",
-        "flipBoard": "Capovolgi scacchiera ({{key}})"
+        "flipBoard": "Capovolgi scacchiera ({{key}})",
+        "takeBack": "Take Back"
       },
       "tabs": {
         "practice": "Pratica",
@@ -439,7 +600,11 @@
       "completed": "Completato",
       "exercisesCompleted": "esercizi completati",
       "lessonCompleted": "Congratulazioni! Hai completato {{lesson}}!",
-      "completionMessage": "Hai completato con successo tutti gli esercizi di questa lezione. Continua così!"
+      "completionMessage": "Hai completato con successo tutti gli esercizi di questa lezione. Continua così!",
+      "description": "Step-by-step guided tutorials covering chess fundamentals",
+      "lessons": "Lessons",
+      "backToLearn": "Back to Learn",
+      "tryTheseMoves": "Try these moves:"
     },
     "practice": {
       "title": "Allenamento di scacchi",
@@ -452,7 +617,18 @@
       "showHint": "Mostra suggerimento",
       "hintText": "Cerca opportunità tattiche o caselle chiave che controllano la posizione.",
       "congratulations": "Congratulazioni!",
-      "completedCategory": "Hai completato tutti gli esercizi in {{category}}!"
+      "completedCategory": "Hai completato tutti gli esercizi in {{category}}!",
+      "practice": "Practice",
+      "backToLearn": "Back to Learn",
+      "backToPractice": "Back to Practice",
+      "searchPlaceholder": "Search practice categories...",
+      "noCategoriesFound": "No categories found",
+      "adjustSearchCriteria": "Try adjusting your search criteria",
+      "resetExercise": "Reset exercise",
+      "lookForBestMove": "Look for the best move in this position. Consider all tactical motifs!",
+      "comingSoon": "Coming Soon",
+      "startTraining": "Start Training",
+      "continue": "Continue"
     },
     "engines": {
       "title": "Motori",
@@ -464,7 +640,8 @@
         "numOfCores": "Numero di core",
         "sizeOfHash": "Dimensione dell'Hash",
         "editJSON": "Modifica JSON",
-        "reset": "Ripristina impostazioni predefinite"
+        "reset": "Ripristina impostazioni predefinite",
+        "selectEngineTip": "Tip: Select an engine to edit its settings."
       },
       "add": {
         "title": "Aggiungi Motore",
@@ -481,7 +658,13 @@
       "remove": {
         "title": "Rimuovi Motore",
         "message": "Sei sicuro di voler rimuovere questo motore da Obsidian Chess Studio?"
-      }
+      },
+      "searchPlaceholder": "Search engines...",
+      "noEnginesFound": "No engines found",
+      "noEnginesFoundMessage": "Try adjusting your search or add a new engine.",
+      "unknownEngine": "Unknown Engine",
+      "selectImage": "Select image",
+      "invalidConfiguration": "Invalid Configuration"
     },
     "databases": {
       "title": "Database",
@@ -520,6 +703,10 @@
       "delete": {
         "title": "Elimina database",
         "message": "Sei sicuro di voler eliminare questo database?"
+      },
+      "category": {
+        "games": "Games",
+        "puzzles": "Puzzles"
       }
     },
     "files": {
@@ -531,7 +718,9 @@
         "tournament": "Torneo",
         "puzzle": "Puzzle",
         "other": "Altro",
-        "folder": "Cartella"
+        "folder": "Cartella",
+        "all": "All",
+        "variants": "Variants"
       },
       "delete": {
         "title": "Elimina file",
@@ -610,7 +799,8 @@
       "showingSolution": "Mostrando soluzione",
       "viewSolution": "Mostra soluzione",
       "loadingRatingRange": "Caricamento intervallo punteggio...",
-      "enterTitle": "Inserisci titolo esercizio"
+      "enterTitle": "Inserisci titolo esercizio",
+      "title": "Puzzle"
     },
     "tablebase": {
       "title": "Tablebase",
@@ -618,6 +808,117 @@
       "dtm": "DTM {{count}}",
       "dtz": "DTZ {{count}}",
       "fiftyMoveRule": "*a causa della regola delle 50 mosse"
+    },
+    "updater": {
+      "newVersionAvailable": "New Version Available",
+      "versionInfo": "Version {{version}} is now available",
+      "prereleaseWarning": "Pre-release Version",
+      "prereleaseDescription": "This is a pre-release version and may contain bugs or unfinished features.",
+      "releaseNotes": "What's New:",
+      "viewFullNotes": "View full release notes",
+      "publishedAt": "Published: {{date}}",
+      "skipVersion": "Skip This Version",
+      "remindLater": "Remind Me Later",
+      "updating": "Updating...",
+      "updateNow": "Update Now",
+      "updateFailed": "Update Failed",
+      "updateCompleted": "Update Completed",
+      "checkingForUpdates": "Checking for Updates",
+      "noUpdatesAvailable": "No Updates Available"
+    },
+    "tournaments": {
+      "import": "Import",
+      "search": "Search",
+      "create": "Create",
+      "importTab": {
+        "title": "Import Tournament from Lichess",
+        "description": "Import tournament games from Lichess using a tournament ID or URL",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "button": "Import Tournament"
+      },
+      "browse": {
+        "title": "Browse Lichess Tournaments",
+        "description": "Search and browse tournaments on Lichess",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "button": "Browse Tournaments",
+        "schedule": "Schedule",
+        "noTemplates": "No tournament templates found",
+        "loadError": "Failed to load tournament templates",
+        "deleted": "Tournament template deleted",
+        "deleteError": "Failed to delete tournament template"
+      },
+      "schedule": {
+        "title": "Schedule Tournament",
+        "description": "Select the date and time when the tournament should start",
+        "startDate": "Start Date & Time",
+        "dateRequired": "Start date is required",
+        "invalidDate": "Invalid date format",
+        "success": "Tournament scheduled successfully!",
+        "successTitle": "Tournament Created Successfully!",
+        "shareUrl": "Share this URL to invite players:",
+        "urlCopied": "Tournament URL copied to clipboard!",
+        "copyError": "Failed to copy URL",
+        "invalidTeamId": "Invalid team ID. Please verify that the team ID is correct and that you have access to it.",
+        "error": "Failed to schedule tournament",
+        "button": "Schedule",
+        "tournamentId": "Tournament ID:",
+        "share": "Share",
+        "shared": "Shared!"
+      },
+      "createTab": {
+        "title": "Create Tournament Template",
+        "description": "Create a new tournament template (schedule it later from the Search tab)",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "noAccount": "No account selected. Please select a main account first.",
+        "button": "Save Template",
+        "templateSaved": "Tournament template saved successfully!",
+        "nameRequired": "Tournament name is required",
+        "success": "Tournament created successfully!",
+        "error": "Failed to create tournament",
+        "fields": {
+          "name": "Tournament Name",
+          "namePlaceholder": "Enter tournament name",
+          "description": "Description",
+          "descriptionPlaceholder": "Optional description",
+          "clockTime": "Clock Time (minutes)",
+          "clockIncrement": "Increment (seconds)",
+          "minutes": "Duration (minutes)",
+          "variant": "Variant",
+          "rated": "Rated",
+          "berserkable": "Allow Berserk",
+          "streakable": "Allow Streak",
+          "hasChat": "Enable Chat",
+          "position": "Starting Position (FEN)",
+          "positionPlaceholder": "Optional: Starting FEN position",
+          "password": "Password (Private Tournament)",
+          "passwordPlaceholder": "Optional: Set password for private tournament",
+          "teamBattle": "Team Battle (Team ID)",
+          "teamBattlePlaceholder": "Optional: Team ID for team battle",
+          "teamBattleDescription": "Create a team battle tournament where players compete in teams",
+          "teamRestriction": "Restrict to Team (Team ID)",
+          "teamRestrictionPlaceholder": "Optional: Only allow members of this team to join",
+          "teamRestrictionDescription": "Enter team ID (e.g., 'torneos-para-pensar' from https://lichess.org/team/torneos-para-pensar) to restrict access to team members only",
+          "conditions": "Entry Conditions",
+          "minRating": "Minimum Rating",
+          "maxRating": "Maximum Rating",
+          "nbRatedGame": "Minimum Rated Games"
+        },
+        "variants": {
+          "standard": "Standard",
+          "chess960": "Chess960",
+          "crazyhouse": "Crazyhouse",
+          "antichess": "Antichess",
+          "atomic": "Atomic",
+          "horde": "Horde",
+          "kingOfTheHill": "King of the Hill",
+          "racingKings": "Racing Kings",
+          "threeCheck": "Three Check"
+        }
+      }
+    },
+    "shortcuts": {
+      "title": "Keyboard Shortcuts",
+      "helpTitle": "Show keyboard shortcuts help"
     }
   },
   "settings": {
@@ -646,7 +947,15 @@
       "scrollThroughMovesDesc": "Abilita o disabilita lo scorrimento tra le mosse sulla scacchiera",
       "coordinatesNone": "No",
       "coordinatesInside": "Dentro la scacchiera",
-      "coordinatesAll": "Su tutte le case della scacchiera"
+      "coordinatesAll": "Su tutte le case della scacchiera",
+      "practiceAnimationSpeed": "Repertoire Practice Animation Speed",
+      "practiceAnimationSpeedDesc": "Control how fast moves are played when practicing repertoire positions",
+      "practiceAnimationDisabled": "Disabled",
+      "practiceAnimationVeryFast": "Very Fast",
+      "practiceAnimationFast": "Fast",
+      "practiceAnimationNormal": "Normal",
+      "practiceAnimationSlow": "Slow",
+      "practiceAnimationVerySlow": "Very Slow"
     },
     "inputs": {
       "title": "Input",
@@ -674,7 +983,80 @@
       "title": "Aspetto",
       "desc": "Personalizza l'aspetto dell'app",
       "theme": {
-        "theme": "Tema"
+        "theme": "Tema",
+        "manage": "Manage",
+        "manageTitle": "Manage Themes",
+        "customThemes": "Custom Themes",
+        "builtInThemes": "Built-in Themes",
+        "createNew": "Create New",
+        "created": "Theme Created",
+        "createdMessage": "Successfully created theme {{name}}",
+        "edit": "Edit theme",
+        "duplicate": "Duplicate theme",
+        "duplicated": "Theme Duplicated",
+        "duplicatedMessage": "Successfully created {{name}}",
+        "export": "Export theme",
+        "exported": "Theme Exported",
+        "exportedMessage": "Successfully exported theme {{name}}",
+        "exportFailed": "Export Failed",
+        "exportFailedMessage": "Could not export theme.",
+        "delete": "Delete theme",
+        "import": "Import Theme",
+        "importFromFile": "Import from file",
+        "importFromJSON": "Import from JSON",
+        "importTheme": "Import Theme",
+        "importDesc": "Paste the JSON content of a theme file below:",
+        "importPlaceholder": "Paste theme JSON here...",
+        "imported": "Theme Imported",
+        "importedMessage": "Successfully imported {{name}}",
+        "importFailed": "Import Failed",
+        "importFailedMessage": "Invalid theme file format",
+        "noCustomThemes": "No custom themes yet. Create your first custom theme to get started.",
+        "builtIn": "Built-in",
+        "apply": "Apply Theme",
+        "applied": "Theme Applied",
+        "appliedMessage": "Applied theme {{name}}",
+        "name": "Theme Name",
+        "nameRequired": "Theme name is required",
+        "namePlaceholder": "Enter theme name",
+        "description": "Description",
+        "descriptionPlaceholder": "Enter theme description",
+        "author": "Author",
+        "authorPlaceholder": "Enter author name",
+        "create": "Create",
+        "importFile": "Import File",
+        "createError": "Failed to create theme",
+        "deleteError": "Failed to delete theme",
+        "duplicateError": "Failed to duplicate theme",
+        "exportError": "Failed to export theme",
+        "importError": "Failed to import theme",
+        "deleted": "Theme Deleted",
+        "deletedMessage": "Deleted theme {{name}}",
+        "visualEditor": "Visual Editor",
+        "updated": "Theme Updated",
+        "updatedMessage": "Successfully updated theme {{name}}",
+        "saveError": "Failed to save theme",
+        "editTheme": "Edit Theme",
+        "hidePreview": "Hide Preview",
+        "showPreview": "Show Preview",
+        "basic": "Basic Settings",
+        "colors": "Colors",
+        "components": "Components",
+        "primaryColor": "Primary Color",
+        "defaultRadius": "Default Radius",
+        "fontFamily": "Font Family",
+        "monospaceFont": "Monospace Font",
+        "scale": "Scale",
+        "luminanceThreshold": "Luminance Threshold",
+        "fontSmoothing": "Font Smoothing",
+        "autoContrast": "Auto Contrast",
+        "focusRing": "Focus Ring",
+        "white": "White Color",
+        "black": "Black Color",
+        "colorPalettes": "Color Palettes",
+        "addColor": "Add Color",
+        "newColorName": "Enter color name",
+        "autoDesc": "Automatically matches system preference"
       },
       "themeDesc": "Schema di colori generale",
       "custom": "Personalizzata",
@@ -699,7 +1081,11 @@
       "dateFormat": "Formato data",
       "dateFormatDesc": "Scegli tra formato internazionale (YYYY-MM-DD) o specifico per la lingua",
       "international": "Internazionale",
-      "locale": "Locale"
+      "locale": "Locale",
+      "colorScheme": "Color Scheme",
+      "colorSchemeDesc": "Light or dark mode preference",
+      "light": "Light",
+      "dark": "Dark"
     },
     "sound": {
       "title": "Suono",
@@ -709,7 +1095,13 @@
       "collection": "Collezione di Suoni",
       "collectionDesc": "Collezione di suoni utilizzati"
     },
-    "keybindings": "Tasti di Scelta Rapida",
+    "keybindings": {
+      "title": "Keybindings",
+      "desc": "Customize keyboard shortcuts",
+      "placeholder": "Type to search in keybindings",
+      "command": "Command",
+      "keybinding": "Keybinding"
+    },
     "directories": {
       "title": "Cartelle",
       "desc": "Personalizza le directory utilizzate dall'app",
@@ -733,7 +1125,13 @@
     "gameplay": "Gioco",
     "analysis": "Analisi",
     "interface": "Interfaccia",
-    "system": "Sistema"
+    "system": "Sistema",
+    "about": "About",
+    "aboutDesc": "Learn more about Obsidian Chess Studio",
+    "telemetryLoading": "Loading telemetry settings...",
+    "telemetryDetails": "Telemetry data is anonymous and helps us understand how Obsidian Chess Studio is used to improve the experience. We never collect personal information or game content. Data is securely stored using Supabase.",
+    "pickValue": "Pick value",
+    "pressAnyKey": "Press any key"
   },
   "formatters": {
     "dateFormat": "{{date, dateformat}}",
@@ -746,5 +1144,468 @@
     "duration": "{{duration, duration}}",
     "durationLong": "{{duration, durationLong}}",
     "score": "{{score, score}}"
+  },
+  "error": {
+    "title": "An error occurred",
+    "unexpectedError": "Unexpected Error:",
+    "copyStackTrace": "Copy stack trace",
+    "reportPrompt": "Please report this on",
+    "reportOr": "or on the"
+  },
+  "analysis": {
+    "noEnginesInstalled": "No engines installed. Please",
+    "addEngine": "Add an engine",
+    "first": "first.",
+    "checkOpponentThreat": "Check the opponent's threat",
+    "engineSpeed": "How fast the engine is running",
+    "killEngine": "Kill engine",
+    "enableWDL": "Enable WDL"
+  },
+  "logs": {
+    "filterAll": "All",
+    "filterGUI": "GUI",
+    "filterEngine": "Engine",
+    "noEnginesLoaded": "No engines loaded",
+    "noLogsFor": "No logs for",
+    "engine": "engine"
+  },
+  "moves": {
+    "transposition": "Transposition"
+  },
+  "game": {
+    "timeSettings": "Time Settings",
+    "timeControl": "Time",
+    "unlimited": "Unlimited",
+    "time": "Time",
+    "increment": "Increment",
+    "sameTimeControl": "Same time control",
+    "noEnginesAvailable": "No Chess Engines Available",
+    "noEnginesAvailableDesc": "No chess engines are currently installed or detected on your system. To play against an engine, you'll need to install one first.",
+    "installEngine": "Install Engine",
+    "selectEngine": "Select engine",
+    "openingFor": "opening for",
+    "startingPosition": "Starting Position",
+    "fen": "FEN Position",
+    "fenDescription": "Enter a FEN position or leave empty for standard starting position",
+    "applyFen": "Apply FEN",
+    "resetFen": "Reset to initial position",
+    "invalidFen": "Invalid FEN position"
+  },
+  "databases": {
+    "selectDatabasePrompt": "Select a database",
+    "doubleclickTip": "Double-click on a database to select it",
+    "loadError": "Error loading database",
+    "reason": "Reason",
+    "checkFileError": "Check if the file exists and you have permission to read it",
+    "noTournamentSelected": "No tournament selected",
+    "noPlayerSelected": "No player selected",
+    "processingPlayerData": "Processing Player Data",
+    "searchPlaceholder": "Search databases...",
+    "noDatabasesFound": "No databases found",
+    "player1": "Player 1",
+    "player2": "Player 2",
+    "on": "On",
+    "off": "Off",
+    "analyzeGame": "Analyze game",
+    "deleteGame": "Delete game",
+    "fideInfo": {
+      "title": "FIDE Player Info",
+      "sex": "Sex: {{sex}}",
+      "born": "Born: {{birthday}}",
+      "standard": "Standard",
+      "rapid": "Rapid",
+      "blitz": "Blitz"
+    },
+    "playerTable": {
+      "minElo": "Min ELO",
+      "maxElo": "Max ELO"
+    },
+    "tournamentCard": {
+      "tabs": {
+        "games": "Games",
+        "leaderboard": "Leaderboard"
+      }
+    }
+  },
+  "accounts": {
+    "title": "Accounts",
+    "viewDatabases": "View Player Databases",
+    "processingGames": "Processing Games...",
+    "databaseLoadError": "Error loading database",
+    "searchPlaceholder": "Search accounts...",
+    "addAccount": "Add Account",
+    "name": "Name",
+    "website": "Website",
+    "username": "Username",
+    "loginWithBrowser": "Login with browser",
+    "loginWithBrowserDesc": "Allows faster game downloads",
+    "selectPlayer": "Select player",
+    "enterUsername": "Enter your username",
+    "noAccountsFound": "No accounts found",
+    "personalCard": {
+      "fideInfo": "FIDE info",
+      "tabs": {
+        "overview": "Overview",
+        "ratings": "Ratings",
+        "openings": "Openings"
+      }
+    },
+    "dateRange": {
+      "allTime": "All time"
+    },
+    "selector": {
+      "allWebsites": "All websites",
+      "allAccounts": "All accounts",
+      "website": "Website",
+      "account": "Account"
+    },
+    "overview": {
+      "clickToSeeMonthDetails": "Click to see the month details",
+      "clickToReturnToYears": "Click to return to the years view"
+    },
+    "accountCard": {
+      "mainAccount": "Main account",
+      "setAsMainAccount": "Set as main account",
+      "updateStats": "Update stats",
+      "downloadGames": "Download games",
+      "removeAccount": "Remove account",
+      "downloaded": "Downloaded",
+      "gamesCount": "{{count}} games",
+      "editName": "Edit name",
+      "lastUpdate": "Last update",
+      "saveChanges": "Save changes",
+      "cancelEdit": "Cancel edit"
+    }
+  },
+  "practice": {
+    "noPositionsYet": "no positions yet",
+    "noLogsYet": "No logs yet",
+    "adjustSearchCriteria": "Adjust the search criteria to see some logs",
+    "hintMessage": "Hint: Look for tactical opportunities or patterns in the position"
+  },
+  "repertoire": {
+    "maxDepth": "Max Depth:",
+    "totalMoves": "Total moves:",
+    "analyzing": "Analyzing Repertoire",
+    "noMissingMoves": "No missing moves",
+    "missingMoves": "Missing moves",
+    "refreshMoves": "Refresh moves",
+    "variations": "Variations",
+    "markAsStartHint": "Mark as starting position",
+    "noMissingMovesFound": "No missing moves found",
+    "practicePositions": "Practice Positions",
+    "practiceLogs": "Practice Logs"
+  },
+  "notifications": {
+    "failedToOpenFile": "Failed to open file",
+    "newVersionAvailable": "New version available",
+    "updating": "Updating",
+    "downloadingUpdate": "Downloading and installing update...",
+    "clearAllData": "Clear all data",
+    "dataCleared": "Data cleared",
+    "dataClearedMessage": "All saved data has been cleared. The app will reload.",
+    "failedToClearData": "Failed to clear data",
+    "openingLogs": "Opening Logs",
+    "failedToOpenLogFile": "Failed to open log file",
+    "aboutTitle": "Obsidian Chess Studio",
+    "menuError": "Menu Error",
+    "failedToCreateMenu": "Failed to create application menu",
+    "versionReadyToInstall": "Version {{version}} is ready to install",
+    "updatingApplication": "Updating Application",
+    "updateCompleted": "Update Completed",
+    "appWillRestart": "The application will restart to apply the update",
+    "updateFailed": "Update Failed"
+  },
+  "dashboard": {
+    "noMainAccount": "No main account",
+    "estimatedElo": "Est. Elo",
+    "suggestions": {
+      "analyzeLastGame": "Analyze your last game",
+      "exploreOpenings": "Explore popular openings"
+    },
+    "timeControlCards": {
+      "classicalDesc": "Play classical chess games",
+      "rapidDesc": "Play quick-paced rapid games",
+      "blitzDesc": "Play fast-paced blitz games",
+      "bulletDesc": "Play ultra-fast bullet games"
+    },
+    "tabs": {
+      "local": "Local",
+      "lichess": "Lichess"
+    },
+    "tableHeaders": {
+      "opponent": "Opponent",
+      "color": "Color",
+      "result": "Result",
+      "accuracy": "Accuracy",
+      "moves": "Moves",
+      "date": "Date",
+      "account": "Account"
+    }
+  },
+  "databaseOptions": {
+    "player": "Player",
+    "search": "Search",
+    "color": "Color",
+    "result": "Result",
+    "any": "Any",
+    "whiteWon": "White Won",
+    "draw": "Draw",
+    "blackWon": "Black Won",
+    "from": "From",
+    "to": "To",
+    "startDate": "Start date",
+    "endDate": "End date",
+    "position": "Position",
+    "exact": "Exact",
+    "partial": "Partial",
+    "currentPosition": "Current Position",
+    "similarStructure": "Similar Structure",
+    "empty": "Empty",
+    "since": "Since",
+    "until": "Until",
+    "pickDate": "Pick date",
+    "playerUsername": "Player's username",
+    "selectColor": "Select color"
+  },
+  "gameInfo": {
+    "unknownEvent": "Unknown Event",
+    "unknownSite": "Unknown Site",
+    "unknownElo": "Unknown ELO",
+    "openingFor": "opening for",
+    "unknownPlaceholder": "?",
+    "unknownDate": "????.??.??"
+  },
+  "keybindings": {
+    "openFile": "Open File",
+    "saveFile": "Save File",
+    "appReload": "Reload",
+    "exitApp": "Exit Obsidian Chess Studio",
+    "spotlightSearch": "Spotlight Search",
+    "newBoardTab": "New board tab",
+    "closeBoardTab": "Close board tab",
+    "cycleBoardTabs": "Cycle board tabs",
+    "reverseCycleBoardTabs": "Reverse cycle board tabs",
+    "boardTabOne": "Go to board tab one",
+    "boardTabTwo": "Go to board tab two",
+    "boardTabThree": "Go to board tab three",
+    "boardTabFour": "Go to board tab four",
+    "boardTabFive": "Go to board tab five",
+    "boardTabSix": "Go to board tab six",
+    "boardTabSeven": "Go to board tab seven",
+    "boardTabEight": "Go to board tab eight",
+    "boardTabLast": "Go to rightmost board tab",
+    "playBoard": "Play",
+    "analyzeBoard": "Analyze",
+    "trainBoard": "Train",
+    "importBoard": "Import",
+    "copyFen": "Copy FEN",
+    "copyPgn": "Copy PGN",
+    "pasteFen": "Paste FEN",
+    "exportGame": "Export Game",
+    "nextMove": "Next move",
+    "previousMove": "Previous move",
+    "goToBranchStart": "Go to start of branch",
+    "goToBranchEnd": "Go to end of branch",
+    "goToStart": "Go to start of game",
+    "goToEnd": "Go to end of game",
+    "nextBranching": "Next branching point",
+    "previousBranching": "Previous branching point",
+    "nextBranch": "Next branch",
+    "previousBranch": "Previous branch",
+    "annotationBrilliant": "Toggle brilliant move annotation",
+    "annotationGood": "Toggle good move annotation",
+    "annotationInteresting": "Toggle interesting move annotation",
+    "annotationDubious": "Toggle dubious move annotation",
+    "annotationMistake": "Toggle mistake move annotation",
+    "annotationBlunder": "Toggle blunder move annotation",
+    "deleteMove": "Delete move",
+    "promoteVariation": "Promote Variation",
+    "deleteVariation": "Delete Variation",
+    "addVariation": "Add Variation",
+    "collapseVariations": "Collapse Variations",
+    "addComment": "Add Comment",
+    "editComment": "Edit Comment",
+    "practiceTab": "Go to practice tab",
+    "analysisTab": "Go to analysis tab",
+    "databaseTab": "Go to database tab",
+    "annotateTab": "Go to annotate tab",
+    "infoTab": "Go to info tab",
+    "toggleEvalBar": "Toggle Eval Bar and Arrows",
+    "toggleAllEngines": "Toggle all engines",
+    "toggleBlur": "Toggle blur",
+    "toggleEngine": "Toggle Engine",
+    "stopEngine": "Stop Engine",
+    "analyzePosition": "Analyze Position",
+    "infiniteAnalysis": "Infinite Analysis",
+    "flipBoard": "Flip Board",
+    "resetPosition": "Reset Position",
+    "setupPosition": "Setup Position",
+    "swapOrientation": "Swap orientation",
+    "clearShapes": "Clear shapes",
+    "blindfold": "Blindfold",
+    "findPosition": "Find Position",
+    "quickSearch": "Quick Search",
+    "filterGames": "Filter Games",
+    "toggleSidebar": "Toggle Sidebar",
+    "toggleNotation": "Toggle Notation",
+    "toggleFullscreen": "Toggle Fullscreen",
+    "focusBoard": "Focus Board",
+    "focusMoves": "Focus Moves",
+    "showHint": "Show Hint",
+    "retryPosition": "Retry Position",
+    "markAsCorrect": "Mark as Correct",
+    "skipPosition": "Skip Position",
+    "addToRepertoire": "Add to Repertoire",
+    "removeFromRepertoire": "Remove from Repertoire",
+    "undo": "Undo",
+    "redo": "Redo",
+    "newGame": "New Game",
+    "duplicateTab": "Duplicate Tab",
+    "openSettings": "Open Settings",
+    "showKeybindings": "Show Keybindings",
+    "toggleHelp": "Toggle Help",
+    "jumpToMove": "Jump to Move",
+    "goToPositionNumber": "Go to Position Number",
+    "previousGame": "Previous game",
+    "nextGame": "Next game"
+  },
+  "errors": {
+    "failedToLoadAnalysisPanels": "Failed to load analysis panels",
+    "failedToLoadGameAnalysis": "Failed to load game analysis",
+    "failedToInitializeChessBoard": "Failed to initialize chess board",
+    "failedToLoadMobileBoardLayout": "Failed to load mobile board layout",
+    "defaultLayout": "Default Layout",
+    "unexpectedError": "Unexpected Error:",
+    "invalidMove": "Invalid move"
+  },
+  "window": {
+    "minimize": "Minimize Window",
+    "maximize": "Maximize Window",
+    "maximizeRestore": "Maximize/Restore Window",
+    "close": "Close Window"
+  },
+  "sidebar": {
+    "more": "More"
+  },
+  "board": {
+    "human": "Human",
+    "moveInput": {
+      "enterMove": "Enter move",
+      "invalidMove": "Invalid move"
+    },
+    "choosePromotionPiece": "Choose promotion piece:"
+  },
+  "learn": {
+    "chessMasteryHub": "Chess Mastery Hub",
+    "progressTooltip": "Progress",
+    "yourProgress": "Your Progress",
+    "overallProgress": "Overall Progress",
+    "streak": "Streak",
+    "streakDays": "{{count}} days",
+    "level": "Level",
+    "totalPoints": "Total Points",
+    "beginner": "Beginner",
+    "intermediate": "Intermediate",
+    "advanced": "Advanced",
+    "master": "Master"
+  },
+  "themes": {
+    "preview": {
+      "title": "Theme Preview",
+      "preview": "Preview",
+      "unknown": "Unknown",
+      "colorPalette": "Color Palette",
+      "componentExamples": "Component Examples",
+      "buttons": "Buttons",
+      "inputs": "Inputs",
+      "data": "Data",
+      "feedback": "Feedback",
+      "primaryButton": "Primary Button",
+      "outline": "Outline",
+      "light": "Light",
+      "subtle": "Subtle",
+      "extraSmall": "Extra Small",
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large",
+      "textInput": "Text Input",
+      "enterText": "Enter text",
+      "withIcon": "With Icon",
+      "searchPlaceholder": "Search...",
+      "switch": "Switch",
+      "enableNotifications": "Enable notifications",
+      "slider": "Slider",
+      "name": "Name",
+      "email": "Email",
+      "role": "Role",
+      "demoUser1": "John Doe",
+      "demoUser2": "Jane Smith",
+      "demoUser3": "Bob Johnson",
+      "admin": "Admin",
+      "user": "User",
+      "moderator": "Moderator",
+      "filled": "Filled",
+      "dot": "Dot",
+      "settings": "Settings",
+      "userProfile": "User Profile",
+      "typography": "Typography",
+      "heading1": "Heading 1",
+      "heading2": "Heading 2",
+      "heading3": "Heading 3",
+      "largeText": "Large text with font family: {{fontFamily}}",
+      "regularText": "Regular text that demonstrates the default font styling.",
+      "smallDimmedText": "Small dimmed text for secondary information.",
+      "monospaceText": "Monospace text: {{fontFamily}}",
+      "layoutSpacing": "Layout & Spacing",
+      "cardWithRadius": "Card with {{radius}} radius",
+      "scaleFactor": "Scale factor: {{scale}}",
+      "cardWithShadow": "Card with shadow",
+      "usingThemeColors": "Using theme colors and spacing"
+    }
+  },
+  "playerStyle": {
+    "mixedStyle": "Mixed Style",
+    "mixedStyleDescription": "Versatile repertoire without a clear dominant style, adapts to different positions and opponents",
+    "noData": "No Data",
+    "noDataDescription": "There are not enough openings in the database to analyze this player's style",
+    "creativeGambiteer": "Creative Gambiteer",
+    "creativeGambiteerDescription": "Prefers creative gambits and offbeat lines to create early complications and surprise opponents",
+    "gambiteer": "Gambiteer",
+    "gambiteerDescription": "Frequently employs gambits and sacrificial opening lines to gain dynamic compensation and initiative",
+    "gambiteerSimpleDescription": "Often chooses gambits and speculative sacrifices in the opening phase to create tactical opportunities",
+    "gambiteerFallbackDescription": "Frequently uses gambits or speculative sacrifices in the opening to gain dynamic play and initiative",
+    "systemPlayer": "System Player",
+    "systemPlayerDescription": "Relies on set-up systems like London, Colle or Torre with repeatable plans and solid structures",
+    "classicalSolid": "Classical Solid",
+    "classicalSolidDescription": "Prefers solid defensive structures and small, long-term advantages over sharp tactical complications",
+    "positional": "Positional",
+    "positionalDescription": "Strategic, positional player with focus on pawn structures, long-term plans and key squares",
+    "positionalSimpleDescription": "Focuses on strategic planning, pawn structures and long-term positional advantages",
+    "positionalFallbackDescription": "Strategic, positional play with focus on structures, key squares and long-term advantages",
+    "hypermodernDynamic": "Hypermodern Dynamic",
+    "hypermodernDynamicDescription": "Dynamic, hypermodern style with Indian defenses, Benoni structures, Modern Defense, or sharp Sicilian variations",
+    "unconventionalOpenings": "Unconventional Openings",
+    "unconventionalOpeningsDescription": "Prefers rare and less theoretical openings to sidestep mainline theory and create unfamiliar positions",
+    "unconventional": "Unconventional",
+    "unconventionalDescription": "Uses offbeat and surprise openings as a main weapon to avoid theory and create original positions",
+    "unconventionalFallbackDescription": "Prefers unusual or rare openings to avoid theoretical preparation and create unique positions",
+    "dynamicTactician": "Dynamic Tactician",
+    "dynamicTacticianDescription": "Seeks complex, tactical positions with plenty of counterplay and dynamic piece activity",
+    "systematic": "Systematic",
+    "systematicDescription": "Prefers structured systems and set-up based openings with consistent plans and reliable structures",
+    "systematicFallbackDescription": "Relies on set-up based openings and systems with repeatable plans and solid foundations",
+    "tactical": "Tactical",
+    "tacticalDescription": "Looks for combinations and concrete tactical shots, prioritizing calculation and tactical opportunities",
+    "tacticalFallbackDescription": "Tactics and concrete calculation are a central part of the repertoire, seeking sharp positions",
+    "dynamic": "Dynamic",
+    "dynamicDescription": "Prefers sharp, unbalanced positions with active play and dynamic piece coordination",
+    "dynamicFallbackDescription": "Enjoys dynamic positions with active piece play and complex tactical possibilities",
+    "solid": "Solid",
+    "solidDescription": "Values safety and sound structures over sharp play, prioritizing solidity and long-term stability",
+    "solidFallbackDescription": "Safe and reliable repertoire with fewer risks, focusing on solid structures and defensive play"
+  },
+  "about": {
+    "tauriVersion": "Tauri version: {{version}}"
   }
 }

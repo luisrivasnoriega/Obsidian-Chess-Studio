@@ -64,7 +64,24 @@
     "close": "Close",
     "import": "Import",
     "all": "All",
-    "convert": "Convert"
+    "convert": "Convert",
+    "grid": "Grid",
+    "table": "Table",
+    "sort": "Sort",
+    "sortDirection": "Sort Direction",
+    "view": "View",
+    "copied": "Copied",
+    "copy": "Copy",
+    "update": "Update",
+    "reload": "Reload",
+    "reloadFile": "Reload file",
+    "namePlaceholder": "Name",
+    "details": "Details",
+    "fileSavedSuccessfully": "File saved successfully",
+    "failedToSaveFile": "Failed to save file",
+    "puzzlesGeneratedSuccessfully": "{{count}} puzzles generated successfully",
+    "failedToGeneratePuzzles": "Failed to generate puzzles",
+    "generatePuzzles": "Generate Puzzles"
   },
   "chess": {
     "checkmate": "Checkmate",
@@ -106,7 +123,9 @@
       "timeTrouble": "Time Trouble",
       "withIdea": "With the idea",
       "onlyMove": "Only move",
-      "zugzwang": "Zugzwang"
+      "zugzwang": "Zugzwang",
+      "great": "Great",
+      "best": "Best"
     },
     "timeControl": {
       "ultraBullet": "UltraBullet",
@@ -156,7 +175,8 @@
       "invalidRemainingChecks": "Invalid remaining checks",
       "invalidTurn": "Invalid turn",
       "unknown": "Unknown error"
-    }
+    },
+    "draw": "Draw"
   },
   "error": {
     "title": "An error occurred",
@@ -196,7 +216,13 @@
     "noEnginesAvailableDesc": "No chess engines are currently installed or detected on your system. To play against an engine, you'll need to install one first.",
     "installEngine": "Install Engine",
     "selectEngine": "Select engine",
-    "openingFor": "opening for"
+    "openingFor": "opening for",
+    "startingPosition": "Starting Position",
+    "fen": "FEN Position",
+    "fenDescription": "Enter a FEN position or leave empty for standard starting position",
+    "applyFen": "Apply FEN",
+    "resetFen": "Reset to initial position",
+    "invalidFen": "Invalid FEN position"
   },
   "databases": {
     "selectDatabasePrompt": "Select a database",
@@ -275,8 +301,14 @@
       "downloadGames": "Download games",
       "removeAccount": "Remove account",
       "downloaded": "Downloaded",
-      "gamesCount": "{{count}} games"
-    }
+      "gamesCount": "{{count}} games",
+      "editName": "Edit name",
+      "lastUpdate": "Last update",
+      "saveChanges": "Save changes",
+      "cancelEdit": "Cancel edit"
+    },
+    "title": "Accounts",
+    "viewDatabases": "View Player Databases"
   },
   "practice": {
     "noPositionsYet": "no positions yet",
@@ -343,7 +375,8 @@
       "account": "Account"
     },
     "suggestedForYou": "Suggested for you",
-    "dailyGoals": "Daily goals"
+    "dailyGoals": "Daily goals",
+    "estimatedElo": "Est. Elo"
   },
   "databaseOptions": {
     "player": "Player",
@@ -461,7 +494,39 @@
       "promoteToMainLine": "Promote to Main Line",
       "promoteVariation": "Promote Variation",
       "copyVariationPGN": "Copy Variation PGN",
-      "deleteMove": "Delete Move"
+      "deleteMove": "Delete Move",
+      "pawnAppetit": "Obsidian Chess Studio",
+      "quit": "Quit Obsidian Chess Studio",
+      "newAnalysisBoard": "New Analysis Board",
+      "newPlayBoard": "New Play Board",
+      "importPgn": "Import PGN",
+      "settings": "Settings",
+      "edit": "Edit",
+      "undo": "Undo",
+      "redo": "Redo",
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste",
+      "selectAll": "Select All",
+      "commandPalette": "Command Palette",
+      "forceReload": "Force Reload",
+      "go": "Go",
+      "goToDashboard": "Go to Dashboard",
+      "goToBoards": "Go to Boards",
+      "goToAccounts": "Go to Accounts",
+      "goToFiles": "Go to Files",
+      "goToDatabases": "Go to Databases",
+      "goToEngines": "Go to Engines",
+      "goToLearn": "Go to Learn",
+      "goToSettings": "Go to Settings",
+      "goToKeyboardShortcuts": "Go to Keyboard Shortcuts",
+      "window": "Window",
+      "minimize": "Minimize",
+      "zoom": "Zoom",
+      "toggleFullScreen": "Toggle Full Screen",
+      "closeTab": "Close Tab",
+      "closeAllTabs": "Close All Tabs",
+      "reportIssue": "Report Issue"
     },
     "updater": {
       "newVersionAvailable": "New Version Available",
@@ -490,13 +555,22 @@
       "engines": "Engines",
       "learn": "Learn",
       "settings": "Settings",
-      "keyboardShortcuts": "Keyboard Shortcuts"
+      "keyboardShortcuts": "Keyboard Shortcuts",
+      "puzzles": "Puzzles",
+      "tournaments": "Tournaments"
     },
     "dashboard": {
       "welcome": {
         "firstOpen": "Welcome to Obsidian Chess Studio!",
         "back": "Welcome back",
-        "desc": "Ready to make your next best move?"
+        "desc": "Ready to make your next best move?",
+        "backWithName": {
+          "male": "Welcome back, {{name}}!",
+          "female": "Welcome back, {{name}}!"
+        },
+        "fideTitle": "FIDE Title",
+        "worldRank": "World Rank",
+        "nationalRank": "National Rank"
       },
       "cards": {
         "learn": {
@@ -549,6 +623,77 @@
           "desc": "Upload and edit PGN files to analyse your own games or study specific positions with full control.",
           "button": "Import"
         }
+      },
+      "suggestedForYou": "Suggested for you",
+      "dailyGoals": "Daily goals",
+      "dayStreak": "day streak",
+      "thisWeek": "This week",
+      "tags": {
+        "lessons": "Lessons",
+        "openings": "Openings",
+        "endgames": "Endgames",
+        "tactics": "Tactics"
+      },
+      "start": "Start",
+      "streak": "Streak",
+      "achievement": "Achievement",
+      "startPuzzleStreak": "Start today's puzzle streak",
+      "keepStreak": "Keep the streak: solve more puzzles",
+      "win": "Win",
+      "loss": "Loss",
+      "analyzeAllGames": "Analyze All Games",
+      "selectAnalysisDepth_one": "Select analysis depth for {{count}} game. This will analyze games shown in the dashboard using the default engine.",
+      "selectAnalysisDepth_other": "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the default engine.",
+      "analyze": "Analyze",
+      "onlyUnanalyzedGames": "Only unanalyzed games",
+      "allGamesReanalyze": "All games (re-analyze)",
+      "analysisDepth": "Analysis Depth",
+      "analyzingGames": "Analyzing {{current}} of {{total}} games...",
+      "stopAnalysis": "Stop Analysis",
+      "analysisSpeeds": {
+        "express": "Express / depth 8",
+        "swift": "Fast / depth 12",
+        "focused": "Intermediate / depth 16",
+        "advanced": "Advanced / depth 20",
+        "deepdive": "Deep / depth 24"
+      },
+      "deleteGame": "Delete game",
+      "allAccounts": "All Accounts",
+      "noEngineAvailable": "No Engine Available",
+      "noEngineAvailableMessage": "Please install an engine first in the Engines page.",
+      "analysisStarted": "Analysis Started",
+      "analysisCancelled": "Analysis Cancelled",
+      "analysisProgress": "Analysis Progress",
+      "analysisComplete": "Analysis Complete",
+      "newGame": "New Game",
+      "unknown": "Unknown",
+      "engine": "Engine",
+      "editProfile": {
+        "title": "FIDE Title",
+        "fideIdLabel": "FIDE ID",
+        "fideIdPlaceholder": "Enter your FIDE ID",
+        "invalidFideId": "FIDE ID must be a number",
+        "enterFideId": "Please enter a FIDE ID",
+        "playerNotFound": "Player not found. Please verify the FIDE ID.",
+        "searchError": "Error searching for player. Please try again.",
+        "search": "Search",
+        "name": "Name",
+        "firstName": "First Name",
+        "customName": "Display Name",
+        "customNamePlaceholder": "Enter your preferred name",
+        "customNameDescription": "This name will be shown in the dashboard",
+        "lichessToken": "Lichess Token",
+        "lichessTokenPlaceholder": "Enter your Lichess API token",
+        "lichessTokenDescription": "Required for creating tournaments on Lichess. Get your token from https://lichess.org/account/oauth/token/create",
+        "gender": "Gender",
+        "male": "Male",
+        "female": "Female",
+        "error": "Error",
+        "note": "Note: FIDE player search may not be available. You can still save the FIDE ID manually.",
+        "ratings": "FIDE Ratings",
+        "standard": "Standard",
+        "rapid": "Rapid",
+        "blitz": "Blitz"
       }
     },
     "tabs": {
@@ -594,7 +739,10 @@
         "title": "Puzzles",
         "desc": "Train your chess skills",
         "button": "Solve now"
-      }
+      },
+      "limitReached": "Maximum Tabs Reached",
+      "limitReachedDesc": "You can have up to {{max}} tabs open at once. Please close some tabs before opening new ones.",
+      "maxTabsReached": "Maximum of {{max}} tabs reached"
     },
     "board": {
       "actions": {
@@ -720,7 +868,18 @@
       "showHint": "Show Hint",
       "hintText": "Look for tactical opportunities or key squares that control the position.",
       "congratulations": "Congratulations!",
-      "completedCategory": "You've completed all exercises in {{category}}!"
+      "completedCategory": "You've completed all exercises in {{category}}!",
+      "practice": "Practice",
+      "backToLearn": "Back to Learn",
+      "backToPractice": "Back to Practice",
+      "searchPlaceholder": "Search practice categories...",
+      "noCategoriesFound": "No categories found",
+      "adjustSearchCriteria": "Try adjusting your search criteria",
+      "resetExercise": "Reset exercise",
+      "lookForBestMove": "Look for the best move in this position. Consider all tactical motifs!",
+      "comingSoon": "Coming Soon",
+      "startTraining": "Start Training",
+      "continue": "Continue"
     },
     "engines": {
       "title": "Your Engines",
@@ -732,7 +891,8 @@
         "numOfCores": "Number of cores",
         "sizeOfHash": "Size of Hash",
         "editJSON": "Edit JSON",
-        "reset": "Reset to default"
+        "reset": "Reset to default",
+        "selectEngineTip": "Tip: Select an engine to edit its settings."
       },
       "add": {
         "title": "Add Engine",
@@ -749,7 +909,13 @@
       "remove": {
         "title": "Remove Engine",
         "message": "Are you sure you want to remove this engine from Obsidian Chess Studio?"
-      }
+      },
+      "searchPlaceholder": "Search engines...",
+      "noEnginesFound": "No engines found",
+      "noEnginesFoundMessage": "Try adjusting your search or add a new engine.",
+      "unknownEngine": "Unknown Engine",
+      "selectImage": "Select image",
+      "invalidConfiguration": "Invalid Configuration"
     },
     "databases": {
       "title": "Your Databases",
@@ -803,7 +969,9 @@
         "tournament": "Tournament",
         "puzzle": "Puzzle",
         "other": "Other",
-        "folder": "Folder"
+        "folder": "Folder",
+        "all": "All",
+        "variants": "Variants"
       },
       "delete": {
         "title": "Delete file",
@@ -892,6 +1060,100 @@
       "dtm": "DTM {{count}}",
       "dtz": "DTZ {{count}}",
       "fiftyMoveRule": "*due to the 50-move rule"
+    },
+    "tournaments": {
+      "import": "Import",
+      "search": "Search",
+      "create": "Create",
+      "importTab": {
+        "title": "Import Tournament from Lichess",
+        "description": "Import tournament games from Lichess using a tournament ID or URL",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "button": "Import Tournament"
+      },
+      "browse": {
+        "title": "Browse Lichess Tournaments",
+        "description": "Search and browse tournaments on Lichess",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "button": "Browse Tournaments",
+        "schedule": "Schedule",
+        "noTemplates": "No tournament templates found",
+        "loadError": "Failed to load tournament templates",
+        "deleted": "Tournament template deleted",
+        "deleteError": "Failed to delete tournament template"
+      },
+      "schedule": {
+        "title": "Schedule Tournament",
+        "description": "Select the date and time when the tournament should start",
+        "startDate": "Start Date & Time",
+        "dateRequired": "Start date is required",
+        "invalidDate": "Invalid date format",
+        "success": "Tournament scheduled successfully!",
+        "successTitle": "Tournament Created Successfully!",
+        "shareUrl": "Share this URL to invite players:",
+        "urlCopied": "Tournament URL copied to clipboard!",
+        "copyError": "Failed to copy URL",
+        "invalidTeamId": "Invalid team ID. Please verify that the team ID is correct and that you have access to it.",
+        "error": "Failed to schedule tournament",
+        "button": "Schedule",
+        "tournamentId": "Tournament ID:",
+        "share": "Share",
+        "shared": "Shared!"
+      },
+      "createTab": {
+        "title": "Create Tournament Template",
+        "description": "Create a new tournament template (schedule it later from the Search tab)",
+        "noToken": "Lichess token not found. Please add your Lichess token in the main account settings.",
+        "noAccount": "No account selected. Please select a main account first.",
+        "button": "Save Template",
+        "templateSaved": "Tournament template saved successfully!",
+        "nameRequired": "Tournament name is required",
+        "success": "Tournament created successfully!",
+        "error": "Failed to create tournament",
+        "fields": {
+          "name": "Tournament Name",
+          "namePlaceholder": "Enter tournament name",
+          "description": "Description",
+          "descriptionPlaceholder": "Optional description",
+          "clockTime": "Clock Time (minutes)",
+          "clockIncrement": "Increment (seconds)",
+          "minutes": "Duration (minutes)",
+          "variant": "Variant",
+          "rated": "Rated",
+          "berserkable": "Allow Berserk",
+          "streakable": "Allow Streak",
+          "hasChat": "Enable Chat",
+          "position": "Starting Position (FEN)",
+          "positionPlaceholder": "Optional: Starting FEN position",
+          "password": "Password (Private Tournament)",
+          "passwordPlaceholder": "Optional: Set password for private tournament",
+          "teamBattle": "Team Battle (Team ID)",
+          "teamBattlePlaceholder": "Optional: Team ID for team battle",
+          "teamBattleDescription": "Create a team battle tournament where players compete in teams",
+          "teamRestriction": "Restrict to Team (Team ID)",
+          "teamRestrictionPlaceholder": "Optional: Only allow members of this team to join",
+          "teamRestrictionDescription": "Enter team ID (e.g., 'torneos-para-pensar' from https://lichess.org/team/torneos-para-pensar) to restrict access to team members only",
+          "conditions": "Entry Conditions",
+          "minRating": "Minimum Rating",
+          "maxRating": "Maximum Rating",
+          "nbRatedGame": "Minimum Rated Games"
+        },
+        "variants": {
+          "standard": "Standard",
+          "chess960": "Chess960",
+          "crazyhouse": "Crazyhouse",
+          "antichess": "Antichess",
+          "atomic": "Atomic",
+          "horde": "Horde",
+          "kingOfTheHill": "King of the Hill",
+          "racingKings": "Racing Kings",
+          "threeCheck": "Three Check"
+        }
+      }
+    },
+    "shortcuts": {
+      "title": "Keyboard Shortcuts",
+      "helpTitle": "Show keyboard shortcuts help"
     }
   },
   "settings": {
@@ -920,7 +1182,15 @@
       "scrollThroughMovesDesc": "Enable or disable scrolling through moves on the chessboard",
       "coordinatesNone": "No",
       "coordinatesInside": "Inside the board",
-      "coordinatesAll": "All squares on the board"
+      "coordinatesAll": "All squares on the board",
+      "practiceAnimationSpeed": "Repertoire Practice Animation Speed",
+      "practiceAnimationSpeedDesc": "Control how fast moves are played when practicing repertoire positions",
+      "practiceAnimationDisabled": "Disabled",
+      "practiceAnimationVeryFast": "Very Fast",
+      "practiceAnimationFast": "Fast",
+      "practiceAnimationNormal": "Normal",
+      "practiceAnimationSlow": "Slow",
+      "practiceAnimationVerySlow": "Very Slow"
     },
     "inputs": {
       "title": "Inputs",
@@ -1300,5 +1570,46 @@
   },
   "about": {
     "tauriVersion": "Tauri version: {{version}}"
+  },
+  "playerStyle": {
+    "mixedStyle": "Mixed Style",
+    "mixedStyleDescription": "Versatile repertoire without a clear dominant style, adapts to different positions and opponents",
+    "noData": "No Data",
+    "noDataDescription": "There are not enough openings in the database to analyze this player's style",
+    "creativeGambiteer": "Creative Gambiteer",
+    "creativeGambiteerDescription": "Prefers creative gambits and offbeat lines to create early complications and surprise opponents",
+    "gambiteer": "Gambiteer",
+    "gambiteerDescription": "Frequently employs gambits and sacrificial opening lines to gain dynamic compensation and initiative",
+    "gambiteerSimpleDescription": "Often chooses gambits and speculative sacrifices in the opening phase to create tactical opportunities",
+    "gambiteerFallbackDescription": "Frequently uses gambits or speculative sacrifices in the opening to gain dynamic play and initiative",
+    "systemPlayer": "System Player",
+    "systemPlayerDescription": "Relies on set-up systems like London, Colle or Torre with repeatable plans and solid structures",
+    "classicalSolid": "Classical Solid",
+    "classicalSolidDescription": "Prefers solid defensive structures and small, long-term advantages over sharp tactical complications",
+    "positional": "Positional",
+    "positionalDescription": "Strategic, positional player with focus on pawn structures, long-term plans and key squares",
+    "positionalSimpleDescription": "Focuses on strategic planning, pawn structures and long-term positional advantages",
+    "positionalFallbackDescription": "Strategic, positional play with focus on structures, key squares and long-term advantages",
+    "hypermodernDynamic": "Hypermodern Dynamic",
+    "hypermodernDynamicDescription": "Dynamic, hypermodern style with Indian defenses, Benoni structures, Modern Defense, or sharp Sicilian variations",
+    "unconventionalOpenings": "Unconventional Openings",
+    "unconventionalOpeningsDescription": "Prefers rare and less theoretical openings to sidestep mainline theory and create unfamiliar positions",
+    "unconventional": "Unconventional",
+    "unconventionalDescription": "Uses offbeat and surprise openings as a main weapon to avoid theory and create original positions",
+    "unconventionalFallbackDescription": "Prefers unusual or rare openings to avoid theoretical preparation and create unique positions",
+    "dynamicTactician": "Dynamic Tactician",
+    "dynamicTacticianDescription": "Seeks complex, tactical positions with plenty of counterplay and dynamic piece activity",
+    "systematic": "Systematic",
+    "systematicDescription": "Prefers structured systems and set-up based openings with consistent plans and reliable structures",
+    "systematicFallbackDescription": "Relies on set-up based openings and systems with repeatable plans and solid foundations",
+    "tactical": "Tactical",
+    "tacticalDescription": "Looks for combinations and concrete tactical shots, prioritizing calculation and tactical opportunities",
+    "tacticalFallbackDescription": "Tactics and concrete calculation are a central part of the repertoire, seeking sharp positions",
+    "dynamic": "Dynamic",
+    "dynamicDescription": "Prefers sharp, unbalanced positions with active play and dynamic piece coordination",
+    "dynamicFallbackDescription": "Enjoys dynamic positions with active piece play and complex tactical possibilities",
+    "solid": "Solid",
+    "solidDescription": "Values safety and sound structures over sharp play, prioritizing solidity and long-term stability",
+    "solidFallbackDescription": "Safe and reliable repertoire with fewer risks, focusing on solid structures and defensive play"
   }
 }

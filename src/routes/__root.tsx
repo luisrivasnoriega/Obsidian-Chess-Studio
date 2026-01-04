@@ -199,7 +199,7 @@ function RootLayout() {
       const update = await check();
       if (update) {
         const shouldInstall = await ask(
-          `A new version (${update.version}) is available. Do you want to install it now?`,
+          t("notifications.updateAvailablePrompt", { version: update.version }),
           { title: t("notifications.newVersionAvailable") },
         );
 
@@ -214,10 +214,10 @@ function RootLayout() {
           await relaunch();
         }
       } else {
-        await message("You're running the latest version!");
+        await message(t("notifications.latestVersion"));
       }
     } catch {
-      await message("Failed to check for updates. Please try again later.");
+      await message(t("notifications.updateCheckFailed"));
     }
   }, [t]);
 
@@ -432,7 +432,7 @@ function RootLayout() {
 
   const handleClearData = useCallback(async () => {
     const confirmed = await ask(
-      "This will clear all saved data including settings, tabs, and preferences. This action cannot be undone.",
+      t("notifications.clearAllDataPrompt"),
       { title: t("notifications.clearAllData") },
     );
 
@@ -462,7 +462,7 @@ function RootLayout() {
 
       notifications.show({
         title: t("notifications.openingLogs"),
-        message: `Log file: ${logPath}`,
+        message: t("notifications.logFilePath", { path: logPath }),
       });
 
       await openPath(logPath);
@@ -857,9 +857,9 @@ function RootLayout() {
         <Spotlight
           actions={getSpotlightActions(navigate, t)}
           shortcut={keyMap.SPOTLIGHT_SEARCH.keys}
-          nothingFound="Nothing found..."
+          nothingFound={t("spotlight.nothingFound")}
           highlightQuery
-          searchProps={{ placeholder: "Search..." }}
+          searchProps={{ placeholder: t("spotlight.searchPlaceholder") }}
           scrollable
         />
       </AppShell>

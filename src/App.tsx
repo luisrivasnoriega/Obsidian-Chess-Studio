@@ -168,14 +168,15 @@ function AppLoading() {
 }
 
 function AppError({ error: errorMsg }: { error: string }) {
+  const { t } = useTranslation();
   const handleReload = useCallback(() => {
     window.location.reload();
   }, []);
 
   return (
     <div style={ERROR_CONTAINER_STYLES}>
-      <h2 style={{ color: "#ef4444", marginBottom: "16px" }}>Initialization Error</h2>
-      <p style={{ color: "#9ca3af", marginBottom: "16px" }}>The application encountered an error during startup:</p>
+      <h2 style={{ color: "#ef4444", marginBottom: "16px" }}>{t("common.initializationErrorTitle")}</h2>
+      <p style={{ color: "#9ca3af", marginBottom: "16px" }}>{t("common.initializationErrorDescription")}</p>
       <pre
         style={{
           backgroundColor: "#374151",
@@ -204,7 +205,7 @@ function AppError({ error: errorMsg }: { error: string }) {
           fontSize: "14px",
         }}
       >
-        Reload Application
+        {t("common.reloadApplication")}
       </button>
     </div>
   );

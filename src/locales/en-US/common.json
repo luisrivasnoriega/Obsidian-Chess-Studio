@@ -21,6 +21,9 @@
                    "downloading":  "Downloading",
                    "extracting":  "Extracting",
                    "error":  "Error",
+                   "initializationErrorTitle":  "Initialization Error",
+                   "initializationErrorDescription":  "The application encountered an error during startup:",
+                   "reloadApplication":  "Reload Application",
                    "addNew":  "Add New",
                    "generate":  "Generate",
                    "openFolder":  "Open folder in file explorer",
@@ -410,7 +413,12 @@
                           "updatingApplication":  "Updating Application",
                           "updateCompleted":  "Update Completed",
                           "appWillRestart":  "The application will restart to apply the update",
-                          "updateFailed":  "Update Failed"
+                          "updateFailed":  "Update Failed",
+                          "updateAvailablePrompt":  "A new version ({{version}}) is available. Do you want to install it now?",
+                          "latestVersion":  "You're running the latest version!",
+                          "updateCheckFailed":  "Failed to check for updates. Please try again later.",
+                          "clearAllDataPrompt":  "This will clear all saved data including settings, tabs, and preferences. This action cannot be undone.",
+                          "logFilePath":  "Log file: {{path}}"
                       },
     "dashboard":  {
                       "noMainAccount":  "No main account",
@@ -1862,5 +1870,9 @@
                              "tournaments":  "Tournaments",
                              "learn":  "Learn"
                          }
-             }
+             },
+    "spotlight":  {
+                      "nothingFound":  "Nothing found...",
+                      "searchPlaceholder":  "Search..."
+                  }
 }
