@@ -5,7 +5,7 @@ import { IconMenu2 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useAtomValue } from "jotai";
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BoardTab } from "@/features/boards/components/BoardTab";
 import { DROPPABLE_IDS, SCROLL_AREA_CONFIG } from "@/features/boards/constants";
 import { useTabManagement } from "@/features/boards/hooks/useTabManagement";
@@ -45,6 +45,45 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
 
   const activeTabData = useMemo(() => tabs.find((tab) => tab.value === activeTab) ?? null, [activeTab, tabs]);
   const shouldHideTabs = activeTabData?.type === "play" && (gameState === "playing" || gameState === "gameOver");
+  
+  // Track tabs that should flash when opened or created
+  const previousActiveTab = useRef<string | null>(activeTab);
+  const previousTabsLength = useRef(tabs.length);
+  const previousTabValues = useRef<Set<string>>(new Set(tabs.map((t) => t.value)));
+  const [flashingTab, setFlashingTab] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Detect when a new tab is created
+    if (tabs.length > previousTabsLength.current) {
+      const newTab = tabs.find((tab) => !previousTabValues.current.has(tab.value));
+      if (newTab) {
+        setFlashingTab(newTab.value);
+        const timer = setTimeout(() => {
+          setFlashingTab(null);
+        }, 2000);
+        previousTabsLength.current = tabs.length;
+        previousTabValues.current = new Set(tabs.map((t) => t.value));
+        return () => clearTimeout(timer);
+      }
+    }
+    
+    // Detect when a tab is opened (becomes active)
+    if (activeTab && activeTab !== previousActiveTab.current) {
+      // Only flash if it's not already flashing (to avoid double flash)
+      if (flashingTab !== activeTab) {
+        setFlashingTab(activeTab);
+        const timer = setTimeout(() => {
+          setFlashingTab(null);
+        }, 2000);
+        previousActiveTab.current = activeTab;
+        return () => clearTimeout(timer);
+      }
+    }
+    
+    previousActiveTab.current = activeTab;
+    previousTabsLength.current = tabs.length;
+    previousTabValues.current = new Set(tabs.map((t) => t.value));
+  }, [activeTab, tabs]);
 
   const openBoards = useCallback(
     (tabValue?: string) => {
@@ -221,6 +260,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
                               duplicateTab={duplicateTab}
                               openInNewWindow={openTabInNewWindow}
                               selected={activeTab === tab.value}
+                              shouldFlash={flashingTab === tab.value}
                             />
                           </div>
                         )}

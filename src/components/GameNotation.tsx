@@ -44,10 +44,9 @@ import * as styles from "./GameNotation.css";
 import * as moveStyles from "./MoveCell.css";
 import OpeningName from "./OpeningName";
 
-type VariationState = "mainline" | "variations" | "repertoire" | "report";
+type VariationState = "variations" | "repertoire" | "report";
 
 const variationRefs = {
-  mainline: React.createRef<HTMLSpanElement>(),
   variations: React.createRef<HTMLSpanElement>(),
   repertoire: React.createRef<HTMLSpanElement>(),
   report: React.createRef<HTMLSpanElement>(),
@@ -173,7 +172,7 @@ function buildReportRows(items: MoveItem[]): ReportRow[] {
 
 function GameNotation({
   topBar,
-  initialVariationState = "mainline",
+  initialVariationState = "report",
 }: {
   topBar?: boolean;
   initialVariationState?: VariationState;
@@ -192,7 +191,7 @@ function GameNotation({
   const [invisibleValue, setInvisible] = useAtom(currentInvisibleAtom);
   const [variationState, toggleVariationState] = useToggle([
     initialVariationState,
-    ...["mainline", "variations", "repertoire", "report"].filter((v) => v !== initialVariationState),
+    ...["variations", "repertoire", "report"].filter((v) => v !== initialVariationState),
   ]) as [VariationState, () => void];
   const [showComments, toggleComments] = useToggle([true, false]);
 
@@ -247,23 +246,6 @@ function GameNotation({
                 />
               )}
               {showComments && root.comment && <Comment comment={root.comment} />}
-              <Box
-                style={{
-                  display: variationState === "mainline" ? "block" : "none",
-                }}
-              >
-                <RenderMainline
-                  tree={root}
-                  depth={0}
-                  path={[]}
-                  start={headers.start}
-                  first={true}
-                  showComments={showComments}
-                  // @ts-expect-error
-                  targetRef={variationRefs.mainline}
-                  toggleVariationState={toggleVariationState}
-                />
-              </Box>
               <Box
                 style={{
                   display: variationState === "variations" ? "block" : "none",
@@ -375,9 +357,7 @@ function NotationHeader({
                 ? t("features.gameNotation.showVariations")
                 : variationState === "repertoire"
                   ? t("features.gameNotation.repertoireView")
-                  : variationState === "report"
-                    ? t("features.gameNotation.reportView")
-                    : t("features.gameNotation.mainLine")
+                  : t("features.gameNotation.reportView")
             }
           >
             <ActionIcon onClick={toggleVariationState}>
@@ -396,92 +376,6 @@ function NotationHeader({
       </Group>
       <Divider />
     </Stack>
-  );
-}
-
-function RenderMainline({
-  tree,
-  depth,
-  path,
-  start,
-  first,
-  showComments,
-  targetRef,
-  toggleVariationState,
-}: {
-  tree: TreeNode;
-  depth: number;
-  start?: number[];
-  first?: boolean;
-  showComments: boolean;
-  targetRef: React.RefObject<HTMLSpanElement>;
-  path: number[];
-  toggleVariationState: () => void;
-}) {
-  const store = useContext(TreeStateContext);
-  if (!store) {
-    throw new Error("RenderMainline must be used within a TreeStateProvider");
-  }
-  const currentPosition = useStore(store, (s) => s.position);
-  const theme = useMantineTheme();
-  const { t } = useTranslation();
-
-  const variations = tree.children;
-  if (!variations?.length) return null;
-
-  const newPath = [...path, 0];
-  const isAtDivergence =
-    currentPosition.length > path.length &&
-    currentPosition.slice(0, path.length).every((v, i) => path[i] === v) &&
-    currentPosition[path.length] > 0;
-
-  return (
-    <>
-      {isAtDivergence && (
-        <Box
-          component="span"
-          style={{
-            display: "inline-block",
-            fontSize: "80%",
-          }}
-        >
-          <Tooltip label={t("features.gameNotation.showVariationsTooltip")}>
-            <Box
-              component="button"
-              className={moveStyles.cell}
-              onClick={toggleVariationState}
-              style={{
-                backgroundColor: rgba(theme.colors.gray[6], 0.2),
-              }}
-            >
-              <IconArrowsSplit size="1rem" style={{ verticalAlign: "text-bottom" }} />
-            </Box>
-          </Tooltip>
-        </Box>
-      )}
-      <CompleteMoveCell
-        annotations={variations[0].annotations}
-        comment={variations[0].comment}
-        clockSeconds={variations[0].clock}
-        halfMoves={variations[0].halfMoves}
-        move={variations[0].san}
-        fen={variations[0].fen}
-        movePath={newPath}
-        showComments={showComments}
-        isStart={equal(newPath, start)}
-        first={first}
-        targetRef={targetRef}
-      />
-      <RenderMainline
-        tree={variations[0]}
-        depth={depth}
-        start={start}
-        showComments={showComments}
-        targetRef={targetRef}
-        path={newPath}
-        toggleVariationState={toggleVariationState}
-      />
-    </>
   );
 }
 

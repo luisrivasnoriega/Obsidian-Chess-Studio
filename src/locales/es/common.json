@@ -345,6 +345,7 @@
       "gamesCount": "{{count}} partidas",
       "editName": "Editar nombre",
       "lastUpdate": "Última actualización",
+      "lastActivity": "Última Actividad",
       "saveChanges": "Guardar cambios",
       "cancelEdit": "Cancelar edición"
     }

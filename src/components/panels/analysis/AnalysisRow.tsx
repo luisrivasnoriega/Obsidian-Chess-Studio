@@ -72,34 +72,40 @@ function AnalysisRow({
           <ScoreBubble size="md" score={score} evalDisplay={evalDisplay} setEvalDisplay={setEvalDisplay} />
         </Table.Td>
         <Table.Td>
-          <Flex
-            direction="row"
-            wrap="wrap"
+          <Box
             style={{
               height: open ? "100%" : 35,
-              overflow: "hidden",
-              alignItems: "center",
+              overflow: open ? "auto" : "hidden",
+              maxHeight: open ? "300px" : "35px",
             }}
           >
-            {moveInfo.map(({ san, fen, lastMove, isCheck }, index) => (
-              <BoardPopover
-                position={{
-                  left: ref.current?.getClientRects()[0]?.left ?? 0,
-                  top: ref.current?.getClientRects()[0]?.top ?? 0,
-                }}
-                key={index}
-                san={san}
-                index={index}
-                moves={moves}
-                halfMoves={halfMoves}
-                threat={threat}
-                fen={fen}
-                orientation={orientation}
-                lastMove={lastMove}
-                isCheck={isCheck}
-              />
-            ))}
-          </Flex>
+            <Flex
+              direction="row"
+              wrap="wrap"
+              style={{
+                alignItems: "center",
+              }}
+            >
+              {moveInfo.map(({ san, fen, lastMove, isCheck }, index) => (
+                <BoardPopover
+                  position={{
+                    left: ref.current?.getClientRects()[0]?.left ?? 0,
+                    top: ref.current?.getClientRects()[0]?.top ?? 0,
+                  }}
+                  key={index}
+                  san={san}
+                  index={index}
+                  moves={moves}
+                  halfMoves={halfMoves}
+                  threat={threat}
+                  fen={fen}
+                  orientation={orientation}
+                  lastMove={lastMove}
+                  isCheck={isCheck}
+                />
+              ))}
+            </Flex>
+          </Box>
         </Table.Td>
         <Table.Th w={10}>
           <ActionIcon

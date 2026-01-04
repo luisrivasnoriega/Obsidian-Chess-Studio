@@ -120,7 +120,7 @@ export function SideBar() {
     route: "/play" | "/analysis" | "/puzzles";
     initialAnalysisTab?: string;
     initialAnalysisSubTab?: string;
-    initialNotationView?: "mainline" | "variations" | "repertoire" | "report";
+    initialNotationView?: "variations" | "repertoire" | "report";
   }) => {
     await createTab({
       tab,

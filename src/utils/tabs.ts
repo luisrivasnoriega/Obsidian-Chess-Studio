@@ -71,7 +71,7 @@ export async function createTab({
   position?: number[];
   initialAnalysisTab?: string;
   initialAnalysisSubTab?: string;
-  initialNotationView?: "mainline" | "variations" | "repertoire" | "report";
+  initialNotationView?: "variations" | "repertoire" | "report";
 }) {
   const id = genID();
 

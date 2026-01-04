@@ -86,12 +86,104 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
+  const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
+
+  // Load last activity dates for all profiles
+  useEffect(() => {
+    let cancelled = false;
+    const loadLastActivities = async () => {
+      const activityMap = new Map<string, number | null>();
+      
+      for (const profile of profiles) {
+        const linkedSessions = sessions.filter((s) => s.profileId === profile.id);
+        if (linkedSessions.length === 0) {
+          activityMap.set(profile.id, null);
+          continue;
+        }
+
+        const lastDates = await Promise.all(
+          linkedSessions.map(async (session) => {
+            const type = session.lichess ? "lichess" : "chesscom";
+            const username = session.lichess?.username ?? session.chessCom?.username ?? "";
+            if (!username || !session.profileId) return null;
+
+            const activityDates: number[] = [];
+
+            // For Lichess accounts, use seenAt (includes all activity: games, puzzles, etc.)
+            if (session.lichess?.account?.seenAt) {
+              // seenAt is in milliseconds, same as our Date.now()
+              activityDates.push(session.lichess.account.seenAt);
+            }
+
+            // For Chess.com accounts, use the most recent last.date from stats
+            if (session.chessCom?.stats) {
+              const stats = session.chessCom.stats;
+              const lastDates = [
+                stats.chess_bullet?.last?.date,
+                stats.chess_blitz?.last?.date,
+                stats.chess_rapid?.last?.date,
+                stats.chess_daily?.last?.date,
+              ]
+                .filter((d): d is number => d !== undefined && d !== null)
+                .map((d) => d * 1000); // Convert from seconds to milliseconds
+              
+              if (lastDates.length > 0) {
+                activityDates.push(Math.max(...lastDates));
+              }
+            }
+
+            // Also check last game date from database
+            try {
+              const profileDbPath = await getProfileDbPath(session.profileId);
+              const accountKey = getAccountKey(type, username);
+              const { lastGameDate } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
+              if (lastGameDate) {
+                activityDates.push(lastGameDate);
+              }
+            } catch {
+              // Ignore errors
+            }
+
+            // Return the most recent activity date
+            return activityDates.length > 0 ? Math.max(...activityDates) : null;
+          }),
+        );
+
+        const validDates = lastDates.filter((d): d is number => d !== null);
+        const mostRecent = validDates.length > 0 ? Math.max(...validDates) : null;
+        activityMap.set(profile.id, mostRecent);
+      }
+
+      if (!cancelled) {
+        setLastActivityMap(activityMap);
+      }
+    };
+
+    void loadLastActivities();
+    return () => {
+      cancelled = true;
+    };
+  }, [profiles, sessions]);
 
   const sortedProfiles = useMemo(() => {
     const list = [...profiles];
-    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    list.sort((a, b) => {
+      const aDate = lastActivityMap.get(a.id) ?? null;
+      const bDate = lastActivityMap.get(b.id) ?? null;
+      
+      // When sorting by lastActivity, nulls always go to the end
+      if (aDate === null && bDate === null) {
+        // If both are null, sort by name
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      }
+      if (aDate === null) return 1; // a goes to end
+      if (bDate === null) return -1; // b goes to end
+      
+      // Both have dates, compare them (most recent first)
+      return bDate - aDate;
+    });
     return list;
-  }, [profiles]);
+  }, [profiles, lastActivityMap]);
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
@@ -1116,9 +1208,23 @@ export default function DashboardPage() {
               return;
             }
 
+            // Create activeAnalysisIds set early so stop function can access it
+            const activeAnalysisIds = new Set<string>();
+            
+            // Function to stop all active engines - defined early so it can be returned immediately
+            const stopAllEngines = async () => {
+              const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
+                commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                  // Ignore errors when stopping
+                }),
+              );
+              await Promise.all(stopPromises);
+              activeAnalysisIds.clear();
+            };
+            
             // Get all analyzed games to filter out already analyzed ones if needed
             const analyzedGames = await getAllAnalyzedGames();
-
+            
             const getFilteredGames = (type: "local" | "chesscom" | "lichess") => {
               if (type === "local") {
                 return recentGames.filter((g) => {
@@ -1250,7 +1356,6 @@ export default function DashboardPage() {
 
             let successCount = 0;
             let failCount = 0;
-            const activeAnalysisIds = new Set<string>();
             let completedCount = 0;
 
             // Process games in parallel batches
@@ -1644,14 +1749,11 @@ export default function DashboardPage() {
               });
             } else {
               // If cancelled, make sure all engines are stopped
-              for (const analysisId of activeAnalysisIds) {
-                try {
-                  await commands.stopEngine(defaultEngine.path, analysisId);
-                } catch {
-                  // Ignore errors when stopping
-                }
-              }
+              await stopAllEngines();
             }
+            
+            // Return stop function for immediate cancellation
+            return { stop: stopAllEngines };
           }}
           gameCount={
             analyzeAllGameType === "all"

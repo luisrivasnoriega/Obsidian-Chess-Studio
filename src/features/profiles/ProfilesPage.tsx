@@ -21,7 +21,7 @@
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconCheck, IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconCheck, IconEdit, IconPlus, IconTrash, IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { remove } from "@tauri-apps/plugin-fs";
@@ -38,10 +38,13 @@ import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { getProfileDbPath, profileDbFilename } from "@/utils/profileDb";
-import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
+import { getAccountKey } from "@/utils/accountKeys";
+import { parseDate } from "@/utils/format";
+import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/AddProfileAccountModal";
 import PawnStructuresPanel from "./components/PawnStructuresPanel";
 
@@ -77,6 +80,8 @@ export default function ProfilesPage() {
   const [draftFideId, setDraftFideId] = useState("");
   const [profilesPage, setProfilesPage] = useState(1);
   const profilesPerPage = 5;
+  const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
+  const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
 
   const sessionsByProfileId = useMemo(() => {
     const map = new Map<string, Session[]>();
@@ -96,11 +101,107 @@ export default function ProfilesPage() {
     return profiles.filter((p) => p.name.toLowerCase().includes(q));
   }, [profileQuery, profiles]);
 
+  // Load last activity dates for all profiles
+  useEffect(() => {
+    let cancelled = false;
+    const loadLastActivities = async () => {
+      const activityMap = new Map<string, number | null>();
+      
+      for (const profile of filteredProfiles) {
+        const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
+        if (linkedSessions.length === 0) {
+          activityMap.set(profile.id, null);
+          continue;
+        }
+
+        const lastDates = await Promise.all(
+          linkedSessions.map(async (session) => {
+            const type = session.lichess ? "lichess" : "chesscom";
+            const username = session.lichess?.username ?? session.chessCom?.username ?? "";
+            if (!username || !session.profileId) return null;
+
+            const activityDates: number[] = [];
+
+            // For Lichess accounts, use seenAt (includes all activity: games, puzzles, etc.)
+            if (session.lichess?.account?.seenAt) {
+              // seenAt is in milliseconds, same as our Date.now()
+              activityDates.push(session.lichess.account.seenAt);
+            }
+
+            // For Chess.com accounts, use the most recent last.date from stats
+            if (session.chessCom?.stats) {
+              const stats = session.chessCom.stats;
+              const lastDates = [
+                stats.chess_bullet?.last?.date,
+                stats.chess_blitz?.last?.date,
+                stats.chess_rapid?.last?.date,
+                stats.chess_daily?.last?.date,
+              ]
+                .filter((d): d is number => d !== undefined && d !== null)
+                .map((d) => d * 1000); // Convert from seconds to milliseconds
+              
+              if (lastDates.length > 0) {
+                activityDates.push(Math.max(...lastDates));
+              }
+            }
+
+            // Also check last game date from database
+            try {
+              const profileDbPath = await getProfileDbPath(session.profileId);
+              const accountKey = getAccountKey(type, username);
+              const { lastGameDate } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
+              if (lastGameDate) {
+                activityDates.push(lastGameDate);
+              }
+            } catch {
+              // Ignore errors
+            }
+
+            // Return the most recent activity date
+            return activityDates.length > 0 ? Math.max(...activityDates) : null;
+          }),
+        );
+
+        const validDates = lastDates.filter((d): d is number => d !== null);
+        const mostRecent = validDates.length > 0 ? Math.max(...validDates) : null;
+        activityMap.set(profile.id, mostRecent);
+      }
+
+      if (!cancelled) {
+        setLastActivityMap(activityMap);
+      }
+    };
+
+    void loadLastActivities();
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredProfiles, sessionsByProfileId, sessions]);
+
   const sortedProfiles = useMemo(() => {
     const list = [...filteredProfiles];
-    list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    list.sort((a, b) => {
+      if (sortBy.field === "name") {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      } else if (sortBy.field === "lastActivity") {
+        const aDate = lastActivityMap.get(a.id) ?? null;
+        const bDate = lastActivityMap.get(b.id) ?? null;
+        
+        // When sorting by lastActivity, nulls always go to the end
+        if (aDate === null && bDate === null) return 0;
+        if (aDate === null) return 1; // a goes to end
+        if (bDate === null) return -1; // b goes to end
+        
+        // Both have dates, compare them
+        const comparison = aDate - bDate;
+        // For descending, we want most recent first, so reverse the comparison
+        return sortBy.direction === "desc" ? -comparison : comparison;
+      }
+      return 0;
+    });
+    
     return list;
-  }, [filteredProfiles]);
+  }, [filteredProfiles, sortBy, lastActivityMap]);
 
   const totalProfilePages = useMemo(
     () => Math.max(1, Math.ceil(sortedProfiles.length / profilesPerPage)),
@@ -564,10 +665,51 @@ export default function ProfilesPage() {
                 <Table withTableBorder highlightOnHover striped>
                   <Table.Thead>
                     <Table.Tr>
-                      <Table.Th style={{ width: 240 }}>{t("profiles.profile", { defaultValue: "Profile" })}</Table.Th>
-                      <Table.Th style={{ width: 120 }}>{t("profiles.fideId", { defaultValue: "FIDE ID" })}</Table.Th>
-                      <Table.Th>{t("accounts.title", { defaultValue: "Accounts" })}</Table.Th>
-                      <Table.Th style={{ width: 160 }}>{t("common.actions", { defaultValue: "Actions" })}</Table.Th>
+                      <Table.Th style={{ width: 240 }}>
+                        <Text fw={600} size="sm">
+                          <Group gap={4} style={{ cursor: "pointer" }} onClick={() => {
+                            setSortBy((prev) => ({
+                              field: "name",
+                              direction: prev.field === "name" && prev.direction === "asc" ? "desc" : "asc",
+                            }));
+                          }}>
+                            {t("profiles.profile", { defaultValue: "Profile" })}
+                            {sortBy.field === "name" && (
+                              sortBy.direction === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />
+                            )}
+                          </Group>
+                        </Text>
+                      </Table.Th>
+                      <Table.Th style={{ width: 120 }}>
+                        <Text fw={600} size="sm">
+                          {t("profiles.fideId", { defaultValue: "FIDE ID" })}
+                        </Text>
+                      </Table.Th>
+                      <Table.Th style={{ width: 160 }}>
+                        <Text fw={600} size="sm">
+                          <Group gap={4} style={{ cursor: "pointer" }} onClick={() => {
+                            setSortBy((prev) => ({
+                              field: "lastActivity",
+                              direction: prev.field === "lastActivity" && prev.direction === "asc" ? "desc" : "asc",
+                            }));
+                          }}>
+                            {t("accounts.accountCard.lastActivity", { defaultValue: "Last Activity" })}
+                            {sortBy.field === "lastActivity" && (
+                              sortBy.direction === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />
+                            )}
+                          </Group>
+                        </Text>
+                      </Table.Th>
+                      <Table.Th>
+                        <Text fw={600} size="sm">
+                          {t("accounts.title", { defaultValue: "Accounts" })}
+                        </Text>
+                      </Table.Th>
+                      <Table.Th style={{ width: 160 }}>
+                        <Text fw={600} size="sm">
+                          {t("common.actions", { defaultValue: "Actions" })}
+                        </Text>
+                      </Table.Th>
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
@@ -602,6 +744,20 @@ export default function ProfilesPage() {
                           </Table.Td>
                           <Table.Td>
                             <Text size="sm">{profile.fideId || "-"}</Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm" c="dimmed">
+                              {(() => {
+                                const lastActivity = lastActivityMap.get(profile.id);
+                                if (lastActivity === null || lastActivity === undefined) {
+                                  return "-";
+                                }
+                                return t("formatters.dateFormat", {
+                                  date: parseDate(lastActivity),
+                                  interpolation: { escapeValue: false },
+                                });
+                              })()}
+                            </Text>
                           </Table.Td>
                           <Table.Td>
                             <Stack gap={6}>

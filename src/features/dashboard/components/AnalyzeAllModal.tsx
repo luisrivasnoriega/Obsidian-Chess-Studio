@@ -26,7 +26,7 @@ interface AnalyzeAllModalProps {
     config: AnalyzeAllConfig,
     onProgress: (current: number, total: number) => void,
     isCancelled: () => boolean,
-  ) => Promise<void>;
+  ) => Promise<{ stop: () => Promise<void> } | void>;
   gameCount: number;
   unanalyzedGameCount?: number;
   analyzeMode?: "all" | "unanalyzed";
@@ -45,6 +45,7 @@ export function AnalyzeAllModal({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const cancelledRef = useRef(false);
+  const stopAnalysisRef = useRef<(() => Promise<void>) | null>(null);
 
   const form = useForm<AnalyzeAllConfig>({
     initialValues: {
@@ -67,7 +68,7 @@ export function AnalyzeAllModal({
     cancelledRef.current = false;
 
     try {
-      await onAnalyze(
+      const result = await onAnalyze(
         {
           speed: form.values.speed,
           timeMs: selectedOption.timeMs,
@@ -78,6 +79,10 @@ export function AnalyzeAllModal({
         },
         () => cancelledRef.current,
       );
+      // Store the stop function if provided
+      if (result && typeof result === "object" && "stop" in result) {
+        stopAnalysisRef.current = result.stop;
+      }
     } finally {
       setIsAnalyzing(false);
       if (!cancelledRef.current && progress.current === progress.total && progress.total > 0) {
@@ -93,10 +98,17 @@ export function AnalyzeAllModal({
     }
   };
 
-  const handleStop = () => {
+  const handleStop = async () => {
     cancelledRef.current = true;
     setIsAnalyzing(false);
-    // The onAnalyze callback will handle stopping the engines
+    // Stop all active engines immediately
+    if (stopAnalysisRef.current) {
+      try {
+        await stopAnalysisRef.current();
+      } catch {
+        // Ignore errors when stopping
+      }
+    }
   };
 
   // Reset progress and form when modal opens/closes
@@ -105,6 +117,7 @@ export function AnalyzeAllModal({
       setProgress({ current: 0, total: 0 });
       setIsAnalyzing(false);
       cancelledRef.current = false;
+      stopAnalysisRef.current = null;
     } else {
       // Reset form to initial values when modal opens
       form.setValues({

@@ -338,7 +338,7 @@ function ReportPanel() {
   }, [isCompleted, inProgress, activeTab, store]); // Removed root and headers from dependencies - we get them from store directly
 
   return (
-    <ScrollArea offsetScrollbars style={{ flex: 1, minHeight: 0 }}>
+    <Box style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
       <Suspense>
         <ReportModal
           tab={activeTab!}
@@ -351,38 +351,40 @@ function ReportPanel() {
           inProgress={inProgress}
         />
       </Suspense>
-      <Stack mb="lg" gap="0.4rem" mr="xs">
-        <Group grow style={{ textAlign: "center" }}>
-          {stats.whiteAccuracy && stats.blackAccuracy && (
-            <>
-              <AccuracyCard color={t("chess.white")} accuracy={stats.whiteAccuracy} cpl={stats.whiteCPL} />
-              <AccuracyCard color={t("chess.black")} accuracy={stats.blackAccuracy} cpl={stats.blackCPL} />
-            </>
-          )}
-          <div>
-            <ProgressButton
-              id={`report_${activeTab}`}
-              onClick={() => toggleReportingMode()}
-              leftIcon={<IconZoomCheck size="0.875rem" />}
-              labels={{
-                action: t("features.board.analysis.generateReport"),
-                completed: t("features.board.analysis.reportGenerated"),
-                inProgress: t("features.board.analysis.generatingReport"),
-              }}
-              disabled={root.children.length === 0}
-              redoable
-              inProgress={inProgress}
-              progress={progress}
-              completed={isCompleted}
-            />
-          </div>
-        </Group>
-        <Paper withBorder p="md">
-          <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
-        </Paper>
-        <GameStats {...stats} />
-      </Stack>
-    </ScrollArea>
+      <ScrollArea offsetScrollbars style={{ flex: 1, minHeight: 0 }}>
+        <Stack mb="lg" gap="0.4rem" mr="xs">
+          <Group grow style={{ textAlign: "center" }}>
+            {stats.whiteAccuracy && stats.blackAccuracy && (
+              <>
+                <AccuracyCard color={t("chess.white")} accuracy={stats.whiteAccuracy} cpl={stats.whiteCPL} />
+                <AccuracyCard color={t("chess.black")} accuracy={stats.blackAccuracy} cpl={stats.blackCPL} />
+              </>
+            )}
+            <div>
+              <ProgressButton
+                id={`report_${activeTab}`}
+                onClick={() => toggleReportingMode()}
+                leftIcon={<IconZoomCheck size="0.875rem" />}
+                labels={{
+                  action: t("features.board.analysis.generateReport"),
+                  completed: t("features.board.analysis.reportGenerated"),
+                  inProgress: t("features.board.analysis.generatingReport"),
+                }}
+                disabled={root.children.length === 0}
+                redoable
+                inProgress={inProgress}
+                progress={progress}
+                completed={isCompleted}
+              />
+            </div>
+          </Group>
+          <Paper withBorder p="md">
+            <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
+          </Paper>
+          <GameStats {...stats} />
+        </Stack>
+      </ScrollArea>
+    </Box>
   );
 }
 
@@ -506,7 +508,12 @@ const GameStats = memo(
     }, [whiteAnnotations, blackAnnotations, t]);
 
     return (
-      <Paper withBorder radius="lg" p="md">
+      <Paper
+        withBorder
+        radius="lg"
+        p="md"
+        style={{ display: "flex", flexDirection: "column", minHeight: 0, maxHeight: "600px" }}
+      >
         {/* Header: auto | 1fr | auto */}
         <Box
           style={{
@@ -516,6 +523,7 @@ const GameStats = memo(
             gap: "1rem",
             paddingInline: "0.25rem",
             paddingBottom: "0.75rem",
+            flexShrink: 0,
           }}
         >
           <Center>
@@ -537,8 +545,16 @@ const GameStats = memo(
           </Center>
         </Box>
 
-        <Stack gap="sm">
-          {rows.map((r) => {
+        <ScrollArea
+          style={{
+            flex: 1,
+            minHeight: 0,
+          }}
+          offsetScrollbars
+          type="auto"
+        >
+          <Stack gap="sm">
+            {rows.map((r) => {
             const total = r.w + r.b;
             const wPct = total > 0 ? (r.w / total) * 100 : 0;
             const bPct = total > 0 ? (r.b / total) * 100 : 0;
@@ -655,7 +671,8 @@ const GameStats = memo(
               </Paper>
             );
           })}
-        </Stack>
+          </Stack>
+        </ScrollArea>
       </Paper>
     );
   },

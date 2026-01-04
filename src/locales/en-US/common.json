@@ -345,6 +345,7 @@
                                          "gamesCount":  "{{count}} games",
                                          "editName":  "Edit name",
                                          "lastUpdate":  "Last update",
+                                         "lastActivity":  "Last Activity",
                                          "saveChanges":  "Save changes",
                                          "cancelEdit":  "Cancel edit"
                                      }

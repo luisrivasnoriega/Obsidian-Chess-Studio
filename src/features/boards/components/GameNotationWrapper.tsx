@@ -33,7 +33,7 @@ function GameNotationWrapper({
   const [isInitializing, setIsInitializing] = useState(true);
   const [initializationError, setInitializationError] = useState<Error | null>(null);
   const currentTab = useAtomValue(currentTabAtom);
-  const [initialVariationState, setInitialVariationState] = useState<"mainline" | "variations" | "repertoire" | "report">("mainline");
+  const [initialVariationState, setInitialVariationState] = useState<"variations" | "repertoire" | "report">("report");
 
   // Read initial configuration from sessionStorage and set notation view if configured
   useEffect(() => {
@@ -43,8 +43,8 @@ function GameNotationWrapper({
       if (configJson) {
         try {
           const config = JSON.parse(configJson);
-          if (config.notationView && ["mainline", "variations", "repertoire", "report"].includes(config.notationView)) {
-            setInitialVariationState(config.notationView as "mainline" | "variations" | "repertoire" | "report");
+          if (config.notationView && ["variations", "repertoire", "report"].includes(config.notationView)) {
+            setInitialVariationState(config.notationView as "variations" | "repertoire" | "report");
             // Remove notationView from config, or remove entire config if it's the only key
             const updatedConfig = { ...config };
             delete updatedConfig.notationView;
