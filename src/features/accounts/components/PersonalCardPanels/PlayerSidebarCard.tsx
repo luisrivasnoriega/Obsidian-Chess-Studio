@@ -31,9 +31,10 @@ const TIME_CONTROL_OPTIONS: Array<{ value: TimeControlFilter; label: string }> =
 type OpponentEloOption = { value: string; label: string };
 
 export function normalizePlatform(site: string): PlatformFilter | null {
-  const lower = site.toLowerCase();
-  if (lower.includes("chess.com")) return "Chess.com";
-  if (lower.includes("lichess")) return "Lichess";
+  const lower = site.trim().toLowerCase();
+  const condensed = lower.replace(/[^a-z0-9]/g, "");
+  if (condensed.includes("chesscom") || /chess\s*\.?\s*com/.test(lower)) return "Chess.com";
+  if (condensed.includes("lichess") || lower.includes("lichess")) return "Lichess";
   return null;
 }
 

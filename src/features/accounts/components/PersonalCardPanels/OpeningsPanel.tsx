@@ -19,6 +19,26 @@ import ResultsChart from "./ResultsChart";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
+function extractOpponentEloValues(value: unknown): number[] {
+  if (typeof value === "number" && Number.isFinite(value)) return [value];
+  if (typeof value === "string") {
+    const matches = value.replaceAll(",", "").match(/-?\d+(?:\.\d+)?/g);
+    if (!matches) return [];
+    return matches.map((match) => Number.parseFloat(match)).filter((num) => Number.isFinite(num));
+  }
+  return [];
+}
+
+function parseOpponentEloRange(value: unknown): { min: number; max: number } | null {
+  const values = extractOpponentEloValues(value);
+  if (values.length === 0) return null;
+  if (values.length === 1) return { min: values[0], max: values[0] };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
 type OpeningStats = {
   name: string;
   games: number;
@@ -104,9 +124,10 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
   const opponentEloOptions = useMemo(() => {
     const buckets = new Set<number>();
     for (const g of openingData) {
-      const elo = g.opponent_elo;
-      if (typeof elo !== "number") continue;
-      buckets.add(Math.floor(elo / 200) * 200);
+      const values = extractOpponentEloValues(g.opponent_elo);
+      for (const elo of values) {
+        buckets.add(Math.floor(elo / 200) * 200);
+      }
     }
     const sorted = Array.from(buckets).sort((a, b) => a - b);
     return [
@@ -150,9 +171,10 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
       const start = Number.parseInt(opponentEloBucket, 10);
       if (Number.isFinite(start)) {
         const end = start + 199;
-        data = data.filter(
-          (g) => typeof g.opponent_elo === "number" && g.opponent_elo >= start && g.opponent_elo <= end,
-        );
+        data = data.filter((g) => {
+          const range = parseOpponentEloRange(g.opponent_elo);
+          return range != null && range.max >= start && range.min <= end;
+        });
       }
     }
 
@@ -179,15 +201,7 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
 
   return (
     <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0, width: "100%" }}>
-      <Box
-        style={{
-          flex: "0 0 auto",
-          width: "clamp(280px, 28%, 360px)",
-          minWidth: 280,
-          maxWidth: 360,
-          minHeight: 0,
-        }}
-      >
+      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
         <PlayerSidebarCard
           playerName={playerName}
           info={info}

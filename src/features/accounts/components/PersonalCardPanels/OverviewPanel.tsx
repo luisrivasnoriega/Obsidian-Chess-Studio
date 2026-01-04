@@ -6,34 +6,61 @@ import type { NameType, ValueType } from "recharts/types/component/DefaultToolti
 import type { PlayerGameInfo, StatsData } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { getTimeControl } from "@/utils/timeControl";
-import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter, normalizePlatform } from "./PlayerSidebarCard";
+import PlayerSidebarCard, { normalizePlatform, type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
+
+function extractOpponentEloValues(value: unknown): number[] {
+  if (typeof value === "number" && Number.isFinite(value)) return [value];
+  if (typeof value === "string") {
+    const matches = value.replaceAll(",", "").match(/-?\d+(?:\.\d+)?/g);
+    if (!matches) return [];
+    return matches.map((match) => Number.parseFloat(match)).filter((num) => Number.isFinite(num));
+  }
+  return [];
+}
+
+function parseOpponentEloRange(value: unknown): { min: number; max: number } | null {
+  const values = extractOpponentEloValues(value);
+  if (values.length === 0) return null;
+  if (values.length === 1) return { min: values[0], max: values[0] };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
 
 function fillMissingMonths(data: { name: string; count: number }[]): { name: string; count: number }[] {
   if (data.length === 0) return data;
 
-  data.sort((a, b) => a.name.localeCompare(b.name));
+  const monthData = [...data].sort((a, b) => a.name.localeCompare(b.name));
+
+  const parseMonthKey = (value: string): { year: number; month: number } | null => {
+    const match = value.match(/^(\d{4})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+    return { year, month };
+  };
+
+  const start = parseMonthKey(monthData[0].name);
+  const end = parseMonthKey(monthData[monthData.length - 1].name);
+  if (!start || !end) return monthData;
 
   const monthStrings: string[] = [];
-  const startDate = new Date(`${data[0].name}-01`);
-  const endDate = new Date(`${data[data.length - 1].name}-01`);
-
-  const timezoneOffset = new Date().getTimezoneOffset() * 60 * 1000; // milliseconds
-  const currDate = new Date(startDate);
-  while (currDate <= endDate) {
-    const localCurrDate = new Date(currDate.getTime() - timezoneOffset);
-    const monthString = localCurrDate.toISOString().slice(0, 7);
-    monthStrings.push(monthString);
-    currDate.setMonth(currDate.getMonth() + 1);
+  let year = start.year;
+  let month = start.month;
+  while (year < end.year || (year === end.year && month <= end.month)) {
+    monthStrings.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month === 13) {
+      month = 1;
+      year += 1;
+    }
   }
 
-  const dataMap = new Map(data.map((item) => [item.name, item.count]));
-  const filledData = monthStrings.map((month) => ({
-    name: month,
-    count: dataMap.get(month) || 0,
-  }));
-
-  return filledData;
+  const dataMap = new Map(monthData.map((item) => [item.name, item.count]));
+  return monthStrings.map((m) => ({ name: m, count: dataMap.get(m) ?? 0 }));
 }
 
 function mergeYears(data: { name: string; count: number }[]): { name: string; count: number }[] {
@@ -56,10 +83,22 @@ function extractGameStats(games: StatsData[]) {
   const draw = games.filter((d) => d.result === "Drawn").length;
   const lost = games.filter((d) => d.result === "Lost").length;
 
+  const getMonthKey = (date: string): string | null => {
+    const match = date.match(/(\d{4})\D*(\d{1,2})/);
+    if (!match) return null;
+    const [, year, month] = match;
+    return `${year}-${month.padStart(2, "0")}`;
+  };
+
   const monthCounts: { [key: string]: number } = {};
+  let unknownCount = 0;
   games.forEach((game) => {
-    const monthString = game.date.slice(0, 7).replace(".", "-");
-    monthCounts[monthString] = (monthCounts[monthString] || 0) + 1;
+    const monthKey = getMonthKey(game.date);
+    if (!monthKey) {
+      unknownCount += 1;
+      return;
+    }
+    monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
   });
 
   const dataPerMonth = Object.entries(monthCounts).map(([month, count]) => ({
@@ -67,7 +106,7 @@ function extractGameStats(games: StatsData[]) {
     count,
   }));
 
-  return { total, won, draw, lost, dataPerMonth };
+  return { total, won, draw, lost, dataPerMonth, unknownCount };
 }
 
 function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerGameInfo }) {
@@ -80,8 +119,10 @@ function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerG
     const buckets = new Set<number>();
     for (const site of info?.site_stats_data ?? []) {
       for (const game of site.data) {
-        if (typeof game.opponent_elo !== "number") continue;
-        buckets.add(Math.floor(game.opponent_elo / 200) * 200);
+        const values = extractOpponentEloValues(game.opponent_elo);
+        for (const elo of values) {
+          buckets.add(Math.floor(elo / 200) * 200);
+        }
       }
     }
     const sorted = Array.from(buckets).sort((a, b) => a - b);
@@ -105,15 +146,16 @@ function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerG
       const start = Number.parseInt(opponentEloBucket, 10);
       if (Number.isFinite(start)) {
         const end = start + 199;
-        data = data.filter(
-          (game) => typeof game.opponent_elo === "number" && game.opponent_elo >= start && game.opponent_elo <= end,
-        );
+        data = data.filter((game) => {
+          const range = parseOpponentEloRange(game.opponent_elo);
+          return range != null && range.max >= start && range.min <= end;
+        });
       }
     }
 
     return data;
   }, [info?.site_stats_data, opponentEloBucket, platform, timeControl]);
-  const { total, won, draw, lost, dataPerMonth } = extractGameStats(games);
+  const { total, won, draw, lost, dataPerMonth, unknownCount } = extractGameStats(games);
 
   return (
     <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
@@ -136,7 +178,7 @@ function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerG
           {total > 0 ? (
             <Stack gap="md" p="md">
               <ResultsChart won={won} draw={draw} lost={lost} size="2rem" />
-              <DateChart dataPerMonth={dataPerMonth} />
+              <DateChart dataPerMonth={dataPerMonth} unknownCount={unknownCount} unknownLabel="Unknown" />
             </Stack>
           ) : (
             <Text size="sm" c="dimmed" p="md">
@@ -154,7 +196,11 @@ const DateChartTooltip = ({
   payload,
   label,
   isYearSelected,
-}: TooltipProps<ValueType, NameType> & { payload?: any[]; label?: string; isYearSelected?: boolean }) => {
+}: TooltipProps<ValueType, NameType> & {
+  payload?: Array<{ name?: string; value?: number | string }>;
+  label?: string;
+  isYearSelected?: boolean;
+}) => {
   if (active && payload && payload.length) {
     return (
       <div
@@ -180,7 +226,15 @@ const DateChartTooltip = ({
   return null;
 };
 
-function DateChart({ dataPerMonth }: { dataPerMonth: { name: string; count: number }[] }) {
+function DateChart({
+  dataPerMonth,
+  unknownCount = 0,
+  unknownLabel = "Unknown",
+}: {
+  dataPerMonth: { name: string; count: number }[];
+  unknownCount?: number;
+  unknownLabel?: string;
+}) {
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
   let data = fillMissingMonths(dataPerMonth);
@@ -189,6 +243,9 @@ function DateChart({ dataPerMonth }: { dataPerMonth: { name: string; count: numb
     data = data.filter((obj) => obj.name.startsWith(selectedYear.toString()));
   } else if (data.length > 36) {
     data = mergeYears(data);
+  }
+  if (unknownCount > 0) {
+    data = [...data, { name: unknownLabel, count: unknownCount }];
   }
 
   return (
