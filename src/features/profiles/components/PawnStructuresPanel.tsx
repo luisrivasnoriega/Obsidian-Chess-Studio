@@ -1,0 +1,496 @@
+import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Progress,
+  ScrollArea,
+  SegmentedControl,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
+import { IconCopy, IconSearch } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
+import { Fragment, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { NormalizedGame, PlayerGameInfo, SiteStatsData } from "@/bindings";
+import { commands } from "@/bindings";
+import { Chessground } from "@/components/Chessground";
+import PlayerSidebarCard, {
+  normalizePlatform,
+  type PlatformFilter,
+  type TimeControlFilter,
+} from "@/features/accounts/components/PersonalCardPanels/PlayerSidebarCard";
+import { sessionsAtom } from "@/state/atoms";
+import { getAccountKey } from "@/utils/accountKeys";
+import { query_games, query_players } from "@/utils/db";
+import { generateAnalysisResult, type PawnStructureStat } from "@/utils/playerMistakes";
+import { getProfileDbPath } from "@/utils/profileDb";
+import { unwrap } from "@/utils/unwrap";
+import { getTimeControl } from "@/utils/timeControl";
+
+type PawnStructuresPanelProps = {
+  playerName: string;
+  databaseFile?: string;
+  profileId?: string;
+};
+
+const fallbackFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+function normalizePlayerName(name?: string): string {
+  return name?.trim().toLowerCase() ?? "";
+}
+
+function matchesName(candidate: string | undefined, target: string): boolean {
+  if (!candidate || !target) return false;
+  const cand = candidate.toLowerCase();
+  const normalizedTarget = target.toLowerCase();
+  return cand.includes(normalizedTarget) || normalizedTarget.includes(cand);
+}
+
+function createPgnFromNormalizedGame(game: NormalizedGame): string {
+  const resultTag = game.result || "*";
+  const movesText = (game.moves || "").trim();
+  const hasResult = /(?:1-0|0-1|1\/2-1\/2|\*)$/.test(movesText);
+  const movetext = movesText ? (hasResult ? movesText : `${movesText} ${resultTag}`) : resultTag;
+
+  let pgn = `[Event "${game.event || "Online Game"}"]\n`;
+  pgn += `[Site "${game.site || "Online"}"]\n`;
+  pgn += `[Date "${game.date || "????.??.??"}"]\n`;
+  if (game.round) {
+    pgn += `[Round "${game.round}"]\n`;
+  }
+  pgn += `[White "${game.white || "White"}"]\n`;
+  pgn += `[Black "${game.black || "Black"}"]\n`;
+  pgn += `[Result "${resultTag}"]\n`;
+  if (game.white_elo) {
+    pgn += `[WhiteElo "${game.white_elo}"]\n`;
+  }
+  if (game.black_elo) {
+    pgn += `[BlackElo "${game.black_elo}"]\n`;
+  }
+  if (game.time_control) {
+    pgn += `[TimeControl "${game.time_control}"]\n`;
+  }
+  if (game.eco) {
+    pgn += `[ECO "${game.eco}"]\n`;
+  }
+  pgn += "\n";
+  pgn += movetext;
+  return pgn;
+}
+
+async function queryAllGamesFromDb(
+  dbFile: string,
+  normalizedTarget: string,
+  colorFilter: "white" | "black" | "any",
+  platformFilter: PlatformFilter,
+  timeControlFilter: TimeControlFilter,
+  opponentEloBucket: string,
+  onProgress?: (value: number) => void,
+): Promise<NormalizedGame[]> {
+  const pageSize = 200;
+  let page = 1;
+  let loaded = 0;
+  let totalCount: number | null = null;
+  const collected: NormalizedGame[] = [];
+
+  while (true) {
+    const response = await query_games(dbFile, {
+      sides: "Any",
+      options: {
+        skipCount: page !== 1,
+        page,
+        pageSize,
+        sort: "date",
+        direction: "desc",
+      },
+    });
+    const data = response.data ?? [];
+    if (!data.length) break;
+    if (page === 1 && typeof response.count === "number") {
+      totalCount = response.count;
+    }
+
+    for (const game of data) {
+      const isWhite = matchesName(game.white, normalizedTarget);
+      const isBlack = matchesName(game.black, normalizedTarget);
+      const matchesColorFilter =
+        colorFilter === "white" ? isWhite : colorFilter === "black" ? isBlack : isWhite || isBlack;
+      if (!matchesColorFilter) continue;
+      if (game.moves) {
+        const normalizedSite = normalizePlatform(game.site);
+        const matchesPlatform = platformFilter === "all" || normalizedSite === platformFilter;
+        if (!matchesPlatform) continue;
+
+        const hasTimeControl = typeof game.time_control === "string";
+        const currentTimeControl = hasTimeControl ? getTimeControl(game.site, game.time_control) : null;
+        if (timeControlFilter !== "any" && currentTimeControl !== timeControlFilter) continue;
+
+        if (opponentEloBucket !== "all") {
+          const start = Number.parseInt(opponentEloBucket, 10);
+          if (Number.isFinite(start)) {
+            const opponentElo =
+              isWhite && typeof game.black_elo === "number"
+                ? game.black_elo
+                : isBlack && typeof game.white_elo === "number"
+                  ? game.white_elo
+                  : null;
+            const end = start + 199;
+            if (opponentElo === null || opponentElo < start || opponentElo > end) continue;
+          }
+        }
+
+        collected.push(game);
+      }
+    }
+
+    loaded += data.length;
+    if (onProgress && totalCount && totalCount > 0) {
+      onProgress(Math.min(100, Math.round((loaded / totalCount) * 100)));
+    }
+
+    if (data.length < pageSize) break;
+    page += 1;
+  }
+
+  return collected;
+}
+
+export default function PawnStructuresPanel({ playerName, databaseFile, profileId }: PawnStructuresPanelProps) {
+  const { t } = useTranslation();
+
+  const [pawnMoveFilter, setPawnMoveFilter] = useState(10);
+  const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
+  const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">("player");
+  const [pawnStructures, setPawnStructures] = useState<PawnStructureStat[]>([]);
+  const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">("frequency");
+  const [pawnLoading, setPawnLoading] = useState(false);
+  const [pawnProgress, setPawnProgress] = useState<number | null>(null);
+  const [expandedStructure, setExpandedStructure] = useState<string | null>(null);
+  const [expandedFen, setExpandedFen] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<PlatformFilter>("all");
+  const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
+  const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
+  const sessions = useAtomValue(sessionsAtom);
+
+  const moveOptions = Array.from({ length: 50 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }));
+
+  const sortedStructures = [...pawnStructures].sort((a, b) =>
+    pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate,
+  );
+
+  const playerSessions = useMemo(
+    () =>
+      sessions.filter(
+        (session) => session.profileId === profileId && (session.lichess?.username || session.chessCom?.username),
+      ),
+    [sessions, profileId],
+  );
+
+  const { data: personalInfo } = useQuery({
+    queryKey: [
+      "pawnStructuresInfo",
+      profileId,
+      playerSessions.map((session) => session.lichess?.username ?? session.chessCom?.username).join("|"),
+    ],
+    queryFn: async () => {
+      if (!profileId || playerSessions.length === 0) return [];
+      const dbPath = await getProfileDbPath(profileId);
+      const results = await Promise.allSettled(
+        playerSessions.map(async (session) => {
+          const accountKey = session.lichess
+            ? getAccountKey("lichess", session.lichess.username)
+            : session.chessCom
+              ? getAccountKey("chesscom", session.chessCom.username)
+              : null;
+          if (!accountKey) throw new Error("Session does not have an account key");
+
+          const players = await query_players(dbPath, {
+            name: accountKey,
+            options: {
+              pageSize: 200,
+              direction: "asc",
+              sort: "id",
+              skipCount: false,
+            },
+          });
+          const normalizedAccountKey = accountKey.trim().toLowerCase();
+          const player =
+            players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
+          if (!player) throw new Error("Player not found in database");
+
+          const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
+          return info;
+        }),
+      );
+
+      return results
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => (r as PromiseFulfilledResult<PlayerGameInfo>).value);
+    },
+    staleTime: 0,
+    refetchOnMount: true,
+    enabled: !!profileId && playerSessions.length > 0,
+  });
+
+  const mergedInfo = useMemo<PlayerGameInfo | null>(() => {
+    if (!personalInfo || personalInfo.length === 0) return null;
+    const mergedSiteStatsData: SiteStatsData[] = [];
+    const byKey = new Map<string, SiteStatsData>();
+
+    for (const entry of personalInfo.flatMap((info) => info.site_stats_data)) {
+      const key = `${entry.site}:${entry.player}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        const next: SiteStatsData = { site: entry.site, player: entry.player, data: [...entry.data] };
+        byKey.set(key, next);
+        mergedSiteStatsData.push(next);
+        continue;
+      }
+      existing.data.push(...entry.data);
+    }
+
+    return { site_stats_data: mergedSiteStatsData };
+  }, [personalInfo]);
+
+  const playerInfo = mergedInfo ?? { site_stats_data: [] };
+
+  const opponentEloOptions = useMemo(() => {
+    const buckets = new Set<number>();
+    for (const site of playerInfo.site_stats_data ?? []) {
+      for (const game of site.data) {
+        if (typeof game.opponent_elo !== "number") continue;
+        buckets.add(Math.floor(game.opponent_elo / 200) * 200);
+      }
+    }
+    const sorted = Array.from(buckets).sort((a, b) => a - b);
+    return [
+      { value: "all", label: t("common.all", { defaultValue: "All" }) },
+      ...sorted.map((start) => ({ value: String(start), label: `${start}-${start + 199}` })),
+    ];
+  }, [playerInfo.site_stats_data, t]);
+
+  const handleSearch = async () => {
+    if (!databaseFile) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: t("features.dashboard.noPawnStructures"),
+        color: "orange",
+      });
+      return;
+    }
+
+    const normalizedTarget = normalizePlayerName(playerName);
+    if (!normalizedTarget) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: t("profiles.errors.missingName", { defaultValue: "Profile name is required." }),
+        color: "red",
+      });
+      return;
+    }
+
+    setPawnLoading(true);
+    setPawnProgress(0);
+    setPawnStructures([]);
+
+    try {
+      const pgns = await queryAllGamesFromDb(
+        databaseFile,
+        normalizedTarget,
+        pawnColorFilter,
+        platform,
+        timeControl,
+        opponentEloBucket,
+        (value) => setPawnProgress(value),
+      );
+
+      if (!pgns.length) {
+        notifications.show({
+          title: t("features.dashboard.noPawnStructures"),
+          message: t("features.dashboard.noPawnStructuresMessage"),
+          color: "orange",
+        });
+        return;
+      }
+
+      const combined = pgns.map((game) => createPgnFromNormalizedGame(game)).join("\n\n");
+      const analysisResult = generateAnalysisResult(combined, playerName, {
+        maxMove: pawnMoveFilter,
+        playerColor: pawnColorFilter === "any" ? undefined : pawnColorFilter,
+        pawnStructureMode,
+      });
+
+      setPawnStructures(analysisResult.pawnStructures ?? []);
+    } catch {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: t("features.dashboard.errorAnalyzingPawns"),
+        color: "red",
+      });
+    } finally {
+      setPawnLoading(false);
+      setPawnProgress(null);
+    }
+  };
+
+  const toggleStructureDetails = (structure: PawnStructureStat) => {
+    if (expandedStructure === structure.structure) {
+      setExpandedStructure(null);
+      setExpandedFen(null);
+      return;
+    }
+    setExpandedStructure(structure.structure);
+    setExpandedFen(structure.sampleFen ?? fallbackFen);
+  };
+
+  const copyFenToClipboard = (fen: string) => {
+    navigator.clipboard.writeText(fen);
+    notifications.show({
+      title: t("features.dashboard.copied"),
+      message: t("features.dashboard.fenCopiedMessage"),
+      color: "green",
+    });
+  };
+
+  return (
+    <Group h="100%" align="stretch" wrap="nowrap" gap="md">
+      <Box
+        style={{
+          flex: "0 0 25%",
+          minWidth: 280,
+          maxWidth: 420,
+          minHeight: 0,
+        }}
+      >
+        <PlayerSidebarCard
+          playerName={playerName}
+          info={playerInfo}
+          platform={platform}
+          onPlatformChange={setPlatform}
+          timeControl={timeControl}
+          onTimeControlChange={setTimeControl}
+          opponentEloOptions={opponentEloOptions}
+          opponentEloBucket={opponentEloBucket}
+          onOpponentEloChange={setOpponentEloBucket}
+        />
+      </Box>
+      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
+        <Stack gap="md" style={{ minHeight: 0 }} p="md">
+          <Title order={4}>{t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}</Title>
+          <Group align="flex-end" wrap="wrap">
+            <Select
+              label={t("features.dashboard.inMove")}
+              data={moveOptions}
+              value={pawnMoveFilter.toString()}
+              onChange={(value) => setPawnMoveFilter(Number.parseInt(value || "10", 10))}
+              style={{ width: 100 }}
+              size="xs"
+            />
+            <Select
+              label={t("features.dashboard.playerColor")}
+              data={[
+                { value: "white", label: t("features.dashboard.white") },
+                { value: "black", label: t("features.dashboard.black") },
+                { value: "any", label: t("features.dashboard.any") },
+              ]}
+              value={pawnColorFilter}
+              onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
+              style={{ width: 140 }}
+              size="xs"
+            />
+            <SegmentedControl
+              value={pawnStructureMode}
+              onChange={(value) => setPawnStructureMode(value as "player" | "both")}
+              data={[
+                { label: t("features.dashboard.playerStructure"), value: "player" },
+                { label: t("features.dashboard.bothStructures"), value: "both" },
+              ]}
+              size="xs"
+            />
+            <Button leftSection={<IconSearch size={14} />} onClick={handleSearch} loading={pawnLoading} size="xs">
+              {t("features.dashboard.search")}
+            </Button>
+          </Group>
+          {pawnLoading && <Progress value={pawnProgress ?? 0} size="xs" />}
+
+          {sortedStructures.length > 0 ? (
+            <ScrollArea>
+              <Table>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t("features.dashboard.structure")}</Table.Th>
+                    <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("frequency")}>
+                      {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
+                    </Table.Th>
+                    <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
+                      {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
+                    </Table.Th>
+                    <Table.Th>{t("features.dashboard.actions")}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {sortedStructures.map((structure) => {
+                    const displayFen = expandedFen ?? structure.sampleFen ?? fallbackFen;
+                    return (
+                      <Fragment key={structure.structure}>
+                        <Table.Tr>
+                          <Table.Td>
+                            <Text fw={600}>{structure.structure}</Text>
+                          </Table.Td>
+                          <Table.Td>{structure.frequency}</Table.Td>
+                          <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
+                          <Table.Td>
+                            <Button size="xs" variant="light" onClick={() => toggleStructureDetails(structure)}>
+                              {expandedStructure === structure.structure
+                                ? t("features.dashboard.hide")
+                                : t("features.dashboard.view")}
+                            </Button>
+                          </Table.Td>
+                        </Table.Tr>
+                        {expandedStructure === structure.structure && (
+                          <Table.Tr>
+                            <Table.Td colSpan={4}>
+                              <Stack gap="md">
+                                <Chessground
+                                  fen={displayFen}
+                                  coordinates={false}
+                                  viewOnly
+                                  orientation={pawnColorFilter === "black" ? "black" : "white"}
+                                />
+                                <Group gap="xs">
+                                  <Badge size="sm" variant="light">
+                                    {t("features.dashboard.structure")}:
+                                  </Badge>
+                                  <Text>{structure.structure}</Text>
+                                  <ActionIcon size="sm" variant="subtle" onClick={() => copyFenToClipboard(displayFen)}>
+                                    <IconCopy size={14} />
+                                  </ActionIcon>
+                                </Group>
+                              </Stack>
+                            </Table.Td>
+                          </Table.Tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          ) : (
+            <Text size="sm" c="dimmed" ta="center">
+              {t("features.dashboard.noPawnStructuresHint")}
+            </Text>
+          )}
+        </Stack>
+      </Box>
+    </Group>
+  );
+}

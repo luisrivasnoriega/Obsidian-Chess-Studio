@@ -143,11 +143,6 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
   const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
 
   const dates = useMemo(() => {
-    const timezoneOffset = new Date().getTimezoneOffset() * 60 * 1000; // milliseconds
-    const localDate = new Date(Date.now() - timezoneOffset);
-    const todayString = localDate.toISOString().slice(0, 10);
-    const today = new Date(todayString).getTime();
-
     const gameDates = openingData
       .map((game) => {
         if (!game.date) return null;
@@ -155,7 +150,7 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
       })
       .filter((date): date is number => Number.isFinite(date));
 
-    return Array.from(new Set([today, ...gameDates])).sort((a, b) => a - b);
+    return Array.from(new Set(gameDates)).sort((a, b) => a - b);
   }, [openingData]);
 
   const filteredOpeningData = useMemo(() => {

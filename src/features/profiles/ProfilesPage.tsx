@@ -42,6 +42,7 @@ import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/AddProfileAccountModal";
+import PawnStructuresPanel from "./components/PawnStructuresPanel";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {
   if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
@@ -104,10 +105,6 @@ export default function ProfilesPage() {
     () => Math.max(1, Math.ceil(sortedProfiles.length / profilesPerPage)),
     [sortedProfiles.length],
   );
-
-  useEffect(() => {
-    setProfilesPage(1);
-  }, [profileQuery]);
 
   useEffect(() => {
     setProfilesPage((page) => Math.min(page, totalProfilePages));
@@ -553,7 +550,10 @@ export default function ProfilesPage() {
               <TextInput
                 placeholder={t("profiles.searchPlaceholder", { defaultValue: "Search profiles..." })}
                 value={profileQuery}
-                onChange={(e) => setProfileQuery(e.currentTarget.value)}
+                onChange={(e) => {
+                  setProfileQuery(e.currentTarget.value);
+                  setProfilesPage(1);
+                }}
                 size="xs"
               />
 
@@ -787,9 +787,11 @@ export default function ProfilesPage() {
                   </Text>
                 </Tabs.Panel>
                 <Tabs.Panel value="pawnStructures" pt="sm">
-                  <Text size="sm" c="dimmed">
-                    {t("profiles.tabs.pawnStructuresDesc", { defaultValue: "Pawn structures content coming soon." })}
-                  </Text>
+                  <PawnStructuresPanel
+                    playerName={activeProfile?.name ?? ""}
+                    databaseFile={profileDatabase?.file ?? undefined}
+                    profileId={activeProfile?.id ?? undefined}
+                  />
                 </Tabs.Panel>
               </Tabs>
             </Card>
