@@ -1,10 +1,11 @@
-import { Badge, Box, Card, Divider, Group, Select, Stack, Text } from "@mantine/core";
+import { Badge, Box, Card, Divider, Group, Select, Stack, Text, Tooltip } from "@mantine/core";
+import { IconBolt, IconCircleDot, IconGauge } from "@tabler/icons-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
 import { analyzePlayerStyle } from "@/utils/playerStyle";
 import { getTimeControl } from "@/utils/timeControl";
-import DateRangeTabs, { DateRange } from "./DateRangeTabs";
+import DateRangeTabs, { type DateRange } from "./DateRangeTabs";
 
 export type PlatformFilter = "all" | "Chess.com" | "Lichess";
 export type TimeControlFilter =
@@ -192,10 +193,44 @@ export default function PlayerSidebarCard({
                   <PlatformIcon platform={site} />
                   <Text fw={600}>{site}</Text>
                 </Group>
-                <Text size="sm" fw={700} style={{ whiteSpace: "nowrap" }}>
-                  bullet {formatElo(summary.bullet)} | blitz {formatElo(summary.blitz)} | rapid{" "}
-                  {formatElo(summary.rapid)}
-                </Text>
+                <Group gap="xs" wrap="nowrap" style={{ whiteSpace: "nowrap" }}>
+                  <Group gap={4} wrap="nowrap">
+                    <Tooltip label="Bullet">
+                      <span>
+                        <IconCircleDot size={14} />
+                      </span>
+                    </Tooltip>
+                    <Text size="sm" fw={700}>
+                      {formatElo(summary.bullet)}
+                    </Text>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    |
+                  </Text>
+                  <Group gap={4} wrap="nowrap">
+                    <Tooltip label="Blitz">
+                      <span>
+                        <IconBolt size={14} />
+                      </span>
+                    </Tooltip>
+                    <Text size="sm" fw={700}>
+                      {formatElo(summary.blitz)}
+                    </Text>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    |
+                  </Text>
+                  <Group gap={4} wrap="nowrap">
+                    <Tooltip label="Rapid">
+                      <span>
+                        <IconGauge size={14} />
+                      </span>
+                    </Tooltip>
+                    <Text size="sm" fw={700}>
+                      {formatElo(summary.rapid)}
+                    </Text>
+                  </Group>
+                </Group>
               </Group>
             );
           })}

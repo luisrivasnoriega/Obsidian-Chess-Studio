@@ -6,10 +6,9 @@ import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { getTimeControl } from "@/utils/timeControl";
 import { DateRange } from "./DateRangeTabs";
-import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter, normalizePlatform } from "./PlayerSidebarCard";
+import PlayerSidebarCard, { normalizePlatform, type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import { gradientStops, linearGradientProps, tooltipContentStyle, tooltipCursorStyle } from "./RatingsPanel.css";
 import ResultsChart from "./ResultsChart";
-import TimeRangeSlider from "./TimeRangeSlider";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -24,7 +23,6 @@ function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): num
       return lastDate - 90 * MILLISECONDS_PER_DAY;
     case DateRange.OneYear:
       return lastDate - 365 * MILLISECONDS_PER_DAY;
-    case DateRange.AllTime:
     default:
       return Math.min(...ratingDates);
   }
@@ -66,7 +64,7 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
     }
   }, [dateRange, dates]);
 
-  const [summary, ratingData] = useMemo(() => {
+  const [summary, ratingSeries] = useMemo(() => {
     let filteredGames =
       info.site_stats_data
         ?.filter((games) => platform === "all" || normalizePlatform(games.site) === platform)
@@ -97,15 +95,47 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
     const lostCount = filteredGames.filter((game) => game.result === "Lost").length;
 
     const ratingData = (() => {
-      const map = new Map<number, { date: number; player_elo: number }>();
+      const perPlatform = new Map<string, Map<number, number>>();
       for (const game of filteredGames) {
         const date = new Date(game?.date?.replaceAll(".", "-")).getTime();
-        const existingEntry = map.get(date);
-        if (!existingEntry || existingEntry.player_elo < game.player_elo) {
-          map.set(date, { date, player_elo: game.player_elo });
+        const normalized = normalizePlatform(game.site);
+        if (!Number.isFinite(date)) continue;
+        const platformKey = normalized === "Chess.com" ? "chesscom" : normalized === "Lichess" ? "lichess" : "unknown";
+        const platformMap = perPlatform.get(platformKey) ?? new Map<number, number>();
+        const existing = platformMap.get(date);
+        if (existing == null || existing < game.player_elo) {
+          platformMap.set(date, game.player_elo);
         }
+        perPlatform.set(platformKey, platformMap);
       }
-      return Array.from(map.values()).sort((a, b) => a.date - b.date);
+      const allDates = Array.from(
+        new Set(Array.from(perPlatform.values()).flatMap((map) => Array.from(map.keys()))),
+      ).sort((a, b) => a - b);
+
+      const data = allDates.map((date) => {
+        const entry: { date: number; [key: string]: number | undefined } = { date };
+        for (const [key, map] of perPlatform.entries()) {
+          const value = map.get(date);
+          if (value != null) entry[key] = value;
+        }
+        return entry;
+      });
+
+      const platforms = Array.from(perPlatform.keys()).map((key) => {
+        const isChessCom = key === "chesscom";
+        const isLichess = key === "lichess";
+        return {
+          key,
+          label: isChessCom ? "Chess.com" : isLichess ? "Lichess" : "Unknown",
+          stroke: isChessCom
+            ? "var(--mantine-color-blue-filled)"
+            : isLichess
+              ? "var(--mantine-color-red-filled)"
+              : "var(--mantine-color-gray-5)",
+        };
+      });
+
+      return { data, dates: allDates, platforms };
     })();
 
     return [
@@ -116,20 +146,26 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
         lost: lostCount,
       },
       ratingData,
+      ratingData.dates,
     ];
   }, [info.site_stats_data, platform, timeControl, dates, timeRange, opponentEloBucket]);
 
   const playerEloDomain = useMemo(() => {
-    if (ratingData.length === 0) return null;
+    if (ratingSeries.data.length === 0) return null;
 
-    return ratingData.reduce<[number, number]>(
-      ([min, max], { player_elo }) => [
-        Math.floor(Math.min(min, player_elo) / 50) * 50,
-        Math.ceil(Math.max(max, player_elo) / 50) * 50,
-      ],
-      [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY],
-    );
-  }, [ratingData]);
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const entry of ratingSeries.data) {
+      for (const platformInfo of ratingSeries.platforms) {
+        const value = entry[platformInfo.key];
+        if (typeof value !== "number") continue;
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+    return [Math.floor(min / 50) * 50, Math.ceil(max / 50) * 50] as [number, number];
+  }, [ratingSeries.data, ratingSeries.platforms]);
 
   const opponentEloOptions = useMemo(() => {
     const buckets = new Set<number>();
@@ -173,11 +209,11 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
               )}
               <ChartSizeGuard height={300}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={ratingData}>
+                  <AreaChart data={ratingSeries.data}>
                     <defs>
                       <linearGradient {...linearGradientProps}>
-                        {gradientStops.map((stopProps, index) => (
-                          <stop key={index} {...stopProps} />
+                        {gradientStops.map((stopProps) => (
+                          <stop key={stopProps.offset} {...stopProps} />
                         ))}
                       </linearGradient>
                     </defs>
@@ -195,27 +231,27 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
                       cursor={tooltipCursorStyle}
                       labelFormatter={(label) => new Date(label).toLocaleDateString()}
                     />
-                    <Area
-                      name="Rating"
-                      dataKey="player_elo"
-                      type="monotone"
-                      stroke="var(--mantine-color-blue-filled)"
-                      strokeWidth={2}
-                      strokeOpacity={1}
-                      fillOpacity={0.25}
-                      fill={`url(#${linearGradientProps.id})`}
-                    />
+                    {ratingSeries.platforms.map((platformInfo) => {
+                      return (
+                        <Area
+                          key={platformInfo.key}
+                          name={platformInfo.label}
+                          dataKey={platformInfo.key}
+                          type="monotone"
+                          stroke={platformInfo.stroke}
+                          strokeWidth={2}
+                          strokeOpacity={1}
+                          fillOpacity={0.15}
+                          fill="transparent"
+                          connectNulls
+                          dot={{ r: 2 }}
+                          activeDot={{ r: 3 }}
+                        />
+                      );
+                    })}
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartSizeGuard>
-              <TimeRangeSlider
-                ratingDates={dates}
-                dateRange={timeRange}
-                onDateRangeChange={(range) => {
-                  setDateRange(null);
-                  setTimeRange(range);
-                }}
-              />
             </Stack>
           ) : (
             <Text size="sm" c="dimmed" p="md">
