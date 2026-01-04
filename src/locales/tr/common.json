@@ -81,7 +81,45 @@
     "failedToSaveFile": "Failed to save file",
     "puzzlesGeneratedSuccessfully": "{{count}} puzzles generated successfully",
     "failedToGeneratePuzzles": "Failed to generate puzzles",
-    "generatePuzzles": "Generate Puzzles"
+    "generatePuzzles": "Generate Puzzles",
+    "by": "by",
+    "deleteComponentTheme": "Delete component theme",
+    "initializationErrorTitle": "Initialization Error",
+    "initializationErrorDescription": "The application encountered an error during startup:",
+    "reloadApplication": "Reload Application",
+    "generate": "Generate",
+    "success": "Success",
+    "search": "Search",
+    "annotation": "Annotation",
+    "importing": "Importing",
+    "noRecordsFound": "No records found",
+    "elo": "ELO",
+    "years": "years",
+    "back": "Back",
+    "again": "Again",
+    "analyze": "Analyze",
+    "flip": "Flip",
+    "resign": "Resign",
+    "clocks": "Clocks",
+    "controls": "Controls",
+    "opening": "Opening",
+    "pgn": "PGN",
+    "fenAbbr": "FEN",
+    "gameInfo": "Game info",
+    "gamePanel": "Game panel",
+    "duplicateTab": "Duplicate Tab",
+    "renameTab": "Rename Tab",
+    "closeTab": "Close Tab",
+    "openTabInNewWindow": "Open tab in new window",
+    "centerGraph": "Center graph",
+    "copiedFenToClipboard": "Copied FEN to clipboard",
+    "copiedPgnToClipboard": "Copied PGN to clipboard",
+    "pastedFenFromClipboard": "Pasted FEN from clipboard",
+    "gameExportedSuccessfully": "Game exported successfully",
+    "positionResetToStart": "Position reset to start",
+    "enginesStopped": "Engines stopped",
+    "variationPromoted": "Variation promoted",
+    "variationDeleted": "Variation deleted"
   },
   "chess": {
     "checkmate": "Mat",
@@ -306,7 +344,11 @@
       "settings": "Ayarlar",
       "keyboardShortcuts": "Klavye Kısayolları",
       "puzzles": "Puzzles",
-      "tournaments": "Tournaments"
+      "tournaments": "Tournaments",
+      "profiles": "Profiles",
+      "quickPlay": "Quick Play",
+      "quickAnalyze": "Quick Analyze",
+      "quickPuzzles": "Quick Puzzles"
     },
     "dashboard": {
       "welcome": {
@@ -443,7 +485,96 @@
         "standard": "Standard",
         "rapid": "Rapid",
         "blitz": "Blitz"
-      }
+      },
+      "byColor": "By Color",
+      "filterByColor": "Filter by Color",
+      "all": "All",
+      "any": "Any",
+      "white": "White",
+      "black": "Black",
+      "overview": "Overview",
+      "view": "View",
+      "search": "Search",
+      "actions": "Actions",
+      "show": "Show",
+      "hide": "Hide",
+      "copied": "Copied",
+      "copy": "Copy",
+      "copyFen": "Copy FEN",
+      "fenCopied": "FEN copied",
+      "fenCopiedMessage": "FEN copied to clipboard",
+      "pgnsCopied": "PGNs copied to clipboard",
+      "fen": "FEN",
+      "game": "Game",
+      "games": "Games",
+      "move": "Move",
+      "moveNumber": "Move number",
+      "bestLine": "Best line",
+      "result": "Result",
+      "kind": "Kind",
+      "issueType": "Issue type",
+      "issues": "Issues",
+      "totalIssues": "Total issues",
+      "issueCounts": "Issue counts",
+      "themeCounts": "Theme counts",
+      "theme": "Theme",
+      "allThemes": "All themes",
+      "filterByTheme": "Filter by theme",
+      "structure": "Structure",
+      "playerStructure": "Player only",
+      "bothStructures": "Both structures",
+      "pawnStructures": "Pawn structures",
+      "noPawnStructures": "No pawn structures",
+      "noPawnStructuresMessage": "No games available for the selected filter.",
+      "noPawnStructuresHint": "No pawn structures found. Click search to analyze.",
+      "inMove": "In move",
+      "playerColor": "Player color",
+      "winRate": "Win rate",
+      "frequency": "Frequency",
+      "frequentMistakes": "Frequent mistakes",
+      "openings": "Openings",
+      "unknownOpening": "Unknown opening",
+      "pliesAnalyzed": "Plies analyzed",
+      "playerStats": "Player stats",
+      "openGame": "Open game",
+      "showingIssues": "Showing {{count}} of {{total}} issues",
+      "showingFirst100": "Showing first 100 of {{total}} issues",
+      "sortBy": "Sort by",
+      "cpSwing": "CP swing",
+      "severity": "Severity",
+      "allSeverities": "All severities",
+      "filterBySeverity": "Filter by severity",
+      "order": "Order",
+      "ascending": "Ascending",
+      "descending": "Descending",
+      "noGamesFound": "No games found",
+      "noFavorites": "No favorite games yet",
+      "removeFavorite": "Remove from favorites",
+      "gamesAnalyzed": "Games analyzed",
+      "gamesMatched": "Games matched",
+      "generateStats": "Generate stats",
+      "generatingStats": "Generating stats",
+      "generatingStatsMessage": "Processing analyzed games...",
+      "statsGenerated": "Stats generated",
+      "statsGeneratedMessage": "Analyzed {{gamesMatchedPlayer}} games. Found {{issuesCount}} issues.",
+      "statsError": "Error",
+      "statsErrorMessage": "Failed to generate stats. Please try again.",
+      "gameNotFound": "Game not found",
+      "gameNotFoundMessage": "The selected game could not be found.",
+      "gameOpened": "Game opened",
+      "gameOpenedMessage": "Game opened in a new tab.",
+      "error": "Error",
+      "errorOpeningGame": "Failed to open game",
+      "analyzed": "Analyzed",
+      "debug": "Debug",
+      "debugPgns": "Debug PGNs",
+      "debugPgnsDescription": "PGNs passed to the analysis function:",
+      "noDebugPgns": "No debug PGNs available",
+      "showing": "Showing",
+      "count": "Count",
+      "maxGames": "Max games",
+      "mostCommonSchemes": "Most common schemes",
+      "errorAnalyzingPawns": "Failed to analyze pawn structures"
     },
     "tabs": {
       "newTab": "Yeni Sekme",
@@ -491,7 +622,12 @@
       },
       "limitReached": "Maximum Tabs Reached",
       "limitReachedDesc": "You can have up to {{max}} tabs open at once. Please close some tabs before opening new ones.",
-      "maxTabsReached": "Maximum of {{max}} tabs reached"
+      "maxTabsReached": "Maximum of {{max}} tabs reached",
+      "playBoard": {
+        "title": "Play Board",
+        "desc": "Play a game against an engine or a friend",
+        "button": "Play"
+      }
     },
     "board": {
       "actions": {
@@ -575,6 +711,28 @@
       },
       "annotate": {
         "writeHere": "Buraya yazın..."
+      },
+      "variants": {
+        "treeBuilder": {
+          "button": "Build variants",
+          "title": "Variants tree",
+          "syncHint": "Sync with the database selected in the Database panel.",
+          "localDb": "Local database:",
+          "mode": "Best move for my side",
+          "engine": "Current engine",
+          "winrate": "Highest win rate",
+          "engineSelect": "Select engine",
+          "engineTime": "Time per move (ms)",
+          "dbMoves": "Moves from database",
+          "coverage": "Coverage %",
+          "minMoves": "Minimum moves",
+          "depth": "Depth (active player moves)",
+          "sideNote": "Your side is defined by the board orientation.",
+          "run": "Run",
+          "missingDb": "Select a local database in the Database panel to use database moves.",
+          "noProgress": "Could not make progress from this position. Check the database or engine options.",
+          "done": "Variants generation finished."
+        }
       }
     },
     "lessons": {
@@ -641,7 +799,8 @@
         "sizeOfHash": "Hash boyutu",
         "editJSON": "JSON olarak düzenle",
         "reset": "Varsayılana sıfırla",
-        "selectEngineTip": "Tip: Select an engine to edit its settings."
+        "selectEngineTip": "Tip: Select an engine to edit its settings.",
+        "fileNotFound": "Engine file not found"
       },
       "add": {
         "title": "Motor Ekle",
@@ -698,7 +857,8 @@
         "removeEmpty": "Boş Oyunları Sil",
         "actions": "Operasyonlar",
         "addGames": "Oyun Ekle",
-        "exportPGN": "PGN olarak çıkart"
+        "exportPGN": "PGN olarak çıkart",
+        "selected": "selected"
       },
       "delete": {
         "title": "Veritabanını Sil",
@@ -707,6 +867,11 @@
       "category": {
         "games": "Games",
         "puzzles": "Puzzles"
+      },
+      "source": {
+        "locals": "Locals",
+        "lichess": "Lichess",
+        "chesscom": "Chess.com"
       }
     },
     "files": {
@@ -767,7 +932,11 @@
       "showVariations": "Varyantları Göster",
       "repertoireView": "Repertuar Görünümü",
       "mainLine": "Ana Varyant",
-      "showVariationsTooltip": "Varyantları göster"
+      "showVariationsTooltip": "Varyantları göster",
+      "showMore": "Show more",
+      "showLess": "Show less",
+      "reportView": "Report View",
+      "noMoves": "No moves"
     },
     "pgnInput": {
       "comments": "Yorumlar",
@@ -800,14 +969,20 @@
       "viewSolution": "Çözümü Görüntüle",
       "loadingRatingRange": "Derece aralığı yükleniyor...",
       "enterTitle": "Bulmaca Başlığı Girin",
-      "title": "Puzzle"
+      "title": "Puzzle",
+      "useInPuzzleBoard": "Use this database in the puzzle board to solve puzzles",
+      "themes": "Themes",
+      "selectThemes": "Select themes",
+      "openingTags": "Opening Tags",
+      "selectOpeningTags": "Select opening tags"
     },
     "tablebase": {
       "title": "Tablebase",
       "error": "Hata: ",
       "dtm": "DTM {{count}}",
       "dtz": "DTZ {{count}}",
-      "fiftyMoveRule": "*50 hamle kuralı nedeniyle"
+      "fiftyMoveRule": "*50 hamle kuralı nedeniyle",
+      "unknown": "Unknown"
     },
     "updater": {
       "newVersionAvailable": "New Version Available",
@@ -1085,7 +1260,19 @@
       "light": "Light",
       "dark": "Dark",
       "blindfold": "Blindfold",
-      "blindfoldDesc": "The board is visible but pieces are hidden"
+      "blindfoldDesc": "The board is visible but pieces are hidden",
+      "uiLayout": {
+        "title": "UI Layout",
+        "desc": "Choose between the default layout and Maya",
+        "default": "Default",
+        "maya": "Maya"
+      },
+      "showPlayInSidebar": "Show Play in Sidebar",
+      "showPlayInSidebarDesc": "Add a quick action to start a new play board from the sidebar",
+      "showAnalyzeInSidebar": "Show Analyze in Sidebar",
+      "showAnalyzeInSidebarDesc": "Add a quick action to start a new analysis board from the sidebar",
+      "showPuzzlesInSidebar": "Show Puzzles in Sidebar",
+      "showPuzzlesInSidebarDesc": "Add a quick action to start puzzles from the sidebar"
     },
     "sound": {
       "title": "Ses",
@@ -1106,7 +1293,14 @@
       "title": "Klasörler",
       "desc": "Uygulama tarafından kullanılan klasörleri düzenleyin",
       "files": "Dosyalar Klasörü",
-      "filesDesc": "Dosyalar sayfasındaki oyunlarınız burada saklanır"
+      "filesDesc": "Dosyalar sayfasındaki oyunlarınız burada saklanır",
+      "precacheOpenings": "Pre-cache Openings",
+      "precacheOpeningsDesc": "Pre-cache all common opening positions from the opening database. This will improve search performance for frequently accessed positions.",
+      "noReferenceDatabase": "Please select a reference database first in the Databases page",
+      "startPrecache": "Start Pre-caching",
+      "processing": "Processing",
+      "errors": "Errors",
+      "precacheCompleted": "Pre-caching completed successfully!"
     },
     "telemetry": "Telemetri",
     "telemetryDesc": "Anonim kullanım verilerini paylaşarak OCS'in geliştirilmesine yardımcı olun",
@@ -1294,7 +1488,8 @@
     "markAsStartHint": "Mark as starting position",
     "noMissingMovesFound": "No missing moves found",
     "practicePositions": "Practice Positions",
-    "practiceLogs": "Practice Logs"
+    "practiceLogs": "Practice Logs",
+    "enterOpeningTitle": "Enter opening title"
   },
   "notifications": {
     "failedToOpenFile": "Failed to open file",
@@ -1314,7 +1509,12 @@
     "updatingApplication": "Updating Application",
     "updateCompleted": "Update Completed",
     "appWillRestart": "The application will restart to apply the update",
-    "updateFailed": "Update Failed"
+    "updateFailed": "Update Failed",
+    "updateAvailablePrompt": "A new version ({{version}}) is available. Do you want to install it now?",
+    "latestVersion": "You're running the latest version!",
+    "updateCheckFailed": "Failed to check for updates. Please try again later.",
+    "clearAllDataPrompt": "This will clear all saved data including settings, tabs, and preferences. This action cannot be undone.",
+    "logFilePath": "Log file: {{path}}"
   },
   "dashboard": {
     "noMainAccount": "No main account",
@@ -1366,7 +1566,10 @@
     "until": "Until",
     "pickDate": "Pick date",
     "playerUsername": "Player's username",
-    "selectColor": "Select color"
+    "selectColor": "Select color",
+    "downloadPositionCache": "Download Position Cache",
+    "downloadPositionCacheDesc": "Download pre-calculated position cache with statistics and games for Lumbra's Gigabase, Caissabase 2024, Ajedrez Data (Correspondence & OTB), and MillionBase. This will overwrite your existing cache.",
+    "positionCacheDownloaded": "Position cache downloaded successfully!"
   },
   "gameInfo": {
     "unknownEvent": "Unknown Event",
@@ -1477,7 +1680,21 @@
     "failedToLoadMobileBoardLayout": "Failed to load mobile board layout",
     "defaultLayout": "Default Layout",
     "unexpectedError": "Unexpected Error:",
-    "invalidMove": "Invalid move"
+    "invalidMove": "Invalid move",
+    "failedToInitializeListener": "Failed to initialize engine listener",
+    "failedToCopyFen": "Failed to copy FEN",
+    "failedToCopyPgn": "Failed to copy PGN",
+    "failedToPasteFen": "Failed to paste FEN",
+    "failedToSaveGame": "Failed to save game",
+    "failedToImportPuzzleFile": "Failed to import puzzle file",
+    "missingFen": "Missing FEN",
+    "missingFilePath": "Missing file path",
+    "missingReferenceDatabase": "Missing reference database",
+    "missingEngine": "Missing engine",
+    "missingPosition": "Missing position",
+    "variantPositionsCacheUnavailable": "Variant positions cache unavailable: {{message}}",
+    "unknownError": "Unknown error",
+    "puzzleDepthTooDeep": "Depth cannot exceed the available puzzle depth (max {{max}})"
   },
   "window": {
     "minimize": "Minimize Window",
@@ -1607,5 +1824,55 @@
   },
   "about": {
     "tauriVersion": "Tauri version: {{version}}"
+  },
+  "profiles": {
+    "title": "Profiles",
+    "searchPlaceholder": "Search profiles or accounts...",
+    "add": "Add Profile",
+    "listTitle": "Profiles",
+    "active": "Active",
+    "profile": "Profile",
+    "selectProfile": "Select profile",
+    "accountsCount": "{{count}} accounts",
+    "linkAccountsTitle": "Link accounts",
+    "linkAccountsHint": "Assign each account to a profile. All games will be stored in the profile database.",
+    "noAccounts": "No accounts found. Add accounts first in the Accounts page.",
+    "createTitle": "Create profile",
+    "editTitle": "Edit profile",
+    "namePlaceholder": "e.g. Magnus Carlsen",
+    "fideId": "FIDE ID",
+    "fideIdPlaceholder": "Optional",
+    "created": "Profile created.",
+    "updated": "Profile updated.",
+    "deleted": "Profile deleted.",
+    "activeSet": "Active profile updated.",
+    "errors": {
+      "missingName": "Profile name is required.",
+      "duplicateName": "A profile with this name already exists.",
+      "cannotDeleteLinked": "Unlink accounts from this profile before deleting it."
+    }
+  },
+  "language:DisplayName": "English (US)",
+  "puzzles": {
+    "depthLabel": "Depth",
+    "depthHelper": "Select how many moves to include (max {{max}})"
+  },
+  "maya": {
+    "nav": {
+      "playVsPc": "Play vs PC",
+      "analysis": "Analysis",
+      "puzzles": "Puzzles",
+      "importGame": "Import game",
+      "engines": "Engines",
+      "databases": "Databases",
+      "files": "Files",
+      "accounts": "Accounts",
+      "tournaments": "Tournaments",
+      "learn": "Learn"
+    }
+  },
+  "spotlight": {
+    "nothingFound": "Nothing found...",
+    "searchPlaceholder": "Search..."
   }
 }

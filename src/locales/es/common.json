@@ -820,7 +820,8 @@
         "fideTitle": "Título FIDE",
         "worldRank": "Ranking Mundial",
         "nationalRank": "Ranking Nacional"
-      }
+      },
+      "showing": "Showing"
     },
     "tabs": {
       "newTab": "Nueva pestaña",
