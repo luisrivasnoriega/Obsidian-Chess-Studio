@@ -705,7 +705,7 @@ interface DatabaseDetailsProps {
   refreshPuzzleDatabases: () => void;
 }
 
-function DatabaseDetails({
+export function DatabaseDetails({
   selectedDatabase,
   isReference,
   onChangeReference,
@@ -972,6 +972,12 @@ function GeneralSettings({ selectedDatabase, mutate }: { selectedDatabase: Succe
   const [debouncedDescription] = useDebouncedValue(description, 300);
 
   useEffect(() => {
+    if (
+      debouncedTitle === selectedDatabase.title &&
+      (debouncedDescription ?? "") === (selectedDatabase.description ?? "")
+    ) {
+      return;
+    }
     commands
       .editDbInfo(selectedDatabase.file, debouncedTitle ?? null, debouncedDescription ?? null)
       .then(() => mutate());

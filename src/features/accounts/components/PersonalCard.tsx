@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, Box, Flex, Paper, Select, Tabs, Text, Tooltip } from "@mantine/core";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import type { PlayerGameInfo } from "@/bindings";
@@ -14,17 +14,26 @@ import OpeningsPanel from "./PersonalCardPanels/OpeningsPanel";
 import OverviewPanel from "./PersonalCardPanels/OverviewPanel";
 import RatingsPanel from "./PersonalCardPanels/RatingsPanel";
 
+type PlayerTabs = Array<"overview" | "ratings" | "openings">;
+
 function PersonalPlayerCard({
   name,
   setName,
   info,
+  visibleTabs = ["overview", "ratings", "openings"],
+  showPlayerSelector = true,
 }: {
   name: string;
   setName?: (name: string) => void;
   info: PlayerGameInfo;
+  visibleTabs?: PlayerTabs;
+  showPlayerSelector?: boolean;
 }) {
   const { t } = useTranslation();
-  const store = useContext(DatabaseViewStateContext)!;
+  const store = useContext(DatabaseViewStateContext);
+  if (!store) {
+    throw new Error("DatabaseViewStateContext is missing");
+  }
   const activeTab = useStore(store, (s) => s?.players?.activeTab);
   const setActiveTab = useStore(store, (s) => s.setPlayersActiveTab);
 
@@ -36,6 +45,17 @@ function PersonalPlayerCard({
 
   // Analyze player style from openings
   const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
+  const allowedTabs = useMemo<PlayerTabs>(() => {
+    const defaults: PlayerTabs = ["overview", "ratings", "openings"];
+    return defaults.filter((tab) => visibleTabs.includes(tab));
+  }, [visibleTabs]);
+  const isOpeningsTab = (activeTab ?? allowedTabs[0]) === "openings";
+
+  useEffect(() => {
+    if (!allowedTabs.includes((activeTab ?? "overview") as PlayerTabs[number])) {
+      setActiveTab(allowedTabs[0] as DatabaseViewStore["players"]["activeTab"]);
+    }
+  }, [activeTab, allowedTabs, setActiveTab]);
 
   return (
     <Paper
@@ -46,82 +66,110 @@ function PersonalPlayerCard({
       style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
     >
       <FideInfo key={name} opened={opened} setOpened={setOpened} name={name} />
-      <Box pos="relative">
-        {name !== "Stats" && (
-          <Tooltip label={t("accounts.personalCard.fideInfo")}>
-            <ActionIcon pos="absolute" right={0} onClick={() => setOpened(true)}>
-              <IconInfoCircle />
-            </ActionIcon>
-          </Tooltip>
-        )}
-        {setName ? (
-          <Flex justify="center" direction="column" gap="xs">
-            <Select
-              value={name}
-              data={players}
-              onChange={(e) => setName(e || "")}
-              clearable={false}
-              fw="bold"
-              styles={{
-                input: {
-                  textAlign: "center",
-                  fontSize: "1.25rem",
-                },
-              }}
-            />
-            <Flex direction="column" gap={4} align="center">
-              <Badge color={playerStyle.color} variant="light" size="lg">
-                {t(playerStyle.label)}
-              </Badge>
-              <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
-                {t(playerStyle.description)}
-              </Text>
+      {!isOpeningsTab && (
+        <Box pos="relative">
+          {name !== "Stats" && (
+            <Tooltip label={t("accounts.personalCard.fideInfo")}>
+              <ActionIcon pos="absolute" right={0} onClick={() => setOpened(true)}>
+                <IconInfoCircle />
+              </ActionIcon>
+            </Tooltip>
+          )}
+          {setName && showPlayerSelector ? (
+            <Flex justify="center" direction="column" gap="xs">
+              <Select
+                value={name}
+                data={players}
+                onChange={(e) => setName(e || "")}
+                clearable={false}
+                fw="bold"
+                styles={{
+                  input: {
+                    textAlign: "center",
+                    fontSize: "1.25rem",
+                  },
+                }}
+              />
+              <Flex direction="column" gap={4} align="center">
+                <Badge color={playerStyle.color} variant="light" size="lg">
+                  {t(playerStyle.label)}
+                </Badge>
+                <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
+                  {t(playerStyle.description)}
+                </Text>
+              </Flex>
             </Flex>
-          </Flex>
-        ) : (
-          <Flex direction="column" gap="xs" align="center">
-            <Text fz="lg" fw={500} ta="center">
-              {name}
-            </Text>
-            <Flex direction="column" gap={4} align="center">
-              <Badge color={playerStyle.color} variant="light" size="lg">
-                {t(playerStyle.label)}
-              </Badge>
-              <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
-                {t(playerStyle.description)}
+          ) : (
+            <Flex direction="column" gap="xs" align="center">
+              <Text fz="lg" fw={500} ta="center">
+                {name}
               </Text>
+              <Flex direction="column" gap={4} align="center">
+                <Badge color={playerStyle.color} variant="light" size="lg">
+                  {t(playerStyle.label)}
+                </Badge>
+                <Text fz="xs" c="dimmed" ta="center" style={{ maxWidth: "320px", lineHeight: 1.4 }}>
+                  {t(playerStyle.description)}
+                </Text>
+              </Flex>
             </Flex>
-          </Flex>
-        )}
-      </Box>
-      <Tabs
-        mt="xs"
-        keepMounted={false}
-        value={activeTab}
-        onChange={(v) => setActiveTab(v as DatabaseViewStore["players"]["activeTab"])}
-        variant="outline"
-        flex={1}
-        style={{
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <Tabs.List>
-          <Tabs.Tab value="overview">{t("accounts.personalCard.tabs.overview")}</Tabs.Tab>
-          <Tabs.Tab value="ratings">{t("accounts.personalCard.tabs.ratings")}</Tabs.Tab>
-          <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="overview">
-          <OverviewPanel playerName={name} info={info} />
-        </Tabs.Panel>
-        <Tabs.Panel value="openings" style={{ overflow: "hidden" }}>
-          <OpeningsPanel playerName={name} info={info} />
-        </Tabs.Panel>
-        <Tabs.Panel value="ratings">
-          <RatingsPanel playerName={name} info={info} />
-        </Tabs.Panel>
-      </Tabs>
+          )}
+        </Box>
+      )}
+      {allowedTabs.length > 1 ? (
+        <Tabs
+          mt="xs"
+          keepMounted={false}
+          value={activeTab}
+          onChange={(v) => setActiveTab(v as DatabaseViewStore["players"]["activeTab"])}
+          variant="outline"
+          flex={1}
+          style={{
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Tabs.List>
+            {allowedTabs.includes("overview") && (
+              <Tabs.Tab value="overview">{t("accounts.personalCard.tabs.overview")}</Tabs.Tab>
+            )}
+            {allowedTabs.includes("ratings") && (
+              <Tabs.Tab value="ratings">{t("accounts.personalCard.tabs.ratings")}</Tabs.Tab>
+            )}
+            {allowedTabs.includes("openings") && (
+              <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
+            )}
+          </Tabs.List>
+          {allowedTabs.includes("overview") && (
+            <Tabs.Panel value="overview">
+              <OverviewPanel playerName={name} info={info} />
+            </Tabs.Panel>
+          )}
+          {allowedTabs.includes("openings") && (
+            <Tabs.Panel value="openings" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+              <Box style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                <OpeningsPanel playerName={name} info={info} />
+              </Box>
+            </Tabs.Panel>
+          )}
+          {allowedTabs.includes("ratings") && (
+            <Tabs.Panel value="ratings">
+              <RatingsPanel playerName={name} info={info} />
+            </Tabs.Panel>
+          )}
+        </Tabs>
+      ) : (
+        <>
+          {allowedTabs.includes("overview") && <OverviewPanel playerName={name} info={info} />}
+          {allowedTabs.includes("openings") && (
+            <Box mt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+              <OpeningsPanel playerName={name} info={info} />
+            </Box>
+          )}
+          {allowedTabs.includes("ratings") && <RatingsPanel playerName={name} info={info} />}
+        </>
+      )}
     </Paper>
   );
 }

@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { PlayerGameInfo } from "@/bindings";
+import type { PlayerGameInfo, SiteStatsData } from "@/bindings";
 import { commands, events } from "@/bindings";
 import { sessionsAtom } from "@/state/atoms";
+import { getAccountKey } from "@/utils/accountKeys";
 import { query_players } from "@/utils/db";
 import { getProfileDbPath } from "@/utils/profileDb";
 import type { Session } from "@/utils/session";
@@ -17,7 +18,17 @@ interface PersonalInfo {
   info: PlayerGameInfo;
 }
 
-function Databases({ initialPlayer }: { initialPlayer?: string }) {
+function Databases({
+  initialPlayer,
+  profileId,
+  visibleTabs,
+  showPlayerSelector = true,
+}: {
+  initialPlayer?: string;
+  profileId?: string;
+  visibleTabs?: Array<"overview" | "ratings" | "openings">;
+  showPlayerSelector?: boolean;
+}) {
   const { t } = useTranslation();
   const sessions = useAtomValue(sessionsAtom);
 
@@ -49,32 +60,37 @@ function Databases({ initialPlayer }: { initialPlayer?: string }) {
     isLoading,
     error,
   } = useQuery<PersonalInfo[]>({
-    queryKey: ["personalInfo", name, sessions],
+    queryKey: ["personalInfo", profileId ?? name, sessions],
     queryFn: async () => {
-      const profileId = profilesByName.get(name);
-      if (!profileId) return [];
-      const dbPath = await getProfileDbPath(profileId);
+      const effectiveProfileId = profileId ?? profilesByName.get(name) ?? null;
+      if (!effectiveProfileId) return [];
+      const dbPath = await getProfileDbPath(effectiveProfileId);
 
       const playerSessions = sessions.filter(
-        (s) => s.profileId === profileId && (s.lichess?.username || s.chessCom?.username),
+        (s) => s.profileId === effectiveProfileId && (s.lichess?.username || s.chessCom?.username),
       );
 
       const results = await Promise.allSettled(
         playerSessions.map(async (session) => {
-          const username = session.lichess?.username ?? session.chessCom?.username;
-          if (!username) throw new Error("Session does not have a username");
+          const accountKey = session.lichess
+            ? getAccountKey("lichess", session.lichess.username)
+            : session.chessCom
+              ? getAccountKey("chesscom", session.chessCom.username)
+              : null;
+          if (!accountKey) throw new Error("Session does not have an account key");
 
           const players = await query_players(dbPath, {
-            name: username,
+            name: accountKey,
             options: {
-              pageSize: 10,
+              pageSize: 200,
               direction: "asc",
               sort: "id",
               skipCount: false,
             },
           });
+          const normalizedAccountKey = accountKey.trim().toLowerCase();
           const player =
-            players.data.find((p) => (p.name ?? "").toLowerCase() === username.toLowerCase()) ?? players.data[0];
+            players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
           if (!player) throw new Error("Player not found in database");
 
           const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
@@ -85,9 +101,31 @@ function Databases({ initialPlayer }: { initialPlayer?: string }) {
         .filter((r) => r.status === "fulfilled")
         .map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
     },
-    staleTime: Infinity,
-    enabled: !!name && sessions.length > 0,
+    staleTime: 0,
+    refetchOnMount: true,
+    enabled: (profileId != null || !!name) && sessions.length > 0,
   });
+
+  const mergedInfo = useMemo<PlayerGameInfo | null>(() => {
+    if (!personalInfo || personalInfo.length === 0) return null;
+
+    const mergedSiteStatsData: SiteStatsData[] = [];
+    const byKey = new Map<string, SiteStatsData>();
+
+    for (const entry of personalInfo.flatMap((i) => i.info.site_stats_data)) {
+      const key = `${entry.site}:${entry.player}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        const next: SiteStatsData = { site: entry.site, player: entry.player, data: [...entry.data] };
+        byKey.set(key, next);
+        mergedSiteStatsData.push(next);
+        continue;
+      }
+      existing.data.push(...entry.data);
+    }
+
+    return { site_stats_data: mergedSiteStatsData };
+  }, [personalInfo]);
 
   const [progress, setProgress] = useState(0);
   useEffect(() => {
@@ -151,8 +189,10 @@ function Databases({ initialPlayer }: { initialPlayer?: string }) {
             name={name}
             setName={setName}
             info={{
-              site_stats_data: personalInfo.flatMap((i) => i.info.site_stats_data),
+              site_stats_data: mergedInfo?.site_stats_data ?? [],
             }}
+            visibleTabs={visibleTabs}
+            showPlayerSelector={showPlayerSelector}
           />
         ))}
     </>

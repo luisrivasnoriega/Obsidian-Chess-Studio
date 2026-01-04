@@ -1,10 +1,12 @@
-import { Stack, Text } from "@mantine/core";
-import { useState } from "react";
+import { Badge, Card, Divider, Grid, Group, Stack, Text } from "@mantine/core";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, type TooltipProps, XAxis, YAxis } from "recharts";
 import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 import type { PlayerGameInfo, StatsData } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { getTimeControl } from "@/utils/timeControl";
+import { analyzePlayerStyle } from "@/utils/playerStyle";
 import ResultsChart from "./ResultsChart";
 import TimeControlSelector from "./TimeControlSelector";
 import WebsiteAccountSelector from "./WebsiteAccountSelector";
@@ -71,9 +73,24 @@ function extractGameStats(games: StatsData[]) {
 }
 
 function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerGameInfo }) {
+  const { t } = useTranslation();
   const [website, setWebsite] = useState<string | null>("All websites");
   const [account, setAccount] = useState<string | null>("All accounts");
   const [timeControl, setTimeControl] = useState<string | null>(null);
+  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
+
+  const siteElo = useMemo(() => {
+    const map = new Map<string, { games: number; elo: number }>();
+    for (const site of info.site_stats_data ?? []) {
+      const games = site.data.length;
+      const maxElo = site.data.reduce((max, g) => (typeof g.player_elo === "number" ? Math.max(max, g.player_elo) : max), 0);
+      map.set(site.site, {
+        games: (map.get(site.site)?.games ?? 0) + games,
+        elo: Math.max(map.get(site.site)?.elo ?? 0, maxElo),
+      });
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1].games - a[1].games || a[0].localeCompare(b[0]));
+  }, [info.site_stats_data]);
 
   const games =
     info?.site_stats_data
@@ -86,35 +103,78 @@ function OverviewPanel({ playerName, info }: { playerName: string; info: PlayerG
   const { total, won, draw, lost, dataPerMonth } = extractGameStats(games);
 
   return (
-    <Stack>
-      <WebsiteAccountSelector
-        playerName={playerName}
-        onWebsiteChange={(website) => {
-          setWebsite(website);
-          if (website === "All websites") {
-            setTimeControl(null);
-          } else if (timeControl === null) {
-            setTimeControl("any");
-          }
-        }}
-        onAccountChange={setAccount}
-        allowAll={true}
-      />
-      {website !== "All websites" && (
-        <TimeControlSelector website={website} onTimeControlChange={setTimeControl} allowAll={true} />
-      )}
-
-      <Text pt="md" fw="bold" fz="lg" ta="center">
-        {total} Games
-      </Text>
-
-      {total > 0 && (
-        <>
-          <ResultsChart won={won} draw={draw} lost={lost} size="2rem" />
-          <DateChart dataPerMonth={dataPerMonth} />
-        </>
-      )}
-    </Stack>
+    <Grid gutter="md" h="100%" style={{ minHeight: 0 }}>
+      <Grid.Col span={{ base: 12, md: 3 }}>
+        <Card withBorder radius="md" shadow="sm" bg="var(--mantine-color-dark-6)">
+          <Stack gap="xs">
+            <Text fz="lg" fw={700} ta="center">
+              {playerName}
+            </Text>
+            <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
+              {t(playerStyle.label)}
+            </Badge>
+            <Text c="dimmed" fz="xs" ta="center">
+              {t(playerStyle.description)}
+            </Text>
+            <Divider />
+            <Stack gap={4}>
+              <Text fw={600} fz="sm">
+                {t("common.filters", { defaultValue: "Filters" })}
+              </Text>
+              <WebsiteAccountSelector
+                playerName={playerName}
+                onWebsiteChange={(website) => {
+                  setWebsite(website);
+                  if (website === "All websites") {
+                    setTimeControl(null);
+                  } else if (timeControl === null) {
+                    setTimeControl("any");
+                  }
+                }}
+                onAccountChange={setAccount}
+                allowAll={true}
+              />
+              {website !== "All websites" && (
+                <TimeControlSelector website={website} onTimeControlChange={setTimeControl} allowAll={true} />
+              )}
+            </Stack>
+            <Divider />
+            <Stack gap={4}>
+              <Text fw={600} fz="sm">
+                {t("common.elo", { defaultValue: "Elo" })} / {t("common.games.other", { defaultValue: "Games", count: 0 })}
+              </Text>
+              {siteElo.length === 0 ? (
+                <Text size="sm" c="dimmed">
+                  No data
+                </Text>
+              ) : (
+                siteElo.map(([site, { games, elo }]) => (
+                  <Group key={site} justify="space-between">
+                    <Text>{site}</Text>
+                    <Text fw={700}>
+                      {elo > 0 ? elo : "—"} · {games} games
+                    </Text>
+                  </Group>
+                ))
+              )}
+            </Stack>
+          </Stack>
+        </Card>
+      </Grid.Col>
+      <Grid.Col span={{ base: 12, md: 9 }} style={{ minHeight: 0 }}>
+        <Stack gap="md" h="100%" style={{ minHeight: 0 }}>
+          <Text pt="md" fw="bold" fz="lg" ta="center">
+            {total} Games
+          </Text>
+          {total > 0 && (
+            <>
+              <ResultsChart won={won} draw={draw} lost={lost} size="2rem" />
+              <DateChart dataPerMonth={dataPerMonth} />
+            </>
+          )}
+        </Stack>
+      </Grid.Col>
+    </Grid>
   );
 }
 

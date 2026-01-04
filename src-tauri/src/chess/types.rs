@@ -180,24 +180,32 @@ pub enum UciOptionConfig {
     Button { name: String },
     /// The option of type `string` (a string, unsurprisingly).
     #[serde(rename = "string")]
-    String { name: String, default: Option<String> },
+    String {
+        name: String,
+        default: Option<String>,
+    },
 }
 
 impl From<VampircUciOptionConfig> for UciOptionConfig {
     fn from(value: VampircUciOptionConfig) -> Self {
         match value {
             VampircUciOptionConfig::Check { name, default } => Self::Check { name, default },
-            VampircUciOptionConfig::Spin { name, default, min, max } => Self::Spin {
+            VampircUciOptionConfig::Spin {
+                name,
+                default,
+                min,
+                max,
+            } => Self::Spin {
                 name,
                 default,
                 min,
                 max,
             },
-            VampircUciOptionConfig::Combo { name, default, var } => Self::Combo { name, default, var },
+            VampircUciOptionConfig::Combo { name, default, var } => {
+                Self::Combo { name, default, var }
+            }
             VampircUciOptionConfig::Button { name } => Self::Button { name },
             VampircUciOptionConfig::String { name, default } => Self::String { name, default },
         }
     }
 }
-
-

@@ -1,7 +1,7 @@
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager, path::BaseDirectory};
+use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 use crate::error::{Error, Result};
 
@@ -17,7 +17,9 @@ fn get_variant_positions_db(app: &AppHandle) -> Result<Connection> {
     let db_path = app
         .path()
         .resolve("VariantPositions.db3", BaseDirectory::AppData)
-        .map_err(|e| Error::PackageManager(format!("Failed to resolve VariantPositions DB path: {}", e)))?;
+        .map_err(|e| {
+            Error::PackageManager(format!("Failed to resolve VariantPositions DB path: {}", e))
+        })?;
 
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
@@ -72,9 +74,12 @@ fn init_variant_positions_schema(conn: &Connection) -> Result<()> {
     )?;
 
     // Backfill fen_key for older rows (if any).
-    let mut stmt = conn.prepare("SELECT fen, engine FROM variant_positions WHERE fen_key IS NULL")?;
+    let mut stmt =
+        conn.prepare("SELECT fen, engine FROM variant_positions WHERE fen_key IS NULL")?;
     let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<std::result::Result<Vec<(String, String)>, _>>()?;
 
     for (fen, engine) in rows {
@@ -97,7 +102,11 @@ fn fen_identity_key(fen: &str) -> Option<String> {
     Some(parts[..4].join(" "))
 }
 
-fn fetch_variant_position(app: &AppHandle, fen: &str, engine: &str) -> Result<Option<VariantPosition>> {
+fn fetch_variant_position(
+    app: &AppHandle,
+    fen: &str,
+    engine: &str,
+) -> Result<Option<VariantPosition>> {
     let conn = get_variant_positions_db(app)?;
     let fen_key = fen_identity_key(fen);
     let fen_key = match fen_key {
@@ -162,7 +171,11 @@ fn upsert_variant_position_entry(
 
 #[tauri::command]
 #[specta::specta]
-pub fn get_variant_position(app: AppHandle, fen: String, engine: String) -> Result<Option<VariantPosition>> {
+pub fn get_variant_position(
+    app: AppHandle,
+    fen: String,
+    engine: String,
+) -> Result<Option<VariantPosition>> {
     let fen = fen.trim();
     let engine = engine.trim();
     if fen.is_empty() || engine.is_empty() {

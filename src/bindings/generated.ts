@@ -903,7 +903,7 @@ export type ScoreValue = { type: "cp"; value: number } | { type: "mate"; value: 
 export type Sides = "BlackWhite" | "WhiteBlack" | "Any"
 export type SiteStatsData = { site: string; player: string; data: StatsData[] }
 export type SortDirection = "asc" | "desc"
-export type StatsData = { date: string; is_player_white: boolean; player_elo: number; result: GameOutcome; time_control: string; opening: string }
+export type StatsData = { date: string; is_player_white: boolean; player_elo: number; opponent_elo: number | null; result: GameOutcome; time_control: string; opening: string }
 export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bigint | null }
 /**
  * Theme group containing a category name and its themes

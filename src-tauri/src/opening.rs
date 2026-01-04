@@ -91,63 +91,56 @@ pub fn get_opening_info_from_fen(fen: &str) -> Result<OpeningInfo, Error> {
     let fen: Fen = fen.parse()?;
     let chess: Chess = fen.into_position(CastlingMode::Standard)?;
     let setup = chess.into_setup(EnPassantMode::Legal);
-    
+
     // Try exact match first
-    let opening = OPENINGS
-        .iter()
-        .find(|o| o.setup == setup);
-    
+    let opening = OPENINGS.iter().find(|o| o.setup == setup);
+
     // If no exact match, try to find by comparing board positions only
     // (ignoring en passant, castling rights, etc. which may differ)
     let opening = if opening.is_none() {
-        OPENINGS
-            .iter()
-            .find(|o| {
-                // Compare board positions, turn, and move counters
-                // This is more lenient and will match even if en passant or castling differ
-                o.setup.board == setup.board &&
-                o.setup.turn == setup.turn &&
-                o.setup.fullmoves == setup.fullmoves &&
-                o.setup.halfmoves == setup.halfmoves
-            })
+        OPENINGS.iter().find(|o| {
+            // Compare board positions, turn, and move counters
+            // This is more lenient and will match even if en passant or castling differ
+            o.setup.board == setup.board
+                && o.setup.turn == setup.turn
+                && o.setup.fullmoves == setup.fullmoves
+                && o.setup.halfmoves == setup.halfmoves
+        })
     } else {
         opening
     };
-    
+
     // If still no match, try matching just board and turn (most lenient)
     let opening = if opening.is_none() {
-        OPENINGS
-            .iter()
-            .find(|o| {
-                // Just compare board and turn - this will match positions that are the same
-                // regardless of move counters, en passant, or castling
-                o.setup.board == setup.board &&
-                o.setup.turn == setup.turn
-            })
+        OPENINGS.iter().find(|o| {
+            // Just compare board and turn - this will match positions that are the same
+            // regardless of move counters, en passant, or castling
+            o.setup.board == setup.board && o.setup.turn == setup.turn
+        })
     } else {
         opening
     };
-    
+
     let opening = opening.ok_or_else(|| {
         info!("No opening found for FEN: {}", fen_str);
         Error::NoOpeningFound
     })?;
-    
+
     // Parse the opening name to extract ECO, Opening, and Variation
     let eco = opening.eco.clone();
     let full_name = opening.name.clone().trim().to_string();
-    
+
     // The format in TSV files is typically:
     // - "Catalan Opening"
     // - "Catalan Opening: Hungarian Gambit"
     // - "Catalan Opening: Open Defense, Alekhine Variation"
     // - "Indian Defense: Devin Gambit"
-    
+
     // First, try to split by colon (:) which separates opening from variation
     let colon_parts: Vec<&str> = full_name.splitn(2, ':').map(|s| s.trim()).collect();
-    
+
     let opening_name = colon_parts[0].to_string();
-    
+
     // If there's a colon, the part after is the variation
     // But it might contain commas for sub-variations (e.g., "Open Defense, Alekhine Variation")
     let variation = if colon_parts.len() > 1 {
@@ -162,7 +155,7 @@ pub fn get_opening_info_from_fen(fen: &str) -> Result<OpeningInfo, Error> {
             String::new()
         }
     };
-    
+
     Ok(OpeningInfo {
         eco,
         opening: opening_name,
@@ -254,7 +247,7 @@ lazy_static! {
                     }
                 }
             }
-            info!("Loaded {} openings from file {}", file_count, 
+            info!("Loaded {} openings from file {}", file_count,
                   match tsv_idx {
                       0 => "a.tsv",
                       1 => "b.tsv",

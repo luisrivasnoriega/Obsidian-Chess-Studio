@@ -34,13 +34,13 @@ use tauri::Emitter;
 
 use crate::{
     db::{
-        get_db_or_create, get_pawn_home,
+        get_cached_position, get_db_or_create, get_pawn_home, is_position_cached,
         models::*,
         normalize_games,
         pgn::{get_material_count, MaterialCount},
+        save_position_cache,
         schema::*,
         ConnectionOptions, GameSort, SortDirection,
-        is_position_cached, get_cached_position, save_position_cache,
     },
     error::Error,
     AppState,
@@ -867,8 +867,7 @@ pub(crate) fn search_position_local_internal(
 
     // Shared containers
     let openings: DashMap<String, PositionStats> = DashMap::with_capacity(128);
-    let sample_games: Mutex<Vec<(i32, i32)>> =
-        Mutex::new(Vec::with_capacity(MAX_SAMPLE_GAMES)); // (avg_elo, id)
+    let sample_games: Mutex<Vec<(i32, i32)>> = Mutex::new(Vec::with_capacity(MAX_SAMPLE_GAMES)); // (avg_elo, id)
 
     // Pre-compute filter values to avoid repeated clones
     let start_date = query.start_date.as_deref();
@@ -1571,7 +1570,10 @@ pub async fn search_position(
                 .try_into()
                 .unwrap_or(10);
 
-            let ids_to_load: Vec<i32> = cached_game_ids.into_iter().take(game_details_limit).collect();
+            let ids_to_load: Vec<i32> = cached_game_ids
+                .into_iter()
+                .take(game_details_limit)
+                .collect();
 
             // Load full game data from original database
             let (white_players, black_players) = diesel::alias!(players as white, players as black);
@@ -1591,7 +1593,9 @@ pub async fn search_position(
                         SortDirection::Desc => query_builder.order(games::id.desc()),
                     },
                     GameSort::Date => match options.direction {
-                        SortDirection::Asc => query_builder.order((games::date.asc(), games::time.asc())),
+                        SortDirection::Asc => {
+                            query_builder.order((games::date.asc(), games::time.asc()))
+                        }
                         SortDirection::Desc => {
                             query_builder.order((games::date.desc(), games::time.desc()))
                         }
@@ -1612,7 +1616,8 @@ pub async fn search_position(
                 };
             }
 
-            let games_result: Vec<(Game, Player, Player, Event, Site)> = if !ids_to_load.is_empty() {
+            let games_result: Vec<(Game, Player, Player, Event, Site)> = if !ids_to_load.is_empty()
+            {
                 query_builder.load(db)?
             } else {
                 Vec::new()

@@ -1,7 +1,7 @@
-use tokio::process::Command;
 use log::info;
-use specta::Type;
 use serde::{Deserialize, Serialize};
+use specta::Type;
+use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 use crate::error::Error;
@@ -28,26 +28,36 @@ pub async fn check_package_manager_available(manager: String) -> Result<bool, Er
 
 #[tauri::command]
 #[specta::specta]
-pub async fn install_package(manager: String, package_name: String) -> Result<PackageManagerResult, Error> {
+pub async fn install_package(
+    manager: String,
+    package_name: String,
+) -> Result<PackageManagerResult, Error> {
     info!("Installing package {} using {}", package_name, manager);
 
     validate_package_name(&package_name)?;
-    
+
     let result = match manager.as_str() {
         "brew" => install_brew_package(&package_name).await,
         "apt" => install_apt_package(&package_name).await,
         "dnf" => install_dnf_package(&package_name).await,
         "pacman" => install_pacman_package(&package_name).await,
-        _ => return Err(Error::PackageManager("Unsupported package manager".to_string())),
+        _ => {
+            return Err(Error::PackageManager(
+                "Unsupported package manager".to_string(),
+            ))
+        }
     };
-    
+
     match result {
         Ok(output) => Ok(PackageManagerResult {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         }),
-        Err(e) => Err(Error::PackageManager(format!("Failed to install package: {}", e))),
+        Err(e) => Err(Error::PackageManager(format!(
+            "Failed to install package: {}",
+            e
+        ))),
     }
 }
 
@@ -60,9 +70,13 @@ pub async fn check_package_installed(manager: String, package_name: String) -> R
         "apt" => check_apt_package_installed(&package_name).await,
         "dnf" => check_dnf_package_installed(&package_name).await,
         "pacman" => check_pacman_package_installed(&package_name).await,
-        _ => return Err(Error::PackageManager("Unsupported package manager".to_string())),
+        _ => {
+            return Err(Error::PackageManager(
+                "Unsupported package manager".to_string(),
+            ))
+        }
     };
-    
+
     match installed {
         Ok(result) => Ok(result),
         Err(e) => {
@@ -97,7 +111,12 @@ pub async fn find_executable_path(executable_name: String) -> Result<Option<Stri
         .map_err(|e| Error::PackageManager(format!("Executable lookup failed: {}", e)))?;
 
     if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").trim().to_string();
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !path.is_empty() {
             return Ok(Some(path));
         }
@@ -115,15 +134,21 @@ fn check_brew_available() -> bool {
 }
 
 async fn install_brew_package(package: &str) -> Result<std::process::Output, std::io::Error> {
-    timeout(Duration::from_secs(60 * 10), Command::new("brew").args(["install", package]).output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "brew install timed out"))?
+    timeout(
+        Duration::from_secs(60 * 10),
+        Command::new("brew").args(["install", package]).output(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "brew install timed out"))?
 }
 
 async fn check_brew_package_installed(package: &str) -> Result<bool, std::io::Error> {
-    let output = timeout(Duration::from_secs(5), Command::new("brew").args(["list", package]).output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "brew list timed out"))??;
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("brew").args(["list", package]).output(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "brew list timed out"))??;
     Ok(output.status.success())
 }
 
@@ -140,16 +165,21 @@ async fn install_apt_package(package: &str) -> Result<std::process::Output, std:
     // `-n` fails fast if sudo password is required (prevents GUI hang).
     timeout(
         Duration::from_secs(60 * 10),
-        Command::new("sudo").args(["-n", "apt", "install", "-y", package]).output(),
+        Command::new("sudo")
+            .args(["-n", "apt", "install", "-y", package])
+            .output(),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "apt install timed out"))?
 }
 
 async fn check_apt_package_installed(package: &str) -> Result<bool, std::io::Error> {
-    let output = timeout(Duration::from_secs(5), Command::new("dpkg").args(["-l", package]).output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "dpkg query timed out"))??;
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("dpkg").args(["-l", package]).output(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "dpkg query timed out"))??;
     Ok(output.status.success())
 }
 
@@ -165,16 +195,23 @@ fn check_dnf_available() -> bool {
 async fn install_dnf_package(package: &str) -> Result<std::process::Output, std::io::Error> {
     timeout(
         Duration::from_secs(60 * 10),
-        Command::new("sudo").args(["-n", "dnf", "install", "-y", package]).output(),
+        Command::new("sudo")
+            .args(["-n", "dnf", "install", "-y", package])
+            .output(),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "dnf install timed out"))?
 }
 
 async fn check_dnf_package_installed(package: &str) -> Result<bool, std::io::Error> {
-    let output = timeout(Duration::from_secs(5), Command::new("dnf").args(["list", "installed", package]).output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "dnf query timed out"))??;
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("dnf")
+            .args(["list", "installed", package])
+            .output(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "dnf query timed out"))??;
     Ok(output.status.success())
 }
 
@@ -190,16 +227,21 @@ fn check_pacman_available() -> bool {
 async fn install_pacman_package(package: &str) -> Result<std::process::Output, std::io::Error> {
     timeout(
         Duration::from_secs(60 * 10),
-        Command::new("sudo").args(["-n", "pacman", "-S", "--noconfirm", package]).output(),
+        Command::new("sudo")
+            .args(["-n", "pacman", "-S", "--noconfirm", package])
+            .output(),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "pacman install timed out"))?
 }
 
 async fn check_pacman_package_installed(package: &str) -> Result<bool, std::io::Error> {
-    let output = timeout(Duration::from_secs(5), Command::new("pacman").args(["-Q", package]).output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "pacman query timed out"))??;
+    let output = timeout(
+        Duration::from_secs(5),
+        Command::new("pacman").args(["-Q", package]).output(),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "pacman query timed out"))??;
     Ok(output.status.success())
 }
 
@@ -222,7 +264,7 @@ fn validate_executable_name(name: &str) -> Result<(), Error> {
         && name.len() <= 128
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' ));
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     if ok {
         Ok(())
     } else {

@@ -37,7 +37,15 @@ impl EngineProcess {
     /// Spawn a new UCI engine process and initialize it.
     ///
     /// Returns the process and a line reader for its stdout.
-    pub async fn new(path: PathBuf) -> Result<(Self, tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>), Error> {
+    pub async fn new(
+        path: PathBuf,
+    ) -> Result<
+        (
+            Self,
+            tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+        ),
+        Error,
+    > {
         let mut comm = UciCommunicator::spawn(path).await?;
 
         let mut logs = Vec::new();
@@ -147,7 +155,12 @@ impl EngineProcess {
             GoMode::Depth(depth) => format!("go depth {}\n", depth),
             GoMode::Time(time) => format!("go movetime {}\n", time),
             GoMode::Nodes(nodes) => format!("go nodes {}\n", nodes),
-            GoMode::PlayersTime(super::types::PlayersTime { white, black, winc, binc }) => {
+            GoMode::PlayersTime(super::types::PlayersTime {
+                white,
+                black,
+                winc,
+                binc,
+            }) => {
                 // Don't add movetime limit - let the engine use the available time
                 // The engine will manage its time based on wtime/btime
                 format!(
@@ -274,5 +287,3 @@ pub fn parse_uci_attrs(
 
     Ok(best_moves)
 }
-
-

@@ -73,7 +73,11 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_set_analyzed_game(app: AppHandle, game_id: String, analyzed_pgn: String) -> Result<()> {
+pub fn analysis_db_set_analyzed_game(
+    app: AppHandle,
+    game_id: String,
+    analyzed_pgn: String,
+) -> Result<()> {
     let game_id = game_id.trim();
     if game_id.is_empty() {
         return Ok(());
@@ -100,7 +104,9 @@ pub fn analysis_db_get_analyzed_game(app: AppHandle, game_id: String) -> Result<
         return Ok(None);
     }
     let conn = get_analysis_db(&app)?;
-    let mut stmt = conn.prepare("SELECT analyzed_pgn FROM game_analysis WHERE game_id = ?1 AND analyzed_pgn IS NOT NULL")?;
+    let mut stmt = conn.prepare(
+        "SELECT analyzed_pgn FROM game_analysis WHERE game_id = ?1 AND analyzed_pgn IS NOT NULL",
+    )?;
     let res = stmt
         .query_row(params![game_id], |row| row.get::<_, String>(0))
         .optional()?;
@@ -131,7 +137,11 @@ pub fn analysis_db_get_all_analyzed_games(app: AppHandle) -> Result<Vec<Analyzed
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_set_game_stats(app: AppHandle, game_id: String, stats: StoredGameStats) -> Result<()> {
+pub fn analysis_db_set_game_stats(
+    app: AppHandle,
+    game_id: String,
+    stats: StoredGameStats,
+) -> Result<()> {
     let game_id = game_id.trim();
     if game_id.is_empty() {
         return Ok(());
@@ -154,7 +164,10 @@ pub fn analysis_db_set_game_stats(app: AppHandle, game_id: String, stats: Stored
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_game_stats(app: AppHandle, game_id: String) -> Result<Option<StoredGameStats>> {
+pub fn analysis_db_get_game_stats(
+    app: AppHandle,
+    game_id: String,
+) -> Result<Option<StoredGameStats>> {
     let game_id = game_id.trim();
     if game_id.is_empty() {
         return Ok(None);
@@ -181,7 +194,10 @@ pub fn analysis_db_get_game_stats(app: AppHandle, game_id: String) -> Result<Opt
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_game_stats_bulk(app: AppHandle, game_ids: Vec<String>) -> Result<Vec<GameStatsEntry>> {
+pub fn analysis_db_get_game_stats_bulk(
+    app: AppHandle,
+    game_ids: Vec<String>,
+) -> Result<Vec<GameStatsEntry>> {
     if game_ids.is_empty() {
         return Ok(vec![]);
     }
@@ -224,7 +240,10 @@ pub fn analysis_db_get_game_stats_bulk(app: AppHandle, game_ids: Vec<String>) ->
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_analyzed_games_bulk(app: AppHandle, game_ids: Vec<String>) -> Result<Vec<AnalyzedGameEntry>> {
+pub fn analysis_db_get_analyzed_games_bulk(
+    app: AppHandle,
+    game_ids: Vec<String>,
+) -> Result<Vec<AnalyzedGameEntry>> {
     if game_ids.is_empty() {
         return Ok(vec![]);
     }
@@ -277,7 +296,10 @@ pub fn analysis_db_delete_entries(app: AppHandle, game_ids: Vec<String>) -> Resu
             .take(chunk.len())
             .collect::<Vec<_>>()
             .join(",");
-        let sql = format!("DELETE FROM game_analysis WHERE game_id IN ({})", placeholders);
+        let sql = format!(
+            "DELETE FROM game_analysis WHERE game_id IN ({})",
+            placeholders
+        );
         let mut stmt = conn.prepare(&sql)?;
         stmt.execute(rusqlite::params_from_iter(chunk.iter()))?;
     }
@@ -289,6 +311,9 @@ pub fn analysis_db_delete_entries(app: AppHandle, game_ids: Vec<String>) -> Resu
 #[specta::specta]
 pub fn analysis_db_clear_analyzed_pgns(app: AppHandle) -> Result<()> {
     let conn = get_analysis_db(&app)?;
-    conn.execute("UPDATE game_analysis SET analyzed_pgn = NULL, updated_at = CURRENT_TIMESTAMP", [])?;
+    conn.execute(
+        "UPDATE game_analysis SET analyzed_pgn = NULL, updated_at = CURRENT_TIMESTAMP",
+        [],
+    )?;
     Ok(())
 }

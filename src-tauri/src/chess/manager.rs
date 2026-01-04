@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri_specta::Event;
 use log::info;
+use tauri_specta::Event;
 use tokio::sync::Mutex;
 
 use crate::error::Error;
@@ -64,7 +64,10 @@ impl<'a> EngineManager<'a> {
                 let mut process = process.lock().await;
                 // If options and mode match and engine is running, return cached result.
                 if options == process.options && go_mode == process.go_mode && process.running {
-                    return Ok(Some((process.last_progress, process.last_best_moves.clone())));
+                    return Ok(Some((
+                        process.last_progress,
+                        process.last_best_moves.clone(),
+                    )));
                 }
                 // Otherwise, stop and reconfigure the engine.
                 process.stop().await?;
@@ -85,7 +88,9 @@ impl<'a> EngineManager<'a> {
         process.go(&go_mode).await?;
 
         let process = Arc::new(Mutex::new(process));
-        self.state.engine_processes.insert(key.clone(), process.clone());
+        self.state
+            .engine_processes
+            .insert(key.clone(), process.clone());
 
         // Spawn background reader task so multiple engines can run concurrently.
         let app_cloned = app.clone();
@@ -94,16 +99,25 @@ impl<'a> EngineManager<'a> {
         let key_cloned = key.clone();
         let engines_map = self.state.engine_processes.clone();
         tokio::spawn(async move {
-            info!("Engine loop started: tab={} engine={}", key_cloned.0, key_cloned.1);
+            info!(
+                "Engine loop started: tab={} engine={}",
+                key_cloned.0, key_cloned.1
+            );
             // OPTIMIZED: Increased emission rate from 5 to 10 events/sec for more responsive UI
-            let lim = governor::RateLimiter::direct(governor::Quota::per_second(nonzero_ext::nonzero!(10u32)));
+            let lim = governor::RateLimiter::direct(governor::Quota::per_second(
+                nonzero_ext::nonzero!(10u32),
+            ));
             while let Ok(Some(line)) = reader.next_line().await {
                 // REMOVED: Excessive logging that slows down engine communication
                 if let Some(proc_arc) = engines_map.get(&key_cloned) {
                     let mut proc = proc_arc.lock().await;
                     match vampirc_uci::parse_one(&line) {
                         vampirc_uci::UciMessage::Info(attrs) => {
-                            if let Ok(best_moves) = super::process::parse_uci_attrs(attrs, &proc.options.fen.parse().unwrap(), &proc.options.moves) {
+                            if let Ok(best_moves) = super::process::parse_uci_attrs(
+                                attrs,
+                                &proc.options.fen.parse().unwrap(),
+                                &proc.options.moves,
+                            ) {
                                 let multipv = best_moves.multipv;
                                 let cur_depth = best_moves.depth;
                                 let cur_nodes = best_moves.nodes;
@@ -111,15 +125,35 @@ impl<'a> EngineManager<'a> {
                                     proc.best_moves.push(best_moves);
                                     if multipv == proc.real_multipv {
                                         // Only emit if all lines are at the same depth and rate limit allows.
-                                        if proc.best_moves.iter().all(|x| x.depth == cur_depth) && cur_depth >= proc.last_depth && lim.check().is_ok() {
+                                        if proc.best_moves.iter().all(|x| x.depth == cur_depth)
+                                            && cur_depth >= proc.last_depth
+                                            && lim.check().is_ok()
+                                        {
                                             let progress = match proc.go_mode {
-                                                GoMode::Depth(depth) => (cur_depth as f64 / depth as f64) * 100.0,
-                                                GoMode::Time(time) => (proc.start.elapsed().as_millis() as f64 / time as f64) * 100.0,
-                                                GoMode::Nodes(nodes) => (cur_nodes as f64 / nodes as f64) * 100.0,
+                                                GoMode::Depth(depth) => {
+                                                    (cur_depth as f64 / depth as f64) * 100.0
+                                                }
+                                                GoMode::Time(time) => {
+                                                    (proc.start.elapsed().as_millis() as f64
+                                                        / time as f64)
+                                                        * 100.0
+                                                }
+                                                GoMode::Nodes(nodes) => {
+                                                    (cur_nodes as f64 / nodes as f64) * 100.0
+                                                }
                                                 GoMode::PlayersTime(_) => 99.99,
                                                 GoMode::Infinite => 99.99,
                                             };
-                                            super::types::BestMovesPayload { best_lines: proc.best_moves.clone(), engine: id_cloned.clone(), tab: tab_cloned.clone(), fen: proc.options.fen.clone(), moves: proc.options.moves.clone(), progress }.emit(&app_cloned).ok();
+                                            super::types::BestMovesPayload {
+                                                best_lines: proc.best_moves.clone(),
+                                                engine: id_cloned.clone(),
+                                                tab: tab_cloned.clone(),
+                                                fen: proc.options.fen.clone(),
+                                                moves: proc.options.moves.clone(),
+                                                progress,
+                                            }
+                                            .emit(&app_cloned)
+                                            .ok();
                                             proc.last_depth = cur_depth;
                                             proc.last_best_moves = proc.best_moves.clone();
                                             proc.last_progress = progress as f32;
@@ -131,7 +165,16 @@ impl<'a> EngineManager<'a> {
                         }
                         vampirc_uci::UciMessage::BestMove { .. } => {
                             // Emit final result when engine signals best move.
-                            super::types::BestMovesPayload { best_lines: proc.last_best_moves.clone(), engine: id_cloned.clone(), tab: tab_cloned.clone(), fen: proc.options.fen.clone(), moves: proc.options.moves.clone(), progress: 100.0 }.emit(&app_cloned).ok();
+                            super::types::BestMovesPayload {
+                                best_lines: proc.last_best_moves.clone(),
+                                engine: id_cloned.clone(),
+                                tab: tab_cloned.clone(),
+                                fen: proc.options.fen.clone(),
+                                moves: proc.options.moves.clone(),
+                                progress: 100.0,
+                            }
+                            .emit(&app_cloned)
+                            .ok();
                             proc.last_progress = 100.0;
                         }
                         _ => {}
@@ -139,12 +182,13 @@ impl<'a> EngineManager<'a> {
                     proc.logs.push(EngineLog::Engine(line));
                 }
             }
-            info!("Engine process finished: tab: {}, engine: {}", key_cloned.0, key_cloned.1);
+            info!(
+                "Engine process finished: tab: {}, engine: {}",
+                key_cloned.0, key_cloned.1
+            );
             engines_map.remove(&key_cloned);
         });
 
         Ok(None)
     }
 }
-
-

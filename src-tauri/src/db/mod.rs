@@ -1,19 +1,14 @@
+mod core;
 mod encoding;
 mod models;
 mod ops;
-mod schema;
-mod search;
-mod core;
 mod pgn;
 mod position_cache;
+mod schema;
+mod search;
 
 use crate::{
-    db::{
-        encoding::{extract_main_line_moves},
-        models::*,
-        ops::*,
-        schema::*,
-    },
+    db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
     error::{Error, Result},
     opening::get_opening_from_setup,
     AppState,
@@ -27,21 +22,19 @@ use diesel::{
     sql_query,
     sql_types::Text,
 };
-use pgn_reader::{BufferedReader};
 use pgn::{GameTree, Importer, TempGame};
+use pgn_reader::BufferedReader;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use shakmaty::{
-    fen::Fen, Board, Chess, EnPassantMode, Piece, Position, FromSetup, CastlingMode
-};
+use shakmaty::{fen::Fen, Board, CastlingMode, Chess, EnPassantMode, FromSetup, Piece, Position};
 use specta::Type;
+use std::io::{BufWriter, Write};
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
-use std::io::{BufWriter, Write};
 use tauri::{path::BaseDirectory, Manager};
 use tauri::{Emitter, State};
 
@@ -50,27 +43,29 @@ use tauri_specta::Event as _;
 
 pub use self::models::NormalizedGame;
 pub use self::models::Puzzle;
+pub use self::position_cache::{get_cached_position, is_position_cached, save_position_cache};
 pub use self::schema::puzzles;
 pub use self::search::{
     is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
 };
-pub use self::position_cache::{
-    is_position_cached, get_cached_position, save_position_cache,
-};
 
 const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
-const DELETE_INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/delete_indexes.sql");
+const DELETE_INDEXES_SQL: &str =
+    include_str!("../../../database/queries/indexes/delete_indexes.sql");
 
 // PRAGMA queries
-const PRAGMA_JOURNAL_MODE_DELETE: &str = include_str!("../../../database/pragmas/journal_mode_delete.sql");
-const PRAGMA_JOURNAL_MODE_OFF: &str = include_str!("../../../database/pragmas/journal_mode_off.sql");
+const PRAGMA_JOURNAL_MODE_DELETE: &str =
+    include_str!("../../../database/pragmas/journal_mode_delete.sql");
+const PRAGMA_JOURNAL_MODE_OFF: &str =
+    include_str!("../../../database/pragmas/journal_mode_off.sql");
 const PRAGMA_FOREIGN_KEYS_ON: &str = include_str!("../../../database/pragmas/foreign_keys_on.sql");
 const PRAGMA_BUSY_TIMEOUT: &str = include_str!("../../../database/pragmas/busy_timeout.sql");
 const PRAGMA_PERFORMANCE: &str = include_str!("../../../database/pragmas/performance_pragmas.sql");
 
 // Games queries
 const GAMES_CHECK_INDEXES: &str = include_str!("../../../database/queries/games/check_indexes.sql");
-const GAMES_DELETE_DUPLICATES: &str = include_str!("../../../database/queries/games/delete_duplicates.sql");
+const GAMES_DELETE_DUPLICATES: &str =
+    include_str!("../../../database/queries/games/delete_duplicates.sql");
 const GAMES_CREATE_DEDUPE_UNIQUE_INDEX: &str =
     include_str!("../../../database/queries/games/create_dedupe_unique_index.sql");
 
@@ -120,21 +115,24 @@ impl Default for ConnectionOptions {
 impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
     for ConnectionOptions
 {
-    fn on_acquire(&self, conn: &mut SqliteConnection) -> std::result::Result<(), diesel::r2d2::Error> {
+    fn on_acquire(
+        &self,
+        conn: &mut SqliteConnection,
+    ) -> std::result::Result<(), diesel::r2d2::Error> {
         (|| {
             // FIXED: Check if tables exist before applying performance pragmas
             // This prevents errors when database is being initialized
             let tables_exist = diesel::sql_query(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1"
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1",
             )
             .execute(conn)
             .is_ok();
-            
+
             // Only apply performance PRAGMAs if database is already initialized
             if tables_exist {
                 conn.batch_execute(PRAGMA_PERFORMANCE)?;
             }
-            
+
             match self.journal_mode {
                 JournalMode::Delete => conn.batch_execute(PRAGMA_JOURNAL_MODE_DELETE)?,
                 JournalMode::Off => conn.batch_execute(PRAGMA_JOURNAL_MODE_OFF)?,
@@ -143,7 +141,9 @@ impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
                 conn.batch_execute(PRAGMA_FOREIGN_KEYS_ON)?;
             }
             if let Some(d) = self.busy_timeout {
-                conn.batch_execute(&PRAGMA_BUSY_TIMEOUT.replace("{0}", &d.as_millis().to_string()))?;
+                conn.batch_execute(
+                    &PRAGMA_BUSY_TIMEOUT.replace("{0}", &d.as_millis().to_string()),
+                )?;
             }
             Ok(())
         })()
@@ -155,7 +155,8 @@ fn get_db_or_create(
     state: &State<AppState>,
     db_path: &str,
     options: ConnectionOptions,
-) -> Result<diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>> {
+) -> Result<diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>>
+{
     let pool = match state.connection_pool.get(db_path) {
         Some(pool) => pool.clone(),
         None => {
@@ -277,17 +278,17 @@ pub async fn convert_pgn(
             #[diesel(sql_type = Text, column_name = "name")]
             _name: String,
         }
-        
+
         // Check if Players table exists
-        let result: std::result::Result<Vec<TableInfo>, _> = sql_query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='Players'"
-        ).load(db);
-        
+        let result: std::result::Result<Vec<TableInfo>, _> =
+            sql_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Players'")
+                .load(db);
+
         result.is_ok() && !result.unwrap().is_empty()
     };
 
     let needs_init = !db_exists || !tables_exist;
-    
+
     if needs_init {
         // Initialize database if file doesn't exist or tables are missing
         if !tables_exist && db_exists {
@@ -316,20 +317,20 @@ pub async fn convert_pgn(
     let start = Instant::now();
 
     let mut importer = Importer::new(timestamp.map(|t| t as i64));
-    
+
     // OPTIMIZED: Batch inserts for better performance
     // Collect games in batches to reduce transaction overhead
     const BATCH_SIZE: usize = 5000;
     let mut batch: Vec<TempGame> = Vec::with_capacity(BATCH_SIZE);
     let mut total_processed = 0;
-    
+
     for game in BufferedReader::new(uncompressed)
-            .into_iter(&mut importer)
-            .flatten()
-            .flatten()
+        .into_iter(&mut importer)
+        .flatten()
+        .flatten()
     {
         batch.push(game);
-        
+
         if batch.len() >= BATCH_SIZE {
             // Process batch in a single transaction
             db.transaction::<_, Error, _>(|db| {
@@ -338,28 +339,30 @@ pub async fn convert_pgn(
                 }
                 Ok(())
             })?;
-            
+
             total_processed += BATCH_SIZE;
-                let elapsed = start.elapsed().as_millis() as u32;
-            app.emit("convert_progress", (total_processed, elapsed)).unwrap();
-            }
+            let elapsed = start.elapsed().as_millis() as u32;
+            app.emit("convert_progress", (total_processed, elapsed))
+                .unwrap();
+        }
     }
-    
+
     // Process remaining games in batch
     if !batch.is_empty() {
         // FIXED: Save batch length before moving into closure
         let batch_len = batch.len();
-        
+
         db.transaction::<_, Error, _>(|db| {
             for game in batch.drain(..) {
-            insert_to_db(db, &game)?;
-        }
-        Ok(())
-    })?;
-        
+                insert_to_db(db, &game)?;
+            }
+            Ok(())
+        })?;
+
         total_processed += batch_len;
         let elapsed = start.elapsed().as_millis() as u32;
-        app.emit("convert_progress", (total_processed, elapsed)).unwrap();
+        app.emit("convert_progress", (total_processed, elapsed))
+            .unwrap();
     }
 
     if needs_init {
@@ -403,7 +406,11 @@ pub async fn init_profile_db(
     let description = description.unwrap_or_default();
     let db_exists = db_path.exists();
 
-    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
 
     let tables_exist = {
         #[derive(QueryableByName)]
@@ -412,10 +419,9 @@ pub async fn init_profile_db(
             _name: String,
         }
 
-        let result: std::result::Result<Vec<TableInfo>, _> = sql_query(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='Players'",
-        )
-        .load(db);
+        let result: std::result::Result<Vec<TableInfo>, _> =
+            sql_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Players'")
+                .load(db);
 
         result.is_ok() && !result.unwrap().is_empty()
     };
@@ -627,7 +633,7 @@ pub struct GameQuery {
 // Helper functions for serializing/deserializing u64 as string for bigint compatibility
 mod bigint_serde {
     use serde::{Deserializer, Serializer};
-    
+
     #[allow(dead_code)]
     pub fn serialize<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -638,30 +644,30 @@ mod bigint_serde {
             None => serializer.serialize_none(),
         }
     }
-    
+
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
     where
         D: Deserializer<'de>,
     {
         use serde::de::Visitor;
         use std::fmt;
-        
+
         struct BigIntVisitor;
-        
+
         impl<'de> Visitor<'de> for BigIntVisitor {
             type Value = Option<u64>;
-            
+
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a string representing a u64, a number, bigint, or null")
             }
-            
+
             fn visit_none<E>(self) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 Ok(None)
             }
-            
+
             fn visit_unit<E>(self) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
@@ -669,84 +675,99 @@ mod bigint_serde {
                 // Handle null/unit values
                 Ok(None)
             }
-            
+
             fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
             where
                 D: Deserializer<'de>,
             {
                 deserializer.deserialize_any(self)
             }
-            
+
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                value.parse::<u64>()
-                    .map(Some)
-                    .map_err(|e| serde::de::Error::custom(format!("Failed to parse '{}' as u64: {}", value, e)))
+                value.parse::<u64>().map(Some).map_err(|e| {
+                    serde::de::Error::custom(format!("Failed to parse '{}' as u64: {}", value, e))
+                })
             }
-            
+
             fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                value.parse::<u64>()
-                    .map(Some)
-                    .map_err(|e| serde::de::Error::custom(format!("Failed to parse '{}' as u64: {}", value, e)))
+                value.parse::<u64>().map(Some).map_err(|e| {
+                    serde::de::Error::custom(format!("Failed to parse '{}' as u64: {}", value, e))
+                })
             }
-            
+
             fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 Ok(Some(value))
             }
-            
+
             fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0 {
-                    return Err(serde::de::Error::custom(format!("Negative value {} cannot be converted to u64", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Negative value {} cannot be converted to u64",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             // Handle i128/u128 for JavaScript BigInt values
             fn visit_i128<E>(self, value: i128) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0 {
-                    return Err(serde::de::Error::custom(format!("Negative value {} cannot be converted to u64", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Negative value {} cannot be converted to u64",
+                        value
+                    )));
                 }
                 if value > u64::MAX as i128 {
-                    return Err(serde::de::Error::custom(format!("Value {} exceeds u64::MAX", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Value {} exceeds u64::MAX",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value > u64::MAX as u128 {
-                    return Err(serde::de::Error::custom(format!("Value {} exceeds u64::MAX", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Value {} exceeds u64::MAX",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             // Handle f64 (JavaScript numbers that might be sent as floats)
             fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0.0 || value.fract() != 0.0 {
-                    return Err(serde::de::Error::custom(format!("Value {} cannot be converted to u64 (must be non-negative integer)", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Value {} cannot be converted to u64 (must be non-negative integer)",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             // Handle u32 (common JavaScript number range)
             fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
             where
@@ -754,18 +775,21 @@ mod bigint_serde {
             {
                 Ok(Some(value as u64))
             }
-            
+
             // Handle i32 (common JavaScript number range)
             fn visit_i32<E>(self, value: i32) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0 {
-                    return Err(serde::de::Error::custom(format!("Negative value {} cannot be converted to u64", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Negative value {} cannot be converted to u64",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             // Handle u16, u8, i16, i8 for completeness
             fn visit_u16<E>(self, value: u16) -> Result<Self::Value, E>
             where
@@ -773,34 +797,40 @@ mod bigint_serde {
             {
                 Ok(Some(value as u64))
             }
-            
+
             fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 Ok(Some(value as u64))
             }
-            
+
             fn visit_i16<E>(self, value: i16) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0 {
-                    return Err(serde::de::Error::custom(format!("Negative value {} cannot be converted to u64", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Negative value {} cannot be converted to u64",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             fn visit_i8<E>(self, value: i8) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
                 if value < 0 {
-                    return Err(serde::de::Error::custom(format!("Negative value {} cannot be converted to u64", value)));
+                    return Err(serde::de::Error::custom(format!(
+                        "Negative value {} cannot be converted to u64",
+                        value
+                    )));
                 }
                 Ok(Some(value as u64))
             }
-            
+
             // Handle map/object case - Tauri might serialize bigint as {"type": "bigint", "value": "..."}
             // or similar structures
             fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
@@ -809,7 +839,7 @@ mod bigint_serde {
             {
                 let mut value_str: Option<String> = None;
                 let mut value_num: Option<u64> = None;
-                
+
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "value" | "Value" | "val" => {
@@ -830,20 +860,25 @@ mod bigint_serde {
                         }
                     }
                 }
-                
+
                 // Prefer parsed string, then number
                 if let Some(s) = value_str {
-                    s.parse::<u64>()
-                        .map(Some)
-                        .map_err(|e| serde::de::Error::custom(format!("Failed to parse bigint value '{}' as u64: {}", s, e)))
+                    s.parse::<u64>().map(Some).map_err(|e| {
+                        serde::de::Error::custom(format!(
+                            "Failed to parse bigint value '{}' as u64: {}",
+                            s, e
+                        ))
+                    })
                 } else if let Some(n) = value_num {
                     Ok(Some(n))
                 } else {
-                    Err(serde::de::Error::custom("Could not extract value from bigint map structure"))
+                    Err(serde::de::Error::custom(
+                        "Could not extract value from bigint map structure",
+                    ))
                 }
             }
         }
-        
+
         // Use deserialize_option to properly handle Option<u64>
         // This correctly handles null, missing fields, and actual values
         deserializer.deserialize_option(BigIntVisitor)
@@ -1078,7 +1113,7 @@ pub async fn get_games(
         GameSort::AverageElo => {
             // AverageElo will be sorted in Rust after calculating
             sql_query
-        },
+        }
         GameSort::PlyCount => match query_options.direction {
             SortDirection::Asc => sql_query.order(games::ply_count.asc()),
             SortDirection::Desc => sql_query.order(games::ply_count.desc()),
@@ -1095,7 +1130,7 @@ pub async fn get_games(
 
     let games: Vec<(Game, Player, Player, Event, Site)> = sql_query.load(db)?;
     let mut normalized_games = normalize_games(games)?;
-    
+
     // Sort by average ELO if needed (calculated in Rust)
     if matches!(query_options.sort, GameSort::AverageElo) {
         normalized_games.sort_by(|a, b| {
@@ -1107,7 +1142,7 @@ pub async fn get_games(
                     // Round the average (same as Math.round in TypeScript)
                     let sum = white + black;
                     Some((sum + 1) / 2) // This is equivalent to rounding for integers
-                },
+                }
                 (Some(elo), None) | (None, Some(elo)) => Some(elo),
                 (None, None) => None,
             };
@@ -1115,15 +1150,15 @@ pub async fn get_games(
                 (Some(white), Some(black)) => {
                     let sum = white + black;
                     Some((sum + 1) / 2)
-                },
+                }
                 (Some(elo), None) | (None, Some(elo)) => Some(elo),
                 (None, None) => None,
             };
-            
+
             // For sorting, treat None as 0 (lowest priority)
             let a_val = a_avg.unwrap_or(0);
             let b_val = b_avg.unwrap_or(0);
-            
+
             match query_options.direction {
                 SortDirection::Asc => a_val.cmp(&b_val),
                 SortDirection::Desc => b_val.cmp(&a_val), // Descending: higher ELO first
@@ -1140,7 +1175,9 @@ pub async fn get_games(
 fn normalize_games(games: Vec<(Game, Player, Player, Event, Site)>) -> Result<Vec<NormalizedGame>> {
     games
         .into_iter()
-        .map(|(game, white, black, event, site)| core::normalize_game(game, white, black, event, site))
+        .map(|(game, white, black, event, site)| {
+            core::normalize_game(game, white, black, event, site)
+        })
         .collect::<Result<_>>()
 }
 
@@ -1348,6 +1385,7 @@ pub struct StatsData {
     pub date: String,
     pub is_player_white: bool,
     pub player_elo: i32,
+    pub opponent_elo: Option<i32>,
     pub result: GameOutcome,
     pub time_control: String,
     pub opening: String,
@@ -1444,7 +1482,7 @@ pub async fn get_players_game_info(
 
                 let mut setups = vec![];
                 let mut chess = Chess::default();
-                
+
                 // Extract main line moves from the extended format
                 let main_moves = match extract_main_line_moves(moves, Some(chess.clone())) {
                     Ok(moves) => moves,
@@ -1453,7 +1491,7 @@ pub async fn get_players_game_info(
                         return None;
                     }
                 };
-                
+
                 for (i, m) in main_moves.iter().enumerate() {
                     if i > 54 {
                         // max length of opening in data
@@ -1489,6 +1527,7 @@ pub async fn get_players_game_info(
                         } else {
                             black_elo.unwrap()
                         },
+                        opponent_elo: if is_white { *black_elo } else { *white_elo },
                         result: result.unwrap(),
                         time_control: time_control.clone().unwrap_or_default(),
                         opening,
@@ -1536,52 +1575,54 @@ pub async fn delete_database(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     use std::fs::remove_file;
-    
+
     let path_str = file.to_string_lossy().into_owned();
-    
+
     log::info!("Attempting to delete database: {:?}", file);
-    
+
     // STEP 1: Cancel any ongoing searches by acquiring all permits
     // This will stop new searches and wait for current ones to complete
     let _permits = state.new_request.clone();
     let permit1 = _permits.acquire().await.ok();
     let permit2 = _permits.acquire().await.ok();
-    
+
     // STEP 2: Run PRAGMA optimize before closing connections
     if let Ok(mut db) = get_db_or_create(&state, &path_str, ConnectionOptions::default()) {
         let _ = diesel::sql_query("PRAGMA optimize").execute(&mut db);
     }
-    
+
     // Drop permits after optimize
     drop(permit1);
     drop(permit2);
-    
+
     // Remove from connection pool - this drops the pool and closes all connections
     if let Some((_, pool)) = state.connection_pool.remove(&path_str) {
         // Force drop the pool to close all connections immediately
         drop(pool);
         log::info!("Closed connection pool for: {:?}", file);
     }
-    
+
     // Clear any cached data for this database (both in-memory and persistent cache)
-    let cache_keys_to_remove: Vec<_> = state.line_cache.iter()
+    let cache_keys_to_remove: Vec<_> = state
+        .line_cache
+        .iter()
         .filter(|entry| entry.key().1 == file)
         .map(|entry| entry.key().clone())
         .collect();
-    
+
     for key in cache_keys_to_remove {
         state.line_cache.remove(&key);
     }
-    
+
     // Clear persistent position cache for this database
     if let Err(e) = crate::db::position_cache::clear_cache_for_database(&app, &file) {
         log::warn!("Failed to clear position cache for database: {}", e);
     }
-    
+
     log::info!("Waiting for file handles to be released...");
     // INCREASED: Wait longer for OS to release all file handles
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    
+
     // Try up to 3 times with increasing delays
     for attempt in 1..=3 {
         if file.exists() {
@@ -1592,7 +1633,8 @@ pub async fn delete_database(
                 }
                 Err(e) if attempt < 3 => {
                     log::warn!("Attempt {} failed: {}. Retrying...", attempt, e);
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
+                        .await;
                 }
                 Err(e) => {
                     return Err(Error::Io(e));
@@ -1603,7 +1645,7 @@ pub async fn delete_database(
             return Ok(());
         }
     }
-    
+
     Ok(())
 }
 
@@ -1622,10 +1664,7 @@ pub async fn delete_duplicated_games(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_empty_games(
-    file: PathBuf,
-    state: tauri::State<'_, AppState>,
-) -> Result<()> {
+pub async fn delete_empty_games(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
     diesel::delete(games::table.filter(games::ply_count.eq(0))).execute(db)?;
@@ -1751,14 +1790,15 @@ pub async fn export_to_pgn(
                 black_elo: game.black_elo.map(|e| e.to_string()),
                 ply_count: game.ply_count.map(|e| e.to_string()),
                 fen: game.fen.clone(),
-                 moves: GameTree::from_bytes(
+                moves: GameTree::from_bytes(
                     &game.moves,
                     game.fen
                         .map(|fen| Fen::from_ascii(fen.as_bytes()).ok())
                         .flatten()
                         .map(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok())
-                        .flatten()
-                )?.to_string(),
+                        .flatten(),
+                )?
+                .to_string(),
             };
 
             pgn.write(&mut writer)?;
@@ -1779,27 +1819,33 @@ pub async fn export_position_games_to_pgn(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     use crate::db::position_cache::get_cached_position;
-    
+
     // Get cached game IDs for this position
     let game_ids = match get_cached_position(&app, &fen, &file)? {
         Some((_, ids)) => ids,
-        None => return Err(Error::PackageManager("Position not found in cache".to_string())),
+        None => {
+            return Err(Error::PackageManager(
+                "Position not found in cache".to_string(),
+            ))
+        }
     };
-    
+
     if game_ids.is_empty() {
-        return Err(Error::PackageManager("No games found for this position".to_string()));
+        return Err(Error::PackageManager(
+            "No games found for this position".to_string(),
+        ));
     }
-    
+
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-    
+
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(dest_file)?;
-    
+
     let mut writer = BufWriter::new(file);
-    
+
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
     games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
@@ -1830,17 +1876,22 @@ pub async fn export_position_games_to_pgn(
                         .map(|fen| Fen::from_ascii(fen.as_bytes()).ok())
                         .flatten()
                         .map(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok())
-                        .flatten()
-                )?.to_string(),
+                        .flatten(),
+                )?
+                .to_string(),
             };
-            
+
             pgn.write(&mut writer)?;
-            
+
             Ok(())
         })
         .collect::<Result<Vec<_>>>()?;
-    
-    info!("Exported {} games from position {} to PGN", game_ids.len(), fen);
+
+    info!(
+        "Exported {} games from position {} to PGN",
+        game_ids.len(),
+        fen
+    );
     Ok(())
 }
 
@@ -1855,17 +1906,17 @@ pub async fn export_selected_games_to_pgn(
     if game_ids.is_empty() {
         return Err(Error::PackageManager("No games selected".to_string()));
     }
-    
+
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-    
+
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(dest_file)?;
-    
+
     let mut writer = BufWriter::new(file);
-    
+
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
     games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
@@ -1896,16 +1947,17 @@ pub async fn export_selected_games_to_pgn(
                         .map(|fen| Fen::from_ascii(fen.as_bytes()).ok())
                         .flatten()
                         .map(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok())
-                        .flatten()
-                )?.to_string(),
+                        .flatten(),
+                )?
+                .to_string(),
             };
-            
+
             pgn.write(&mut writer)?;
-            
+
             Ok(())
         })
         .collect::<Result<Vec<_>>>()?;
-    
+
     info!("Exported {} selected games to PGN", game_ids.len());
     Ok(())
 }
@@ -2003,7 +2055,7 @@ pub async fn merge_players(
 pub fn clear_games(state: tauri::State<'_, AppState>) -> Result<()> {
     // Clear position search cache to free memory
     state.line_cache.clear();
-    
+
     info!("Cleared position search cache");
     Ok(())
 }
@@ -2041,12 +2093,12 @@ pub async fn precache_openings(
 ) -> Result<()> {
     use crate::opening::TSV_DATA;
     use csv::ReaderBuilder;
-    use shakmaty::{Chess, EnPassantMode, fen::Fen, san::San};
+    use log::info;
+    use shakmaty::{fen::Fen, san::San, Chess, EnPassantMode};
     use std::sync::{Arc, Mutex};
     use tauri::Emitter;
-    use log::info;
     use tokio::sync::Semaphore;
-    
+
     #[derive(serde::Deserialize)]
     struct OpeningRecord {
         #[allow(dead_code)]
@@ -2054,10 +2106,10 @@ pub async fn precache_openings(
         name: String,
         pgn: String,
     }
-    
+
     // Load all openings from TSV files
     let mut openings: Vec<(String, String)> = Vec::new(); // (name, fen)
-    
+
     for tsv_data in TSV_DATA {
         let mut rdr = ReaderBuilder::new().delimiter(b'\t').from_reader(tsv_data);
         for result in rdr.deserialize() {
@@ -2075,229 +2127,268 @@ pub async fn precache_openings(
                     }
                     let fen = Fen::from_setup(pos.into_setup(EnPassantMode::Legal));
                     openings.push((record.name, fen.to_string()));
-                },
+                }
                 Err(_) => continue,
             }
         }
     }
-    
+
     let total = openings.len();
     let processed = Arc::new(Mutex::new(0usize));
     let errors = Arc::new(Mutex::new(0usize));
-    
+
     // Get a reference to AppState (Tauri manages it internally, likely with Arc)
     let state_arc = state.inner();
-    
-    info!("Starting to pre-cache {} openings for database: {:?}", total, database_path);
-    
+
+    info!(
+        "Starting to pre-cache {} openings for database: {:?}",
+        total, database_path
+    );
+
     // Limit concurrency to avoid overwhelming the database
     let semaphore = Arc::new(Semaphore::new(4)); // Process 4 openings at a time
-    
+
     // Process openings in parallel using futures instead of tokio::spawn
     // This avoids the 'static lifetime requirement
     use futures_util::future;
-    let futures: Vec<_> = openings.into_iter().map(|(name, fen)| {
-        let app_clone = app.clone();
-        let db_path_clone = database_path.clone();
-        let fen_clone = fen.clone();
-        let name_clone = name.clone();
-        let processed_clone = processed.clone();
-        let errors_clone = errors.clone();
-        let semaphore_clone = semaphore.clone();
-        let state_inner = state_arc;
-        let total_for_closure = total;
-        
-        async move {
-            let _permit = semaphore_clone.acquire().await.unwrap();
-            
-            // Check if already cached
-            if let Ok(true) = crate::db::position_cache::is_position_cached(&app_clone, &fen_clone, &db_path_clone) {
-                let mut p = processed_clone.lock().unwrap();
-                *p += 1;
-                if *p % 10 == 0 {
-                    app_clone.emit("precache-progress", serde_json::json!({
-                        "processed": *p,
-                        "total": total_for_closure,
-                        "errors": *errors_clone.lock().unwrap(),
-                        "current": name_clone
-                    })).ok();
-                }
-                return;
-            }
-            
-            // Get database connection directly using Arc<AppState>
-            let db_result = {
-                let state_ref = &*state_inner;
-                let file_str = db_path_clone.to_str().unwrap();
-                // Access the connection pool from AppState directly
-                let pool = match state_ref.connection_pool.get(file_str) {
-                    Some(p) => p.clone(),
-                    None => {
-                        // Create new pool if it doesn't exist
-                        use diesel::r2d2::ConnectionManager;
-                        use diesel::SqliteConnection;
-                        let manager = ConnectionManager::<SqliteConnection>::new(file_str);
-                        let new_pool = match diesel::r2d2::Pool::builder()
-                            .max_size(32)
-                            .min_idle(Some(4))
-                            .connection_timeout(std::time::Duration::from_secs(30))
-                            .build(manager)
-                        {
-                            Ok(p) => p,
-                            Err(e) => {
-                                log::warn!("Failed to create connection pool for opening {}: {}", name_clone, e);
-                                let mut e = errors_clone.lock().unwrap();
-                                *e += 1;
-                                return;
-                            }
-                        };
-                        state_ref.connection_pool.insert(file_str.to_string(), new_pool.clone());
-                        new_pool
-                    }
-                };
-                pool.get().map_err(|e| Error::PackageManager(format!("Failed to get connection: {}", e)))
-            };
-            
-            let mut db = match db_result {
-                Ok(conn) => conn,
-                Err(e) => {
-                    log::warn!("Failed to get database connection for opening {}: {}", name_clone, e);
-                    let mut e = errors_clone.lock().unwrap();
-                    *e += 1;
-                    return;
-                }
-            };
-            
-            // Convert position query
-            let position_query = match PositionQuery::exact_from_fen(&fen_clone) {
-                Ok(q) => q,
-                Err(e) => {
-                    log::warn!("Failed to parse FEN for opening {}: {}", name_clone, e);
-                    let mut e = errors_clone.lock().unwrap();
-                    *e += 1;
-                    return;
-                }
-            };
-            
-            // Perform simplified search - just get stats and game IDs
-            // We'll use the internal search functions from search.rs
-            let query_js = {
-                let mut q = GameQueryJs::default();
-                q.position = Some(PositionQueryJs {
-                    fen: fen_clone.clone(),
-                    type_: "exact".to_string(),
-                });
-                q.game_details_limit = Some(1000);
-                q
-            };
-            
-            let is_online = crate::db::search::is_online_database(&db_path_clone);
-            let (stats, game_ids) = if is_online {
-                let total_count: i64 = games::table.count().get_result(&mut db).unwrap_or(0);
-                let total_games = total_count.max(0) as usize;
-                let (stats_vec, ids) = crate::db::search::search_position_online_internal(
-                    &mut db,
-                    &position_query,
-                    &query_js,
+    let futures: Vec<_> = openings
+        .into_iter()
+        .map(|(name, fen)| {
+            let app_clone = app.clone();
+            let db_path_clone = database_path.clone();
+            let fen_clone = fen.clone();
+            let name_clone = name.clone();
+            let processed_clone = processed.clone();
+            let errors_clone = errors.clone();
+            let semaphore_clone = semaphore.clone();
+            let state_inner = state_arc;
+            let total_for_closure = total;
+
+            async move {
+                let _permit = semaphore_clone.acquire().await.unwrap();
+
+                // Check if already cached
+                if let Ok(true) = crate::db::position_cache::is_position_cached(
                     &app_clone,
-                    "precache",
-                    &state_inner,
-                    total_games,
-                );
-                (stats_vec, ids)
-            } else {
-                match crate::db::search::search_position_local_internal(
-                    &mut db,
-                    &position_query,
-                    &query_js,
-                    &app_clone,
-                    "precache",
-                    &state_inner,
+                    &fen_clone,
+                    &db_path_clone,
                 ) {
-                    Ok((stats_vec, ids)) => (stats_vec, ids),
+                    let mut p = processed_clone.lock().unwrap();
+                    *p += 1;
+                    if *p % 10 == 0 {
+                        app_clone
+                            .emit(
+                                "precache-progress",
+                                serde_json::json!({
+                                    "processed": *p,
+                                    "total": total_for_closure,
+                                    "errors": *errors_clone.lock().unwrap(),
+                                    "current": name_clone
+                                }),
+                            )
+                            .ok();
+                    }
+                    return;
+                }
+
+                // Get database connection directly using Arc<AppState>
+                let db_result = {
+                    let state_ref = &*state_inner;
+                    let file_str = db_path_clone.to_str().unwrap();
+                    // Access the connection pool from AppState directly
+                    let pool = match state_ref.connection_pool.get(file_str) {
+                        Some(p) => p.clone(),
+                        None => {
+                            // Create new pool if it doesn't exist
+                            use diesel::r2d2::ConnectionManager;
+                            use diesel::SqliteConnection;
+                            let manager = ConnectionManager::<SqliteConnection>::new(file_str);
+                            let new_pool = match diesel::r2d2::Pool::builder()
+                                .max_size(32)
+                                .min_idle(Some(4))
+                                .connection_timeout(std::time::Duration::from_secs(30))
+                                .build(manager)
+                            {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    log::warn!(
+                                        "Failed to create connection pool for opening {}: {}",
+                                        name_clone,
+                                        e
+                                    );
+                                    let mut e = errors_clone.lock().unwrap();
+                                    *e += 1;
+                                    return;
+                                }
+                            };
+                            state_ref
+                                .connection_pool
+                                .insert(file_str.to_string(), new_pool.clone());
+                            new_pool
+                        }
+                    };
+                    pool.get().map_err(|e| {
+                        Error::PackageManager(format!("Failed to get connection: {}", e))
+                    })
+                };
+
+                let mut db = match db_result {
+                    Ok(conn) => conn,
                     Err(e) => {
-                        log::warn!("Failed to search opening {}: {}", name_clone, e);
+                        log::warn!(
+                            "Failed to get database connection for opening {}: {}",
+                            name_clone,
+                            e
+                        );
                         let mut e = errors_clone.lock().unwrap();
                         *e += 1;
                         return;
                     }
-                }
-            };
-            
-            // Save to cache
-            if let Err(e) = crate::db::position_cache::save_position_cache(
-                &app_clone,
-                &fen_clone,
-                &db_path_clone,
-                &stats,
-                &game_ids,
-            ) {
-                log::warn!("Failed to cache opening {}: {}", name_clone, e);
-                let mut e = errors_clone.lock().unwrap();
-                *e += 1;
-            } else {
-                let mut p = processed_clone.lock().unwrap();
-                *p += 1;
-                if *p % 10 == 0 || *p == total_for_closure {
-                    app_clone.emit("precache-progress", serde_json::json!({
-                        "processed": *p,
-                        "total": total_for_closure,
-                        "errors": *errors_clone.lock().unwrap(),
-                        "current": name_clone
-                    })).ok();
+                };
+
+                // Convert position query
+                let position_query = match PositionQuery::exact_from_fen(&fen_clone) {
+                    Ok(q) => q,
+                    Err(e) => {
+                        log::warn!("Failed to parse FEN for opening {}: {}", name_clone, e);
+                        let mut e = errors_clone.lock().unwrap();
+                        *e += 1;
+                        return;
+                    }
+                };
+
+                // Perform simplified search - just get stats and game IDs
+                // We'll use the internal search functions from search.rs
+                let query_js = {
+                    let mut q = GameQueryJs::default();
+                    q.position = Some(PositionQueryJs {
+                        fen: fen_clone.clone(),
+                        type_: "exact".to_string(),
+                    });
+                    q.game_details_limit = Some(1000);
+                    q
+                };
+
+                let is_online = crate::db::search::is_online_database(&db_path_clone);
+                let (stats, game_ids) = if is_online {
+                    let total_count: i64 = games::table.count().get_result(&mut db).unwrap_or(0);
+                    let total_games = total_count.max(0) as usize;
+                    let (stats_vec, ids) = crate::db::search::search_position_online_internal(
+                        &mut db,
+                        &position_query,
+                        &query_js,
+                        &app_clone,
+                        "precache",
+                        &state_inner,
+                        total_games,
+                    );
+                    (stats_vec, ids)
+                } else {
+                    match crate::db::search::search_position_local_internal(
+                        &mut db,
+                        &position_query,
+                        &query_js,
+                        &app_clone,
+                        "precache",
+                        &state_inner,
+                    ) {
+                        Ok((stats_vec, ids)) => (stats_vec, ids),
+                        Err(e) => {
+                            log::warn!("Failed to search opening {}: {}", name_clone, e);
+                            let mut e = errors_clone.lock().unwrap();
+                            *e += 1;
+                            return;
+                        }
+                    }
+                };
+
+                // Save to cache
+                if let Err(e) = crate::db::position_cache::save_position_cache(
+                    &app_clone,
+                    &fen_clone,
+                    &db_path_clone,
+                    &stats,
+                    &game_ids,
+                ) {
+                    log::warn!("Failed to cache opening {}: {}", name_clone, e);
+                    let mut e = errors_clone.lock().unwrap();
+                    *e += 1;
+                } else {
+                    let mut p = processed_clone.lock().unwrap();
+                    *p += 1;
+                    if *p % 10 == 0 || *p == total_for_closure {
+                        app_clone
+                            .emit(
+                                "precache-progress",
+                                serde_json::json!({
+                                    "processed": *p,
+                                    "total": total_for_closure,
+                                    "errors": *errors_clone.lock().unwrap(),
+                                    "current": name_clone
+                                }),
+                            )
+                            .ok();
+                    }
                 }
             }
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     // Execute all futures concurrently with semaphore limiting
     future::join_all(futures).await;
-    
+
     let final_processed = *processed.lock().unwrap();
     let final_errors = *errors.lock().unwrap();
-    
-    info!("Pre-caching completed: {}/{} processed, {} errors", final_processed, total, final_errors);
-    
+
+    info!(
+        "Pre-caching completed: {}/{} processed, {} errors",
+        final_processed, total, final_errors
+    );
+
     // Emit final progress
-    app.emit("precache-progress", serde_json::json!({
-        "processed": final_processed,
-        "total": total,
-        "errors": final_errors,
-        "completed": true
-    })).ok();
-    
+    app.emit(
+        "precache-progress",
+        serde_json::json!({
+            "processed": final_processed,
+            "total": total,
+            "errors": final_errors,
+            "completed": true
+        }),
+    )
+    .ok();
+
     Ok(())
 }
 
 /// Download pre-calculated position cache database
 #[tauri::command]
 #[specta::specta]
-pub async fn download_position_cache(
-    app: tauri::AppHandle,
-) -> Result<()> {
+pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
     use crate::fs::download_file;
     use tauri::path::BaseDirectory;
-    
+
     // Get the path where position_cache.db3 should be stored
-    let cache_path = app.path()
+    let cache_path = app
+        .path()
         .resolve("position_cache.db3", BaseDirectory::AppData)
         .map_err(|e| Error::PackageManager(format!("Failed to resolve cache DB path: {}", e)))?;
-    
+
     // Ensure parent directory exists
     if let Some(parent) = cache_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| Error::Io(std::io::Error::new(
+        std::fs::create_dir_all(parent).map_err(|e| {
+            Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to create cache directory: {}", e)
-            )))?;
+                format!("Failed to create cache directory: {}", e),
+            ))
+        })?;
     }
-    
+
     // Download URL for pre-calculated position cache
     let download_url = "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/position_cache.db3";
-    
+
     info!("Downloading position cache from: {}", download_url);
     info!("Saving to: {}", cache_path.display());
-    
+
     // Download the file (will overwrite if it exists)
     // Use "db_position_cache" as ID to match the format expected by ProgressButton
     download_file(
@@ -2308,9 +2399,13 @@ pub async fn download_position_cache(
         None,
         None,
         None,
-    ).await?;
-    
-    info!("Position cache downloaded successfully to: {}", cache_path.display());
-    
+    )
+    .await?;
+
+    info!(
+        "Position cache downloaded successfully to: {}",
+        cache_path.display()
+    );
+
     Ok(())
 }

@@ -1,12 +1,12 @@
+use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use diesel::connection::SimpleConnection;
-use std::path::{PathBuf, Path};
+use log::{debug, info};
+use std::path::{Path, PathBuf};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
-use log::{info, debug};
 
-use crate::error::Error;
 use crate::db::PositionStats;
+use crate::error::Error;
 
 /// Normalize database path for consistent comparison
 /// Attempts to canonicalize the path, falls back to normalizing separators
@@ -59,26 +59,30 @@ diesel::allow_tables_to_appear_in_same_query!(position_cache, position_stats, po
 
 /// Get or create the position cache database connection
 fn get_cache_db(app: &AppHandle) -> Result<SqliteConnection, Error> {
-    let db_path = app.path()
+    let db_path = app
+        .path()
         .resolve("position_cache.db3", BaseDirectory::AppData)
         .map_err(|e| Error::PackageManager(format!("Failed to resolve cache DB path: {}", e)))?;
-    
+
     // Ensure parent directory exists
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| Error::Io(std::io::Error::new(
+        std::fs::create_dir_all(parent).map_err(|e| {
+            Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to create cache directory: {}", e)
-            )))?;
+                format!("Failed to create cache directory: {}", e),
+            ))
+        })?;
     }
-    
+
     let mut conn = SqliteConnection::establish(
-        db_path.to_str().ok_or_else(|| Error::PackageManager("Invalid cache DB path".to_string()))?
+        db_path
+            .to_str()
+            .ok_or_else(|| Error::PackageManager("Invalid cache DB path".to_string()))?,
     )?;
-    
+
     // Initialize schema if needed
     init_cache_schema(&mut conn)?;
-    
+
     Ok(conn)
 }
 
@@ -126,9 +130,9 @@ fn init_cache_schema(conn: &mut SqliteConnection) -> Result<(), Error> {
         
         CREATE INDEX IF NOT EXISTS idx_position_games_game_id 
             ON position_games(game_id);
-        "#
+        "#,
     )?;
-    
+
     Ok(())
 }
 
@@ -140,18 +144,18 @@ pub fn is_position_cached(
 ) -> Result<bool, Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
-    
+
     debug!("Checking cache for FEN: {} in DB: {}", fen, db_path_str);
-    
+
     let count: i64 = position_cache::table
         .filter(position_cache::fen.eq(fen))
         .filter(position_cache::database_path.eq(&db_path_str))
         .count()
         .get_result(&mut conn)?;
-    
+
     let cached = count > 0;
     debug!("Cache check result: {} (count: {})", cached, count);
-    
+
     Ok(cached)
 }
 
@@ -163,9 +167,12 @@ pub fn get_cached_position(
 ) -> Result<Option<(Vec<PositionStats>, Vec<i32>)>, Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
-    
-    debug!("Loading cached data for FEN: {} in DB: {}", fen, db_path_str);
-    
+
+    debug!(
+        "Loading cached data for FEN: {} in DB: {}",
+        fen, db_path_str
+    );
+
     // Find the position cache entry
     let cache_entry: Option<i32> = position_cache::table
         .select(position_cache::id)
@@ -173,12 +180,12 @@ pub fn get_cached_position(
         .filter(position_cache::database_path.eq(&db_path_str))
         .first(&mut conn)
         .optional()?;
-    
+
     let position_id = match cache_entry {
         Some(id) => id,
         None => return Ok(None),
     };
-    
+
     // Load stats
     let stats_rows: Vec<(String, i32, i32, i32, i32)> = position_stats::table
         .select((
@@ -190,7 +197,7 @@ pub fn get_cached_position(
         ))
         .filter(position_stats::position_id.eq(position_id))
         .load(&mut conn)?;
-    
+
     let stats: Vec<PositionStats> = stats_rows
         .into_iter()
         .map(|(move_, white, draw, black, _total)| PositionStats {
@@ -200,16 +207,20 @@ pub fn get_cached_position(
             black,
         })
         .collect();
-    
+
     // Load game IDs (ordered by game_order)
     let game_ids: Vec<i32> = position_games::table
         .select(position_games::game_id)
         .filter(position_games::position_id.eq(position_id))
         .order(position_games::game_order.asc())
         .load(&mut conn)?;
-    
-    debug!("Loaded {} stats and {} game IDs from cache", stats.len(), game_ids.len());
-    
+
+    debug!(
+        "Loaded {} stats and {} game IDs from cache",
+        stats.len(),
+        game_ids.len()
+    );
+
     Ok(Some((stats, game_ids)))
 }
 
@@ -223,10 +234,15 @@ pub fn save_position_cache(
 ) -> Result<(), Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
-    
-    debug!("Saving cache for FEN: {} in DB: {} ({} stats, {} games)", 
-           fen, db_path_str, stats.len(), game_ids.len());
-    
+
+    debug!(
+        "Saving cache for FEN: {} in DB: {} ({} stats, {} games)",
+        fen,
+        db_path_str,
+        stats.len(),
+        game_ids.len()
+    );
+
     conn.transaction::<_, Error, _>(|conn| {
         // Insert or get position cache entry
         let position_id: i32 = {
@@ -237,17 +253,17 @@ pub fn save_position_cache(
                 .filter(position_cache::database_path.eq(&db_path_str))
                 .first(conn)
                 .optional()?;
-            
+
             if let Some(cache_id) = existing {
                 // Delete old stats and games
                 diesel::delete(
-                    position_stats::table
-                        .filter(position_stats::position_id.eq(cache_id))
-                ).execute(conn)?;
+                    position_stats::table.filter(position_stats::position_id.eq(cache_id)),
+                )
+                .execute(conn)?;
                 diesel::delete(
-                    position_games::table
-                        .filter(position_games::position_id.eq(cache_id))
-                ).execute(conn)?;
+                    position_games::table.filter(position_games::position_id.eq(cache_id)),
+                )
+                .execute(conn)?;
                 cache_id
             } else {
                 // Insert new entry
@@ -257,7 +273,7 @@ pub fn save_position_cache(
                         position_cache::database_path.eq(&db_path_str),
                     ))
                     .execute(conn)?;
-                
+
                 // Get the inserted ID
                 position_cache::table
                     .select(position_cache::id)
@@ -266,7 +282,7 @@ pub fn save_position_cache(
                     .first(conn)?
             }
         };
-        
+
         // Insert stats
         for stat in stats {
             let total = stat.white + stat.draw + stat.black;
@@ -281,7 +297,7 @@ pub fn save_position_cache(
                 ))
                 .execute(conn)?;
         }
-        
+
         // Insert game IDs (limit to 1000)
         let games_to_save = game_ids.iter().take(1000).enumerate();
         for (order, &game_id) in games_to_save {
@@ -293,57 +309,54 @@ pub fn save_position_cache(
                 ))
                 .execute(conn)?;
         }
-        
+
         Ok(())
     })?;
-    
-    info!("Cached position data for FEN: {} ({} stats, {} games)", fen, stats.len(), game_ids.len().min(1000));
-    
+
+    info!(
+        "Cached position data for FEN: {} ({} stats, {} games)",
+        fen,
+        stats.len(),
+        game_ids.len().min(1000)
+    );
+
     Ok(())
 }
 
 /// Clear cache for a specific database (when database is deleted)
-pub fn clear_cache_for_database(
-    app: &AppHandle,
-    database_path: &PathBuf,
-) -> Result<(), Error> {
+pub fn clear_cache_for_database(app: &AppHandle, database_path: &PathBuf) -> Result<(), Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
-    
+
     // Find all position IDs for this database
     let position_ids: Vec<i32> = position_cache::table
         .select(position_cache::id)
         .filter(position_cache::database_path.eq(&db_path_str))
         .load(&mut conn)?;
-    
+
     if position_ids.is_empty() {
         return Ok(());
     }
-    
+
     conn.transaction::<_, Error, _>(|conn| {
         // Delete stats and games (cascade should handle this, but explicit is safer)
         for pos_id in &position_ids {
-            diesel::delete(
-                position_stats::table
-                    .filter(position_stats::position_id.eq(*pos_id))
-            ).execute(conn)?;
-            diesel::delete(
-                position_games::table
-                    .filter(position_games::position_id.eq(*pos_id))
-            ).execute(conn)?;
+            diesel::delete(position_stats::table.filter(position_stats::position_id.eq(*pos_id)))
+                .execute(conn)?;
+            diesel::delete(position_games::table.filter(position_games::position_id.eq(*pos_id)))
+                .execute(conn)?;
         }
-        
+
         // Delete cache entries
         diesel::delete(
-            position_cache::table
-                .filter(position_cache::database_path.eq(&db_path_str))
-        ).execute(conn)?;
-        
+            position_cache::table.filter(position_cache::database_path.eq(&db_path_str)),
+        )
+        .execute(conn)?;
+
         Ok(())
     })?;
-    
+
     info!("Cleared cache for database: {}", db_path_str);
-    
+
     Ok(())
 }
-

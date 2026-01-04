@@ -1,10 +1,11 @@
-import { Stack, Text } from "@mantine/core";
+import { Badge, Card, Divider, Grid, Group, Stack, Text } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { getTimeControl } from "@/utils/timeControl";
+import { analyzePlayerStyle } from "@/utils/playerStyle";
 import DateRangeTabs, { DateRange } from "./DateRangeTabs";
 import { gradientStops, linearGradientProps, tooltipContentStyle, tooltipCursorStyle } from "./RatingsPanel.css";
 import ResultsChart from "./ResultsChart";
@@ -36,8 +37,29 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const [timeControl, setTimeControl] = useState<string | null>(null);
   const [website, setWebsite] = useState<string | null>(null);
-  const [account, setAccount] = useState<string | null>(null);
+  const [account, setAccount] = useState<string | null>("All accounts");
   const [timeRange, setTimeRange] = useState({ start: 0, end: 0 });
+  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
+
+  const defaultWebsite = useMemo(() => info.site_stats_data?.[0]?.site ?? null, [info.site_stats_data]);
+
+  useEffect(() => {
+    setWebsite(defaultWebsite);
+    setAccount("All accounts");
+  }, [defaultWebsite, playerName]);
+
+  const defaultTimeControl = useMemo(() => {
+    const games =
+      info.site_stats_data
+        ?.filter((entry) => (website ? entry.site === website : true))
+        .flatMap((entry) => entry.data.map((game) => getTimeControl(entry.site, game.time_control)))
+        .filter((tc): tc is string => !!tc) ?? [];
+    return games[0] ?? "rapid";
+  }, [info.site_stats_data, website]);
+
+  useEffect(() => {
+    setTimeControl(defaultTimeControl);
+  }, [defaultTimeControl, playerName]);
 
   const dates = useMemo(() => {
     const timezoneOffset = new Date().getTimezoneOffset() * 60 * 1000; // milliseconds
@@ -47,11 +69,13 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
 
     const gameDates =
       info.site_stats_data
-        ?.filter((games) => games.site === website)
+        ?.filter((games) => !website || games.site === website)
         .filter((games) => account === "All accounts" || games.player === account)
-        .flatMap((games) => games.data)
-        .filter((game) => getTimeControl(website!, game.time_control) === timeControl)
-        .map((game) => new Date(game?.date?.replaceAll(".", "-")).getTime()) ?? [];
+        .flatMap((games) =>
+          games.data
+            .filter((game) => getTimeControl(games.site, game.time_control) === timeControl)
+            .map((game) => new Date(game?.date?.replaceAll(".", "-")).getTime()),
+        ) ?? [];
 
     return Array.from(new Set([today, ...gameDates])).sort((a, b) => a - b);
   }, [info.site_stats_data, website, account, timeControl]);
@@ -69,16 +93,18 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
   const [summary, ratingData] = useMemo(() => {
     const filteredGames =
       info.site_stats_data
-        ?.filter((games) => games.site === website)
+        ?.filter((games) => !website || games.site === website)
         .filter((games) => account === "All accounts" || games.player === account)
-        .flatMap((games) => games.data)
-        .filter((game) => getTimeControl(website!, game.time_control) === timeControl)
-        .filter((game) => {
-          const gameDate = new Date(game?.date?.replaceAll(".", "-")).getTime();
-          const startDate = dates[timeRange.start];
-          const endDate = dates[timeRange.end];
-          return gameDate >= (startDate ?? 0) && gameDate <= (endDate ?? 0);
-        }) ?? [];
+        .flatMap((games) =>
+          games.data
+            .filter((game) => getTimeControl(games.site, game.time_control) === timeControl)
+            .filter((game) => {
+              const gameDate = new Date(game?.date?.replaceAll(".", "-")).getTime();
+              const startDate = dates[timeRange.start];
+              const endDate = dates[timeRange.end];
+              return gameDate >= (startDate ?? 0) && gameDate <= (endDate ?? 0);
+            }),
+        ) ?? [];
 
     const wonCount = filteredGames.filter((game) => game.result === "Won").length;
     const drawCount = filteredGames.filter((game) => game.result === "Drawn").length;
@@ -119,71 +145,129 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
     );
   }, [ratingData]);
 
+  const siteElo = useMemo(() => {
+    const map = new Map<string, { games: number; elo: number }>();
+    for (const site of info.site_stats_data ?? []) {
+      const games = site.data.length;
+      const maxElo = site.data.reduce((max, g) => (typeof g.player_elo === "number" ? Math.max(max, g.player_elo) : max), 0);
+      map.set(site.site, {
+        games: (map.get(site.site)?.games ?? 0) + games,
+        elo: Math.max(map.get(site.site)?.elo ?? 0, maxElo),
+      });
+    }
+    return Array.from(map.entries()).sort((a, b) => b[1].games - a[1].games || a[0].localeCompare(b[0]));
+  }, [info.site_stats_data]);
+
   return (
-    <Stack>
-      <WebsiteAccountSelector
-        playerName={playerName}
-        onWebsiteChange={setWebsite}
-        onAccountChange={setAccount}
-        allowAll={false}
-      />
-      <TimeControlSelector onTimeControlChange={setTimeControl} website={website} allowAll={false} />
-      <DateRangeTabs timeRange={dateRange} onTimeRangeChange={(value) => setDateRange(value as DateRange | null)} />
-      <Text pt="md" fw="bold" fz="lg" ta="center">
-        {summary.games === 1 && t("common.games.one", { count: summary.games || 0 })}
-        {summary.games > 1 && t("common.games.other", { count: summary.games || 0 })}
-      </Text>
-      {dates.length > 1 && (
-        <>
-          {summary.games > 0 && <ResultsChart won={summary.won} draw={summary.draw} lost={summary.lost} size="2rem" />}
-          <ChartSizeGuard height={300}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={ratingData}>
-                <defs>
-                  <linearGradient {...linearGradientProps}>
-                    {gradientStops.map((stopProps, index) => (
-                      <stop key={index} {...stopProps} />
-                    ))}
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3" vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  domain={[dates[timeRange.start], dates[timeRange.end]]}
-                  tickFormatter={(date) => new Date(date).toLocaleDateString()}
-                  type="number"
-                />
-                {playerEloDomain == null && <YAxis />}
-                {playerEloDomain != null && <YAxis domain={playerEloDomain} />}
-                <Tooltip
-                  contentStyle={tooltipContentStyle}
-                  cursor={tooltipCursorStyle}
-                  labelFormatter={(label) => new Date(label).toLocaleDateString()}
-                />
-                <Area
-                  name="Rating"
-                  dataKey="player_elo"
-                  type="monotone"
-                  stroke="var(--mantine-color-blue-filled)"
-                  strokeWidth={2}
-                  strokeOpacity={1}
-                  fillOpacity={0.25}
-                  fill={`url(#${linearGradientProps.id})`}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </ChartSizeGuard>
-          <TimeRangeSlider
-            ratingDates={dates}
-            dateRange={timeRange}
-            onDateRangeChange={(range) => {
-              setDateRange(null);
-              setTimeRange(range);
-            }}
-          />
-        </>
-      )}
-    </Stack>
+    <Grid gutter="md" h="100%" style={{ minHeight: 0 }}>
+      <Grid.Col span={{ base: 12, md: 3 }}>
+        <Card withBorder radius="md" shadow="sm" bg="var(--mantine-color-dark-6)">
+          <Stack gap="xs">
+            <Text fz="lg" fw={700} ta="center">
+              {playerName}
+            </Text>
+            <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
+              {t(playerStyle.label)}
+            </Badge>
+            <Text fz="xs" c="dimmed" ta="center">
+              {t(playerStyle.description)}
+            </Text>
+            <Divider />
+            <Stack gap={4}>
+              <Text fw={600} fz="sm">
+                {t("common.filters", { defaultValue: "Filters" })}
+              </Text>
+              <WebsiteAccountSelector
+                playerName={playerName}
+                onWebsiteChange={setWebsite}
+                onAccountChange={setAccount}
+                allowAll={false}
+              />
+              <TimeControlSelector onTimeControlChange={setTimeControl} website={website} allowAll={false} />
+              <DateRangeTabs timeRange={dateRange} onTimeRangeChange={(value) => setDateRange(value as DateRange | null)} />
+            </Stack>
+            <Divider />
+            <Stack gap={4}>
+              <Text fw={600} fz="sm">
+                {t("common.elo", { defaultValue: "Elo" })} / {t("common.games.other", { defaultValue: "Games", count: 0 })}
+              </Text>
+              {siteElo.length === 0 ? (
+                <Text size="sm" c="dimmed">
+                  No data
+                </Text>
+              ) : (
+                siteElo.map(([site, { games, elo }]) => (
+                  <Group key={site} justify="space-between">
+                    <Text>{site}</Text>
+                    <Text fw={700}>
+                      {elo > 0 ? elo : "—"} · {games} games
+                    </Text>
+                  </Group>
+                ))
+              )}
+            </Stack>
+          </Stack>
+        </Card>
+      </Grid.Col>
+      <Grid.Col span={{ base: 12, md: 9 }} style={{ minHeight: 0 }}>
+        <Stack style={{ minHeight: 0 }}>
+          <Text pt="md" fw="bold" fz="lg" ta="center">
+            {summary.games === 1 && t("common.games.one", { count: summary.games || 0 })}
+            {summary.games > 1 && t("common.games.other", { count: summary.games || 0 })}
+          </Text>
+          {dates.length > 1 && (
+            <>
+              {summary.games > 0 && <ResultsChart won={summary.won} draw={summary.draw} lost={summary.lost} size="2rem" />}
+              <ChartSizeGuard height={300}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={ratingData}>
+                    <defs>
+                      <linearGradient {...linearGradientProps}>
+                        {gradientStops.map((stopProps, index) => (
+                          <stop key={index} {...stopProps} />
+                        ))}
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      domain={[dates[timeRange.start], dates[timeRange.end]]}
+                      tickFormatter={(date) => new Date(date).toLocaleDateString()}
+                      type="number"
+                    />
+                    {playerEloDomain == null && <YAxis />}
+                    {playerEloDomain != null && <YAxis domain={playerEloDomain} />}
+                    <Tooltip
+                      contentStyle={tooltipContentStyle}
+                      cursor={tooltipCursorStyle}
+                      labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                    />
+                    <Area
+                      name="Rating"
+                      dataKey="player_elo"
+                      type="monotone"
+                      stroke="var(--mantine-color-blue-filled)"
+                      strokeWidth={2}
+                      strokeOpacity={1}
+                      fillOpacity={0.25}
+                      fill={`url(#${linearGradientProps.id})`}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartSizeGuard>
+              <TimeRangeSlider
+                ratingDates={dates}
+                dateRange={timeRange}
+                onDateRangeChange={(range) => {
+                  setDateRange(null);
+                  setTimeRange(range);
+                }}
+              />
+            </>
+          )}
+        </Stack>
+      </Grid.Col>
+    </Grid>
   );
 }
 

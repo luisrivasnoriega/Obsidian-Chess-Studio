@@ -71,7 +71,10 @@
             {
                 "label": "main",
                 "title": "Obsidian Chess Studio",
-                "maximized": true,
+                "center": true,
+                "width": 1280,
+                "height": 800,
+                "maximized": false,
                 "visible": false,
                 "decorations": false,
                 "minWidth": 1024,

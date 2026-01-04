@@ -24,7 +24,7 @@ pub fn create_player(
         )) => {
             // Player already exists, fetch it
             players::table
-            .filter(players::name.eq(name))
+                .filter(players::name.eq(name))
                 .first::<Player>(conn)
         }
         Err(e) => Err(e),
@@ -52,7 +52,7 @@ pub fn create_event(
         )) => {
             // Event already exists, fetch it
             events::table
-            .filter(events::name.eq(name))
+                .filter(events::name.eq(name))
                 .first::<Event>(conn)
         }
         Err(e) => Err(e),
@@ -77,7 +77,7 @@ pub fn create_site(conn: &mut SqliteConnection, name: &str) -> Result<Site, dies
         )) => {
             // Site already exists, fetch it
             sites::table
-            .filter(sites::name.eq(name))
+                .filter(sites::name.eq(name))
                 .first::<Site>(conn)
         }
         Err(e) => Err(e),

@@ -7,9 +7,15 @@ pub enum PlatformError {
     #[error("Failed to resolve path {path}: {source}")]
     PathResolutionFailed { path: String, source: tauri::Error },
     #[error("Failed to create directory {path}: {source}")]
-    DirectoryCreationFailed { path: String, source: std::io::Error },
+    DirectoryCreationFailed {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("Failed to create file {path}: {source}")]
-    FileCreationFailed { path: String, source: std::io::Error },
+    FileCreationFailed {
+        path: String,
+        source: std::io::Error,
+    },
 }
 
 // Common platform utilities and shared functionality
@@ -39,19 +45,19 @@ const REQUIRED_FILES: &[(BaseDirectory, &str, &str)] = &[
 pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError> {
     log::info!("Checking for required directories");
     for &(dir, path) in REQUIRED_DIRS {
-        let resolved_path = app.path().resolve(path, dir)
-            .map_err(|e| PlatformError::PathResolutionFailed { 
-                path: path.to_string(), 
-                source: e 
-            })?;
-        
+        let resolved_path =
+            app.path()
+                .resolve(path, dir)
+                .map_err(|e| PlatformError::PathResolutionFailed {
+                    path: path.to_string(),
+                    source: e,
+                })?;
+
         if !resolved_path.exists() {
             log::info!("Creating directory {}", resolved_path.display());
-            create_dir_all(&resolved_path).map_err(|e| {
-                PlatformError::DirectoryCreationFailed { 
-                    path: resolved_path.display().to_string(), 
-                    source: e 
-                }
+            create_dir_all(&resolved_path).map_err(|e| PlatformError::DirectoryCreationFailed {
+                path: resolved_path.display().to_string(),
+                source: e,
             })?;
         } else {
             log::info!("Directory already exists: {}", resolved_path.display());
@@ -71,20 +77,20 @@ pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError>
 pub fn ensure_required_files(app: &AppHandle) -> Result<(), PlatformError> {
     log::info!("Checking for required files");
     for &(dir, path, contents) in REQUIRED_FILES {
-        let resolved_path = app
-            .path()
-            .resolve(path, dir)
-            .map_err(|e| PlatformError::PathResolutionFailed { 
-                path: path.to_string(), 
-                source: e 
-            })?;
+        let resolved_path =
+            app.path()
+                .resolve(path, dir)
+                .map_err(|e| PlatformError::PathResolutionFailed {
+                    path: path.to_string(),
+                    source: e,
+                })?;
 
         if !resolved_path.exists() {
             log::info!("Creating file {}", resolved_path.display());
             std::fs::write(&resolved_path, contents).map_err(|e| {
-                PlatformError::FileCreationFailed { 
-                    path: resolved_path.display().to_string(), 
-                    source: e 
+                PlatformError::FileCreationFailed {
+                    path: resolved_path.display().to_string(),
+                    source: e,
                 }
             })?;
         } else {

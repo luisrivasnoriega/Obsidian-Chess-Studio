@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod analysis_storage;
 mod app;
 mod chess;
 mod db;
@@ -15,7 +16,6 @@ mod opening;
 mod package_manager;
 mod pgn;
 mod puzzle;
-mod analysis_storage;
 mod variant_positions;
 
 use std::sync::Arc;
@@ -31,15 +31,23 @@ use specta_typescript::{BigIntExportBehavior, Typescript};
 use sysinfo::SystemExt;
 use tauri::AppHandle;
 
+use crate::analysis_storage::{
+    analysis_db_clear_analyzed_pgns, analysis_db_delete_entries,
+    analysis_db_get_all_analyzed_games, analysis_db_get_analyzed_game,
+    analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
+    analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
+};
 use crate::chess::{
-    get_best_moves, analyze_game, get_engine_config, get_engine_logs, kill_engine, kill_engines, stop_engine
+    analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
+    stop_engine,
 };
 use crate::db::{
-    clear_games, convert_pgn, init_profile_db, create_indexes, delete_database, delete_db_game, delete_empty_games,
-    delete_indexes, export_to_pgn, export_position_games_to_pgn, export_selected_games_to_pgn, get_player, get_players_game_info, get_tournaments,
-    precache_openings, search_position, download_position_cache,
+    clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games,
+    delete_indexes, download_position_cache, export_position_games_to_pgn,
+    export_selected_games_to_pgn, export_to_pgn, get_player, get_players_game_info,
+    get_tournaments, init_profile_db, precache_openings, search_position,
 };
-use crate::fide::{download_fide_db, find_fide_player, fetch_fide_profile_html, save_fide_photo};
+use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
 use crate::fs::{set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
@@ -47,19 +55,20 @@ use crate::package_manager::{
     check_package_installed, check_package_manager_available, find_executable_path, install_package,
 };
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
-use crate::puzzle::{get_puzzle, get_puzzle_db_info, get_puzzle_rating_range, import_puzzle_file, check_puzzle_db_columns, get_puzzle_themes, get_puzzle_opening_tags, validate_puzzle_database};
-use crate::analysis_storage::{
-    analysis_db_clear_analyzed_pgns, analysis_db_delete_entries, analysis_db_get_all_analyzed_games,
-    analysis_db_get_analyzed_game, analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
-    analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
+use crate::puzzle::{
+    check_puzzle_db_columns, get_puzzle, get_puzzle_db_info, get_puzzle_opening_tags,
+    get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file, validate_puzzle_database,
 };
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
 use crate::{
     db::{
-        delete_duplicated_games, edit_db_info, get_db_info, get_games, get_game, get_players, merge_players, update_game
+        delete_duplicated_games, edit_db_info, get_db_info, get_game, get_games, get_players,
+        merge_players, update_game,
     },
     fs::{download_file, file_exists, get_file_metadata},
-    opening::{get_opening_from_fen, get_opening_from_name, get_opening_info_from_fen, search_opening_name},
+    opening::{
+        get_opening_from_fen, get_opening_from_name, get_opening_info_from_fen, search_opening_name,
+    },
 };
 use tokio::sync::{RwLock, Semaphore};
 
@@ -83,7 +92,8 @@ pub struct AppState {
         String,
         diesel::r2d2::Pool<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>,
     >,
-    line_cache: DashMap<(GameQueryJs, std::path::PathBuf), (Vec<PositionStats>, Vec<NormalizedGame>)>,
+    line_cache:
+        DashMap<(GameQueryJs, std::path::PathBuf), (Vec<PositionStats>, Vec<NormalizedGame>)>,
     // Cache for games loaded from database (optimized for repeated queries)
     db_cache: std::sync::Mutex<Vec<GameData>>,
     #[derivative(Default(value = "Arc::new(Semaphore::new(10))"))]
@@ -196,13 +206,11 @@ pub async fn run() {
         )
         .expect("Failed to export types");
 
-    let builder = tauri::Builder::default();    
+    let builder = tauri::Builder::default();
     let builder = app::platform::setup_tauri_plugins(builder, &specta_builder);
-    
+
     builder
-        .setup(move |app| {
-            app::setup::setup_tauri_app(app, &specta_builder)
-        })
+        .setup(move |app| app::setup::setup_tauri_app(app, &specta_builder))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -230,8 +238,7 @@ fn memory_size() -> u64 {
 #[tauri::command]
 #[specta::specta]
 async fn open_external_link(app: AppHandle, url: String) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(&url)
-        .map_err(|e| format!("Invalid URL: {}", e))?;
+    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
 
     match parsed.scheme() {
         "http" | "https" => {}
