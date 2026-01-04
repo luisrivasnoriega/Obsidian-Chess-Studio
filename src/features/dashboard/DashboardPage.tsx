@@ -37,9 +37,11 @@ import {
 } from "@/utils/gameRecords";
 import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
 import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
+import type { AnalysisResult } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
+import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
 import type { TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
@@ -251,7 +253,7 @@ export default function DashboardPage() {
     setAnalyzeAllModalOpened(true);
   }, []);
   const [playerStatsModalOpened, setPlayerStatsModalOpened] = useState(false);
-  const [playerStatsResult, setPlayerStatsResult] = useState<unknown | null>(null);
+  const [playerStatsResult, setPlayerStatsResult] = useState<AnalysisResult | null>(null);
   const [playerStatsDebugPgns, setPlayerStatsDebugPgns] = useState<string | null>(null);
   const [playerStatsGameType, _setPlayerStatsGameType] = useState<"local" | "chesscom" | "lichess" | null>(null);
   const [playerStatsAccountName, _setPlayerStatsAccountName] = useState<string | null>(null);
@@ -312,29 +314,41 @@ export default function DashboardPage() {
     void loadMainAccountData();
   }, [loadMainAccountData]);
 
-  const getSessionGameCount = useCallback((session: Session | undefined) => {
-    if (!session) return 0;
+  const sumLichessPerfGames = useCallback((perfs: unknown) => {
+    if (!perfs || typeof perfs !== "object") return 0;
     let total = 0;
-
-    const perfs = session.lichess?.account?.perfs;
-    if (perfs) {
-      total += Object.values(perfs).reduce((sum, perf) => sum + (perf?.games ?? 0), 0);
+    for (const value of Object.values(perfs as Record<string, unknown>)) {
+      if (!value || typeof value !== "object") continue;
+      if (!("games" in value)) continue;
+      const games = (value as { games?: unknown }).games;
+      if (typeof games === "number") total += games;
     }
-
-    const chessComStats = session.chessCom?.stats;
-    if (chessComStats) {
-      const addPerf = (perf?: { record?: { win: number; loss: number; draw: number } }) => {
-        if (!perf?.record) return;
-        total += (perf.record.win ?? 0) + (perf.record.loss ?? 0) + (perf.record.draw ?? 0);
-      };
-      addPerf(chessComStats.chess_daily);
-      addPerf(chessComStats.chess_rapid);
-      addPerf(chessComStats.chess_blitz);
-      addPerf(chessComStats.chess_bullet);
-    }
-
     return total;
   }, []);
+
+  const getSessionGameCount = useCallback(
+    (session: Session | undefined) => {
+      if (!session) return 0;
+      let total = 0;
+
+      total += sumLichessPerfGames(session.lichess?.account?.perfs);
+
+      const chessComStats = session.chessCom?.stats;
+      if (chessComStats) {
+        const addPerf = (perf?: { record?: { win: number; loss: number; draw: number } }) => {
+          if (!perf?.record) return;
+          total += (perf.record.win ?? 0) + (perf.record.loss ?? 0) + (perf.record.draw ?? 0);
+        };
+        addPerf(chessComStats.chess_daily);
+        addPerf(chessComStats.chess_rapid);
+        addPerf(chessComStats.chess_blitz);
+        addPerf(chessComStats.chess_bullet);
+      }
+
+      return total;
+    },
+    [sumLichessPerfGames],
+  );
 
   // Find the main session - prioritize exact username matches over player name matches
   // This ensures we pick the most active account (by games played) for the main card
@@ -1314,7 +1328,7 @@ export default function DashboardPage() {
                     activeAnalysisIds.delete(analysisId);
                     return;
                   }
-                  throw error;
+                  throw _error;
                 }
 
                 clearInterval(cancellationCheckInterval);

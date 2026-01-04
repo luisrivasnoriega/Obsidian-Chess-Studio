@@ -1,6 +1,6 @@
 import { Group, Select } from "@mantine/core";
 import { useAtomValue } from "jotai";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { sessionsAtom } from "@/state/atoms";
 
 interface WebsiteAccountSelectorProps {
@@ -10,6 +10,8 @@ interface WebsiteAccountSelectorProps {
   allowAll: boolean;
 }
 
+const ALL_WEBSITES_VALUE = "__ALL_WEBSITES__";
+
 const WebsiteAccountSelector = ({
   playerName,
   onWebsiteChange,
@@ -18,23 +20,32 @@ const WebsiteAccountSelector = ({
 }: WebsiteAccountSelectorProps) => {
   const sessions = useAtomValue(sessionsAtom);
 
-  const websites = [];
-  if (sessions.some((s) => s.player === playerName && s.chessCom?.username)) {
-    websites.push({ value: "Chess.com", label: "Chess.com" });
-  }
-  if (sessions.some((s) => s.player === playerName && s.lichess?.username)) {
-    websites.push({ value: "Lichess", label: "Lichess" });
-  }
+  const websites = useMemo(() => {
+    const list: Array<{ value: string; label: string }> = [];
+    if (allowAll) {
+      list.push({ value: ALL_WEBSITES_VALUE, label: "All websites" });
+    }
+    if (sessions.some((s) => s.player === playerName && s.chessCom?.username)) {
+      list.push({ value: "Chess.com", label: "Chess.com" });
+    }
+    if (sessions.some((s) => s.player === playerName && s.lichess?.username)) {
+      list.push({ value: "Lichess", label: "Lichess" });
+    }
+    return list;
+  }, [allowAll, playerName, sessions]);
 
-  if (allowAll) {
-    websites.unshift({ value: "All websites", label: "All websites" });
-  }
+  const defaultWebsiteValue = websites[0]?.value ?? null;
 
-  const [website, setWebsite] = useState<string | null>(websites[0]?.value);
+  const [website, setWebsite] = useState<string | null>(defaultWebsiteValue);
   const [account, setAccount] = useState<string | null>("All accounts");
 
   useEffect(() => {
-    onWebsiteChange(website);
+    setWebsite(defaultWebsiteValue);
+    setAccount("All accounts");
+  }, [defaultWebsiteValue, playerName]);
+
+  useEffect(() => {
+    onWebsiteChange(website === ALL_WEBSITES_VALUE ? null : website);
   }, [website, onWebsiteChange]);
 
   useEffect(() => {
@@ -65,7 +76,7 @@ const WebsiteAccountSelector = ({
         data={websites}
         allowDeselect={false}
       />
-      {website !== "All websites" && (
+      {website !== ALL_WEBSITES_VALUE && (
         <Select
           pt="lg"
           label="Account"

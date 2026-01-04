@@ -35,15 +35,15 @@ import { useTranslation } from "react-i18next";
 import type { DatabaseInfo } from "@/bindings";
 import { commands, events } from "@/bindings";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import { getAccountKey } from "@/utils/accountKeys";
+import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { downloadChessCom } from "@/utils/chess.com/api";
 import { getDatabases } from "@/utils/db";
 import { capitalize, parseDate } from "@/utils/format";
 import { downloadLichess } from "@/utils/lichess/api";
+import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
 import { getProfileDbPath, profileDbFilename } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
-import { getAccountPgnPath } from "@/utils/accountPgnPaths";
-import { getAccountKey } from "@/utils/accountKeys";
-import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
 import type { Session } from "@/utils/session";
 import { unwrap } from "@/utils/unwrap";
 import LichessLogo from "./LichessLogo";
@@ -217,8 +217,7 @@ export function AccountCard({
             found = updatedDatabases.find((db) => db.filename === expectedDbFilename) ?? null;
             if (!found) {
               found =
-                updatedDatabases.find((db) => db.filename.toLowerCase() === expectedDbFilename.toLowerCase()) ??
-                null;
+                updatedDatabases.find((db) => db.filename.toLowerCase() === expectedDbFilename.toLowerCase()) ?? null;
             }
           }
 
@@ -247,11 +246,13 @@ export function AccountCard({
     };
   }, [accountKey, downloadId, profileId, setDatabases, type, title]);
 
+  const currentDatabaseGameCount = currentDatabase?.type === "success" ? currentDatabase.game_count : 0;
+
   useEffect(() => {
     let cancelled = false;
     const loadCount = async () => {
       if (!profileId) {
-        setDownloadedGames(currentDatabase?.type === "success" ? currentDatabase.game_count : 0);
+        setDownloadedGames(currentDatabaseGameCount);
         return;
       }
       const dbPath = await getProfileDbPath(profileId);
@@ -262,7 +263,7 @@ export function AccountCard({
     return () => {
       cancelled = true;
     };
-  }, [accountKey, currentDatabase?.game_count, currentDatabase?.type, profileId]);
+  }, [accountKey, currentDatabaseGameCount, profileId]);
 
   // Use currentDatabase instead of database prop to ensure we have the latest data
   // If total is 0 or less than downloadedGames, use downloadedGames as minimum total

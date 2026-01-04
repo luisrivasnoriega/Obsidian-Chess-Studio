@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
-import { getTimeControl } from "@/utils/timeControl";
 import { analyzePlayerStyle } from "@/utils/playerStyle";
+import { getTimeControl } from "@/utils/timeControl";
 import DateRangeTabs, { DateRange } from "./DateRangeTabs";
 import { gradientStops, linearGradientProps, tooltipContentStyle, tooltipCursorStyle } from "./RatingsPanel.css";
 import ResultsChart from "./ResultsChart";
@@ -41,19 +41,11 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
   const [timeRange, setTimeRange] = useState({ start: 0, end: 0 });
   const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
 
-  const defaultWebsite = useMemo(() => info.site_stats_data?.[0]?.site ?? null, [info.site_stats_data]);
-
-  useEffect(() => {
-    setWebsite(defaultWebsite);
-    setAccount("All accounts");
-  }, [defaultWebsite, playerName]);
-
   const defaultTimeControl = useMemo(() => {
     const games =
       info.site_stats_data
         ?.filter((entry) => (website ? entry.site === website : true))
-        .flatMap((entry) => entry.data.map((game) => getTimeControl(entry.site, game.time_control)))
-        .filter((tc): tc is string => !!tc) ?? [];
+        .flatMap((entry) => entry.data.map((game) => getTimeControl(entry.site, game.time_control))) ?? [];
     return games[0] ?? "rapid";
   }, [info.site_stats_data, website]);
 
@@ -149,7 +141,10 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
     const map = new Map<string, { games: number; elo: number }>();
     for (const site of info.site_stats_data ?? []) {
       const games = site.data.length;
-      const maxElo = site.data.reduce((max, g) => (typeof g.player_elo === "number" ? Math.max(max, g.player_elo) : max), 0);
+      const maxElo = site.data.reduce(
+        (max, g) => (typeof g.player_elo === "number" ? Math.max(max, g.player_elo) : max),
+        0,
+      );
       map.set(site.site, {
         games: (map.get(site.site)?.games ?? 0) + games,
         elo: Math.max(map.get(site.site)?.elo ?? 0, maxElo),
@@ -181,15 +176,19 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
                 playerName={playerName}
                 onWebsiteChange={setWebsite}
                 onAccountChange={setAccount}
-                allowAll={false}
+                allowAll
               />
               <TimeControlSelector onTimeControlChange={setTimeControl} website={website} allowAll={false} />
-              <DateRangeTabs timeRange={dateRange} onTimeRangeChange={(value) => setDateRange(value as DateRange | null)} />
+              <DateRangeTabs
+                timeRange={dateRange}
+                onTimeRangeChange={(value) => setDateRange(value as DateRange | null)}
+              />
             </Stack>
             <Divider />
             <Stack gap={4}>
               <Text fw={600} fz="sm">
-                {t("common.elo", { defaultValue: "Elo" })} / {t("common.games.other", { defaultValue: "Games", count: 0 })}
+                {t("common.elo", { defaultValue: "Elo" })} /{" "}
+                {t("common.games.other", { defaultValue: "Games", count: 0 })}
               </Text>
               {siteElo.length === 0 ? (
                 <Text size="sm" c="dimmed">
@@ -217,7 +216,9 @@ function RatingsPanel({ playerName, info }: { playerName: string; info: PlayerGa
           </Text>
           {dates.length > 1 && (
             <>
-              {summary.games > 0 && <ResultsChart won={summary.won} draw={summary.draw} lost={summary.lost} size="2rem" />}
+              {summary.games > 0 && (
+                <ResultsChart won={summary.won} draw={summary.draw} lost={summary.lost} size="2rem" />
+              )}
               <ChartSizeGuard height={300}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={ratingData}>

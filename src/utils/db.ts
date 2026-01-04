@@ -15,6 +15,8 @@ import {
 import type { LocalOptions } from "@/components/panels/database/DatabasePanel";
 import { unwrap } from "./unwrap";
 
+export type { DatabaseInfo } from "@/bindings";
+
 export type SuccessDatabaseInfo = Extract<DatabaseInfo, { type: "success" }>;
 
 export type Sides = "WhiteBlack" | "BlackWhite" | "Any";
@@ -76,9 +78,10 @@ const DATABASES: DownloadableDatabase[] = [
     title: "Position Cache",
     game_count: 0,
     player_count: 0,
-    storage_size: BigInt(628700416), 
+    storage_size: BigInt(628700416),
     downloadLink: "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/position_cache.db3",
-    description: "Pre-calculated position cache with statistics and games for Lumbra's Gigabase, Caissabase 2024, Ajedrez Data (Correspondence & OTB), and MillionBase. This will overwrite your existing cache.",
+    description:
+      "Pre-calculated position cache with statistics and games for Lumbra's Gigabase, Caissabase 2024, Ajedrez Data (Correspondence & OTB), and MillionBase. This will overwrite your existing cache.",
   },
 ];
 
@@ -93,8 +96,8 @@ const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
   {
     title: "Lichess Puzzles 2025",
     description: "Latest puzzles from Lichess.org organized by themes in database format",
-    puzzleCount: 5600086, 
-    storageSize: BigInt(3542036480), // 3,459,020 KB = 3,542,036,480 bytes 
+    puzzleCount: 5600086,
+    storageSize: BigInt(3542036480), // 3,459,020 KB = 3,542,036,480 bytes
     downloadLink: "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/Lichess%20Puzzles%202025.db3",
   },
 ];
@@ -274,7 +277,7 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       fen,
       type_: type,
     },
-    game_details_limit: gameDetailsLimitValue as any,
+    game_details_limit: BigInt(gameDetailsLimitValue),
     options: {
       skipCount: true,
       sort: (options.sort || "averageElo") as "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count",
@@ -287,7 +290,11 @@ export async function searchPosition(options: LocalOptions, tab: string) {
     ...(wantedResult ? { wanted_result: wantedResult } : {}),
   };
 
-  const res = await commands.searchPosition(options.path!, payload, tab);
+  if (!options.path) {
+    throw new Error("Missing database path for position search.");
+  }
+
+  const res = await commands.searchPosition(options.path, payload, tab);
 
   if (res.status === "error") {
     if (res.error !== "Search stopped") {

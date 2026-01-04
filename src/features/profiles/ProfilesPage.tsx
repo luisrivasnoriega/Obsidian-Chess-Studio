@@ -7,6 +7,7 @@
   Flex,
   Group,
   Modal,
+  ScrollArea,
   Select,
   Stack,
   Table,
@@ -527,142 +528,144 @@ export default function ProfilesPage() {
 
           <Divider my="sm" />
 
-          <Table withTableBorder highlightOnHover striped>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th style={{ width: 240 }}>{t("profiles.profile", { defaultValue: "Profile" })}</Table.Th>
-                <Table.Th style={{ width: 120 }}>{t("profiles.fideId", { defaultValue: "FIDE ID" })}</Table.Th>
-                <Table.Th>{t("accounts.title", { defaultValue: "Accounts" })}</Table.Th>
-                <Table.Th style={{ width: 160 }}>{t("common.actions", { defaultValue: "Actions" })}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {sortedProfiles.map((profile) => {
-                const isActive = profile.id === activeProfileId;
-                const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
+          <ScrollArea mah="55vh" type="auto" offsetScrollbars>
+            <Table withTableBorder highlightOnHover striped>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th style={{ width: 240 }}>{t("profiles.profile", { defaultValue: "Profile" })}</Table.Th>
+                  <Table.Th style={{ width: 120 }}>{t("profiles.fideId", { defaultValue: "FIDE ID" })}</Table.Th>
+                  <Table.Th>{t("accounts.title", { defaultValue: "Accounts" })}</Table.Th>
+                  <Table.Th style={{ width: 160 }}>{t("common.actions", { defaultValue: "Actions" })}</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {sortedProfiles.map((profile) => {
+                  const isActive = profile.id === activeProfileId;
+                  const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
 
-                return (
-                  <Table.Tr
-                    key={profile.id}
-                    style={{
-                      background: isActive ? "var(--mantine-color-dark-6)" : undefined,
-                    }}
-                  >
-                    <Table.Td>
-                      <Group gap="xs" wrap="nowrap">
-                        <Text fw={700} truncate>
-                          {profile.name}
-                        </Text>
-                        {isActive && (
-                          <Badge size="xs" color="teal" variant="light">
-                            {t("profiles.active", { defaultValue: "Active" })}
-                          </Badge>
-                        )}
-                      </Group>
-                      <Text size="xs" c="dimmed">
-                        {t("profiles.accountsCount", {
-                          defaultValue: "{{count}} accounts",
-                          count: linkedSessions.length,
-                        })}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm">{profile.fideId || "-"}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Stack gap={6}>
-                        {linkedSessions.map((session) => {
-                          const meta = sessionMeta(session);
-                          const sessionIndex = sessions.indexOf(session);
-                          if (sessionIndex < 0) return null;
-                          return (
-                            <Group
-                              key={`${profile.id}:${meta.platform}:${meta.username}`}
-                              gap="xs"
-                              wrap="nowrap"
-                              justify="space-between"
-                            >
-                              <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
-                                <Badge size="xs" variant="light" color={meta.platform === "lichess" ? "red" : "blue"}>
-                                  {meta.platform === "chesscom" ? "Chess.com" : meta.platform}
-                                </Badge>
-                                <Text size="sm" truncate>
-                                  {meta.username}
-                                </Text>
-                              </Group>
-                              <Group gap="xs" wrap="nowrap">
-                                <Select
-                                  size="xs"
-                                  data={profilesSelectData}
-                                  value={profile.id}
-                                  onChange={(value) => {
-                                    if (!value) return;
-                                    assignSessionToProfile(sessionIndex, value);
-                                  }}
-                                  searchable
-                                  clearable={false}
-                                  w={180}
-                                />
-                                <ActionIcon
-                                  size="sm"
-                                  color="red"
-                                  variant="subtle"
-                                  onClick={() => void removeSession(session)}
-                                  title={t("common.delete", { defaultValue: "Delete" })}
-                                >
-                                  <IconTrash size={16} />
-                                </ActionIcon>
-                              </Group>
-                            </Group>
-                          );
-                        })}
-                        {linkedSessions.length === 0 ? (
-                          <Text size="sm" c="dimmed">
-                            {t("profiles.noAccounts", { defaultValue: "No accounts linked to this profile yet." })}
+                  return (
+                    <Table.Tr
+                      key={profile.id}
+                      style={{
+                        background: isActive ? "var(--mantine-color-dark-6)" : undefined,
+                      }}
+                    >
+                      <Table.Td>
+                        <Group gap="xs" wrap="nowrap">
+                          <Text fw={700} truncate>
+                            {profile.name}
                           </Text>
-                        ) : null}
-                      </Stack>
-                    </Table.Td>
-                    <Table.Td>
-                      <Group gap={4} wrap="nowrap" justify="flex-end">
-                        {!isActive && (
+                          {isActive && (
+                            <Badge size="xs" color="teal" variant="light">
+                              {t("profiles.active", { defaultValue: "Active" })}
+                            </Badge>
+                          )}
+                        </Group>
+                        <Text size="xs" c="dimmed">
+                          {t("profiles.accountsCount", {
+                            defaultValue: "{{count}} accounts",
+                            count: linkedSessions.length,
+                          })}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm">{profile.fideId || "-"}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Stack gap={6}>
+                          {linkedSessions.map((session) => {
+                            const meta = sessionMeta(session);
+                            const sessionIndex = sessions.indexOf(session);
+                            if (sessionIndex < 0) return null;
+                            return (
+                              <Group
+                                key={`${profile.id}:${meta.platform}:${meta.username}`}
+                                gap="xs"
+                                wrap="nowrap"
+                                justify="space-between"
+                              >
+                                <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                                  <Badge size="xs" variant="light" color={meta.platform === "lichess" ? "red" : "blue"}>
+                                    {meta.platform === "chesscom" ? "Chess.com" : meta.platform}
+                                  </Badge>
+                                  <Text size="sm" truncate>
+                                    {meta.username}
+                                  </Text>
+                                </Group>
+                                <Group gap="xs" wrap="nowrap">
+                                  <Select
+                                    size="xs"
+                                    data={profilesSelectData}
+                                    value={profile.id}
+                                    onChange={(value) => {
+                                      if (!value) return;
+                                      assignSessionToProfile(sessionIndex, value);
+                                    }}
+                                    searchable
+                                    clearable={false}
+                                    w={180}
+                                  />
+                                  <ActionIcon
+                                    size="sm"
+                                    color="red"
+                                    variant="subtle"
+                                    onClick={() => void removeSession(session)}
+                                    title={t("common.delete", { defaultValue: "Delete" })}
+                                  >
+                                    <IconTrash size={16} />
+                                  </ActionIcon>
+                                </Group>
+                              </Group>
+                            );
+                          })}
+                          {linkedSessions.length === 0 ? (
+                            <Text size="sm" c="dimmed">
+                              {t("profiles.noAccounts", { defaultValue: "No accounts linked to this profile yet." })}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={4} wrap="nowrap" justify="flex-end">
+                          {!isActive && (
+                            <ActionIcon
+                              variant="subtle"
+                              onClick={() => setActiveProfile(profile.id)}
+                              title={t("profiles.setActive", { defaultValue: "Set active" })}
+                            >
+                              <IconCheck size={16} />
+                            </ActionIcon>
+                          )}
                           <ActionIcon
                             variant="subtle"
-                            onClick={() => setActiveProfile(profile.id)}
-                            title={t("profiles.setActive", { defaultValue: "Set active" })}
+                            onClick={() => openAddAccountModalForProfile(profile.id)}
+                            title={t("accounts.addAccount", { defaultValue: "Add Account" })}
                           >
-                            <IconCheck size={16} />
+                            <IconPlus size={16} />
                           </ActionIcon>
-                        )}
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={() => openAddAccountModalForProfile(profile.id)}
-                          title={t("accounts.addAccount", { defaultValue: "Add Account" })}
-                        >
-                          <IconPlus size={16} />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="subtle"
-                          onClick={() => openEditModal(profile)}
-                          title={t("common.edit", { defaultValue: "Edit" })}
-                        >
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="subtle"
-                          color="red"
-                          onClick={() => deleteProfile(profile)}
-                          title={t("common.delete", { defaultValue: "Delete" })}
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Group>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={() => openEditModal(profile)}
+                            title={t("common.edit", { defaultValue: "Edit" })}
+                          >
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            onClick={() => deleteProfile(profile)}
+                            title={t("common.delete", { defaultValue: "Delete" })}
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
         </Card>
 
         <Card withBorder radius="md" p="md">
