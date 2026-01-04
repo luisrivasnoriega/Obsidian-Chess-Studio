@@ -8,6 +8,7 @@
   Divider,
   Flex,
   Group,
+  Paper,
   Modal,
   Pagination,
   ScrollArea,
@@ -787,11 +788,19 @@ export default function ProfilesPage() {
                   </Text>
                 </Tabs.Panel>
                 <Tabs.Panel value="pawnStructures" pt="sm">
-                  <PawnStructuresPanel
-                    playerName={activeProfile?.name ?? ""}
-                    databaseFile={profileDatabase?.file ?? undefined}
-                    profileId={activeProfile?.id ?? undefined}
-                  />
+                  <Paper
+                    h="100%"
+                    shadow="sm"
+                    p="md"
+                    withBorder
+                    style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
+                  >
+                    <PawnStructuresPanel
+                      playerName={activeProfile?.name ?? ""}
+                      databaseFile={profileDatabase?.file ?? undefined}
+                      profileId={activeProfile?.id ?? undefined}
+                    />
+                  </Paper>
                 </Tabs.Panel>
               </Tabs>
             </Card>

@@ -5,13 +5,11 @@ import {
   Button,
   Group,
   Progress,
-  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
   Table,
   Text,
-  Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
@@ -361,15 +359,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   };
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md">
-      <Box
-        style={{
-          flex: "0 0 25%",
-          minWidth: 280,
-          maxWidth: 420,
-          minHeight: 0,
-        }}
-      >
+    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
+      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
         <PlayerSidebarCard
           playerName={playerName}
           info={playerInfo}
@@ -383,113 +374,118 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         />
       </Box>
       <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        <Stack gap="md" style={{ minHeight: 0 }} p="md">
-          <Title order={4}>{t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}</Title>
-          <Group align="flex-end" wrap="wrap">
-            <Select
-              label={t("features.dashboard.inMove")}
-              data={moveOptions}
-              value={pawnMoveFilter.toString()}
-              onChange={(value) => setPawnMoveFilter(Number.parseInt(value || "10", 10))}
-              style={{ width: 100 }}
-              size="xs"
-            />
-            <Select
-              label={t("features.dashboard.playerColor")}
-              data={[
-                { value: "white", label: t("features.dashboard.white") },
-                { value: "black", label: t("features.dashboard.black") },
-                { value: "any", label: t("features.dashboard.any") },
-              ]}
-              value={pawnColorFilter}
-              onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
-              style={{ width: 140 }}
-              size="xs"
-            />
-            <SegmentedControl
-              value={pawnStructureMode}
-              onChange={(value) => setPawnStructureMode(value as "player" | "both")}
-              data={[
-                { label: t("features.dashboard.playerStructure"), value: "player" },
-                { label: t("features.dashboard.bothStructures"), value: "both" },
-              ]}
-              size="xs"
-            />
-            <Button leftSection={<IconSearch size={14} />} onClick={handleSearch} loading={pawnLoading} size="xs">
-              {t("features.dashboard.search")}
-            </Button>
-          </Group>
-          {pawnLoading && <Progress value={pawnProgress ?? 0} size="xs" />}
+        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+          <Stack gap="md" p="md" style={{ minHeight: 0 }}>
+            <Group align="flex-end" wrap="wrap">
+              <Select
+                label={t("features.dashboard.inMove")}
+                data={moveOptions}
+                value={pawnMoveFilter.toString()}
+                onChange={(value) => setPawnMoveFilter(Number.parseInt(value || "10", 10))}
+                style={{ width: 100 }}
+                size="xs"
+              />
+              <Select
+                label={t("features.dashboard.playerColor")}
+                data={[
+                  { value: "white", label: t("features.dashboard.white") },
+                  { value: "black", label: t("features.dashboard.black") },
+                  { value: "any", label: t("features.dashboard.any") },
+                ]}
+                value={pawnColorFilter}
+                onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
+                style={{ width: 140 }}
+                size="xs"
+              />
+              <SegmentedControl
+                value={pawnStructureMode}
+                onChange={(value) => setPawnStructureMode(value as "player" | "both")}
+                data={[
+                  { label: t("features.dashboard.playerStructure"), value: "player" },
+                  { label: t("features.dashboard.bothStructures"), value: "both" },
+                ]}
+                size="xs"
+              />
+              <Button leftSection={<IconSearch size={14} />} onClick={handleSearch} loading={pawnLoading} size="xs">
+                {t("features.dashboard.search")}
+              </Button>
+            </Group>
+            {pawnLoading && <Progress value={pawnProgress ?? 0} size="xs" />}
 
-          {sortedStructures.length > 0 ? (
-            <ScrollArea>
-              <Table>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>{t("features.dashboard.structure")}</Table.Th>
-                    <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("frequency")}>
-                      {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
-                    </Table.Th>
-                    <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
-                      {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
-                    </Table.Th>
-                    <Table.Th>{t("features.dashboard.actions")}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {sortedStructures.map((structure) => {
-                    const displayFen = expandedFen ?? structure.sampleFen ?? fallbackFen;
-                    return (
-                      <Fragment key={structure.structure}>
-                        <Table.Tr>
-                          <Table.Td>
-                            <Text fw={600}>{structure.structure}</Text>
-                          </Table.Td>
-                          <Table.Td>{structure.frequency}</Table.Td>
-                          <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
-                          <Table.Td>
-                            <Button size="xs" variant="light" onClick={() => toggleStructureDetails(structure)}>
-                              {expandedStructure === structure.structure
-                                ? t("features.dashboard.hide")
-                                : t("features.dashboard.view")}
-                            </Button>
-                          </Table.Td>
-                        </Table.Tr>
-                        {expandedStructure === structure.structure && (
+            {sortedStructures.length > 0 ? (
+              <Box>
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>{t("features.dashboard.structure")}</Table.Th>
+                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("frequency")}>
+                        {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
+                      </Table.Th>
+                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
+                        {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
+                      </Table.Th>
+                      <Table.Th>{t("features.dashboard.actions")}</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {sortedStructures.map((structure) => {
+                      const displayFen = expandedFen ?? structure.sampleFen ?? fallbackFen;
+                      return (
+                        <Fragment key={structure.structure}>
                           <Table.Tr>
-                            <Table.Td colSpan={4}>
-                              <Stack gap="md">
-                                <Chessground
-                                  fen={displayFen}
-                                  coordinates={false}
-                                  viewOnly
-                                  orientation={pawnColorFilter === "black" ? "black" : "white"}
-                                />
-                                <Group gap="xs">
-                                  <Badge size="sm" variant="light">
-                                    {t("features.dashboard.structure")}:
-                                  </Badge>
-                                  <Text>{structure.structure}</Text>
-                                  <ActionIcon size="sm" variant="subtle" onClick={() => copyFenToClipboard(displayFen)}>
-                                    <IconCopy size={14} />
-                                  </ActionIcon>
-                                </Group>
-                              </Stack>
+                            <Table.Td>
+                              <Text fw={600}>{structure.structure}</Text>
+                            </Table.Td>
+                            <Table.Td>{structure.frequency}</Table.Td>
+                            <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
+                            <Table.Td>
+                              <Button size="xs" variant="light" onClick={() => toggleStructureDetails(structure)}>
+                                {expandedStructure === structure.structure
+                                  ? t("features.dashboard.hide")
+                                  : t("features.dashboard.view")}
+                              </Button>
                             </Table.Td>
                           </Table.Tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          ) : (
-            <Text size="sm" c="dimmed" ta="center">
-              {t("features.dashboard.noPawnStructuresHint")}
-            </Text>
-          )}
-        </Stack>
+                          {expandedStructure === structure.structure && (
+                            <Table.Tr>
+                              <Table.Td colSpan={4}>
+                                <Stack gap="md">
+                                  <Chessground
+                                    fen={displayFen}
+                                    coordinates={false}
+                                    viewOnly
+                                    orientation={pawnColorFilter === "black" ? "black" : "white"}
+                                  />
+                                  <Group gap="xs">
+                                    <Badge size="sm" variant="light">
+                                      {t("features.dashboard.structure")}:
+                                    </Badge>
+                                    <Text>{structure.structure}</Text>
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      onClick={() => copyFenToClipboard(displayFen)}
+                                    >
+                                      <IconCopy size={14} />
+                                    </ActionIcon>
+                                  </Group>
+                                </Stack>
+                              </Table.Td>
+                            </Table.Tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </Box>
+            ) : (
+              <Text size="sm" c="dimmed" p="md">
+                {t("features.dashboard.noPawnStructuresHint")}
+              </Text>
+            )}
+          </Stack>
+        </Box>
       </Box>
     </Group>
   );
