@@ -54,13 +54,13 @@ export const closeTabBtn = style({
 
 export const flash = style({
   animation: "tab-flash 2s ease-in-out !important",
-  position: "relative !important",
+  position: "relative",
   zIndex: "1000 !important",
 });
 
 export const flashDark = style({
   animation: "tab-flash-dark 2s ease-in-out !important",
-  position: "relative !important",
+  position: "relative",
   zIndex: "1000 !important",
 });
 

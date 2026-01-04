@@ -145,7 +145,7 @@ pub fn is_position_cached(
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
 
-    debug!("Checking cache for FEN: {} in DB: {}", fen, db_path_str);
+    log::info!("is_position_cached: Checking cache for FEN: {} in DB: {}", fen, db_path_str);
 
     let count: i64 = position_cache::table
         .filter(position_cache::fen.eq(fen))
@@ -154,7 +154,7 @@ pub fn is_position_cached(
         .get_result(&mut conn)?;
 
     let cached = count > 0;
-    debug!("Cache check result: {} (count: {})", cached, count);
+    log::info!("is_position_cached: Cache check result: {} (count: {})", cached, count);
 
     Ok(cached)
 }
@@ -168,8 +168,8 @@ pub fn get_cached_position(
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
 
-    debug!(
-        "Loading cached data for FEN: {} in DB: {}",
+    log::info!(
+        "get_cached_position: Loading cached data for FEN: {} in DB: {}",
         fen, db_path_str
     );
 
@@ -215,8 +215,8 @@ pub fn get_cached_position(
         .order(position_games::game_order.asc())
         .load(&mut conn)?;
 
-    debug!(
-        "Loaded {} stats and {} game IDs from cache",
+    log::info!(
+        "get_cached_position: Loaded {} stats and {} game IDs from cache",
         stats.len(),
         game_ids.len()
     );

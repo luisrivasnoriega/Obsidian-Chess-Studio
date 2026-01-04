@@ -151,8 +151,8 @@ async function queryAllGamesFromDb(
         const matchesPlatform = platformFilter === "all" || normalizedSite === platformFilter;
         if (!matchesPlatform) continue;
 
-        const hasTimeControl = typeof game.time_control === "string";
-        const currentTimeControl = hasTimeControl ? getTimeControl(game.site, game.time_control) : null;
+        const hasTimeControl = typeof game.time_control === "string" && game.time_control !== null;
+        const currentTimeControl = hasTimeControl && game.time_control ? getTimeControl(game.site, game.time_control) : null;
         if (timeControlFilter !== "any" && currentTimeControl !== timeControlFilter) continue;
 
         if (opponentEloBucket !== "all") {
@@ -317,7 +317,11 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         ?.filter((games) => platform === "all" || normalizePlatform(games.site) === platform)
         .flatMap((games) =>
           games.data
-            .filter((game) => timeControl === "any" || getTimeControl(games.site, game.time_control) === timeControl)
+            .filter((game) => {
+              if (timeControl === "any") return true;
+              if (typeof game.time_control !== "string" || !game.time_control) return false;
+              return getTimeControl(games.site, game.time_control) === timeControl;
+            })
             .map((game) => {
               if (!game.date) return null;
               return new Date(game.date.replaceAll(".", "-")).getTime();
@@ -614,7 +618,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                                           <Text size="sm" fw={600} mb="xs">
                                             {t("features.dashboard.games", { defaultValue: "Games" })} ({structure.games.length})
                                           </Text>
-                                          <Table striped highlightOnHover size="xs">
+                                          <Table striped highlightOnHover>
                                             <Table.Thead>
                                               <Table.Tr>
                                                 <Table.Th>{t("features.dashboard.playerColor", { defaultValue: "Player color" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>

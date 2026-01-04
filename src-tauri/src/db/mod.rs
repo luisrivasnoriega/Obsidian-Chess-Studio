@@ -2407,5 +2407,41 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
         cache_path.display()
     );
 
+    // Create a marker file to indicate that the pre-calculated cache was installed
+    // This distinguishes it from a cache that was generated on-the-fly during searches
+    let marker_path = app
+        .path()
+        .resolve("position_cache.installed", BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve marker path: {}", e)))?;
+
+    // Write a simple marker file with timestamp
+    use std::io::Write;
+    let mut marker_file = std::fs::File::create(&marker_path).map_err(|e| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to create marker file: {}", e),
+        ))
+    })?;
+    
+    // Write installation timestamp
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to get timestamp: {}", e),
+            ))
+        })?
+        .as_secs();
+    
+    marker_file.write_all(timestamp.to_string().as_bytes()).map_err(|e| {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to write marker file: {}", e),
+        ))
+    })?;
+
+    info!("Position cache marker file created at: {}", marker_path.display());
+
     Ok(())
 }

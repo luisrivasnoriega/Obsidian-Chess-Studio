@@ -1,7 +1,7 @@
 import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { createTab, type Tab } from "@/utils/tabs";
 import { debugNavLog } from "@/utils/debugNav";
@@ -14,27 +14,41 @@ function isTabMode(tab: Tab, mode: EntryMode): boolean {
   return tab.type === mode;
 }
 
-export function getRouteForTab(tab: Tab | null | undefined): "/play" | "/analysis" | "/puzzles" {
+export function getRouteForTab(tab: Tab | null | undefined): "/play" | "/analysis" | "/puzzles" | "/profiles" {
   if (!tab) return "/analysis";
   if (tab.type === "play") return "/play";
   if (tab.type === "puzzles") return "/puzzles";
+  if (tab.type === "profiles") return "/profiles";
   return "/analysis";
 }
 
 export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const routerState = useRouterState();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const currentPath = routerState.location.pathname;
 
   const active = useMemo(() => tabs.find((tab) => tab.value === activeTab) ?? null, [activeTab, tabs]);
   const ensureKey = `${mode}:${tabs.length}:${activeTab ?? ""}`;
   const lastEnsureKey = useRef<string | null>(null);
 
   useEffect(() => {
-    debugNavLog("route-entry", { mode, tabs: tabs.length, activeTab, activeType: active?.type ?? null });
+    debugNavLog("route-entry", { mode, tabs: tabs.length, activeTab, activeType: active?.type ?? null, currentPath });
     if (lastEnsureKey.current === ensureKey) return;
     lastEnsureKey.current = ensureKey;
+
+    // Don't navigate if we're on /profiles and the active tab is not of this mode
+    // This allows tabs created from profiles (like analysis tabs from openings) to remain active
+    // without forcing navigation away from /profiles
+    if (currentPath === "/profiles" && active && !isTabMode(active, mode)) {
+      debugNavLog("route-entry: skipping navigation - on /profiles with different tab type", { 
+        activeType: active.type, 
+        mode 
+      });
+      return;
+    }
 
     if (tabs.length === 0) {
       try {
@@ -78,6 +92,13 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
       if (skipMode === mode) {
         sessionStorage.removeItem("boardsRouteEntry.skipEnsureOnce");
         if (active) {
+          // Don't navigate if we're on /profiles - allow the user to stay there
+          if (currentPath === "/profiles") {
+            debugNavLog("route-entry: skipping navigation after tab close - on /profiles", { 
+              activeType: active.type 
+            });
+            return;
+          }
           navigate({ to: getRouteForTab(active) });
           return;
         }
@@ -86,6 +107,14 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
 
     const existing = tabs.find((tab) => isTabMode(tab, mode)) ?? null;
     if (existing) {
+      // Don't switch tabs if we're on /profiles - allow the user to stay there
+      if (currentPath === "/profiles") {
+        debugNavLog("route-entry: skipping tab switch - on /profiles", { 
+          existingTab: existing.value, 
+          activeTab: active?.value 
+        });
+        return;
+      }
       debugNavLog("route-entry: switching to existing tab", { tab: existing.value, type: existing.type });
       setActiveTab(existing.value);
       return;

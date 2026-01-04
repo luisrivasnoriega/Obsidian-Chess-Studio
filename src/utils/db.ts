@@ -249,11 +249,23 @@ export async function searchPosition(options: LocalOptions, tab: string) {
     throw new Error("Missing reference database");
   }
 
-  const fen = (options.fen ?? "").trim();
+  let fen = (options.fen ?? "").trim();
   const type = options.type ?? "exact";
+  
+  // Remove trailing spaces from FEN (common issue)
+  fen = fen.trimEnd();
+  
   if (!fen) {
+    console.error("searchPosition: Missing FEN", { options });
     throw new Error("Missing FEN for local database search");
   }
+  
+  console.log("searchPosition: Calling backend", { 
+    path: options.path, 
+    fen: fen.substring(0, 50), 
+    fenLength: fen.length,
+    type 
+  });
 
   // Ensure gameDetailsLimit is a valid number between 1 and 1000
   const parsedLimit =
@@ -269,15 +281,14 @@ export async function searchPosition(options: LocalOptions, tab: string) {
 
   // Build payload matching GameQueryJs type exactly
   // Only include fields that have values to avoid serialization issues
-  // Note: game_details_limit is serialized as string by Rust's bigint_serde
-  // Tauri handles BigInt, but we need to ensure it's properly typed
-  // Using BigInt as the type expects bigint, and Tauri will handle the serialization
-  const payload: GameQueryJs = {
+  // Note: game_details_limit is serialized as string to handle bigint in JSON
+  // We pass as number and Tauri will handle the conversion
+  const payload = {
     position: {
       fen,
       type_: type,
     },
-    game_details_limit: BigInt(gameDetailsLimitValue),
+    game_details_limit: gameDetailsLimitValue,
     options: {
       skipCount: true,
       sort: (options.sort || "averageElo") as "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count",
@@ -294,14 +305,28 @@ export async function searchPosition(options: LocalOptions, tab: string) {
     throw new Error("Missing database path for position search.");
   }
 
-  const res = await commands.searchPosition(options.path, payload, tab);
+  console.log("searchPosition: Calling Tauri command", { path: options.path, payload, tab });
+  
+  try {
+    console.log("searchPosition: About to call commands.searchPosition");
+    const res = await commands.searchPosition(options.path, payload, tab);
+    console.log("searchPosition: Tauri command response", { status: res.status, hasData: !!res.data, error: res.status === "error" ? res.error : undefined });
 
-  if (res.status === "error") {
-    if (res.error !== "Search stopped") {
-      unwrap(res);
+    if (res.status === "error") {
+      console.error("searchPosition: Tauri command error", res.error);
+      if (res.error !== "Search stopped") {
+        unwrap(res);
+      }
+      throw new Error(res.error);
     }
-    throw new Error(res.error);
-  }
 
-  return res.data;
+    console.log("searchPosition: Success", { 
+      openingsCount: res.data?.[0]?.length || 0, 
+      gamesCount: res.data?.[1]?.length || 0 
+    });
+    return res.data;
+  } catch (error) {
+    console.error("searchPosition: Exception caught", error);
+    throw error;
+  }
 }

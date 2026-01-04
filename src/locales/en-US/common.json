@@ -1088,7 +1088,8 @@
                                                     "selectReference":  "add a database",
                                                     "noReference3":  "first and mark it as the reference.",
                                                     "timeControl":  "Time control",
-                                                    "averageRating":  "Average rating"
+                                                    "averageRating":  "Average rating",
+                                                    "selectDatabase":  "Select database"
                                                 },
                                    "variants":  {
                                                     "treeBuilder":  {

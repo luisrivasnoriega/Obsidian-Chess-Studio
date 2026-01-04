@@ -1,4 +1,4 @@
-import { Alert, Group, ScrollArea, SegmentedControl, Stack, Tabs, Text } from "@mantine/core";
+import { Alert, Group, ScrollArea, SegmentedControl, Select, Stack, Tabs, Text } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
@@ -17,14 +17,12 @@ import {
   currentTabSelectedAtom,
   lichessOptionsAtom,
   masterOptionsAtom,
-  referenceDbAtom,
 } from "@/state/atoms";
-import { type Opening, searchPosition } from "@/utils/db";
+import { type Opening, type DatabaseInfo, getDatabases, searchPosition } from "@/utils/db";
 import { convertToNormalized, getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGamesOptions, MasterGamesOptions } from "@/utils/lichess/explorer";
 import DatabaseLoader from "./DatabaseLoader";
 import GamesTable from "./GamesTable";
-import NoDatabaseWarning from "./NoDatabaseWarning";
 import OpeningsTable from "./OpeningsTable";
 import LichessOptionsPanel from "./options/LichessOptionsPanel";
 import LocalOptionsPanel from "./options/LocalOptionsPanel";
@@ -83,7 +81,26 @@ async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number) {
     })
     .with({ type: "local" }, async ({ options }) => {
       if (!options.path) throw Error("Missing reference database");
-      const positionData = await searchPosition({ ...options, gameDetailsLimit }, tab);
+      if (!options.fen || options.fen.trim() === "") {
+        console.error("DatabasePanel: Missing FEN", { options });
+        throw Error("Missing FEN for local database search");
+      }
+      console.log("DatabasePanel: Searching", { 
+        path: options.path, 
+        fen: options.fen.substring(0, 50), 
+        type: options.type 
+      });
+      let positionData;
+      try {
+        positionData = await searchPosition({ ...options, gameDetailsLimit }, tab);
+        console.log("DatabasePanel: Results", { 
+          openings: positionData[0].length, 
+          games: positionData[1].length 
+        });
+      } catch (error) {
+        console.error("DatabasePanel: Error in searchPosition", error);
+        throw error;
+      }
       return {
         openings: sortOpenings(positionData[0]),
         games: positionData[1],
@@ -97,7 +114,6 @@ function DatabasePanel() {
   const queryClient = useQueryClient();
 
   const store = useContext(TreeStateContext)!;
-  const referenceDatabase = useAtomValue(referenceDbAtom);
   const [db, setDb] = useAtom(currentDbTypeAtom);
   const [lichessOptions] = useAtom(lichessOptionsAtom);
   const [masterOptions] = useAtom(masterOptionsAtom);
@@ -107,40 +123,51 @@ function DatabasePanel() {
   const [tabType, setTabType] = useAtom(currentDbTabAtom);
   const currentTabSelected = useAtomValue(currentTabSelectedAtom);
   const tabValue = tab?.value ?? "analysis";
+
+  // Get available local databases
+  const { data: databases } = useQuery({
+    queryKey: ["databases"],
+    queryFn: getDatabases,
+  });
+
+  // Filter only successful game databases (not puzzles)
+  // Note: DatabaseInfo from getDatabases includes 'file' field at runtime
+  const gameDatabases = useMemo(() => {
+    return (databases ?? []).filter((db) => db.type === "success") as Array<
+      DatabaseInfo & { type: "success"; file: string }
+    >;
+  }, [databases]);
+
+  // Default local DB selection:
+  // - keep user's explicit selection (`localOptions.path`) if present
+  // - otherwise pick the first available local DB
+  const defaultLocalDbPath = useMemo(() => {
+    if (localOptions.path) return localOptions.path;
+    return gameDatabases[0]?.file ?? null;
+  }, [gameDatabases, localOptions.path]);
   
   // Only search when we're in the database tab and viewing stats or games
   const isDatabaseTabActive = currentTabSelected === "database";
   const isStatsOrGamesTab = tabType === "stats" || tabType === "games";
   const shouldSearch = isDatabaseTabActive && isStatsOrGamesTab;
   
-  // Only subscribe to FEN when we actually need it (when in database tab and viewing stats/games)
-  // This prevents unnecessary re-renders that cause stuttering when navigating the board
-  // Use a ref to track the last FEN we actually need, so we don't re-render unnecessarily
+  // Always get FEN from store to ensure we have the current position
+  // Use a ref to track the last FEN to prevent unnecessary re-renders when not searching
   const lastNeededFenRef = useRef<string>(localOptions.fen || "");
   
-  // Always get FEN from store, but use a memoized selector that returns stable value when not searching
-  // This prevents re-renders when navigating the board while not in the database tab
-  const fenSelector = useMemo(
-    () => (s: ReturnType<typeof store.getState>) => {
-      // When searching, return the actual FEN from store
-      if (shouldSearch) {
-        const currentFen = s.currentNode().fen;
-        if (currentFen !== lastNeededFenRef.current) {
-          lastNeededFenRef.current = currentFen;
-        }
-        return currentFen;
-      }
-      // When not searching, return a stable value to prevent re-renders
-      // Zustand will still subscribe, but the selector returns the same value, so React won't re-render
-      return lastNeededFenRef.current;
-    },
-    [shouldSearch],
-  );
+  // Always get FEN from store - ALWAYS subscribe to changes
+  // This ensures we always have the latest FEN, even when not searching
+  const fenFromStore = useStore(store, useShallow((s: ReturnType<typeof store.getState>) => s.currentNode().fen)) as string;
   
-  const fenFromStore = useStore(store, useShallow(fenSelector)) as string;
+  // Always use the current FEN from store
+  const fen: string = fenFromStore || lastNeededFenRef.current;
   
-  // Use the FEN from store when searching, otherwise use the last known FEN
-  const fen: string = shouldSearch ? fenFromStore : lastNeededFenRef.current;
+  // Update lastNeededFenRef when FEN changes
+  useEffect(() => {
+    if (fenFromStore && fenFromStore !== lastNeededFenRef.current) {
+      lastNeededFenRef.current = fenFromStore;
+    }
+  }, [fenFromStore]);
   
   // Reduced debounce for local DB to improve synchronization with analysis board
   const [debouncedFen] = useDebouncedValue(fen, db === "local" ? 100 : 50);
@@ -150,15 +177,23 @@ function DatabasePanel() {
   // Update localOptions immediately when FEN changes (before debounce)
   // This ensures the query always uses the latest FEN
   // Always load 1000 games sorted by elo when FEN changes
-  // ONLY update if we're in the database tab and viewing stats or games
+  // Update FEN whenever it changes, not just when searching
   useEffect(() => {
-    if (db === "local" && shouldSearch) {
+    if (db === "local" && localOptions.path && fen) {
       const fenChanged = fen !== prevFenRef.current;
       if (fenChanged) {
+        console.log("[DatabasePanel] FEN changed:", { 
+          old: prevFenRef.current?.substring(0, 50), 
+          new: fen.substring(0, 50),
+          shouldSearch,
+          hasPath: !!localOptions.path
+        });
         prevFenRef.current = fen;
 
         // Cancel any ongoing queries immediately when FEN changes
-        queryClient.cancelQueries({ queryKey: ["database-opening"] });
+        if (shouldSearch) {
+          queryClient.cancelQueries({ queryKey: ["database-opening"] });
+        }
 
         setLocalOptions((q) => {
           // Update FEN immediately and ensure sort is by averageElo
@@ -170,26 +205,41 @@ function DatabasePanel() {
         });
 
         // Always set limit to 1000 when FEN changes
-        setGameLimit(1000);
+        if (shouldSearch) {
+          setGameLimit(1000);
+        }
       }
     }
-  }, [fen, setLocalOptions, db, queryClient, shouldSearch]);
+  }, [fen, setLocalOptions, db, queryClient, shouldSearch, localOptions.path]);
 
   // Handle debounced FEN for final query invalidation
   // This ensures we don't trigger too many queries during rapid FEN changes
   // ONLY invalidate if we're in the database tab and viewing stats or games
   useEffect(() => {
-    if (db === "local" && debouncedFen === fen && shouldSearch) {
+    if (db === "local" && debouncedFen === fen && shouldSearch && localOptions.path) {
+      console.log("[DatabasePanel] Invalidating query after FEN debounce:", { fen: debouncedFen.substring(0, 50) });
       // Only invalidate when debounce settles and matches current FEN
       queryClient.invalidateQueries({ queryKey: ["database-opening"] });
     }
-  }, [debouncedFen, fen, db, queryClient, shouldSearch]);
+  }, [debouncedFen, fen, db, queryClient, shouldSearch, localOptions.path]);
 
+  // Auto-select database when switching to local DB mode
+  // Also ensure FEN is initialized from store
   useEffect(() => {
     if (db === "local") {
-      setLocalOptions((q) => ({ ...q, path: referenceDatabase }));
+      const currentFenFromStore = store.getState().currentNode().fen;
+      const needsPathUpdate = defaultLocalDbPath && !localOptions.path;
+      const needsFenUpdate = (!localOptions.fen || localOptions.fen.trim() === "") && currentFenFromStore;
+      
+      if (needsPathUpdate || needsFenUpdate) {
+        setLocalOptions((q) => ({ 
+          ...q, 
+          ...(needsPathUpdate ? { path: defaultLocalDbPath } : {}),
+          ...(needsFenUpdate ? { fen: currentFenFromStore } : {})
+        }));
+      }
     }
-  }, [referenceDatabase, setLocalOptions, db]);
+  }, [db, defaultLocalDbPath, localOptions.path, localOptions.fen, setLocalOptions, store]);
 
   // Memoize dbType to avoid recreating on every render
   // IMPORTANT: Always use localOptions.fen (updated immediately) for local DB to ensure synchronization
@@ -214,11 +264,32 @@ function DatabasePanel() {
     [db, localOptions, lichessOptions, masterOptions, debouncedFen],
   );
 
+  // Ensure FEN is always set when we have a path but no FEN
+  useEffect(() => {
+    if (db === "local" && localOptions.path && (!localOptions.fen || localOptions.fen.trim() === "")) {
+      const currentFenFromStore = store.getState().currentNode().fen;
+      if (currentFenFromStore) {
+        setLocalOptions((q) => ({ ...q, fen: currentFenFromStore }));
+      }
+    }
+  }, [db, localOptions.path, localOptions.fen, setLocalOptions, store]);
+
   // Only enable query when:
   // 1. We're in the database tab (currentTabSelected === "database")
   // 2. We're viewing stats or games (not options)
   // 3. For local DB, we have FEN and path
-  const queryEnabled = shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path));
+  const queryEnabled = shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
+  
+  console.log("[DatabasePanel] Query state:", {
+    shouldSearch,
+    db,
+    hasFen: !!localOptions.fen,
+    hasPath: !!localOptions.path,
+    fenLength: localOptions.fen?.length || 0,
+    queryEnabled,
+    currentTab: currentTabSelected,
+    tabType
+  });
 
   const {
     data: openingData,
@@ -230,6 +301,7 @@ function DatabasePanel() {
       "database-opening",
       db,
       db === "local" ? localOptions.fen : debouncedFen, // include fen for all DBs to refetch on board move
+      db === "local" ? localOptions.path : null, // include path to refetch when database changes
       db === "local" ? localOptions.type : null,
       db === "local" ? localOptions.player : null,
       db === "local" ? localOptions.color : null,
@@ -277,6 +349,33 @@ function DatabasePanel() {
 
       <DatabaseLoader isLoading={isLoading} tab={tab?.value ?? null} />
 
+      {db === "local" && (
+        <Select
+          data={gameDatabases.map((db) => ({
+            label: db.title,
+            value: db.file,
+          }))}
+          value={localOptions.path ?? defaultLocalDbPath}
+          onChange={(value) => {
+            if (value) {
+              const currentFenFromStore = store.getState().currentNode().fen;
+              setLocalOptions((prev) => ({ 
+                ...prev, 
+                path: value,
+                fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+              }));
+              // Invalidate queries to trigger new search with new database
+              queryClient.invalidateQueries({ queryKey: ["database-opening"] });
+            }
+          }}
+          placeholder={t("features.board.database.selectDatabase")}
+          searchable
+          clearable={false}
+          style={{ minWidth: 200 }}
+          mb="xs"
+        />
+      )}
+
       <Tabs
         defaultValue="stats"
         orientation="vertical"
@@ -295,10 +394,10 @@ function DatabasePanel() {
           <Tabs.Tab value="options">{t("features.board.database.options")}</Tabs.Tab>
         </Tabs.List>
 
-        <PanelWithError value="stats" error={error} type={db}>
+        <PanelWithError value="stats" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
           <OpeningsTable openings={openingData?.openings || []} loading={isLoading} />
         </PanelWithError>
-        <PanelWithError value="games" error={error} type={db}>
+        <PanelWithError value="games" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
           <GamesTable 
             games={openingData?.games || []} 
             loading={isLoading}
@@ -306,7 +405,7 @@ function DatabasePanel() {
             databasePath={db === "local" ? (localOptions.path ?? undefined) : undefined}
           />
         </PanelWithError>
-        <PanelWithError value="options" error={error} type={db}>
+        <PanelWithError value="options" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
           <ScrollArea h="100%" offsetScrollbars>
             {match(db)
               .with("local", () => <LocalOptionsPanel boardFen={debouncedFen} />)
@@ -320,11 +419,17 @@ function DatabasePanel() {
   );
 }
 
-function PanelWithError(props: { value: string; error: Error | null; type: string; children: React.ReactNode }) {
-  const referenceDatabase = useAtomValue(referenceDbAtom);
+function PanelWithError(props: {
+  value: string;
+  error: Error | null;
+  type: string;
+  hasLocalDatabase: boolean;
+  children: React.ReactNode;
+}) {
+  const { t } = useTranslation();
   let children = props.children;
-  if (props.type === "local" && !referenceDatabase) {
-    children = <NoDatabaseWarning />;
+  if (props.type === "local" && !props.hasLocalDatabase) {
+    children = <Text size="sm">{t("features.board.variants.treeBuilder.missingDb")}</Text>;
   }
   if (props.error && props.type !== "local") {
     children = <Alert color="red">{props.error.message}</Alert>;

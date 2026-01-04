@@ -100,7 +100,7 @@ export function WelcomeCard({
 
   return (
     <Card shadow="sm" p="lg" radius="md" withBorder>
-      <Group align="center" justify="space-between" wrap="nowrap" gap="xl">
+      <Group align="center" justify="flex-start" wrap="nowrap" gap="xl">
         {/* Left column: FIDE profile photo - only show if it exists */}
         {photoUrl ? (
           <Box
@@ -210,7 +210,7 @@ export function WelcomeCard({
           </Group>
         </Stack>
 
-        <Box style={{ flexShrink: 0 }}>
+        <Box style={{ flexShrink: 0, marginLeft: "auto" }}>
           <Image
             src={backgroundImageSrc}
             alt={backgroundImageAlt}

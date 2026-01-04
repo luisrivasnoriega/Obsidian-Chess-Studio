@@ -956,7 +956,8 @@
         "selectReference": "agrega una base de datos",
         "noReference3": "primero y marcarla como la referencia.",
         "timeControl": "Control de tiempo",
-        "averageRating": "Puntuación promedio"
+        "averageRating": "Puntuación promedio",
+        "selectDatabase": "Seleccionar base de datos"
       },
       "variants": {
         "treeBuilder": {

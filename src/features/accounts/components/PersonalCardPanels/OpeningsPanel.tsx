@@ -1,5 +1,4 @@
 import { Box, Divider, Group, Select, Stack, Text } from "@mantine/core";
-import { useNavigate } from "@tanstack/react-router";
 import type { Color } from "chessops";
 import { useAtom } from "jotai";
 import { useMemo, useState } from "react";
@@ -270,9 +269,10 @@ function OpeningsPanel({ playerName, info }: { playerName: string; info: PlayerG
 }
 
 function OpeningDetail({ opening, totalGames, color }: { opening: OpeningStats; totalGames: number; color: Color }) {
-  const [, setTabs] = useAtom(tabsAtom);
+  const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
-  const navigate = useNavigate();
+  const currentPath = typeof window !== "undefined" ? window.location.pathname : "";
+  const isOnProfiles = currentPath === "/profiles";
 
   const openingRate = opening.games / Math.max(totalGames, 1);
 
@@ -283,22 +283,43 @@ function OpeningDetail({ opening, totalGames, color }: { opening: OpeningStats; 
           lineClamp={2}
           style={{ flex: 1, minWidth: 0 }} // <- critical: allow shrink + clamp
           className={classes.link}
-          onClick={async () => {
+          onClick={async (e) => {
+            e.stopPropagation();
             const pgn = unwrap(await commands.getOpeningFromName(opening.name));
             const headers = defaultTree().headers;
             const tree = await parsePGN(pgn);
             headers.orientation = color;
 
-            createTab({
+            // Create the tab but manage activation manually to prevent navigation
+            const tabId = await createTab({
               tab: { name: opening.name, type: "analysis" },
               pgn,
               headers,
               setTabs,
               setActiveTab,
               position: Array(countMainPly(tree.root)).fill(0),
+              autoActivate: false,
             });
 
-            navigate({ to: "/analysis" });
+            // If we're on /profiles, activate the tab briefly for the blink effect,
+            // then immediately reactivate the profiles tab to prevent navigation
+            if (isOnProfiles && tabId) {
+              const profilesTab = tabs.find((tab) => tab.type === "profiles");
+              if (profilesTab) {
+                // Activate the new tab for a brief moment to trigger the blink
+                setActiveTab(tabId);
+                // Then reactivate profiles tab immediately to prevent navigation
+                setTimeout(() => {
+                  setActiveTab(profilesTab.value);
+                }, 50);
+              } else {
+                // If no profiles tab, just activate the new tab
+                setActiveTab(tabId);
+              }
+            } else if (tabId) {
+              // If not on profiles, activate normally
+              setActiveTab(tabId);
+            }
           }}
         >
           {opening.name}

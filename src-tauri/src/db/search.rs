@@ -16,6 +16,7 @@
 use dashmap::{mapref::entry::Entry, DashMap};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
+use diesel::dsl::max;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::ByColor;
@@ -588,16 +589,14 @@ impl<'a> MoveStream<'a> {
 }
 
 /// Find the next move played after a position matches the query
-/// Simplified version - smaller and more efficient
+/// Uses MoveStream to properly handle GameTree format (with comments, variations, etc.)
 #[inline]
 fn get_move_after_match(
     move_blob: &[u8],
     fen: &Option<String>,
     query: &PositionQuery,
 ) -> Result<Option<String>, Error> {
-    use crate::db::encoding::decode_move;
-
-    let mut chess = if let Some(fen) = fen {
+    let start_chess = if let Some(fen) = fen {
         let fen = Fen::from_ascii(fen.as_bytes())?;
         Chess::from_setup(fen.into_setup(), shakmaty::CastlingMode::Chess960)?
     } else {
@@ -605,41 +604,36 @@ fn get_move_after_match(
     };
 
     // Early return if position matches at start
-    if query.matches(&chess) {
+    if query.matches(&start_chess) {
         if move_blob.is_empty() {
             return Ok(Some("*".to_string()));
         }
-        if let Some(next_move) = decode_move(move_blob[0], &chess) {
-            let san = SanPlus::from_move(chess, &next_move);
-            return Ok(Some(san.to_string()));
+        let mut stream = MoveStream::new(move_blob, start_chess.clone());
+        if let Some((_, next_move)) = stream.next_move() {
+            return Ok(Some(next_move));
         }
         return Ok(None);
     }
 
-    let blob_len = move_blob.len();
-    for (i, &byte) in move_blob.iter().enumerate() {
-        let Some(m) = decode_move(byte, &chess) else {
-            return Ok(None);
-        };
-        chess.play_unchecked(&m);
+    let mut stream = MoveStream::new(move_blob, start_chess);
 
+    while let Some((position_after_move, _move_string)) = stream.next_move() {
         // Early exit if unreachable
-        let board = chess.board();
+        let board = position_after_move.board();
         if !query.is_reachable_by(&get_material_count(board), get_pawn_home(board)) {
             return Ok(None);
         }
 
-        if query.matches(&chess) {
-            if i == blob_len - 1 {
-                return Ok(Some("*".to_string()));
+        if query.matches(&position_after_move) {
+            // Position found! Get the next move if available
+            if let Some((_, next_move)) = stream.next_move() {
+                return Ok(Some(next_move));
             }
-            if let Some(next_move) = decode_move(move_blob[i + 1], &chess) {
-                let san = SanPlus::from_move(chess, &next_move);
-                return Ok(Some(san.to_string()));
-            }
-            return Ok(None);
+            // No more moves, this is the end of the game
+            return Ok(Some("*".to_string()));
         }
     }
+
     Ok(None)
 }
 
@@ -1209,6 +1203,35 @@ pub(crate) fn search_position_local_internal(
     Ok((openings_vec, ids))
 }
 
+/// Detect whether a "local" DB likely has missing/unreliable reachability metadata.
+///
+/// Many imported/custom DBs may have `games.pawn_home/white_material/black_material` all zeros,
+/// which makes the LOCAL reachability prefilter reject every game (false negatives).
+/// In that case, we fall back to the ONLINE search strategy which derives reachability from each
+/// game's initial position instead of relying on these columns.
+fn local_reachability_metadata_missing(db: &mut SqliteConnection) -> bool {
+    // If the games table is empty, metadata is irrelevant.
+    let res: Result<(Option<i32>, Option<i32>, Option<i32>), diesel::result::Error> =
+        games::table
+            .select((
+                max(games::pawn_home),
+                max(games::white_material),
+                max(games::black_material),
+            ))
+            .first(db);
+
+    match res {
+        Ok((pawn_home_max, white_mat_max, black_mat_max)) => {
+            let pawn_home_max = pawn_home_max.unwrap_or(0);
+            let white_mat_max = white_mat_max.unwrap_or(0);
+            let black_mat_max = black_mat_max.unwrap_or(0);
+            pawn_home_max == 0 && white_mat_max == 0 && black_mat_max == 0
+        }
+        // If we can't query these columns for any reason, treat as missing and use fallback.
+        Err(_) => true,
+    }
+}
+
 /// ============================================================================
 /// ONLINE internal search
 /// ============================================================================
@@ -1239,9 +1262,6 @@ pub(crate) fn search_position_online_internal(
         Option<String>, // result
         Vec<u8>,        // moves
         Option<String>, // fen
-        i32,            // pawn_home (ignored)
-        i32,            // white_material (ignored)
-        i32,            // black_material (ignored)
     )> = match games::table
         .select((
             games::id,
@@ -1251,20 +1271,26 @@ pub(crate) fn search_position_online_internal(
             games::result,
             games::moves,
             games::fen,
-            games::pawn_home,
-            games::white_material,
-            games::black_material,
         ))
         .load(db)
     {
-        Ok(g) => g,
-        Err(_) => return (Vec::new(), Vec::new()),
+        Ok(g) => {
+            log::info!("search_position_online_internal: Loaded {} games from DB", g.len());
+            g
+        }
+        Err(e) => {
+            log::error!("search_position_online_internal: Failed to load games: {:?}", e);
+            return (Vec::new(), Vec::new());
+        }
     };
 
     let games_len = games.len();
     if games_len == 0 {
+        log::warn!("search_position_online_internal: No games found in database");
         return (Vec::new(), Vec::new());
     }
+    
+    log::info!("search_position_online_internal: Processing {} games", games_len);
 
     let processed = AtomicUsize::new(0);
     let expected = total_games.max(games_len).max(1);
@@ -1296,9 +1322,6 @@ pub(crate) fn search_position_online_internal(
                 result,
                 game,
                 fen,
-                _end_pawn_home,
-                _white_material,
-                _black_material,
             )| {
                 if state.new_request.available_permits() == 0 {
                     return;
@@ -1352,12 +1375,13 @@ pub(crate) fn search_position_online_internal(
                     );
                 }
 
-                if let Ok(Some(m)) = get_move_after_match(game, fen, position_query) {
-                    if let Ok(mut sample) = sample_games.try_lock() {
-                        if sample.len() < MAX_SAMPLE_GAMES {
-                            sample.push(*id);
+                match get_move_after_match(game, fen, position_query) {
+                    Ok(Some(m)) => {
+                        if let Ok(mut sample) = sample_games.try_lock() {
+                            if sample.len() < MAX_SAMPLE_GAMES {
+                                sample.push(*id);
+                            }
                         }
-                    }
 
                     let entry = openings.entry(m);
                     match entry {
@@ -1387,6 +1411,17 @@ pub(crate) fn search_position_online_internal(
                         }
                     }
                 }
+                    Ok(None) => {
+                        // Position not found in this game, continue
+                    }
+                    Err(e) => {
+                        // Log decode errors but don't stop processing
+                        let idx = processed.load(Ordering::Relaxed);
+                        if idx % 10000 == 0 {
+                            log::debug!("search_position_online_internal: Error decoding game {}: {:?}", id, e);
+                        }
+                    }
+                }
             },
         );
     } else {
@@ -1398,9 +1433,6 @@ pub(crate) fn search_position_online_internal(
             result,
             game,
             fen,
-            _end_pawn_home,
-            _white_material,
-            _black_material,
         ) in games.iter()
         {
             if state.new_request.available_permits() == 0 {
@@ -1492,48 +1524,62 @@ pub(crate) fn search_position_online_internal(
                 );
             }
 
-            if let Ok(Some(m)) = get_move_after_match(game, fen, position_query) {
-                {
-                    let mut sample = sample_games.lock().unwrap();
-                    if sample.len() < MAX_SAMPLE_GAMES {
-                        sample.push(*id);
-                    }
-                }
-
-                let entry = openings.entry(m);
-                match entry {
-                    Entry::Occupied(mut e) => {
-                        let opening = e.get_mut();
-                        match result.as_deref() {
-                            Some("1-0") => opening.white += 1,
-                            Some("0-1") => opening.black += 1,
-                            Some("1/2-1/2") => opening.draw += 1,
-                            _ => (),
+            match get_move_after_match(game, fen, position_query) {
+                Ok(Some(m)) => {
+                    {
+                        let mut sample = sample_games.lock().unwrap();
+                        if sample.len() < MAX_SAMPLE_GAMES {
+                            sample.push(*id);
                         }
                     }
-                    Entry::Vacant(e) => {
-                        let move_str = e.key().clone();
-                        let (white, black, draw) = match result.as_deref() {
-                            Some("1-0") => (1, 0, 0),
-                            Some("0-1") => (0, 1, 0),
-                            Some("1/2-1/2") => (0, 0, 1),
-                            _ => (0, 0, 0),
-                        };
-                        e.insert(PositionStats {
-                            move_: move_str,
-                            white,
-                            black,
-                            draw,
-                        });
+
+                    let entry = openings.entry(m);
+                    match entry {
+                        Entry::Occupied(mut e) => {
+                            let opening = e.get_mut();
+                            match result.as_deref() {
+                                Some("1-0") => opening.white += 1,
+                                Some("0-1") => opening.black += 1,
+                                Some("1/2-1/2") => opening.draw += 1,
+                                _ => (),
+                            }
+                        }
+                        Entry::Vacant(e) => {
+                            let move_str = e.key().clone();
+                            let (white, black, draw) = match result.as_deref() {
+                                Some("1-0") => (1, 0, 0),
+                                Some("0-1") => (0, 1, 0),
+                                Some("1/2-1/2") => (0, 0, 1),
+                                _ => (0, 0, 0),
+                            };
+                            e.insert(PositionStats {
+                                move_: move_str,
+                                white,
+                                black,
+                                draw,
+                            });
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Position not found in this game
+                }
+                Err(e) => {
+                    // Log decode errors occasionally
+                    if processed.load(Ordering::Relaxed) % 10000 == 0 {
+                        log::debug!("search_position_online_internal: Error decoding game {}: {:?}", id, e);
                     }
                 }
             }
         }
     }
 
-    let openings: Vec<PositionStats> = openings.into_iter().map(|(_, v)| v).collect();
+    let openings_vec: Vec<PositionStats> = openings.into_iter().map(|(_, v)| v).collect();
     let ids: Vec<i32> = sample_games.into_inner().unwrap();
-    (openings, ids)
+    
+    log::info!("search_position_online_internal: Found {} openings and {} matching games", openings_vec.len(), ids.len());
+    
+    (openings_vec, ids)
 }
 
 /// ============================================================================
@@ -1550,25 +1596,53 @@ pub async fn search_position(
     tab_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(Vec<PositionStats>, Vec<NormalizedGame>), Error> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    eprintln!("[RUST] search_position: Command called with file: {:?}, tab_id: {}", file, tab_id);
+    log::info!("search_position: Command called with file: {:?}, tab_id: {}", file, tab_id);
+    
+    let file_str = file.to_str().ok_or_else(|| {
+        log::error!("search_position: Invalid file path");
+        Error::FenError("Invalid database path".to_string())
+    })?;
+    
+    log::info!("search_position: Opening database: {}", file_str);
+    let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
+    log::info!("search_position: Database opened successfully");
 
     // Get FEN from position query
     let fen = match &query.position {
-        Some(pos_query) => pos_query.fen.clone(),
-        None => return Err(Error::NoMatchFound),
+        Some(pos_query) => {
+            let fen = pos_query.fen.trim_end().to_string();
+            log::info!("search_position: FEN from query: '{}' (length: {})", fen, fen.len());
+            fen
+        }
+        None => {
+            log::error!("search_position: Missing position query");
+            return Err(Error::NoMatchFound);
+        }
     };
 
     // Check if position is cached in database
+    log::info!("search_position: Checking cache for FEN: {} in DB: {:?}", fen, file);
     if is_position_cached(&app, &fen, &file)? {
+        log::info!("search_position: Cache HIT - loading cached data");
         // Load cached data
         if let Some((cached_stats, cached_game_ids)) = get_cached_position(&app, &fen, &file)? {
-            // Apply game_details_limit
-            let game_details_limit: usize = query
-                .game_details_limit
-                .unwrap_or(10)
-                .min(1000)
-                .try_into()
-                .unwrap_or(10);
+            log::info!("search_position: Loaded from cache: {} stats, {} game IDs", cached_stats.len(), cached_game_ids.len());
+            // If we cached an empty result (common when DB schema/metadata was incomplete),
+            // treat it as a cache miss so we can recompute after improvements.
+            if cached_stats.is_empty() && cached_game_ids.is_empty() {
+                log::warn!("search_position: Cache has empty result, treating as cache miss and recomputing");
+                // fall through to full search
+            } else {
+                // Apply game_details_limit
+                let game_details_limit: usize = query
+                    .game_details_limit
+                    .unwrap_or(10)
+                    .min(1000)
+                    .try_into()
+                    .unwrap_or(10);
+                
+                log::info!("search_position: Using cached data, loading {} games (limit: {})", cached_game_ids.len().min(game_details_limit), game_details_limit);
 
             let ids_to_load: Vec<i32> = cached_game_ids
                 .into_iter()
@@ -1661,14 +1735,25 @@ pub async fn search_position(
                 },
             );
 
-            return Ok((cached_stats, normalized_games));
+                return Ok((cached_stats, normalized_games));
+            }
+        } else {
+            log::warn!("search_position: Cache check returned true but get_cached_position returned None");
         }
+    } else {
+        log::info!("search_position: Cache MISS - performing full search");
     }
 
     // Convert position query for search
     let position_query = match &query.position {
-        Some(pos_query) => convert_position_query(pos_query.clone())?,
-        None => return Err(Error::NoMatchFound),
+        Some(pos_query) => {
+            log::info!("search_position: Searching for FEN: {}, type: {:?}", pos_query.fen, pos_query.type_);
+            convert_position_query(pos_query.clone())?
+        }
+        None => {
+            log::error!("search_position: Missing position query");
+            return Err(Error::NoMatchFound);
+        }
     };
 
     let permit = state.new_request.acquire().await.unwrap();
@@ -1686,10 +1771,31 @@ pub async fn search_position(
     }
 
     // Phase 1: scan and collect openings + sample IDs
-    let (openings, ids): (Vec<PositionStats>, Vec<i32>) = if online {
-        let total_count: i64 = games::table.count().get_result(db).unwrap_or(0);
-        let total_games = total_count.max(0) as usize;
+    //
+    // IMPORTANT:
+    // Some "local" DBs may have partially-populated or incorrect reachability metadata
+    // (`pawn_home/white_material/black_material`). In that case the LOCAL fast-path can
+    // incorrectly filter out every game and return 0 matches.
+    //
+    // To guarantee correctness we:
+    // - Prefer ONLINE scan for ONLINE DBs.
+    // - For LOCAL DBs:
+    //   - If metadata is clearly missing -> use ONLINE scan.
+    //   - Otherwise try LOCAL scan first; if it yields 0 matches -> fallback to ONLINE scan.
+    let total_count: i64 = games::table.count().get_result(db).unwrap_or(0);
+    let total_games = total_count.max(0) as usize;
 
+    let (openings, ids): (Vec<PositionStats>, Vec<i32>) = if online {
+        search_position_online_internal(
+            db,
+            &position_query,
+            &query,
+            &app,
+            &tab_id,
+            state.inner(),
+            total_games,
+        )
+    } else if local_reachability_metadata_missing(db) {
         search_position_online_internal(
             db,
             &position_query,
@@ -1700,7 +1806,25 @@ pub async fn search_position(
             total_games,
         )
     } else {
-        search_position_local_internal(db, &position_query, &query, &app, &tab_id, state.inner())?
+        let (openings_local, ids_local) =
+            search_position_local_internal(db, &position_query, &query, &app, &tab_id, state.inner())?;
+
+        // If the LOCAL strategy yields no matches, fall back to ONLINE strategy to avoid false negatives.
+        if ids_local.is_empty() {
+            log::info!("search_position: LOCAL strategy found 0 matches, falling back to ONLINE strategy");
+            search_position_online_internal(
+                db,
+                &position_query,
+                &query,
+                &app,
+                &tab_id,
+                state.inner(),
+                total_games,
+            )
+        } else {
+            log::info!("search_position: LOCAL strategy found {} matches", ids_local.len());
+            (openings_local, ids_local)
+        }
     };
 
     if state.new_request.available_permits() == 0 {

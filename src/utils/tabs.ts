@@ -26,7 +26,7 @@ export type EntitySourceMetadata = z.infer<typeof entitySourceMetadataSchema>;
 export const tabSchema = z.object({
   name: z.string(),
   value: z.string(),
-  type: z.enum(["new", "play", "analysis", "puzzles"]),
+  type: z.enum(["new", "play", "analysis", "puzzles", "profiles"]),
   gameNumber: z.number().nullish(),
   source: entitySourceMetadataSchema.nullish(),
   meta: z
@@ -60,6 +60,7 @@ export async function createTab({
   initialAnalysisTab,
   initialAnalysisSubTab,
   initialNotationView,
+  autoActivate = true,
 }: {
   tab: Omit<Tab, "value">;
   setTabs: React.Dispatch<React.SetStateAction<Tab[]>>;
@@ -72,6 +73,7 @@ export async function createTab({
   initialAnalysisTab?: string;
   initialAnalysisSubTab?: string;
   initialNotationView?: "variations" | "repertoire" | "report";
+  autoActivate?: boolean;
 }) {
   const id = genID();
 
@@ -160,7 +162,9 @@ export async function createTab({
       },
     ];
   });
-  setActiveTab(id);
+  if (autoActivate) {
+    setActiveTab(id);
+  }
   return id;
 }
 

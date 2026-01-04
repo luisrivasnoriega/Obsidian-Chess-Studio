@@ -353,17 +353,30 @@ function AddDatabase({
 
   const [positionCacheInstalled, setPositionCacheInstalled] = useState(false);
   
-  // Check if position cache exists
+  // Check if position cache was installed (not just generated on-the-fly)
+  // Position Cache is stored in AppData root, NOT in the db folder
+  // We check for a marker file that is only created when the pre-calculated cache is downloaded
+  // This distinguishes it from a cache that was generated automatically during searches
   useEffect(() => {
     const checkPositionCache = async () => {
       try {
         const { appDataDir, resolve } = await import("@tauri-apps/api/path");
         const { exists } = await import("@tauri-apps/plugin-fs");
         const appDataDirPath = await appDataDir();
-        const cachePath = await resolve(appDataDirPath, "position_cache.db3");
-        const cacheExists = await exists(cachePath);
-        setPositionCacheInstalled(cacheExists);
-      } catch {
+        // Check for the marker file that indicates the pre-calculated cache was installed
+        // This file is only created by download_position_cache, not by automatic cache generation
+        const markerPath = await resolve(appDataDirPath, "position_cache.installed");
+        const markerExists = await exists(markerPath);
+        console.log("[AddDatabase] Position Cache installation check:", { 
+          markerPath, 
+          markerExists,
+          appDataDir: appDataDirPath 
+        });
+        // Only mark as installed if the marker file exists
+        setPositionCacheInstalled(markerExists);
+      } catch (error) {
+        console.error("[AddDatabase] Error checking Position Cache installation:", error);
+        // On error, assume not installed
         setPositionCacheInstalled(false);
       }
     };
@@ -374,12 +387,15 @@ function AddDatabase({
   }, [opened]);
 
   const installedDatabaseTitles = useMemo(
-    () =>
-      new Set(
-        databases
-          .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
-          .map((db) => db.title),
-      ),
+    () => {
+      // Only include databases that are actually in the db folder
+      // Position Cache is NOT in the db folder, so it should NOT be in this set
+      const titles = databases
+        .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
+        .map((db) => db.title);
+      console.log("[AddDatabase] Installed database titles:", titles);
+      return new Set(titles);
+    },
     [databases],
   );
 
@@ -437,6 +453,8 @@ function AddDatabase({
                         databaseId={i}
                         setDatabases={setDatabases}
                         initInstalled={
+                          // Position Cache is stored in AppData root, NOT in db folder
+                          // So it should be checked separately, not via installedDatabaseTitles
                           db.title === "Position Cache"
                             ? positionCacheInstalled
                             : installedDatabaseTitles.has(db.title)

@@ -2,7 +2,7 @@ import { DragDropContext } from "@hello-pangea/dnd";
 import { Box, Tabs } from "@mantine/core";
 import { useAtom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import { useCallback, useEffect, useMemo } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
 import type { Tab } from "@/utils/tabs";
@@ -31,6 +31,7 @@ import {
 import { useTabManagement } from "./hooks/useTabManagement";
 
 const fullLayout = createFullLayout();
+const ProfilesPage = lazy(() => import("@/features/profiles/ProfilesPage"));
 
 export default function BoardsPage() {
   const {
@@ -214,6 +215,16 @@ const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
           {!isVariantsFile && <ReportProgressSubscriber id={`${REPORT_ID_PREFIX}${tab.value}`} />}
           {isVariantsFile ? <BoardVariants /> : <BoardAnalysis />}
         </TreeStateProvider>
+      </Box>
+    );
+  }
+
+  if (tab.type === "profiles") {
+    return (
+      <Box style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Suspense fallback={<div>Loading...</div>}>
+          <ProfilesPage />
+        </Suspense>
       </Box>
     );
   }

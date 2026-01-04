@@ -96,7 +96,7 @@ function RootLayout() {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
 
-  const { activeTab, setTabs, setActiveTab, closeTab } = useTabManagement({ enableHotkeys: false });
+  const { tabs, activeTab, setTabs, setActiveTab, closeTab } = useTabManagement({ enableHotkeys: false });
   const [keyMap] = useAtom(keyMapAtom);
 
   useEffect(() => {
@@ -374,7 +374,23 @@ function RootLayout() {
         [keyMap.NEW_BOARD_TAB.keys, createNewTab],
         // Navigation - Primary Section
         [keyMap.GO_TO_DASHBOARD.keys, () => navigate({ to: "/" })],
-        [keyMap.GO_TO_PROFILES.keys, () => navigate({ to: "/profiles" })],
+        [
+          keyMap.GO_TO_PROFILES.keys,
+          () => {
+            const existingProfileTab = tabs.find((t) => t.type === "profiles");
+            if (existingProfileTab) {
+              setActiveTab(existingProfileTab.value);
+              navigate({ to: "/profiles" });
+            } else {
+              createTab({
+                tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
+                setTabs,
+                setActiveTab,
+              });
+              navigate({ to: "/profiles" });
+            }
+          },
+        ],
         // Navigation - Primary Actions
         [
           keyMap.PLAY_BOARD.keys,

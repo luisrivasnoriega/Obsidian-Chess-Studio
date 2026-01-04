@@ -106,7 +106,7 @@ export function SideBar() {
   const matchesRoute = useMatchRoute();
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [, setTabs] = useAtom(tabsAtom);
+  const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const { layout } = useResponsiveLayout();
   const openTabAndNavigate = async ({
@@ -134,9 +134,32 @@ export function SideBar() {
   };
 
   // Sección principal: Dashboard y Profiles
-  const primaryNavLinks = primaryLinks.map((link) => (
-    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
-  ));
+  const primaryNavLinks = primaryLinks.map((link) => {
+    if (link.url === "/profiles") {
+      return (
+        <MayaActionLink
+          key={link.label}
+          icon={link.icon}
+          label={t(`features.sidebar.${link.label}`)}
+          onClick={() => {
+            const existingProfileTab = tabs.find((t) => t.type === "profiles");
+            if (existingProfileTab) {
+              setActiveTab(existingProfileTab.value);
+              navigate({ to: "/profiles" });
+            } else {
+              void createTab({
+                tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
+                setTabs,
+                setActiveTab,
+              });
+              navigate({ to: "/profiles" });
+            }
+          }}
+        />
+      );
+    }
+    return <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />;
+  });
 
   // Acciones principales: Play, Analysis, Puzzles
   const primaryActionLinks: React.ReactNode[] = [

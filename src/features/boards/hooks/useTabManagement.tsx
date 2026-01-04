@@ -171,14 +171,16 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
         } else if (isClosingActiveTab && nextActiveTabSnapshot) {
           try {
             const path = window.location.pathname;
-            const isBoardsRoute = path === "/analysis" || path === "/play" || path === "/puzzles";
+            const isBoardsRoute = path === "/analysis" || path === "/play" || path === "/puzzles" || path === "/profiles";
             if (isBoardsRoute) {
               const to =
                 nextActiveTabSnapshot.type === "play"
                   ? "/play"
                   : nextActiveTabSnapshot.type === "puzzles"
                     ? "/puzzles"
-                    : "/analysis";
+                    : nextActiveTabSnapshot.type === "profiles"
+                      ? "/profiles"
+                      : "/analysis";
               navigate({ to });
             }
           } catch {}
