@@ -483,6 +483,7 @@
       "ascending": "Ascending",
       "descending": "Descending",
       "noGamesFound": "No games found",
+      "noGames": "لا توجد ألعاب بعد",
       "noFavorites": "No favorite games yet",
       "removeFavorite": "Remove from favorites",
       "gamesAnalyzed": "Games analyzed",

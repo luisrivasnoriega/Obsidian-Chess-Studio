@@ -32,7 +32,7 @@ interface GamesHistoryCardProps {
   onAnalyzeLocalGame: (game: GameRecord) => void;
   onAnalyzeChessComGame: (game: ChessComGame) => void;
   onAnalyzeLichessGame: (game: LichessGame) => void;
-  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess") => void;
+  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;

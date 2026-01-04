@@ -566,6 +566,7 @@
       "ascending": "Artan",
       "descending": "Azalan",
       "noGamesFound": "Oyun bulunamadı",
+      "noGames": "Henüz oyun yok",
       "noFavorites": "Henüz favori oyun yok",
       "removeFavorite": "Favorilerden kaldır",
       "gamesAnalyzed": "Analiz edilen oyunlar",

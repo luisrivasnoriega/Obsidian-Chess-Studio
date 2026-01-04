@@ -1,4 +1,4 @@
-import { Flex, Paper, Progress, Select, Stack, Text } from "@mantine/core";
+import { Paper, Progress, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
@@ -164,21 +164,6 @@ function Databases({
             style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
           >
             <Stack>
-              <Flex justify="center">
-                <Select
-                  value={name}
-                  data={players}
-                  onChange={(e) => setName(e || "")}
-                  clearable={false}
-                  fw="bold"
-                  styles={{
-                    input: {
-                      textAlign: "center",
-                      fontSize: "1.25rem",
-                    },
-                  }}
-                />
-              </Flex>
               <Text ta="center" fw="bold" my="auto" fz="lg">
                 No databases found
               </Text>

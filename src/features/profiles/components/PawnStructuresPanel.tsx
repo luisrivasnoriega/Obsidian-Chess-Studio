@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Group,
+  Pagination,
   Progress,
   SegmentedControl,
   Select,
@@ -14,7 +15,8 @@ import {
 import { notifications } from "@mantine/notifications";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
+import { useNavigate } from "@tanstack/react-router";
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame, PlayerGameInfo, SiteStatsData } from "@/bindings";
@@ -25,11 +27,14 @@ import PlayerSidebarCard, {
   type PlatformFilter,
   type TimeControlFilter,
 } from "@/features/accounts/components/PersonalCardPanels/PlayerSidebarCard";
-import { sessionsAtom } from "@/state/atoms";
+import { DateRange } from "@/features/accounts/components/PersonalCardPanels/DateRangeTabs";
+import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
+import { parsePGN } from "@/utils/chess";
 import { query_games, query_players } from "@/utils/db";
 import { generateAnalysisResult, type PawnStructureStat } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
+import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 import { getTimeControl } from "@/utils/timeControl";
 
@@ -40,6 +45,24 @@ type PawnStructuresPanelProps = {
 };
 
 const fallbackFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): number {
+  const lastDate = ratingDates[ratingDates.length - 1];
+  switch (dateRange) {
+    case DateRange.SevenDays:
+      return lastDate - 7 * MILLISECONDS_PER_DAY;
+    case DateRange.ThirtyDays:
+      return lastDate - 30 * MILLISECONDS_PER_DAY;
+    case DateRange.NinetyDays:
+      return lastDate - 90 * MILLISECONDS_PER_DAY;
+    case DateRange.OneYear:
+      return lastDate - 365 * MILLISECONDS_PER_DAY;
+    default:
+      return Math.min(...ratingDates);
+  }
+}
 
 function normalizePlayerName(name?: string): string {
   return name?.trim().toLowerCase() ?? "";
@@ -91,6 +114,7 @@ async function queryAllGamesFromDb(
   platformFilter: PlatformFilter,
   timeControlFilter: TimeControlFilter,
   opponentEloBucket: string,
+  earliestDate?: number,
   onProgress?: (value: number) => void,
 ): Promise<NormalizedGame[]> {
   const pageSize = 200;
@@ -145,6 +169,12 @@ async function queryAllGamesFromDb(
           }
         }
 
+        if (earliestDate !== undefined) {
+          if (!game.date) continue;
+          const gameDate = new Date(game.date.replaceAll(".", "-")).getTime();
+          if (!Number.isFinite(gameDate) || gameDate < earliestDate) continue;
+        }
+
         collected.push(game);
       }
     }
@@ -173,9 +203,15 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [pawnProgress, setPawnProgress] = useState<number | null>(null);
   const [expandedStructure, setExpandedStructure] = useState<string | null>(null);
   const [expandedFen, setExpandedFen] = useState<string | null>(null);
+  const [gamesPage, setGamesPage] = useState(1);
+  const [pawnSearchPgns, setPawnSearchPgns] = useState<string[]>([]);
+  const [, setTabs] = useAtom(tabsAtom);
+  const [, setActiveTab] = useAtom(activeTabAtom);
+  const navigate = useNavigate();
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
+  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const sessions = useAtomValue(sessionsAtom);
 
   const moveOptions = Array.from({ length: 50 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }));
@@ -275,6 +311,23 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     ];
   }, [playerInfo.site_stats_data, t]);
 
+  const dates = useMemo(() => {
+    const gameDates =
+      playerInfo.site_stats_data
+        ?.filter((games) => platform === "all" || normalizePlatform(games.site) === platform)
+        .flatMap((games) =>
+          games.data
+            .filter((game) => timeControl === "any" || getTimeControl(games.site, game.time_control) === timeControl)
+            .map((game) => {
+              if (!game.date) return null;
+              return new Date(game.date.replaceAll(".", "-")).getTime();
+            }),
+        )
+        .filter((date): date is number => Number.isFinite(date)) ?? [];
+
+    return Array.from(new Set(gameDates)).sort((a, b) => a - b);
+  }, [playerInfo.site_stats_data, platform, timeControl]);
+
   const handleSearch = async () => {
     if (!databaseFile) {
       notifications.show({
@@ -300,6 +353,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     setPawnStructures([]);
 
     try {
+      const earliestDate = dateRange && dates.length > 0 ? calculateEarliestDate(dateRange, dates) : undefined;
       const pgns = await queryAllGamesFromDb(
         databaseFile,
         normalizedTarget,
@@ -307,6 +361,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         platform,
         timeControl,
         opponentEloBucket,
+        earliestDate,
         (value) => setPawnProgress(value),
       );
 
@@ -319,7 +374,10 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         return;
       }
 
-      const combined = pgns.map((game) => createPgnFromNormalizedGame(game)).join("\n\n");
+      const pgnStrings = pgns.map((game) => createPgnFromNormalizedGame(game));
+      const combined = pgnStrings.join("\n\n");
+      setPawnSearchPgns(pgnStrings);
+      
       const analysisResult = generateAnalysisResult(combined, playerName, {
         maxMove: pawnMoveFilter,
         playerColor: pawnColorFilter === "any" ? undefined : pawnColorFilter,
@@ -343,10 +401,12 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     if (expandedStructure === structure.structure) {
       setExpandedStructure(null);
       setExpandedFen(null);
+      setGamesPage(1);
       return;
     }
     setExpandedStructure(structure.structure);
     setExpandedFen(structure.sampleFen ?? fallbackFen);
+    setGamesPage(1);
   };
 
   const copyFenToClipboard = (fen: string) => {
@@ -356,6 +416,66 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       message: t("features.dashboard.fenCopiedMessage"),
       color: "green",
     });
+  };
+
+  const openGameInNewTab = async (gameIndex: number, fen: string) => {
+    if (!pawnSearchPgns || gameIndex < 0 || gameIndex >= pawnSearchPgns.length) {
+      notifications.show({
+        title: t("features.dashboard.gameNotFound"),
+        message: t("features.dashboard.gameNotFoundMessage"),
+        color: "orange",
+      });
+      return;
+    }
+
+    try {
+      const game = pawnSearchPgns[gameIndex];
+      const tree = await parsePGN(game);
+      
+      // Normalize FEN for comparison (remove move counters)
+      const normalizeFen = (f: string) => f.split(" ").slice(0, 4).join(" ");
+      const targetFen = normalizeFen(fen);
+      
+      // Find the position in the game (only mainline)
+      let targetPosition: number[] = [];
+      const findPosition = (node: typeof tree.root, path: number[] = []): void => {
+        if (normalizeFen(node.fen) === targetFen) {
+          targetPosition = path;
+          return;
+        }
+        // Only search mainline (index 0)
+        if (node.children && node.children.length > 0) {
+          findPosition(node.children[0], [...path, 0]);
+        }
+      };
+      findPosition(tree.root);
+
+      await createTab({
+        tab: {
+          name: `${tree.headers?.white || "White"} - ${tree.headers?.black || "Black"}`,
+          type: "analysis",
+        },
+        setTabs,
+        setActiveTab,
+        pgn: game,
+        headers: tree.headers,
+        position: targetPosition.length > 0 ? targetPosition : undefined,
+      });
+
+      navigate({ to: "/analysis" });
+      
+      notifications.show({
+        title: t("features.dashboard.gameOpened"),
+        message: t("features.dashboard.gameOpenedMessage"),
+        color: "green",
+      });
+    } catch {
+      notifications.show({
+        title: t("features.dashboard.error"),
+        message: t("features.dashboard.errorOpeningGame"),
+        color: "red",
+      });
+    }
   };
 
   return (
@@ -371,6 +491,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           opponentEloOptions={opponentEloOptions}
           opponentEloBucket={opponentEloBucket}
           onOpponentEloChange={setOpponentEloBucket}
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
         />
       </Box>
       <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
@@ -449,27 +571,105 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                           {expandedStructure === structure.structure && (
                             <Table.Tr>
                               <Table.Td colSpan={4}>
-                                <Stack gap="md">
-                                  <Chessground
-                                    fen={displayFen}
-                                    coordinates={false}
-                                    viewOnly
-                                    orientation={pawnColorFilter === "black" ? "black" : "white"}
-                                  />
-                                  <Group gap="xs">
-                                    <Badge size="sm" variant="light">
-                                      {t("features.dashboard.structure")}:
-                                    </Badge>
-                                    <Text>{structure.structure}</Text>
-                                    <ActionIcon
-                                      size="sm"
-                                      variant="subtle"
-                                      onClick={() => copyFenToClipboard(displayFen)}
-                                    >
-                                      <IconCopy size={14} />
-                                    </ActionIcon>
-                                  </Group>
-                                </Stack>
+                                <Group align="flex-start" gap="md" wrap="nowrap">
+                                  {/* Board Preview - 38.20% */}
+                                  <Box style={{ flex: "0 0 38.2%", minWidth: 0 }}>
+                                    <Chessground
+                                      fen={displayFen}
+                                      coordinates={false}
+                                      viewOnly
+                                      orientation={pawnColorFilter === "black" ? "black" : "white"}
+                                    />
+                                  </Box>
+                                  
+                                  {/* Right Section - 61.8% */}
+                                  <Box style={{ flex: 1, minWidth: 0 }}>
+                                    <Stack gap="md">
+                                      {/* Structure Info with FEN */}
+                                      <Box>
+                                        <Group gap="xs" mb="xs">
+                                          <Badge size="sm" variant="light">
+                                            {t("features.dashboard.structure")}:
+                                          </Badge>
+                                          <Text size="sm" fw={500}>{structure.structure}</Text>
+                                        </Group>
+                                        <Group gap="xs">
+                                          <Text size="xs" c="dimmed">FEN:</Text>
+                                          <Text size="xs" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                                            {displayFen}
+                                          </Text>
+                                          <ActionIcon
+                                            size="sm"
+                                            variant="subtle"
+                                            onClick={() => copyFenToClipboard(displayFen)}
+                                          >
+                                            <IconCopy size={14} />
+                                          </ActionIcon>
+                                        </Group>
+                                      </Box>
+
+                                      {/* Games Table */}
+                                      {structure.games && structure.games.length > 0 && (
+                                        <Box>
+                                          <Text size="sm" fw={600} mb="xs">
+                                            {t("features.dashboard.games", { defaultValue: "Games" })} ({structure.games.length})
+                                          </Text>
+                                          <Table striped highlightOnHover size="xs">
+                                            <Table.Thead>
+                                              <Table.Tr>
+                                                <Table.Th>{t("features.dashboard.playerColor", { defaultValue: "Player color" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>
+                                                <Table.Th>{t("common.opponent", { defaultValue: "Opponent" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>
+                                                <Table.Th>{t("features.dashboard.actions", { defaultValue: "Actions" })}</Table.Th>
+                                              </Table.Tr>
+                                            </Table.Thead>
+                                            <Table.Tbody>
+                                              {structure.games
+                                                .slice((gamesPage - 1) * 5, gamesPage * 5)
+                                                .map((game, idx) => {
+                                                  const isPlayerWhite = matchesName(game.white, playerName);
+                                                  const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
+                                                  const opponentElo = isPlayerWhite ? game.blackElo : game.whiteElo;
+                                                  const opponentName = isPlayerWhite ? game.black : game.white;
+                                                  
+                                                  return (
+                                                    <Table.Tr key={idx}>
+                                                      <Table.Td>
+                                                        <Text size="xs">
+                                                          {isPlayerWhite ? t("features.dashboard.white") : t("features.dashboard.black")} ({playerElo || "-"})
+                                                        </Text>
+                                                      </Table.Td>
+                                                      <Table.Td>
+                                                        <Text size="xs">{opponentName || "-"} ({opponentElo || "-"})</Text>
+                                                      </Table.Td>
+                                                      <Table.Td>
+                                                        <Button
+                                                          size="xs"
+                                                          variant="light"
+                                                          onClick={() => openGameInNewTab(game.gameIndex, game.fen)}
+                                                        >
+                                                          {t("features.dashboard.openGame", { defaultValue: "Open Game" })}
+                                                        </Button>
+                                                      </Table.Td>
+                                                    </Table.Tr>
+                                                  );
+                                                })}
+                                            </Table.Tbody>
+                                          </Table>
+                                          {structure.games.length > 5 && (
+                                            <Group justify="center" mt="md">
+                                              <Pagination
+                                                value={gamesPage}
+                                                onChange={setGamesPage}
+                                                total={Math.ceil(structure.games.length / 5)}
+                                                size="sm"
+                                              />
+                                            </Group>
+                                          )}
+                                        </Box>
+                                      )}
+                                    </Stack>
+                                  </Box>
+                                </Group>
                               </Table.Td>
                             </Table.Tr>
                           )}

@@ -548,6 +548,7 @@
       "ascending": "升序",
       "descending": "降序",
       "noGamesFound": "未找到对局",
+      "noGames": "暂无对局",
       "noFavorites": "暂无收藏对局",
       "removeFavorite": "从收藏中移除",
       "gamesAnalyzed": "已分析对局",

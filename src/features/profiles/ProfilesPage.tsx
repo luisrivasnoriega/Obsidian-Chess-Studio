@@ -374,7 +374,7 @@ export default function ProfilesPage() {
       notifications.show({
         id,
         title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-        message: `${profile.name} - ${username} (${meta.platform}) procesado`,
+        message: `${profile.name} - ${username} (${meta.platform}) ${t("accounts.processing", { defaultValue: "processing" })}`,
         loading: true,
         autoClose: false,
       });
@@ -387,7 +387,7 @@ export default function ProfilesPage() {
           notifications.update({
             id,
             title: t("common.success", { defaultValue: "Success" }),
-            message: `${profile.name} - ${username} (${meta.platform}) procesado`,
+            message: `${profile.name} - ${username} (${meta.platform}) ${t("accounts.processing", { defaultValue: "processing" })}`,
             color: "green",
             loading: false,
             autoClose: 2500,

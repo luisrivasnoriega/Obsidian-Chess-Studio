@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { getAnalyzedGamesBulk, getGameStatsBulk } from "@/utils/analyzedGames";
 import { stripAccountKey } from "@/utils/accountKeys";
 import type { ChessComGame } from "@/utils/chess.com/api";
@@ -87,7 +88,7 @@ export function ProfileGamesTab({
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
-  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess") => void;
+  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
   favoriteGames?: FavoriteGame[];
 }) {
   const { t } = useTranslation();
@@ -131,6 +132,7 @@ export function ProfileGamesTab({
   }, [items]);
 
   const [analyzedPgns, setAnalyzedPgns] = useState<Map<string, string>>(new Map());
+  const [analyzedGameIds, setAnalyzedGameIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
   const itemsPerPage = 25;
   const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
@@ -169,13 +171,25 @@ export function ProfileGamesTab({
 
       setAnalyzedPgns((prev) => {
         const next = new Map(prev);
+        const analyzedIds = new Set<string>();
+        
         for (const item of sortedAndPaginatedItems) {
-          if (next.has(item.id)) continue;
-          const analyzedPgn = analyzed.get(item.id);
-          if (analyzedPgn) {
-            next.set(item.id, analyzedPgn);
+          if (next.has(item.id)) {
+            // Already loaded, check if it's analyzed by checking if it has analysis markers
+            const existingPgn = next.get(item.id);
+            if (existingPgn && /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(existingPgn)) {
+              analyzedIds.add(item.id);
+            }
             continue;
           }
+          const analyzedPgn = analyzed.get(item.id);
+          if (analyzedPgn) {
+            // This PGN is actually analyzed
+            next.set(item.id, analyzedPgn);
+            analyzedIds.add(item.id);
+            continue;
+          }
+          // Fallback: use original PGN (not analyzed)
           const fallback =
             item.type === "local"
               ? item.game.pgn ?? createPGNFromMoves(item.game.moves, item.game.result, item.game.initialFen)
@@ -184,6 +198,13 @@ export function ProfileGamesTab({
                 : item.game.pgn;
           if (fallback) next.set(item.id, fallback);
         }
+        
+        setAnalyzedGameIds((prevIds) => {
+          const nextIds = new Set(prevIds);
+          analyzedIds.forEach((id) => nextIds.add(id));
+          return nextIds;
+        });
+        
         return next;
       });
     };
@@ -206,11 +227,15 @@ export function ProfileGamesTab({
   const totalPages = Math.ceil(items.length / itemsPerPage);
   const now = useMemo(() => Date.now(), [sortedAndPaginatedItems]);
   const analyzeAllOptions = useMemo(
-    () => [
-      { type: "local" as const, label: "Local", count: localGames.length },
-      { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
-      { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
-    ],
+    () => {
+      const totalCount = localGames.length + chessComGames.length + lichessGames.length;
+      return [
+        { type: "all" as const, label: "All", count: totalCount },
+        { type: "local" as const, label: "Local", count: localGames.length },
+        { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
+        { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
+      ];
+    },
     [localGames.length, chessComGames.length, lichessGames.length],
   );
 
@@ -288,6 +313,10 @@ export function ProfileGamesTab({
     if (item.type === "lichess" && onToggleFavoriteLichess) return await onToggleFavoriteLichess(item.id);
   };
 
+  const isGameAnalyzed = (gameId: string): boolean => {
+    return analyzedGameIds.has(gameId);
+  };
+
   if (isLoadingOnline) {
     return (
       <Stack gap="xs" align="center" justify="center" style={{ minHeight: "200px" }}>
@@ -336,29 +365,26 @@ export function ProfileGamesTab({
               </Table.Th>
               <Table.Th style={{ width: 85 }}>Favorite</Table.Th>
               <Table.Th style={{ width: 200, textAlign: "left" }}>
-                <Group gap="xs" wrap="nowrap" justify="flex-start">
-                  <Text size="sm">Actions</Text>
-                  {onAnalyzeAll && (
-                    <Menu position="bottom-start" withinPortal>
-                      <Menu.Target>
-                        <Button size="xs" variant="light" rightSection={<IconChevronDown size={14} />}>
-                          Analyze All
-                        </Button>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        {analyzeAllOptions.map((option) => (
-                          <Menu.Item
-                            key={option.type}
-                            disabled={option.count === 0}
-                            onClick={() => onAnalyzeAll(option.type)}
-                          >
-                            {option.label} ({option.count})
-                          </Menu.Item>
-                        ))}
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
-                </Group>
+                {onAnalyzeAll && (
+                  <Menu position="bottom-start" withinPortal>
+                    <Menu.Target>
+                      <Button size="xs" variant="light" rightSection={<IconChevronDown size={14} />}>
+                        Analyze All
+                      </Button>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      {analyzeAllOptions.map((option) => (
+                        <Menu.Item
+                          key={option.type}
+                          disabled={option.count === 0}
+                          onClick={() => onAnalyzeAll(option.type)}
+                        >
+                          {option.label} ({option.count})
+                        </Menu.Item>
+                      ))}
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
               </Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -441,15 +467,29 @@ export function ProfileGamesTab({
                           <IconTrash size={16} />
                         </ActionIcon>
                       )}
-                      <Button
-                        size="xs"
-                        variant="default"
-                        leftSection={<IconChess size={16} />}
-                        onClick={() => handleAnalyze(item)}
-                        disabled={!pgn && item.type !== "local"}
-                      >
-                        {t("features.dashboard.analyze") || "Analyze"}
-                      </Button>
+                      {isGameAnalyzed(item.id) && pgn ? (
+                        <AnalysisPreview pgn={pgn}>
+                          <Button
+                            size="xs"
+                            variant="default"
+                            leftSection={<IconChess size={16} />}
+                            onClick={() => handleAnalyze(item)}
+                            disabled={!pgn && item.type !== "local"}
+                          >
+                            {t("features.dashboard.analyze") || "Analyze"}
+                          </Button>
+                        </AnalysisPreview>
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="default"
+                          leftSection={<IconChess size={16} />}
+                          onClick={() => handleAnalyze(item)}
+                          disabled={!pgn && item.type !== "local"}
+                        >
+                          {t("features.dashboard.analyze") || "Analyze"}
+                        </Button>
+                      )}
                     </Group>
                   </Table.Td>
                 </Table.Tr>
