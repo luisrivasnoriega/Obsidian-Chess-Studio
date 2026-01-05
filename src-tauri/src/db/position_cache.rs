@@ -8,16 +8,23 @@ use crate::db::PositionStats;
 use crate::error::Error;
 
 /// Normalize database path for consistent comparison
-/// Attempts to canonicalize the path, falls back to normalizing separators
+/// Extracts only the filename (without path) for cache storage
 pub fn normalize_db_path(path: &Path) -> String {
-    // Try to canonicalize first (resolves symlinks, absolute paths, etc.)
-    if let Ok(canonical) = path.canonicalize() {
-        canonical.to_string_lossy().to_string()
-    } else {
-        // Fallback: normalize separators and convert to string
-        // Replace backslashes with forward slashes for consistency
-        path.to_string_lossy().replace('\\', "/")
-    }
+    // Extract only the filename (e.g., "database.db3" from "/path/to/database.db3")
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            // Fallback: if file_name() fails, try to extract from string
+            let path_str = path.to_string_lossy();
+            // Handle both forward and backslashes
+            let normalized = path_str.replace('\\', "/");
+            normalized
+                .split('/')
+                .last()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path_str.to_string())
+        })
 }
 
 diesel::table! {
