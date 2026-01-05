@@ -77,12 +77,10 @@ function PuzzleBoard({
   const expectedMainlinePath = useMemo(() => Array(currentMove).fill(0), [currentMove]);
   const turn = pos?.turn || "white";
   const orientation = useMemo(() => {
-    let nextOrientation = initialPos?.turn || "white";
-    if ((puzzle?.moves.length || 0) % 2 === 0) {
-      nextOrientation = nextOrientation === "white" ? "black" : "white";
-    }
-    return nextOrientation;
-  }, [initialPos?.turn, puzzle?.moves.length]);
+    // For puzzles, the board should be oriented to the side that must move (current turn).
+    // This ensures the player always sees the board from their perspective.
+    return turn;
+  }, [turn]);
 
   const [pendingMove, setPendingMove] = useState<NormalMove | null>(null);
 

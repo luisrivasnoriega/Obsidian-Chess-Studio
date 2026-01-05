@@ -44,6 +44,101 @@ export function swapMove(fen: string, color?: Color) {
   return makeFen(setup);
 }
 
+/**
+ * Rotates a square 180 degrees (flips it).
+ */
+function rotateSquare(square: Square): Square {
+  const file = squareFile(square);
+  const rank = squareRank(square);
+  const rotatedFile = 7 - file;
+  const rotatedRank = 7 - rank;
+  const rotated = squareFromCoords(rotatedFile, rotatedRank);
+  return rotated ?? square;
+}
+
+/**
+ * Rotates a UCI move 180 degrees (flips it).
+ * Example: "e2e4" -> "e7e5"
+ */
+export function rotateUciMove(uci: string): string {
+  if (uci.length < 4) return uci;
+  const from = parseUci(uci.slice(0, 2) + uci.slice(2, 4));
+  if (!from) return uci;
+  const fromSquare = from.from;
+  const toSquare = from.to;
+  const rotatedFrom = rotateSquare(fromSquare);
+  const rotatedTo = rotateSquare(toSquare);
+  const fromName = makeSquare(rotatedFrom);
+  const toName = makeSquare(rotatedTo);
+  const promotion = uci.length > 4 ? uci.slice(4) : "";
+  return fromName + toName + promotion;
+}
+
+/**
+ * Rotates the board 180 degrees (flips it) to change perspective.
+ * This swaps white and black pieces, flips ranks, and adjusts castling rights and en passant.
+ */
+export function rotateFen(fen: string): string {
+  const parsed = parseFen(fen);
+  if (parsed.isErr()) {
+    return fen; // Return original if parsing fails
+  }
+  const setup = parsed.unwrap();
+
+  // Create a new setup with rotated board
+  const rotated = parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+  
+  // Rotate the board: swap ranks (1<->8, 2<->7, etc.) and swap colors
+  rotated.board = SquareSet.empty();
+  rotated.pockets = undefined;
+  
+  // Rotate each square
+  for (let rank = 0; rank < 8; rank++) {
+    for (let file = 0; file < 8; file++) {
+      const square = squareFromCoords(file, rank);
+      if (square === undefined) continue;
+      
+      // Calculate rotated square (180 degrees: file 7-file, rank 7-rank)
+      const rotatedFile = 7 - file;
+      const rotatedRank = 7 - rank;
+      const rotatedSquare = squareFromCoords(rotatedFile, rotatedRank);
+      if (rotatedSquare === undefined) continue;
+      
+      const piece = setup.board.get(square);
+      if (piece) {
+        // Swap color and place on rotated square
+        rotated.board = rotated.board.set(rotatedSquare, {
+          role: piece.role,
+          color: piece.color === "white" ? "black" : "white",
+        });
+      }
+    }
+  }
+  
+  // Swap turn
+  rotated.turn = setup.turn === "white" ? "black" : "white";
+  
+  // Rotate castling rights: rotate each square in the set
+  rotated.castlingRights = SquareSet.empty();
+  for (const square of setup.castlingRights) {
+    const rotatedSquare = rotateSquare(square);
+    rotated.castlingRights = rotated.castlingRights.set(rotatedSquare, true);
+  }
+  
+  // Rotate en passant square if present
+  if (setup.epSquare !== undefined) {
+    rotated.epSquare = rotateSquare(setup.epSquare);
+  } else {
+    rotated.epSquare = undefined;
+  }
+  
+  // Keep halfmove and fullmove counters
+  rotated.halfmoves = setup.halfmoves;
+  rotated.fullmoves = setup.fullmoves;
+  
+  return makeFen(rotated);
+}
+
 export function squareToCoordinates(square: Square, orientation: "white" | "black") {
   let file = squareFile(square) + 1;
   let rank = squareRank(square) + 1;

@@ -1,5 +1,6 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import type { Chess, Move } from "chessops";
+import { makeSquare } from "chessops";
 import { makeFen } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import { Box, Button, Group, Modal, NumberInput, Portal, SegmentedControl, Select, Stack, Text } from "@mantine/core";
@@ -34,7 +35,7 @@ import {
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
-import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
+import { parseSanOrUci, positionFromFen, rotateFen, rotateUciMove } from "@/utils/chessops";
 import { getBestMoves as chessdbGetBestMoves } from "@/utils/chessdb/api";
 import { getBestMoves as localGetBestMoves, killEngine, type LocalEngine } from "@/utils/engines";
 import { getBestMoves as lichessGetBestMoves, getLichessGames, getMasterGames } from "@/utils/lichess/api";
@@ -169,6 +170,7 @@ function BoardVariants() {
     return null;
   }, []);
 
+  // ✅ FIX: max depth must match the same "start at rival branching node" rule as generatePuzzles.
   const getMaxPuzzleMoveDepth = useCallback(
     (root: TreeNode, puzzleColor: "white" | "black"): number => {
       const memo = new WeakMap<TreeNode, number>();
@@ -194,19 +196,26 @@ function BoardVariants() {
         return best;
       };
 
-      const traverse = (node: TreeNode, inVariants: boolean): number => {
-        const nextInVariants = inVariants || node.children.length > 1;
+      const traverse = (node: TreeNode): number => {
+        const turn = getFenTurn(node.fen);
+        const childrenWithSan = node.children.filter((c) => c.san);
+        const hasVariations = childrenWithSan.length > 1;
+
         let best = 0;
-        if (nextInVariants && getFenTurn(node.fen) === puzzleColor) {
+
+        // Only nodes where the RIVAL branches are valid puzzle start points
+        if (turn && turn !== puzzleColor && hasVariations) {
           best = Math.max(best, maxFromNode(node));
         }
-        for (const child of node.children) {
-          best = Math.max(best, traverse(child, nextInVariants));
+
+        for (const child of childrenWithSan) {
+          best = Math.max(best, traverse(child));
         }
+
         return best;
       };
 
-      return traverse(root, false);
+      return traverse(root);
     },
     [getFenTurn],
   );
@@ -220,256 +229,272 @@ function BoardVariants() {
     return "puzzles";
   }, [currentTab?.source]);
 
-  const generatePuzzles = useCallback(async (selectedDepth: number) => {
-    try {
-      const root = store.getState().root;
-      const puzzleColor = boardOrientation === "white" ? "white" : "black";
-      const maxDepth = getMaxPuzzleMoveDepth(root, puzzleColor);
-      if (selectedDepth < 1 || selectedDepth > maxDepth) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("errors.puzzleDepthTooDeep", { max: maxDepth }),
-          color: "red",
+  const generatePuzzles = useCallback(
+    async (selectedDepth: number) => {
+      try {
+        const root = store.getState().root;
+
+        // ✅ FIX: take boardOrientation directly (explicitly typed)
+        const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
+
+        const maxDepth = getMaxPuzzleMoveDepth(root, puzzleColor);
+        if (selectedDepth < 1 || selectedDepth > maxDepth) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("errors.puzzleDepthTooDeep", { max: maxDepth }),
+            color: "red",
+          });
+          return;
+        }
+
+        if (!documentDir) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("errors.missingFilePath"),
+            color: "red",
+          });
+          return;
+        }
+
+        // Open save dialog
+        const variantName = getVariantBaseName();
+        const baseName = `puzzle-variants-${variantName}-d${selectedDepth}-${formatDateToPGN(new Date())}`;
+        const filePath = await save({
+          defaultPath: `${documentDir}/${baseName}.pgn`,
+          filters: [{ name: "PGN", extensions: ["pgn"] }],
         });
-        return;
-      }
 
-      if (!documentDir) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("errors.missingFilePath"),
-          color: "red",
-        });
-        return;
-      }
+        if (!filePath) return;
 
-      // Open save dialog
-      const variantName = getVariantBaseName();
-      const baseName = `puzzle-variants-${variantName}-d${selectedDepth}-${formatDateToPGN(new Date())}`;
-      const filePath = await save({
-        defaultPath: `${documentDir}/${baseName}.pgn`,
-        filters: [
-          {
-            name: "PGN",
-            extensions: ["pgn"],
-          },
-        ],
-      });
+        // Get filename without extension
+        const fileName = filePath.replace(/\.pgn$/, "").split(/[/\\]/).pop() || baseName;
+        const tags = ["puzzle-variants", `variant:${variantName}`, `depth:${selectedDepth}`];
 
-      if (!filePath) return;
-
-      // Get filename without extension
-      const fileName = filePath.replace(/\.pgn$/, "").split(/[/\\]/).pop() || baseName;
-      const tags = ["puzzle-variants", `variant:${variantName}`, `depth:${selectedDepth}`];
-
-      const mainlineNodes: TreeNode[] = [];
-      let currentNode = root;
-      const maxMainlinePlies = 80;
-      while (mainlineNodes.length < maxMainlinePlies && currentNode.children.length > 0) {
-        const child = currentNode.children.find((c) => c.san) ?? currentNode.children[0];
-        if (!child?.san) break;
-        mainlineNodes.push(child);
-        currentNode = child;
-      }
-
-      const mainline = mainlineNodes
-        .map((move, index) =>
-          getMoveText(move, {
-            glyphs: false,
-            comments: false,
-            extraMarkups: false,
-            isFirst: index === 0 || move.halfMoves % 2 === 0,
-          }),
-        )
-        .join("")
-        .trim();
-
-      if (mainline) {
-        tags.push(`mainline:${mainline}`);
-      }
-
-      // Generate puzzles from the current tree
-      // Each variation at each position becomes a puzzle
-      const puzzles: string[] = [];
-      let puzzleCounter = 0; // Counter for puzzle numbering
-
-      // Get current date for puzzle headers
-      const currentDate = formatDateToPGN(new Date());
-
-      // Function to recursively find all positions with variations and generate puzzles
-      // We traverse the tree and only generate puzzles at positions where there are actual variations
-      const MAX_DEPTH = 80; // increase if you want to traverse longer lines
-
-      const buildSolutionText = (startFen: string, moves: TreeNode[]) => {
-        const parts = startFen.trim().split(/\s+/);
-        const fullmove = Number(parts[5]) || 1;
-        const startHalfMove = (fullmove - 1) * 2 + (parts[1] === "b" ? 1 : 0);
-
-        const [pos] = positionFromFen(startFen);
-        if (!pos) return "";
-
-        let halfMove = startHalfMove;
-        const sanParts: string[] = [];
-
-        for (const move of moves) {
-          const parsedMove = move.move ?? parseSanOrUci(pos, move.san ?? "");
-          if (!parsedMove) return "";
-
-          const san = makeSan(pos, parsedMove);
-          const isBlack = halfMove % 2 === 1;
-          const moveNumber = Math.floor(halfMove / 2) + 1;
-          const prefix = isBlack ? `${moveNumber}... ` : `${moveNumber}. `;
-
-          sanParts.push(`${prefix}${san}`);
-          pos.play(parsedMove);
-          halfMove += 1;
+        const mainlineNodes: TreeNode[] = [];
+        let currentNode = root;
+        const maxMainlinePlies = 80;
+        while (mainlineNodes.length < maxMainlinePlies && currentNode.children.length > 0) {
+          const child = currentNode.children.find((c) => c.san) ?? currentNode.children[0];
+          if (!child?.san) break;
+          mainlineNodes.push(child);
+          currentNode = child;
         }
 
-        return sanParts.join(" ").trim();
-      };
+        const mainline = mainlineNodes
+          .map((move, index) =>
+            getMoveText(move, {
+              glyphs: false,
+              comments: false,
+              extraMarkups: false,
+              isFirst: index === 0 || move.halfMoves % 2 === 0,
+            }),
+          )
+          .join("")
+          .trim();
 
-      const memoMaxFromNode = new WeakMap<TreeNode, number>();
-      const maxMovesFromNode = (node: TreeNode): number => {
-        const cached = memoMaxFromNode.get(node);
-        if (cached != null) return cached;
-
-        const turn = getFenTurn(node.fen);
-        if (!turn || node.children.length === 0) {
-          memoMaxFromNode.set(node, 0);
-          return 0;
+        if (mainline) {
+          tags.push(`mainline:${mainline}`);
         }
 
-        const add = turn === puzzleColor ? 1 : 0;
-        let best = 0;
-        for (const child of node.children) {
-          if (!child.san) continue;
-          best = Math.max(best, add + maxMovesFromNode(child));
-        }
-        memoMaxFromNode.set(node, best);
-        return best;
-      };
+        const puzzles: string[] = [];
+        let puzzleCounter = 0;
+        const currentDate = formatDateToPGN(new Date());
+        const MAX_DEPTH = 80;
 
-      const collectLinesFromPosition = (startNode: TreeNode): TreeNode[][] => {
-        if (maxMovesFromNode(startNode) < selectedDepth) return [];
-        if (startNode.children.length === 0) return [];
+        // ✅ DEDUPE: by FEN identity + canonical SAN (no move numbers)
+        const dedupe = new Set<string>();
+        const canonicalizeSolution = (solution: string) => {
+          // Remove move numbers like "12." or "12..." and normalize spaces
+          return solution
+            .replace(/\b\d+\.(?:\.\.)?\s*/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        };
 
-        const lines: TreeNode[][] = [];
+        const buildSolutionText = (startFen: string, moves: TreeNode[]) => {
+          const parts = startFen.trim().split(/\s+/);
+          let moveNumber = Number(parts[5]) || 1;
+          const startTurn = parts[1] === "b" ? "black" : "white";
 
-        const step = (node: TreeNode, movesByPuzzleSide: number, moves: TreeNode[], depth: number) => {
-          if (depth > MAX_DEPTH) return;
-          
-          const turn = getFenTurn(node.fen);
-          if (!turn) return;
+          const [pos] = positionFromFen(startFen);
+          if (!pos) return "";
 
-          // If we've reached exactly the required depth for puzzle side, add this line
-          if (movesByPuzzleSide === selectedDepth && moves.length > 0) {
-            lines.push(moves);
-            return;
+          const sanParts: string[] = [];
+
+          for (let i = 0; i < moves.length; i++) {
+            const node = moves[i];
+            const parsedMove = node.move ?? parseSanOrUci(pos, node.san ?? "");
+            if (!parsedMove) return "";
+
+            const san = makeSan(pos, parsedMove);
+            const turn = pos.turn; // side to play BEFORE move
+
+            if (turn === "white") {
+              sanParts.push(`${moveNumber}. ${san}`);
+              moveNumber += 1;
+            } else {
+              if (i === 0 && startTurn === "black") {
+                sanParts.push(`${moveNumber}... ${san}`);
+                moveNumber += 1;
+              } else {
+                sanParts.push(san);
+              }
+            }
+
+            pos.play(parsedMove);
           }
 
-          // If we've exceeded the depth, don't continue
-          if (movesByPuzzleSide > selectedDepth) return;
+          return sanParts.join(" ").trim();
+        };
 
-          // Check if we can still reach the required depth
-          const remaining = selectedDepth - movesByPuzzleSide;
-          if (maxMovesFromNode(node) < remaining) return;
+        // Max # of puzzleColor moves reachable from this node (using only the fen turn)
+        const memoMaxFromNode = new WeakMap<TreeNode, number>();
+        const maxMovesFromNode = (node: TreeNode): number => {
+          const cached = memoMaxFromNode.get(node);
+          if (cached != null) return cached;
 
-          if (node.children.length === 0) return;
+          const turn = getFenTurn(node.fen);
+          if (!turn || node.children.length === 0) {
+            memoMaxFromNode.set(node, 0);
+            return 0;
+          }
 
           const add = turn === puzzleColor ? 1 : 0;
+          let best = 0;
+
           for (const child of node.children) {
             if (!child.san) continue;
-            step(child, movesByPuzzleSide + add, [...moves, child], depth + 1);
+            best = Math.max(best, add + maxMovesFromNode(child));
+          }
+
+          memoMaxFromNode.set(node, best);
+          return best;
+        };
+
+        // Collect all lines starting at startNode that contain EXACTLY selectedDepth puzzleColor moves.
+        // We count puzzleColor moves by looking at the TURN BEFORE each move (node.fen).
+        const collectLinesFromPosition = (startNode: TreeNode): TreeNode[][] => {
+          if (maxMovesFromNode(startNode) < selectedDepth) return [];
+          if (startNode.children.length === 0) return [];
+
+          const lines: TreeNode[][] = [];
+
+          const step = (node: TreeNode, moves: TreeNode[], puzzleMoves: number, depth: number) => {
+            if (depth > MAX_DEPTH) return;
+
+            if (puzzleMoves === selectedDepth) {
+              if (moves.length > 0) lines.push(moves);
+              return;
+            }
+
+            const remaining = selectedDepth - puzzleMoves;
+            if (maxMovesFromNode(node) < remaining) return;
+
+            const turn = getFenTurn(node.fen);
+            if (!turn || node.children.length === 0) return;
+
+            // The move from node -> child is played by `turn`
+            const add = turn === puzzleColor ? 1 : 0;
+
+            for (const child of node.children) {
+              if (!child.san) continue;
+
+              const nextPuzzleMoves = puzzleMoves + add;
+              if (nextPuzzleMoves > selectedDepth) continue;
+
+              step(child, [...moves, child], nextPuzzleMoves, depth + 1);
+            }
+          };
+
+          step(startNode, [], 0, 0);
+          return lines;
+        };
+
+        // ✅ Key rule:
+        // Generate puzzles at nodes where the RIVAL branches (turn !== puzzleColor && hasVariations),
+        // so the solution ALWAYS starts with a rival move (e.g. "5. Nc3 ...").
+        const generatePuzzlesFromTree = (node: TreeNode, depth: number): void => {
+          if (depth > MAX_DEPTH) return;
+
+          const turn = getFenTurn(node.fen);
+          const childrenWithSan = node.children.filter((c) => c.san);
+          const hasVariations = childrenWithSan.length > 1;
+
+          if (turn && turn !== puzzleColor && hasVariations) {
+            const lines = collectLinesFromPosition(node);
+
+            for (const line of lines) {
+              if (line.length === 0) continue;
+
+              const solution = buildSolutionText(node.fen, line);
+              if (!solution) continue;
+
+              const canonical = canonicalizeSolution(solution);
+              const startKey = getFenIdentityKey(node.fen);
+              const dedupeKey = `${startKey}|${canonical}`;
+
+              // ✅ DEDUPE: skip duplicates
+              if (dedupe.has(dedupeKey)) continue;
+              dedupe.add(dedupeKey);
+
+              puzzleCounter++;
+
+              const whiteName = puzzleColor === "white" ? "Puzzle" : "?";
+              const blackName = puzzleColor === "black" ? "Puzzle" : "?";
+
+              let puzzlePGN = `[Event "Mini puzzle ${puzzleCounter}"]\n`;
+              puzzlePGN += `[Site "Local"]\n`;
+              puzzlePGN += `[Date "${currentDate}"]\n`;
+              puzzlePGN += `[Round "-"]\n`;
+              puzzlePGN += `[White "${whiteName}"]\n`;
+              puzzlePGN += `[Black "${blackName}"]\n`;
+              puzzlePGN += `[Result "*"]\n`;
+              puzzlePGN += `[SetUp "1"]\n`;
+              puzzlePGN += `[FEN "${node.fen}"]\n`;
+              puzzlePGN += `[Solution "${solution}"]\n`;
+              puzzlePGN += `\n${solution}\n\n`;
+
+              puzzles.push(puzzlePGN);
+            }
+          }
+
+          for (const child of childrenWithSan) {
+            generatePuzzlesFromTree(child, depth + 1);
           }
         };
 
-        step(startNode, 0, [], 0);
-        // Filter to ensure lines have exactly selectedDepth moves from puzzle side
-        return lines.filter((line) => {
-          let count = 0;
-          const [startPos] = positionFromFen(startNode.fen);
-          if (!startPos) return false;
-          let pos = startPos.clone();
-          for (const moveNode of line) {
-            const turn = getFenTurn(makeFen(pos.toSetup()));
-            if (turn === puzzleColor) count++;
-            const parsedMove = moveNode.move ?? parseSanOrUci(pos, moveNode.san ?? "");
-            if (!parsedMove) return false;
-            pos.play(parsedMove);
-          }
-          return count === selectedDepth;
+        generatePuzzlesFromTree(root, 0);
+
+        const puzzlesPGN = puzzles.join("");
+
+        await createFile({
+          filename: fileName,
+          filetype: "puzzle",
+          tags,
+          pgn: puzzlesPGN,
+          dir: documentDir,
         });
-      };
 
-      const generatePuzzlesFromTree = (node: TreeNode, depth: number, inVariants: boolean): void => {
-        if (depth > MAX_DEPTH) return;
+        try {
+          window.dispatchEvent(new Event("puzzles:updated"));
+          window.dispatchEvent(new Event("puzzle-variants:updated"));
+        } catch {}
 
-        const nextInVariants = inVariants || node.children.length > 1;
-        const turn = getFenTurn(node.fen);
-
-        // Generate puzzles when it's the puzzle color's turn and there are variations
-        // (need at least 2 children to have a variation, or already in a variant branch)
-        if (turn === puzzleColor && (nextInVariants || node.children.length > 1)) {
-          const lines = collectLinesFromPosition(node);
-          for (const line of lines) {
-            if (line.length === 0) continue;
-            const solution = buildSolutionText(node.fen, line);
-            if (!solution) continue;
-
-            puzzleCounter++;
-            let puzzlePGN = `[Event "Mini puzzle ${puzzleCounter}"]\n`;
-            puzzlePGN += `[Site "Local"]\n`;
-            puzzlePGN += `[Date "${currentDate}"]\n`;
-            puzzlePGN += `[Round "-"]\n`;
-            puzzlePGN += `[White "Puzzle"]\n`;
-            puzzlePGN += `[Black "?"]\n`;
-            puzzlePGN += `[Result "*"]\n`;
-            puzzlePGN += `[SetUp "1"]\n`;
-            puzzlePGN += `[FEN "${node.fen}"]\n`;
-            puzzlePGN += `[Solution "${solution}"]\n`;
-            puzzlePGN += `\n${solution} *\n\n`;
-
-            puzzles.push(puzzlePGN);
-          }
-        }
-
-        for (const child of node.children) {
-          generatePuzzlesFromTree(child, depth + 1, nextInVariants);
-        }
-      };
-
-      generatePuzzlesFromTree(root, 0, false);
-
-      // Combine all puzzles into a single PGN string
-      const puzzlesPGN = puzzles.join("");
-
-      // Create the file with puzzle type
-      await createFile({
-        filename: fileName,
-        filetype: "puzzle",
-        tags,
-        pgn: puzzlesPGN,
-        dir: documentDir,
-      });
-
-      try {
-        window.dispatchEvent(new Event("puzzles:updated"));
-        window.dispatchEvent(new Event("puzzle-variants:updated"));
-      } catch {}
-
-      notifications.show({
-        title: t("common.save"),
-        message: t("common.puzzlesGeneratedSuccessfully", { count: puzzles.length }),
-        color: "green",
-      });
-    } catch (error) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("common.failedToGeneratePuzzles"),
-        color: "red",
-      });
-    }
-  }, [store, boardOrientation, documentDir, getFenTurn, getMaxPuzzleMoveDepth, getVariantBaseName, t]);
+        notifications.show({
+          title: t("common.save"),
+          message: t("common.puzzlesGeneratedSuccessfully", { count: puzzles.length }),
+          color: "green",
+        });
+      } catch (error) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("common.failedToGeneratePuzzles"),
+          color: "red",
+        });
+      }
+    },
+    [store, boardOrientation, documentDir, getFenTurn, getMaxPuzzleMoveDepth, getVariantBaseName, t],
+  );
 
   const reloadBoard = useCallback(async () => {
     if (currentTab != null) {
@@ -1421,7 +1446,7 @@ function BoardVariants() {
           <Button
             leftSection={<IconPuzzle size={18} />}
             onClick={() => {
-              const puzzleColor = boardOrientation === "white" ? "white" : "black";
+              const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
               const depth = Math.max(1, getMaxPuzzleMoveDepth(store.getState().root, puzzleColor));
               setMaxPuzzleDepth(depth);
               setPuzzleDepth(Math.min(puzzleDepth, depth));
@@ -1446,9 +1471,7 @@ function BoardVariants() {
             fullWidth
             mt="xs"
           >
-            {treeBuilderRunning
-              ? t("common.cancel")
-              : t("features.board.variants.treeBuilder.button")}
+            {treeBuilderRunning ? t("common.cancel") : t("features.board.variants.treeBuilder.button")}
           </Button>
         </>
       </GameNotationWrapper>
@@ -1498,9 +1521,7 @@ function BoardVariants() {
       >
         <Stack gap="md">
           <Stack gap="xs">
-            <Text size="sm">
-              {t("features.board.variants.treeBuilder.syncHint")}
-            </Text>
+            <Text size="sm">{t("features.board.variants.treeBuilder.syncHint")}</Text>
             <SegmentedControl
               data={[
                 { label: t("features.board.database.local"), value: "local" },

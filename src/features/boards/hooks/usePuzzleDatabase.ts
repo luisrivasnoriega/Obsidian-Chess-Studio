@@ -247,12 +247,30 @@ export const usePuzzleDatabase = () => {
     }
 
     const normalizePuzzleSan = (san: string) => {
+      // Keep SAN intact as much as possible.
+      // Some sources may use 0-0 / o-o style castling, so normalize those.
       return san
-        .replace(/^([kqbnr])/i, (_, match) => match.toUpperCase())
         .replace(/0-0-0/gi, "O-O-O")
         .replace(/0-0/gi, "O-O")
         .replace(/o-o-o/gi, "O-O-O")
         .replace(/o-o/gi, "O-O");
+    };
+
+    const tryParseSanWithFallbacks = (pos: Chess, san: string) => {
+      // 1) Try as-is (this correctly handles pawn moves like "bxc6")
+      const direct = parseSan(pos, san);
+      if (direct) return direct;
+
+      // 2) If some PGNs contain lowercase piece letters (e.g. "nxf7"),
+      // try uppercasing only the first character as a fallback.
+      // This is safe because we only do it when the direct parse fails.
+      const first = san[0];
+      if (first && first >= "a" && first <= "z") {
+        const uppercased = first.toUpperCase() + san.slice(1);
+        return parseSan(pos, uppercased);
+      }
+
+      return null;
     };
 
     const parsedMoves = selectedGame.tokens
@@ -261,7 +279,7 @@ export const usePuzzleDatabase = () => {
       .map(normalizePuzzleSan)
       .map((san) => {
         if (pos) {
-          const move = parseSan(pos, san);
+          const move = tryParseSanWithFallbacks(pos, san);
           const uciMove = move ? uciNormalize(pos, move, isChess960) : null;
           if (move) {
             pos.play(move);
