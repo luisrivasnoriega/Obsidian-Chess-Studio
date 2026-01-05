@@ -67,6 +67,36 @@ const createExclusiveQueue = () => {
   };
 };
 
+type RetryOptions = {
+  retries: number;
+  delayMs: number;
+  shouldRetry?: (error: unknown) => boolean;
+  signalCancelled?: () => boolean;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retryAsync = async <T,>(fn: () => Promise<T>, options: RetryOptions): Promise<T> => {
+  const { retries, delayMs, shouldRetry, signalCancelled } = options;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= Math.max(1, retries); attempt++) {
+    if (signalCancelled?.()) {
+      throw new Error("Cancelled");
+    }
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const canRetry = attempt < retries && (shouldRetry ? shouldRetry(error) : true);
+      if (!canRetry) break;
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+};
+
 const getFenIdentityKey = (fen: string) => {
   const parts = fen.trim().split(/\s+/);
   if (parts.length >= 4) return parts.slice(0, 4).join(" ");
@@ -652,6 +682,16 @@ function BoardVariants() {
         throw new Error(t("errors.missingFen"));
       }
       const tabValue = currentTab?.value ?? "analysis";
+      const retryOpts: RetryOptions = {
+        retries: 3,
+        delayMs: 2000,
+        signalCancelled: () => treeBuilderCancelRef.current,
+        // Retry only for likely transient failures.
+        shouldRetry: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          return /network|timeout|fetch|unexpected token|json|econn|502|503|504/i.test(message);
+        },
+      };
 
       switch (dbType) {
         case "local": {
@@ -663,7 +703,7 @@ function BoardVariants() {
           return openings as Opening[];
         }
         case "lch_all": {
-          const data = await getLichessGames(trimmedFen, lichessOptions);
+          const data = await retryAsync(() => getLichessGames(trimmedFen, lichessOptions), retryOpts);
           return data.moves.map((move) => ({
             move: move.san,
             white: move.white,
@@ -672,7 +712,7 @@ function BoardVariants() {
           })) as Opening[];
         }
         case "lch_master": {
-          const data = await getMasterGames(trimmedFen, masterOptions);
+          const data = await retryAsync(() => getMasterGames(trimmedFen, masterOptions), retryOpts);
           return data.moves.map((move) => ({
             move: move.san,
             white: move.white,
@@ -853,10 +893,23 @@ function BoardVariants() {
         return linesFromEvent;
       }
 
-      const result =
-        selectedEngine.type === "chessdb"
-          ? await chessdbGetBestMoves(engineTab, goMode, options)
-          : await lichessGetBestMoves(engineTab, goMode, options);
+      const retryOpts: RetryOptions = {
+        retries: 3,
+        delayMs: 2000,
+        signalCancelled: () => treeBuilderCancelRef.current,
+        shouldRetry: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          return /network|timeout|fetch|unexpected token|json|econn|502|503|504/i.test(message);
+        },
+      };
+
+      const result = await retryAsync(
+        () =>
+          selectedEngine.type === "chessdb"
+            ? chessdbGetBestMoves(engineTab, goMode, options)
+            : lichessGetBestMoves(engineTab, goMode, options),
+        retryOpts,
+      );
       const lines = normalizeLines(result?.[1] ?? []);
       await ensureMinTime();
       return lines;
@@ -992,7 +1045,18 @@ function BoardVariants() {
       };
 
       try {
-        const data: any = await runExclusive(() => getMasterGames(fen, masterOptions));
+          const data: any = await retryAsync(
+            () => runExclusive(() => getMasterGames(fen, masterOptions)),
+            {
+              retries: 3,
+              delayMs: 2000,
+              signalCancelled: () => treeBuilderCancelRef.current,
+              shouldRetry: (error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                return /network|timeout|fetch|unexpected token|json|econn|502|503|504/i.test(message);
+              },
+            },
+          );
         const name =
           (typeof data?.opening?.name === "string" && data.opening.name.trim()) ||
           (typeof data?.opening?.eco === "string" && data.opening.eco.trim()) ||
@@ -1001,7 +1065,18 @@ function BoardVariants() {
       } catch {}
 
       try {
-        const data: any = await runExclusive(() => getLichessGames(fen, lichessOptions));
+          const data: any = await retryAsync(
+            () => runExclusive(() => getLichessGames(fen, lichessOptions)),
+            {
+              retries: 3,
+              delayMs: 2000,
+              signalCancelled: () => treeBuilderCancelRef.current,
+              shouldRetry: (error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                return /network|timeout|fetch|unexpected token|json|econn|502|503|504/i.test(message);
+              },
+            },
+          );
         const name =
           (typeof data?.opening?.name === "string" && data.opening.name.trim()) ||
           (typeof data?.opening?.eco === "string" && data.opening.eco.trim()) ||
