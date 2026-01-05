@@ -1,0 +1,104 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Obsidian Chess Studio (OCS)
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us reproduce and fix the issue.
+
+        Before submitting:
+        - Search existing issues to avoid duplicates: https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/issues
+
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: Describe what happened and what you expected to happen instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide step-by-step instructions to reproduce the bug
+      placeholder: |
+        1. Open Obsidian Chess Studio (OCS)
+        2. Navigate to [specific section]
+        3. Click on [specific button/element]
+        4. See error/unexpected behavior
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: Describe the expected outcome
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: Describe the actual outcome
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity Level
+      description: How severe is this bug?
+      options:
+        - "Critical - App crashes or completely unusable"
+        - "High - Major feature broken, significant impact"
+        - "Medium - Feature partially broken, workaround exists"
+        - "Low - Minor issue, cosmetic problem"
+        - "Enhancement - Suggestion for improvement"
+
+  - type: input
+    id: environment
+    attributes:
+      label: App Version & Operating System
+      description: Specify both the app version and your OS (e.g., v1.0.0 on Windows 11)
+      placeholder: "e.g., v1.0.0 on Windows 11"
+
+  - type: textarea
+    id: stack-trace-logs
+    attributes:
+      label: Stack Trace / Logs
+      description: Paste any relevant error messages or logs here
+      placeholder: Paste error messages or logs here
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / Screen Recordings
+      description: Add images or recordings to illustrate the issue. Drag and drop is supported.
+      placeholder: Drag and drop images here or use the attach button above
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem
+      placeholder: |
+        - Does this happen consistently or intermittently?
+        - Are there any workarounds?
+        - Did this work in a previous version?
+        - Any other relevant information
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        What happens next?
+        1. Your issue will be automatically labeled and assigned for triage
+        2. A maintainer will review and potentially ask for more information
+        3. If confirmed, the bug will be prioritized based on severity and impact
+
+        Thank you for helping improve Obsidian Chess Studio (OCS)!

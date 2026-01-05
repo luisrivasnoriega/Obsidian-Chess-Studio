@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature Request
+    url: https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/discussions/new/choose
+    about: Suggest a new feature or improvement for Obsidian Chess Studio (OCS)

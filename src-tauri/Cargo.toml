@@ -1,0 +1,111 @@
+[package]
+name = "obsidian-chess-studio"
+version = "1.0.3"
+description = "A Modern Chess Database"
+authors = ["OCS Team"]
+license = "GPL-3.0-only"
+repository = "https://github.com/luisrivasnoriega/Obsidian-Chess-Studio"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "ocs_lib"
+# FIXED: Removed "staticlib" to prevent link.exe error 1120 on Windows
+# Multiple crate-types with LTO can cause duplicate symbol errors
+# Tauri only needs rlib for internal use and cdylib for FFI
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2.9.5", features = ["protocol-asset"] }
+zip = "2.4.2"
+tokio = { version = "1.48", features = ["full"] }
+futures-util = "0.3.31"
+reqwest = { version = "0.12.26", features = ["stream", "blocking", "json", "rustls-tls"], default-features = false }
+shakmaty = "0.27.3"
+pgn-reader = "0.26.0"
+csv = "1.4.0"
+lazy_static = "1.5.0"
+btoi = "0.4.3"
+rusqlite = { version = "0.28.0", features = ["bundled"] }
+bzip2 = "0.4.4"
+zstd = "0.13"
+diesel = { version = "2.3.5", features = [
+    "sqlite",
+    "returning_clauses_for_sqlite_3_35",
+    "r2d2",
+] }
+rayon = "1.11.0"
+chrono = "0.4.42"
+derivative = "2.2.0"
+dashmap = "6.1.0"
+once_cell = "1.21.3"
+rand = "0.8.5"
+vampirc-uci = "0.11.1"
+tempfile = "3.23.0"
+quick-xml = { version = "0.31.0", features = ["serialize"] }
+specta = { version = "^2.0.0-rc.20", features = ["derive"] }
+tauri-specta = { version = "^2.0.0-rc.20", features = ["derive", "typescript"] }
+strsim = "0.11.1"
+bincode = "2.0.1"
+thiserror = "1.0.69"
+log = "0.4.29"
+oauth2 = "4.4.2"
+axum = "0.6.20"
+tar = "0.4.44"
+sysinfo = "0.29.11"
+governor = "0.6.3"
+nonzero_ext = "0.3.0"
+specta-typescript = "0.0.7"
+tauri-plugin-shell = "2.3.3"
+tauri-plugin-http = "2.5.4"
+tauri-plugin-fs = "2.4.4"
+tauri-plugin-dialog = "2.4.2"
+tauri-plugin-os = "2.3.2"
+tauri-plugin-cli = "2.4.1"
+tauri-plugin-updater = "2.9.0"
+tauri-plugin-process = "2"
+tauri-plugin-log = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-opener = "2"
+regex = "1.12.2"
+postgrest = "1.6"
+uuid = { version = "1.19.0", features = ["v4"] }
+fs_extra = "1.3.0"
+base64 = "0.22.1"
+flate2 = "1.1.5"
+
+[features]
+# by default Tauri runs in production mode
+# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
+default = ["custom-protocol"]
+# this feature is used for production builds where `devPath` points to the filesystem
+# DO NOT remove this
+custom-protocol = ["tauri/custom-protocol"]
+
+# OPTIMIZED: Aggressive release optimizations for maximum performance
+# This is CRITICAL - without this, release builds are slow
+[profile.release]
+opt-level = 3          # Maximum optimization
+# FIXED: Use "thin" LTO instead of "fat" to prevent link.exe error 1120 on Windows
+# Thin LTO is more compatible with MSVC linker and still provides significant optimization
+lto = "thin"           # Thin LTO (more compatible, still very fast)
+codegen-units = 1      # Better optimization (slower build, faster runtime)
+strip = true           # Strip symbols to reduce binary size
+panic = "abort"        # Smaller binary, faster runtime
+
+# OPTIMIZED: Dev profile with some optimizations for better dev experience
+# FIXED: Set opt-level = 0 for debug builds to prevent link.exe errors on Windows
+# Debug builds with opt-level > 0 can cause symbol conflicts with native dependencies
+[profile.dev]
+opt-level = 0          # No optimization in dev mode (prevents link.exe 1120 errors)
+incremental = true      # Faster incremental builds (default, but explicit)
+debug = true           # Include debug symbols
