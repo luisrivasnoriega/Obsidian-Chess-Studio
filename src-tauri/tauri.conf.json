@@ -67,7 +67,7 @@
         "width": 1280,
         "height": 800,
         "maximized": false,
-        "visible": false,
+        "visible": true,
         "decorations": false,
         "minWidth": 1024,
         "minHeight": 640,

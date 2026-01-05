@@ -1884,5 +1884,13 @@
   "spotlight": {
     "nothingFound": "Nada encontrado...",
     "searchPlaceholder": "Buscar..."
+  },
+  "TimeControl": {
+    "UltraBullet": "UltraBullet",
+    "Bullet": "Bullet",
+    "Blitz": "Blitz",
+    "Rapid": "Rápido",
+    "Classical": "Clásico",
+    "Correspondence": "Correspondencia"
   }
 }

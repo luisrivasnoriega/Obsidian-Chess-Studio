@@ -9,7 +9,6 @@ import {
   isVersionCheckEnabled,
   isVersionSkipped,
   recordVersionCheck,
-  shouldCheckForUpdates,
   type VersionCheckResult,
 } from "@/services/version-checker";
 import {
@@ -140,11 +139,7 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
       return;
     }
 
-    if (!shouldCheckForUpdates(VERSION_CHECK_SETTINGS.checkIntervalHours)) {
-      info("Skipping version check - not enough time has passed since last check");
-      return;
-    }
-
+    // Always check for updates on startup, regardless of interval
     autoCheckInitiated.current = true;
 
     const timeoutId = setTimeout(() => {

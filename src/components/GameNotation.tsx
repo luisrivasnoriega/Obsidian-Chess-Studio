@@ -193,7 +193,7 @@ function GameNotation({
     initialVariationState,
     ...["variations", "repertoire", "report"].filter((v) => v !== initialVariationState),
   ]) as [VariationState, () => void];
-  const [showComments, toggleComments] = useToggle([true, false]);
+  const [showComments, toggleComments] = useToggle([false, true]);
 
   const invisible = topBar && invisibleValue;
   const { colorScheme } = useMantineColorScheme();

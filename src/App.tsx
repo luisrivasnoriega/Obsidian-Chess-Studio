@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { getMatches } from "@tauri-apps/plugin-cli";
 import { attachConsole, error, info } from "@tauri-apps/plugin-log";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useAtom, useAtomValue } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -240,8 +241,29 @@ function useAppInitialization() {
       detachConsole = detach;
       info("Console logging attached successfully");
 
+      // Minimize window at startup
+      try {
+        const webviewWindow = getCurrentWebviewWindow();
+        await webviewWindow.minimize();
+        info("Window minimized at startup");
+      } catch (e) {
+        error(`Failed to minimize window at startup: ${e}`);
+      }
+
       await handleCommandLineFile();
       await commands.screenCapture();
+
+      // Maximize window after app loads
+      try {
+        const webviewWindow = getCurrentWebviewWindow();
+        const isMaximized = await webviewWindow.isMaximized();
+        if (!isMaximized) {
+          await webviewWindow.toggleMaximize();
+          info("Window maximized after initialization");
+        }
+      } catch (e) {
+        error(`Failed to maximize window: ${e}`);
+      }
 
       setInitState("initialized");
       info("React app initialization completed successfully");

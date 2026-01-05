@@ -34,7 +34,7 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
   const headers = useStore(store, (s) => s.headers);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [invisibleValue, setInvisible] = useAtom(currentInvisibleAtom);
-  const [showComments, toggleComments] = useToggle([true, false]);
+  const [showComments, toggleComments] = useToggle([false, true]);
   const [expandedDepths, setExpandedDepths] = useState<Map<string, number>>(() => new Map());
   const invisible = topBar && invisibleValue;
   const { colorScheme } = useMantineColorScheme();

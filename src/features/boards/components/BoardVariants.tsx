@@ -1,5 +1,6 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import type { Chess, Move } from "chessops";
+import { makeFen } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import { Box, Button, Group, Modal, NumberInput, Portal, SegmentedControl, Select, Stack, Text } from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
@@ -356,14 +357,20 @@ function BoardVariants() {
 
         const step = (node: TreeNode, movesByPuzzleSide: number, moves: TreeNode[], depth: number) => {
           if (depth > MAX_DEPTH) return;
-          if (movesByPuzzleSide >= selectedDepth) {
+          
+          const turn = getFenTurn(node.fen);
+          if (!turn) return;
+
+          // If we've reached exactly the required depth for puzzle side, add this line
+          if (movesByPuzzleSide === selectedDepth && moves.length > 0) {
             lines.push(moves);
             return;
           }
 
-          const turn = getFenTurn(node.fen);
-          if (!turn) return;
+          // If we've exceeded the depth, don't continue
+          if (movesByPuzzleSide > selectedDepth) return;
 
+          // Check if we can still reach the required depth
           const remaining = selectedDepth - movesByPuzzleSide;
           if (maxMovesFromNode(node) < remaining) return;
 
@@ -377,7 +384,21 @@ function BoardVariants() {
         };
 
         step(startNode, 0, [], 0);
-        return lines;
+        // Filter to ensure lines have exactly selectedDepth moves from puzzle side
+        return lines.filter((line) => {
+          let count = 0;
+          const [startPos] = positionFromFen(startNode.fen);
+          if (!startPos) return false;
+          let pos = startPos.clone();
+          for (const moveNode of line) {
+            const turn = getFenTurn(makeFen(pos.toSetup()));
+            if (turn === puzzleColor) count++;
+            const parsedMove = moveNode.move ?? parseSanOrUci(pos, moveNode.san ?? "");
+            if (!parsedMove) return false;
+            pos.play(parsedMove);
+          }
+          return count === selectedDepth;
+        });
       };
 
       const generatePuzzlesFromTree = (node: TreeNode, depth: number, inVariants: boolean): void => {
@@ -386,7 +407,9 @@ function BoardVariants() {
         const nextInVariants = inVariants || node.children.length > 1;
         const turn = getFenTurn(node.fen);
 
-        if (nextInVariants && turn === puzzleColor) {
+        // Generate puzzles when it's the puzzle color's turn and there are variations
+        // (need at least 2 children to have a variation, or already in a variant branch)
+        if (turn === puzzleColor && (nextInVariants || node.children.length > 1)) {
           const lines = collectLinesFromPosition(node);
           for (const line of lines) {
             if (line.length === 0) continue;

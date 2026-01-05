@@ -201,3 +201,84 @@ pub fn upsert_variant_position(
     }
     upsert_variant_position_entry(&app, fen, engine, recommended_move, ms)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fen_identity_key() {
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let key = fen_identity_key(fen);
+        assert_eq!(
+            key,
+            Some("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -".to_string())
+        );
+    }
+
+    #[test]
+    fn test_fen_identity_key_short() {
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w";
+        let key = fen_identity_key(fen);
+        assert_eq!(key, None);
+    }
+
+    #[test]
+    fn test_fen_identity_key_various_formats() {
+        // Test with different FEN formats
+        let fen1 = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let key1 = fen_identity_key(fen1);
+        assert!(key1.is_some());
+
+        let fen2 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+        let key2 = fen_identity_key(fen2);
+        assert!(key2.is_some());
+        assert_ne!(key1, key2); // Different positions should have different keys
+    }
+
+    #[test]
+    fn test_variant_position_struct() {
+        let pos = VariantPosition {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            engine: "test_engine".to_string(),
+            recommended_move: "e2e4".to_string(),
+            ms: 1000i64,
+        };
+        assert_eq!(pos.ms, 1000);
+        assert_eq!(pos.recommended_move, "e2e4");
+    }
+
+    #[test]
+    fn test_variant_position_with_large_ms() {
+        // Test that i64 can handle large values
+        let pos = VariantPosition {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            engine: "test_engine".to_string(),
+            recommended_move: "e2e4".to_string(),
+            ms: i64::MAX,
+        };
+        assert_eq!(pos.ms, i64::MAX);
+    }
+
+    #[test]
+    fn test_variant_position_serialization() {
+        // Test that the struct can be serialized/deserialized
+        let pos = VariantPosition {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            engine: "test_engine".to_string(),
+            recommended_move: "e2e4".to_string(),
+            ms: 1000i64,
+        };
+        
+        // Serialize to JSON (simulating what Tauri does)
+        let json = serde_json::to_string(&pos).unwrap();
+        assert!(json.contains("\"ms\":1000"));
+        
+        // Deserialize back
+        let deserialized: VariantPosition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.ms, 1000);
+        assert_eq!(deserialized.fen, pos.fen);
+        assert_eq!(deserialized.engine, pos.engine);
+        assert_eq!(deserialized.recommended_move, pos.recommended_move);
+    }
+}
