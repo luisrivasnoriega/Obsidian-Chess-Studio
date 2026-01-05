@@ -38,7 +38,6 @@ use std::{
 use tauri::{path::BaseDirectory, Manager};
 use tauri::{Emitter, State};
 
-use log::info;
 use tauri_specta::Event as _;
 
 pub use self::models::NormalizedGame;
@@ -292,7 +291,7 @@ pub async fn convert_pgn(
     if needs_init {
         // Initialize database if file doesn't exist or tables are missing
         if !tables_exist && db_exists {
-            info!("Database file exists but tables are missing, reinitializing...");
+            // Database file exists but tables are missing, reinitializing
         }
         core::init_db(db, &title, &description)?;
     }
@@ -429,7 +428,7 @@ pub async fn init_profile_db(
     let needs_init = !db_exists || !tables_exist;
     if needs_init {
         if !tables_exist && db_exists {
-            info!("Database file exists but tables are missing, reinitializing...");
+            // Database file exists but tables are missing, reinitializing
         }
         core::init_db(db, &title, &description)?;
         let _ = db.batch_execute(INDEXES_SQL);
@@ -1559,8 +1558,7 @@ pub async fn get_players_game_info(
         .map(|((site, player), data)| SiteStatsData { site, player, data })
         .collect();
 
-    // OPTIMIZED: Keep timing info but simplify
-    info!("Player stats computed in {:?}", timer.elapsed());
+    // Player stats computed
 
     Ok(game_info)
 }
@@ -1578,7 +1576,6 @@ pub async fn delete_database(
 
     let path_str = file.to_string_lossy().into_owned();
 
-    log::info!("Attempting to delete database: {:?}", file);
 
     // STEP 1: Cancel any ongoing searches by acquiring all permits
     // This will stop new searches and wait for current ones to complete
@@ -1599,7 +1596,6 @@ pub async fn delete_database(
     if let Some((_, pool)) = state.connection_pool.remove(&path_str) {
         // Force drop the pool to close all connections immediately
         drop(pool);
-        log::info!("Closed connection pool for: {:?}", file);
     }
 
     // Clear any cached data for this database (both in-memory and persistent cache)
@@ -1616,10 +1612,9 @@ pub async fn delete_database(
 
     // Clear persistent position cache for this database
     if let Err(e) = crate::db::position_cache::clear_cache_for_database(&app, &file) {
-        log::warn!("Failed to clear position cache for database: {}", e);
+        let _ = e;
     }
 
-    log::info!("Waiting for file handles to be released...");
     // INCREASED: Wait longer for OS to release all file handles
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
@@ -1628,11 +1623,10 @@ pub async fn delete_database(
         if file.exists() {
             match remove_file(&file) {
                 Ok(_) => {
-                    log::info!("✓ Database deleted successfully: {:?}", file);
                     return Ok(());
                 }
                 Err(e) if attempt < 3 => {
-                    log::warn!("Attempt {} failed: {}. Retrying...", attempt, e);
+                    let _ = e;
                     tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
                         .await;
                 }
@@ -1641,7 +1635,6 @@ pub async fn delete_database(
                 }
             }
         } else {
-            log::warn!("Database file does not exist: {:?}", file);
             return Ok(());
         }
     }
@@ -1887,11 +1880,6 @@ pub async fn export_position_games_to_pgn(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    info!(
-        "Exported {} games from position {} to PGN",
-        game_ids.len(),
-        fen
-    );
     Ok(())
 }
 
@@ -1958,7 +1946,6 @@ pub async fn export_selected_games_to_pgn(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    info!("Exported {} selected games to PGN", game_ids.len());
     Ok(())
 }
 
@@ -2055,8 +2042,6 @@ pub async fn merge_players(
 pub fn clear_games(state: tauri::State<'_, AppState>) -> Result<()> {
     // Clear position search cache to free memory
     state.line_cache.clear();
-
-    info!("Cleared position search cache");
     Ok(())
 }
 
@@ -2093,7 +2078,6 @@ pub async fn precache_openings(
 ) -> Result<()> {
     use crate::opening::TSV_DATA;
     use csv::ReaderBuilder;
-    use log::info;
     use shakmaty::{fen::Fen, san::San, Chess, EnPassantMode};
     use std::sync::{Arc, Mutex};
     use tauri::Emitter;
@@ -2140,10 +2124,6 @@ pub async fn precache_openings(
     // Get a reference to AppState (Tauri manages it internally, likely with Arc)
     let state_arc = state.inner();
 
-    info!(
-        "Starting to pre-cache {} openings for database: {:?}",
-        total, database_path
-    );
 
     // Limit concurrency to avoid overwhelming the database
     let semaphore = Arc::new(Semaphore::new(4)); // Process 4 openings at a time
@@ -2210,12 +2190,7 @@ pub async fn precache_openings(
                                 .build(manager)
                             {
                                 Ok(p) => p,
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to create connection pool for opening {}: {}",
-                                        name_clone,
-                                        e
-                                    );
+                                Err(_) => {
                                     let mut e = errors_clone.lock().unwrap();
                                     *e += 1;
                                     return;
@@ -2234,12 +2209,7 @@ pub async fn precache_openings(
 
                 let mut db = match db_result {
                     Ok(conn) => conn,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to get database connection for opening {}: {}",
-                            name_clone,
-                            e
-                        );
+                    Err(_) => {
                         let mut e = errors_clone.lock().unwrap();
                         *e += 1;
                         return;
@@ -2249,8 +2219,7 @@ pub async fn precache_openings(
                 // Convert position query
                 let position_query = match PositionQuery::exact_from_fen(&fen_clone) {
                     Ok(q) => q,
-                    Err(e) => {
-                        log::warn!("Failed to parse FEN for opening {}: {}", name_clone, e);
+                    Err(_) => {
                         let mut e = errors_clone.lock().unwrap();
                         *e += 1;
                         return;
@@ -2294,7 +2263,7 @@ pub async fn precache_openings(
                     ) {
                         Ok((stats_vec, ids)) => (stats_vec, ids),
                         Err(e) => {
-                            log::warn!("Failed to search opening {}: {}", name_clone, e);
+                            let _ = e;
                             let mut e = errors_clone.lock().unwrap();
                             *e += 1;
                             return;
@@ -2310,7 +2279,7 @@ pub async fn precache_openings(
                     &stats,
                     &game_ids,
                 ) {
-                    log::warn!("Failed to cache opening {}: {}", name_clone, e);
+                    let _ = e;
                     let mut e = errors_clone.lock().unwrap();
                     *e += 1;
                 } else {
@@ -2339,11 +2308,6 @@ pub async fn precache_openings(
 
     let final_processed = *processed.lock().unwrap();
     let final_errors = *errors.lock().unwrap();
-
-    info!(
-        "Pre-caching completed: {}/{} processed, {} errors",
-        final_processed, total, final_errors
-    );
 
     // Emit final progress
     app.emit(
@@ -2386,8 +2350,6 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
     // Download URL for pre-calculated position cache
     let download_url = "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/position_cache.db3";
 
-    info!("Downloading position cache from: {}", download_url);
-    info!("Saving to: {}", cache_path.display());
 
     // Download the file (will overwrite if it exists)
     // Use "db_position_cache" as ID to match the format expected by ProgressButton
@@ -2401,11 +2363,6 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
         None,
     )
     .await?;
-
-    info!(
-        "Position cache downloaded successfully to: {}",
-        cache_path.display()
-    );
 
     // Create a marker file to indicate that the pre-calculated cache was installed
     // This distinguishes it from a cache that was generated on-the-fly during searches
@@ -2440,8 +2397,6 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
             format!("Failed to write marker file: {}", e),
         ))
     })?;
-
-    info!("Position cache marker file created at: {}", marker_path.display());
 
     Ok(())
 }

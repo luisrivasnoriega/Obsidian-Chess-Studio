@@ -22,15 +22,11 @@ const GAMES_CHECK_INDEXES: &str = include_str!("../../../database/queries/games/
 pub fn init_db(conn: &mut SqliteConnection, title: &str, description: &str) -> Result<()> {
     use diesel::sql_query;
 
-    log::info!("Initializing database with schema...");
-
     // STEP 1: Create tables
     conn.batch_execute(CREATE_TABLES_SQL)?;
-    log::info!("✓ Tables created successfully");
 
     // STEP 2: Insert initial seed data
     conn.batch_execute(INITIAL_DATA_SQL)?;
-    log::info!("✓ Initial data seeded");
 
     // STEP 3: Insert database metadata
     conn.batch_execute(
@@ -39,14 +35,12 @@ pub fn init_db(conn: &mut SqliteConnection, title: &str, description: &str) -> R
             .replace("{1}", title)
             .replace("{2}", description),
     )?;
-    log::info!("✓ Metadata inserted");
 
     // STEP 4: Now apply performance pragmas AFTER tables are created
     sql_query(include_str!(
         "../../../database/pragmas/performance_pragmas.sql"
     ))
     .execute(conn)?;
-    log::info!("✓ Performance pragmas applied");
 
     Ok(())
 }

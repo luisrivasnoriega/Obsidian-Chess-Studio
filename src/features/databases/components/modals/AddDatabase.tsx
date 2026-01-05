@@ -367,15 +367,9 @@ function AddDatabase({
         // This file is only created by download_position_cache, not by automatic cache generation
         const markerPath = await resolve(appDataDirPath, "position_cache.installed");
         const markerExists = await exists(markerPath);
-        console.log("[AddDatabase] Position Cache installation check:", { 
-          markerPath, 
-          markerExists,
-          appDataDir: appDataDirPath 
-        });
         // Only mark as installed if the marker file exists
         setPositionCacheInstalled(markerExists);
-      } catch (error) {
-        console.error("[AddDatabase] Error checking Position Cache installation:", error);
+      } catch {
         // On error, assume not installed
         setPositionCacheInstalled(false);
       }
@@ -387,15 +381,12 @@ function AddDatabase({
   }, [opened]);
 
   const installedDatabaseTitles = useMemo(
-    () => {
-      // Only include databases that are actually in the db folder
-      // Position Cache is NOT in the db folder, so it should NOT be in this set
-      const titles = databases
-        .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
-        .map((db) => db.title);
-      console.log("[AddDatabase] Installed database titles:", titles);
-      return new Set(titles);
-    },
+    () =>
+      new Set(
+        databases
+          .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
+          .map((db) => db.title),
+      ),
     [databases],
   );
 

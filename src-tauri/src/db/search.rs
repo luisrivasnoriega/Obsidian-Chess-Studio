@@ -1274,23 +1274,14 @@ pub(crate) fn search_position_online_internal(
         ))
         .load(db)
     {
-        Ok(g) => {
-            log::info!("search_position_online_internal: Loaded {} games from DB", g.len());
-            g
-        }
-        Err(e) => {
-            log::error!("search_position_online_internal: Failed to load games: {:?}", e);
-            return (Vec::new(), Vec::new());
-        }
+        Ok(g) => g,
+        Err(_) => return (Vec::new(), Vec::new()),
     };
 
     let games_len = games.len();
     if games_len == 0 {
-        log::warn!("search_position_online_internal: No games found in database");
         return (Vec::new(), Vec::new());
     }
-    
-    log::info!("search_position_online_internal: Processing {} games", games_len);
 
     let processed = AtomicUsize::new(0);
     let expected = total_games.max(games_len).max(1);
@@ -1414,12 +1405,8 @@ pub(crate) fn search_position_online_internal(
                     Ok(None) => {
                         // Position not found in this game, continue
                     }
-                    Err(e) => {
-                        // Log decode errors but don't stop processing
-                        let idx = processed.load(Ordering::Relaxed);
-                        if idx % 10000 == 0 {
-                            log::debug!("search_position_online_internal: Error decoding game {}: {:?}", id, e);
-                        }
+                    Err(_) => {
+                        // Decode errors are ignored to continue processing
                     }
                 }
             },
@@ -1564,11 +1551,8 @@ pub(crate) fn search_position_online_internal(
                 Ok(None) => {
                     // Position not found in this game
                 }
-                Err(e) => {
-                    // Log decode errors occasionally
-                    if processed.load(Ordering::Relaxed) % 10000 == 0 {
-                        log::debug!("search_position_online_internal: Error decoding game {}: {:?}", id, e);
-                    }
+                Err(_) => {
+                    // Decode errors are ignored to continue processing
                 }
             }
         }
@@ -1576,8 +1560,6 @@ pub(crate) fn search_position_online_internal(
 
     let openings_vec: Vec<PositionStats> = openings.into_iter().map(|(_, v)| v).collect();
     let ids: Vec<i32> = sample_games.into_inner().unwrap();
-    
-    log::info!("search_position_online_internal: Found {} openings and {} matching games", openings_vec.len(), ids.len());
     
     (openings_vec, ids)
 }
@@ -1596,42 +1578,25 @@ pub async fn search_position(
     tab_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(Vec<PositionStats>, Vec<NormalizedGame>), Error> {
-    eprintln!("[RUST] search_position: Command called with file: {:?}, tab_id: {}", file, tab_id);
-    log::info!("search_position: Command called with file: {:?}, tab_id: {}", file, tab_id);
-    
     let file_str = file.to_str().ok_or_else(|| {
-        log::error!("search_position: Invalid file path");
         Error::FenError("Invalid database path".to_string())
     })?;
     
-    log::info!("search_position: Opening database: {}", file_str);
     let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
-    log::info!("search_position: Database opened successfully");
 
     // Get FEN from position query
     let fen = match &query.position {
-        Some(pos_query) => {
-            let fen = pos_query.fen.trim_end().to_string();
-            log::info!("search_position: FEN from query: '{}' (length: {})", fen, fen.len());
-            fen
-        }
-        None => {
-            log::error!("search_position: Missing position query");
-            return Err(Error::NoMatchFound);
-        }
+        Some(pos_query) => pos_query.fen.trim_end().to_string(),
+        None => return Err(Error::NoMatchFound),
     };
 
     // Check if position is cached in database
-    log::info!("search_position: Checking cache for FEN: {} in DB: {:?}", fen, file);
     if is_position_cached(&app, &fen, &file)? {
-        log::info!("search_position: Cache HIT - loading cached data");
         // Load cached data
         if let Some((cached_stats, cached_game_ids)) = get_cached_position(&app, &fen, &file)? {
-            log::info!("search_position: Loaded from cache: {} stats, {} game IDs", cached_stats.len(), cached_game_ids.len());
             // If we cached an empty result (common when DB schema/metadata was incomplete),
             // treat it as a cache miss so we can recompute after improvements.
             if cached_stats.is_empty() && cached_game_ids.is_empty() {
-                log::warn!("search_position: Cache has empty result, treating as cache miss and recomputing");
                 // fall through to full search
             } else {
                 // Apply game_details_limit
@@ -1642,7 +1607,6 @@ pub async fn search_position(
                     .try_into()
                     .unwrap_or(10);
                 
-                log::info!("search_position: Using cached data, loading {} games (limit: {})", cached_game_ids.len().min(game_details_limit), game_details_limit);
 
             let ids_to_load: Vec<i32> = cached_game_ids
                 .into_iter()
@@ -1737,23 +1701,13 @@ pub async fn search_position(
 
                 return Ok((cached_stats, normalized_games));
             }
-        } else {
-            log::warn!("search_position: Cache check returned true but get_cached_position returned None");
         }
-    } else {
-        log::info!("search_position: Cache MISS - performing full search");
     }
 
     // Convert position query for search
     let position_query = match &query.position {
-        Some(pos_query) => {
-            log::info!("search_position: Searching for FEN: {}, type: {:?}", pos_query.fen, pos_query.type_);
-            convert_position_query(pos_query.clone())?
-        }
-        None => {
-            log::error!("search_position: Missing position query");
-            return Err(Error::NoMatchFound);
-        }
+        Some(pos_query) => convert_position_query(pos_query.clone())?,
+        None => return Err(Error::NoMatchFound),
     };
 
     let permit = state.new_request.acquire().await.unwrap();
@@ -1811,7 +1765,6 @@ pub async fn search_position(
 
         // If the LOCAL strategy yields no matches, fall back to ONLINE strategy to avoid false negatives.
         if ids_local.is_empty() {
-            log::info!("search_position: LOCAL strategy found 0 matches, falling back to ONLINE strategy");
             search_position_online_internal(
                 db,
                 &position_query,
@@ -1822,7 +1775,6 @@ pub async fn search_position(
                 total_games,
             )
         } else {
-            log::info!("search_position: LOCAL strategy found {} matches", ids_local.len());
             (openings_local, ids_local)
         }
     };
@@ -1920,10 +1872,7 @@ pub async fn search_position(
     // Save results to persistent cache (save all game IDs, not just the loaded ones)
     // This allows us to load different subsets later based on game_details_limit
     // Save to cache after we've extracted ids_to_load
-    if let Err(e) = save_position_cache(&app, &fen, &file, &openings, &all_game_ids) {
-        // Log error but don't fail the request
-        log::warn!("Failed to save position cache: {}", e);
-    }
+    let _ = save_position_cache(&app, &fen, &file, &openings, &all_game_ids);
 
     let _ = app.emit(
         "search_progress",

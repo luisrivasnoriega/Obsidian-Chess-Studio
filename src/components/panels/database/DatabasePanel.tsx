@@ -82,25 +82,9 @@ async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number) {
     .with({ type: "local" }, async ({ options }) => {
       if (!options.path) throw Error("Missing reference database");
       if (!options.fen || options.fen.trim() === "") {
-        console.error("DatabasePanel: Missing FEN", { options });
         throw Error("Missing FEN for local database search");
       }
-      console.log("DatabasePanel: Searching", { 
-        path: options.path, 
-        fen: options.fen.substring(0, 50), 
-        type: options.type 
-      });
-      let positionData;
-      try {
-        positionData = await searchPosition({ ...options, gameDetailsLimit }, tab);
-        console.log("DatabasePanel: Results", { 
-          openings: positionData[0].length, 
-          games: positionData[1].length 
-        });
-      } catch (error) {
-        console.error("DatabasePanel: Error in searchPosition", error);
-        throw error;
-      }
+      const positionData = await searchPosition({ ...options, gameDetailsLimit }, tab);
       return {
         openings: sortOpenings(positionData[0]),
         games: positionData[1],
@@ -182,12 +166,6 @@ function DatabasePanel() {
     if (db === "local" && localOptions.path && fen) {
       const fenChanged = fen !== prevFenRef.current;
       if (fenChanged) {
-        console.log("[DatabasePanel] FEN changed:", { 
-          old: prevFenRef.current?.substring(0, 50), 
-          new: fen.substring(0, 50),
-          shouldSearch,
-          hasPath: !!localOptions.path
-        });
         prevFenRef.current = fen;
 
         // Cancel any ongoing queries immediately when FEN changes
@@ -217,7 +195,6 @@ function DatabasePanel() {
   // ONLY invalidate if we're in the database tab and viewing stats or games
   useEffect(() => {
     if (db === "local" && debouncedFen === fen && shouldSearch && localOptions.path) {
-      console.log("[DatabasePanel] Invalidating query after FEN debounce:", { fen: debouncedFen.substring(0, 50) });
       // Only invalidate when debounce settles and matches current FEN
       queryClient.invalidateQueries({ queryKey: ["database-opening"] });
     }
@@ -279,17 +256,6 @@ function DatabasePanel() {
   // 2. We're viewing stats or games (not options)
   // 3. For local DB, we have FEN and path
   const queryEnabled = shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
-  
-  console.log("[DatabasePanel] Query state:", {
-    shouldSearch,
-    db,
-    hasFen: !!localOptions.fen,
-    hasPath: !!localOptions.path,
-    fenLength: localOptions.fen?.length || 0,
-    queryEnabled,
-    currentTab: currentTabSelected,
-    tabType
-  });
 
   const {
     data: openingData,

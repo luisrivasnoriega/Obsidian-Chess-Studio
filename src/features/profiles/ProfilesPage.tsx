@@ -330,10 +330,8 @@ export default function ProfilesPage() {
       const dbPath = await getProfileDbPath(next.id);
       const result = await commands.initProfileDb(dbPath, next.name, null);
       if (result.status === "error") {
-        console.warn("Failed to init profile db:", result.error);
       }
     } catch (error) {
-      console.warn("Failed to init profile db:", error);
     }
 
     notifications.show({

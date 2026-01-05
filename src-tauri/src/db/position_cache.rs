@@ -1,7 +1,6 @@
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use log::{debug, info};
 use std::path::{Path, PathBuf};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
@@ -145,8 +144,6 @@ pub fn is_position_cached(
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
 
-    log::info!("is_position_cached: Checking cache for FEN: {} in DB: {}", fen, db_path_str);
-
     let count: i64 = position_cache::table
         .filter(position_cache::fen.eq(fen))
         .filter(position_cache::database_path.eq(&db_path_str))
@@ -154,7 +151,6 @@ pub fn is_position_cached(
         .get_result(&mut conn)?;
 
     let cached = count > 0;
-    log::info!("is_position_cached: Cache check result: {} (count: {})", cached, count);
 
     Ok(cached)
 }
@@ -168,10 +164,6 @@ pub fn get_cached_position(
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
 
-    log::info!(
-        "get_cached_position: Loading cached data for FEN: {} in DB: {}",
-        fen, db_path_str
-    );
 
     // Find the position cache entry
     let cache_entry: Option<i32> = position_cache::table
@@ -215,11 +207,6 @@ pub fn get_cached_position(
         .order(position_games::game_order.asc())
         .load(&mut conn)?;
 
-    log::info!(
-        "get_cached_position: Loaded {} stats and {} game IDs from cache",
-        stats.len(),
-        game_ids.len()
-    );
 
     Ok(Some((stats, game_ids)))
 }
@@ -235,13 +222,6 @@ pub fn save_position_cache(
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
 
-    debug!(
-        "Saving cache for FEN: {} in DB: {} ({} stats, {} games)",
-        fen,
-        db_path_str,
-        stats.len(),
-        game_ids.len()
-    );
 
     conn.transaction::<_, Error, _>(|conn| {
         // Insert or get position cache entry
@@ -313,13 +293,6 @@ pub fn save_position_cache(
         Ok(())
     })?;
 
-    info!(
-        "Cached position data for FEN: {} ({} stats, {} games)",
-        fen,
-        stats.len(),
-        game_ids.len().min(1000)
-    );
-
     Ok(())
 }
 
@@ -356,7 +329,6 @@ pub fn clear_cache_for_database(app: &AppHandle, database_path: &PathBuf) -> Res
         Ok(())
     })?;
 
-    info!("Cleared cache for database: {}", db_path_str);
 
     Ok(())
 }
