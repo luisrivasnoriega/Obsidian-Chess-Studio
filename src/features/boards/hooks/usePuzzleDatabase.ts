@@ -1,4 +1,4 @@
-import { makeUci } from "chessops";
+import { type Chess, makeUci } from "chessops";
 import { INITIAL_BOARD_FEN } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom } from "jotai";

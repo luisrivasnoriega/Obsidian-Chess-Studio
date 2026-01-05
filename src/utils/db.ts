@@ -130,10 +130,12 @@ export async function query_games(db: string, query: GameQuery): Promise<QueryRe
         start_date: query.start_date,
         end_date: query.end_date,
         position: null,
-        // Always include game_details_limit - use null if undefined
-        // Rust uses bigint_serde and expects a JSON-safe value (string/number/null).
-        // Do NOT pass JS BigInt here (JSON can't serialize it).
-        game_details_limit: query.game_details_limit == null ? null : String(query.game_details_limit),
+        // Always include game_details_limit - use null if undefined.
+        // IMPORTANT: At runtime we MUST send a JSON-safe value (string/number/null).
+        // The generated TS binding currently expects `bigint`, so we cast for typing while
+        // keeping the runtime value as a string (see __tests__/dbBigIntSerialization.test.ts).
+        game_details_limit:
+          query.game_details_limit == null ? null : (String(query.game_details_limit) as unknown as bigint),
         wanted_result: query.wanted_result ?? null,
         options: {
           skipCount: query.options?.skipCount ?? false,
@@ -280,7 +282,8 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       fen,
       type_: type,
     },
-    game_details_limit: String(gameDetailsLimitValue),
+    // Keep runtime as string, cast for TS binding (bigint) compatibility.
+    game_details_limit: String(gameDetailsLimitValue) as unknown as bigint,
     options: {
       skipCount: true,
       sort: (options.sort || "averageElo") as "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count",

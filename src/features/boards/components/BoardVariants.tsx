@@ -1,6 +1,5 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import type { Chess, Move } from "chessops";
-import { makeSquare } from "chessops";
 import { makeFen } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import { Box, Button, Group, Modal, NumberInput, Portal, SegmentedControl, Select, Stack, Text } from "@mantine/core";
@@ -35,7 +34,7 @@ import {
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
-import { parseSanOrUci, positionFromFen, rotateFen, rotateUciMove } from "@/utils/chessops";
+import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { getBestMoves as chessdbGetBestMoves } from "@/utils/chessdb/api";
 import { getBestMoves as localGetBestMoves, killEngine, type LocalEngine } from "@/utils/engines";
 import { getBestMoves as lichessGetBestMoves, getLichessGames, getMasterGames } from "@/utils/lichess/api";
