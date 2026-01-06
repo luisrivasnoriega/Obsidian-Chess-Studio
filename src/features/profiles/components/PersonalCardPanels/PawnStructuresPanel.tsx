@@ -17,7 +17,6 @@ import { notifications } from "@mantine/notifications";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
-import { useNavigate } from "@tanstack/react-router";
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame, PlayerGameInfo, SiteStatsData } from "@/bindings";
@@ -33,8 +32,8 @@ import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels
 import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { parsePGN } from "@/utils/chess";
-import { query_games, query_players } from "@/utils/db";
-import { generateAnalysisResult, type PawnStructureStat } from "@/utils/playerMistakes";
+import { query_players } from "@/utils/db";
+import type { PawnStructureStat as PawnStructureStatBackend, PawnStructureGame as PawnStructureGameBackend } from "@/bindings";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -50,6 +49,25 @@ const fallbackFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Frontend types (camelCase) mapped from backend types (snake_case)
+type PawnStructureGame = {
+  gameId?: number;
+  white?: string;
+  black?: string;
+  whiteElo?: number;
+  blackElo?: number;
+  result?: string;
+  fen: string;
+};
+
+type PawnStructureStat = {
+  structure: string;
+  frequency: number;
+  winRate: number;
+  sampleFen?: string;
+  games?: PawnStructureGame[];
+};
+
 function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): number {
   const lastDate = ratingDates[ratingDates.length - 1];
   switch (dateRange) {
@@ -64,10 +82,6 @@ function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): num
     default:
       return Math.min(...ratingDates);
   }
-}
-
-function normalizePlayerName(name?: string): string {
-  return name?.trim().toLowerCase() ?? "";
 }
 
 function matchesName(candidate: string | undefined, targets: string[]): boolean {
@@ -112,116 +126,6 @@ function createPgnFromNormalizedGame(game: NormalizedGame): string {
   return pgn;
 }
 
-async function queryAllGamesFromDb(
-  dbFile: string,
-  playerIds: number[],
-  colorFilter: "white" | "black" | "any",
-  platformFilter: PlatformFilter,
-  timeControlFilter: TimeControlFilter,
-  opponentEloBucket: string,
-  earliestDate?: number,
-  onProgress?: (value: number) => void,
-): Promise<NormalizedGame[]> {
-  if (playerIds.length === 0) return [];
-
-  const pageSize = 200;
-  let loaded = 0;
-  let totalCount: number | null = null;
-  const collected: NormalizedGame[] = [];
-
-  // Use a Set to track game IDs and avoid duplicates when multiple player IDs match the same games
-  const seenGameIds = new Set<number>();
-
-  // Query games for each player ID and combine results
-  // Since we're filtering by player ID in the database, we'll get all their games
-  for (const playerId of playerIds) {
-    let playerPage = 1;
-    let playerTotalCount: number | null = null;
-
-    while (true) {
-      const response = await query_games(dbFile, {
-        player1: playerId,
-        sides: "Any",
-        options: {
-          skipCount: playerPage !== 1,
-          page: playerPage,
-          pageSize,
-          sort: "date",
-          direction: "desc",
-        },
-      });
-      const data = response.data ?? [];
-      if (!data.length) break;
-      if (playerPage === 1 && typeof response.count === "number") {
-        playerTotalCount = response.count;
-        if (totalCount === null) totalCount = 0;
-        totalCount += playerTotalCount;
-      }
-
-      for (const game of data) {
-        // Skip duplicates
-        if (seenGameIds.has(game.id)) continue;
-        seenGameIds.add(game.id);
-
-        // Skip games without moves early
-        if (!game.moves) continue;
-
-        // Determine if player is white or black (we know they're in the game since we filtered by ID)
-        const isWhite = game.white_id === playerId;
-        const isBlack = game.black_id === playerId;
-        const matchesColorFilter =
-          colorFilter === "white" ? isWhite : colorFilter === "black" ? isBlack : isWhite || isBlack;
-        if (!matchesColorFilter) continue;
-
-        // Platform filter - allow games with unknown platforms when filter is "all"
-        const normalizedSite = normalizePlatform(game.site);
-        const matchesPlatform =
-          platformFilter === "all" ? true : normalizedSite !== null && normalizedSite === platformFilter;
-        if (!matchesPlatform) continue;
-
-        // Time control filter
-        const hasTimeControl = typeof game.time_control === "string" && game.time_control !== null;
-        const currentTimeControl = hasTimeControl && game.time_control ? getTimeControl(game.site, game.time_control) : null;
-        if (timeControlFilter !== "any" && currentTimeControl !== timeControlFilter) continue;
-
-        // Opponent Elo filter
-        if (opponentEloBucket !== "all") {
-          const start = Number.parseInt(opponentEloBucket, 10);
-          if (Number.isFinite(start)) {
-            const opponentElo =
-              isWhite && typeof game.black_elo === "number"
-                ? game.black_elo
-                : isBlack && typeof game.white_elo === "number"
-                  ? game.white_elo
-                  : null;
-            const end = start + 199;
-            if (opponentElo === null || opponentElo < start || opponentElo > end) continue;
-          }
-        }
-
-        // Date filter
-        if (earliestDate !== undefined) {
-          if (!game.date) continue;
-          const gameDate = new Date(game.date.replaceAll(".", "-")).getTime();
-          if (!Number.isFinite(gameDate) || gameDate < earliestDate) continue;
-        }
-
-        collected.push(game);
-      }
-
-      loaded += data.length;
-      if (onProgress && totalCount && totalCount > 0) {
-        onProgress(Math.min(100, Math.round((loaded / totalCount) * 100)));
-      }
-
-      if (data.length < pageSize) break;
-      playerPage += 1;
-    }
-  }
-
-  return collected;
-}
-
 export default function PawnStructuresPanel({ playerName, databaseFile, profileId }: PawnStructuresPanelProps) {
   const { t } = useTranslation();
 
@@ -235,10 +139,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [expandedStructure, setExpandedStructure] = useState<string | null>(null);
   const [expandedFen, setExpandedFen] = useState<string | null>(null);
   const [gamesPage, setGamesPage] = useState(1);
-  const [pawnSearchPgns, setPawnSearchPgns] = useState<string[]>([]);
   const [, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const navigate = useNavigate();
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
@@ -487,19 +389,19 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         return;
       }
 
-      // Convert Rust types to frontend types
+      // Convert Rust types (snake_case) to frontend types (camelCase)
       setPawnStructures(
-        structures.map((s: any) => ({
+        structures.map((s: PawnStructureStatBackend): PawnStructureStat => ({
           structure: s.structure,
           frequency: s.frequency,
           winRate: s.win_rate,
-          sampleFen: s.sample_fen,
-          games: (s.games || []).map((g: any) => ({
+          sampleFen: s.sample_fen ?? undefined,
+          games: (s.games || []).map((g: PawnStructureGameBackend): PawnStructureGame => ({
             gameId: g.game_id,
             white: g.white,
             black: g.black,
-            whiteElo: g.white_elo,
-            blackElo: g.black_elo,
+            whiteElo: g.white_elo ?? undefined,
+            blackElo: g.black_elo ?? undefined,
             result: g.result,
             fen: g.fen,
           })),
