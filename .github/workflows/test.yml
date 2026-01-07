@@ -3,7 +3,7 @@ name: OCS Test
 on:
   push:
     branches:
-      - "**"   # double star for all branches including nested ones, but "*" works too
+      - "**"
   pull_request:
     branches:
       - "**"
@@ -16,10 +16,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install pnpm CLI
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.26.1
+          run_install: false
 
       - name: Setup Node.js and pnpm cache
         uses: actions/setup-node@v4
@@ -27,8 +27,8 @@ jobs:
           node-version: "lts/*"
           cache: "pnpm"
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies 
+        run: pnpm install --frozen-lockfile --prefer-offline
 
       - name: Run tests
         run: pnpm test
