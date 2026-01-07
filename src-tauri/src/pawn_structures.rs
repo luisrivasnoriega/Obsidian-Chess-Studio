@@ -61,6 +61,11 @@ pub struct PawnStructureOptions {
     /// When empty, no motif filtering is applied.
     #[serde(rename = "structureFilters", default)]
     pub structure_filters: Vec<String>,
+
+    /// Optional named pawn-structure filters (e.g. "carlsbad", "najdorf").
+    /// OR semantics within the list: if any selected structure matches, the stat is kept.
+    #[serde(rename = "structureNameFilters", default)]
+    pub structure_name_filters: Vec<String>,
 }
 
 fn parse_structure_filters(filters: &[String]) -> Vec<String> {
@@ -403,6 +408,170 @@ fn motif_filter_mask(filters: &[String]) -> u32 {
             _ => {}
         }
     }
+    mask
+}
+
+fn named_structure_filter_mask(filters: &[String]) -> u32 {
+    let mut mask: u32 = 0;
+    for f in parse_structure_filters(filters) {
+        match f.as_str() {
+            "carlsbad" => mask |= 1 << 0,
+            "maroczy_bind" => mask |= 1 << 1,
+            "hedgehog" => mask |= 1 << 2,
+            "stonewall" => mask |= 1 << 3,
+            "scheveningen" => mask |= 1 << 4,
+            "najdorf" => mask |= 1 << 5,
+            "dragon" => mask |= 1 << 6,
+            "benoni" => mask |= 1 << 7,
+            "benko" => mask |= 1 << 8,
+            "french" => mask |= 1 << 9,
+            "slav" => mask |= 1 << 10,
+            "semi_slav_triangle" => mask |= 1 << 11,
+            "kings_indian" => mask |= 1 << 12,
+            _ => {}
+        }
+    }
+    mask
+}
+
+fn has_pawn(ps: &PawnSets, file: usize, rank: usize) -> bool {
+    ps.squares[file][rank]
+}
+
+fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u32 {
+    let mode_norm = normalize_filter_value(mode);
+    let analyze_both = mode_norm == "both";
+
+    let mut mask: u32 = 0;
+
+    // Bit assignments match named_structure_filter_mask above.
+    const CARLSBAD: u32 = 1 << 0;
+    const MAROCZY: u32 = 1 << 1;
+    const HEDGEHOG: u32 = 1 << 2;
+    const STONEWALL: u32 = 1 << 3;
+    const SCHEVENINGEN: u32 = 1 << 4;
+    const NAJDORF: u32 = 1 << 5;
+    const DRAGON: u32 = 1 << 6;
+    const BENONI: u32 = 1 << 7;
+    const BENKO: u32 = 1 << 8;
+    const FRENCH: u32 = 1 << 9;
+    const SLAV: u32 = 1 << 10;
+    const SEMI_SLAV_TRI: u32 = 1 << 11;
+    const KINGS_INDIAN: u32 = 1 << 12;
+
+    let colors: Vec<Color> = if analyze_both { vec![Color::White, Color::Black] } else { vec![player_color] };
+    for c in colors {
+        let ps = pawn_sets_from_fen(fen, c);
+        let opp = pawn_sets_from_fen(fen, if c == Color::White { Color::Black } else { Color::White });
+
+        // Helpers: file indices a=0..h=7, rank indices 0=rank1..7=rank8 (White perspective)
+        // Note: These are heuristics for filtering.
+
+        // Carlsbad (strict): White pawns on a2, b2, d4, e3, f2, g2, h2
+        // Black pawns on a7, b7, c6, d5, f7, g7, h7
+        let carlsbad = match c {
+            Color::White => {
+                // White pawns: a2(0,1), b2(1,1), d4(3,3), e3(4,2), f2(5,1), g2(6,1), h2(7,1)
+                // Black pawns: a7(0,6), b7(1,6), c6(2,5), d5(3,4), f7(5,6), g7(6,6), h7(7,6)
+                has_pawn(&ps, 0, 1) && has_pawn(&ps, 1, 1) && has_pawn(&ps, 3, 3) && has_pawn(&ps, 4, 2)
+                    && has_pawn(&ps, 5, 1) && has_pawn(&ps, 6, 1) && has_pawn(&ps, 7, 1)
+                    && has_pawn(&opp, 0, 6) && has_pawn(&opp, 1, 6) && has_pawn(&opp, 2, 5) && has_pawn(&opp, 3, 4)
+                    && has_pawn(&opp, 5, 6) && has_pawn(&opp, 6, 6) && has_pawn(&opp, 7, 6)
+            }
+            Color::Black => {
+                // Black pawns: a7(0,6), b7(1,6), c6(2,5), d5(3,4), f7(5,6), g7(6,6), h7(7,6)
+                // White pawns: a2(0,1), b2(1,1), d4(3,3), e3(4,2), f2(5,1), g2(6,1), h2(7,1)
+                has_pawn(&ps, 0, 6) && has_pawn(&ps, 1, 6) && has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4)
+                    && has_pawn(&ps, 5, 6) && has_pawn(&ps, 6, 6) && has_pawn(&ps, 7, 6)
+                    && has_pawn(&opp, 0, 1) && has_pawn(&opp, 1, 1) && has_pawn(&opp, 3, 3) && has_pawn(&opp, 4, 2)
+                    && has_pawn(&opp, 5, 1) && has_pawn(&opp, 6, 1) && has_pawn(&opp, 7, 1)
+            }
+        };
+        if carlsbad {
+            mask |= CARLSBAD;
+        }
+
+        // Maróczy Bind: White pawns c4 + e4 (vs Sicilian structures). We'll just require c4+e4 for one side.
+        let maroczy = match c {
+            Color::White => has_pawn(&ps, 2, 3) && has_pawn(&ps, 4, 3),
+            Color::Black => has_pawn(&opp, 2, 3) && has_pawn(&opp, 4, 3),
+        };
+        if maroczy {
+            mask |= MAROCZY;
+        }
+
+        // Hedgehog: classic black setup pawns a6 b6 d6 e6 (white often has c4,e4).
+        // We'll detect presence of a6+b6+d6+e6 for one side.
+        let hedgehog = match c {
+            Color::White => has_pawn(&opp, 0, 5) && has_pawn(&opp, 1, 5) && has_pawn(&opp, 3, 5) && has_pawn(&opp, 4, 5),
+            Color::Black => has_pawn(&ps, 0, 5) && has_pawn(&ps, 1, 5) && has_pawn(&ps, 3, 5) && has_pawn(&ps, 4, 5),
+        };
+        if hedgehog {
+            mask |= HEDGEHOG;
+        }
+
+        // Stonewall: pawns c3 d4 e3 f4 (white) or c6 d5 e6 f5 (black).
+        let stonewall_white = has_pawn(&ps, 2, 2) && has_pawn(&ps, 3, 3) && has_pawn(&ps, 4, 2) && has_pawn(&ps, 5, 3);
+        let stonewall_black = has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4) && has_pawn(&ps, 4, 5) && has_pawn(&ps, 5, 4);
+        if stonewall_white || stonewall_black {
+            mask |= STONEWALL;
+        }
+
+        // Scheveningen: black pawns c5 d6 e6
+        let schev = has_pawn(&ps, 2, 4) && has_pawn(&ps, 3, 5) && has_pawn(&ps, 4, 5);
+        if schev {
+            mask |= SCHEVENINGEN;
+        }
+
+        // Najdorf: black pawns a6 + c5 + d6
+        let najdorf = has_pawn(&ps, 0, 5) && has_pawn(&ps, 2, 4) && has_pawn(&ps, 3, 5);
+        if najdorf {
+            mask |= NAJDORF;
+        }
+
+        // Dragon: black pawns g6 + c5 + d6
+        let dragon = has_pawn(&ps, 6, 5) && has_pawn(&ps, 2, 4) && has_pawn(&ps, 3, 5);
+        if dragon {
+            mask |= DRAGON;
+        }
+
+        // Benoni: black pawns c5 + d6 and white pawn d5
+        let benoni = has_pawn(&ps, 2, 4) && has_pawn(&ps, 3, 5) && has_pawn(&opp, 3, 4);
+        if benoni {
+            mask |= BENONI;
+        }
+
+        // Benko: black pawns a6 + b5 + c5
+        let benko = has_pawn(&ps, 0, 5) && has_pawn(&ps, 1, 4) && has_pawn(&ps, 2, 4);
+        if benko {
+            mask |= BENKO;
+        }
+
+        // French: black d5+e6 AND white d4+e5
+        let french = has_pawn(&ps, 3, 4) && has_pawn(&ps, 4, 5) && has_pawn(&opp, 3, 3) && has_pawn(&opp, 4, 4);
+        if french {
+            mask |= FRENCH;
+        }
+
+        // Slav: black c6+d5
+        let slav = has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4);
+        if slav {
+            mask |= SLAV;
+        }
+
+        // Semi-Slav triangle: black c6+d5+e6
+        let semi_slav = has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4) && has_pawn(&ps, 4, 5);
+        if semi_slav {
+            mask |= SEMI_SLAV_TRI;
+        }
+
+        // King's Indian: black d6+e5+g6
+        let kings_indian = has_pawn(&ps, 3, 5) && has_pawn(&ps, 4, 4) && has_pawn(&ps, 6, 5);
+        if kings_indian {
+            mask |= KINGS_INDIAN;
+        }
+    }
+
     mask
 }
 
@@ -781,6 +950,7 @@ pub async fn compute_pawn_structures(
     };
 
     let wanted_motif_mask = motif_filter_mask(&options.structure_filters);
+    let wanted_named_structure_mask = named_structure_filter_mask(&options.structure_name_filters);
 
     let start_date = clean_optional_date(&options.earliest_date);
 
@@ -893,7 +1063,7 @@ pub async fn compute_pawn_structures(
         }
     }
 
-    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>, u32)> = HashMap::new();
+    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>, u32, u32)> = HashMap::new();
     let max_games_per_structure = 50;
 
     for (player_id, game) in game_data.iter() {
@@ -918,10 +1088,11 @@ pub async fn compute_pawn_structures(
 
         let entry = stats
             .entry(structure_str.clone())
-            .or_insert_with(|| (0, 0.0, Some(fen_str.clone()), Vec::new(), 0u32));
+            .or_insert_with(|| (0, 0.0, Some(fen_str.clone()), Vec::new(), 0u32, 0u32));
         entry.0 += 1;
         entry.1 += won;
         entry.4 |= detect_motif_mask(&fen_str, player_color, &pawn_mode);
+        entry.5 |= detect_named_structure_mask(&fen_str, player_color, &pawn_mode);
 
         if entry.3.len() < max_games_per_structure {
             entry.3.push(PawnStructureGame {
@@ -938,15 +1109,24 @@ pub async fn compute_pawn_structures(
 
     let mut results: Vec<PawnStructureStat> = stats
         .into_iter()
-        .filter(|(_structure, (_count, _wins, _sample_fen, _games, motif_mask))| {
-            if wanted_motif_mask == 0 {
+        .filter(|(_structure, (_count, _wins, _sample_fen, _games, motif_mask, named_mask))| {
+            let motifs_ok = if wanted_motif_mask == 0 {
                 true
             } else {
                 // AND semantics: when multiple motifs are selected, require all of them.
                 (motif_mask & wanted_motif_mask) == wanted_motif_mask
-            }
+            };
+
+            let named_ok = if wanted_named_structure_mask == 0 {
+                true
+            } else {
+                // OR semantics: any selected named structure matches.
+                (named_mask & wanted_named_structure_mask) != 0
+            };
+
+            motifs_ok && named_ok
         })
-        .map(|(structure, (count, wins, sample_fen, games, _motif_mask))| PawnStructureStat {
+        .map(|(structure, (count, wins, sample_fen, games, _motif_mask, _named_mask))| PawnStructureStat {
             structure,
             frequency: count,
             win_rate: if count > 0 { wins / count as f64 } else { 0.0 },

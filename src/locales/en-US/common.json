@@ -427,6 +427,8 @@
                       "pawnFilters":  "Pawn filters",
                       "pawnMotifs":  "Pawn motifs",
                       "pawnMotifsPlaceholder":  "Select motifs...",
+                      "pawnStructures":  "Pawn structures",
+                      "pawnStructuresPlaceholder":  "Select structures...",
                       "pawnMotif":  {
                                         "islands":  "Pawn islands",
                                         "isolated":  "Isolated pawn",
@@ -439,6 +441,21 @@
                                         "connectedPassed":  "Connected passed pawns",
                                         "fianchetto":  "Fianchetto pawn structure"
                                     },
+                      "pawnStructure":  {
+                                          "carlsbad":  "Carlsbad",
+                                          "maroczyBind":  "Maróczy Bind",
+                                          "hedgehog":  "Hedgehog",
+                                          "stonewall":  "Stonewall",
+                                          "scheveningen":  "Scheveningen",
+                                          "najdorf":  "Najdorf",
+                                          "dragon":  "Dragon",
+                                          "benoni":  "Benoni",
+                                          "benko":  "Benko Gambit Structure",
+                                          "french":  "French Structure",
+                                          "slav":  "Slav Structure",
+                                          "semiSlavTriangle":  "Semi-Slav Triangle",
+                                          "kingsIndian":  "King’s Indian Structure"
+                                      },
                       "noMainAccount":  "No main account",
                       "estimatedElo":  "Est. Elo",
                       "suggestions":  {

@@ -400,6 +400,8 @@
     "pawnFilters": "Filtros de peones",
     "pawnMotifs": "Motivos de peones",
     "pawnMotifsPlaceholder": "Selecciona motivos...",
+    "pawnStructures": "Estructuras de peones",
+    "pawnStructuresPlaceholder": "Selecciona estructuras...",
     "pawnMotif": {
       "islands": "Islas de peones",
       "isolated": "Peón aislado",
@@ -411,6 +413,21 @@
       "iqp": "Peón dama aislado (IQP)",
       "connectedPassed": "Peones pasados conectados",
       "fianchetto": "Estructura de peones de fianchetto"
+    },
+    "pawnStructure": {
+      "carlsbad": "Carlsbad",
+      "maroczyBind": "Maróczy Bind",
+      "hedgehog": "Erizo",
+      "stonewall": "Stonewall",
+      "scheveningen": "Scheveningen",
+      "najdorf": "Najdorf",
+      "dragon": "Dragón",
+      "benoni": "Benoni",
+      "benko": "Estructura del Gambito Benko",
+      "french": "Estructura Francesa",
+      "slav": "Estructura Eslava",
+      "semiSlavTriangle": "Triángulo Semi-Eslavo",
+      "kingsIndian": "Estructura India de Rey"
     },
     "noMainAccount": "No hay cuenta principal",
     "estimatedElo": "Elo Est.",

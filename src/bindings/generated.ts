@@ -934,7 +934,12 @@ export type PawnStructureOptions = { playerIds: number[]; colorFilter: string; p
  * Optional pawn-structure motif filters, applied server-side.
  * When empty, no motif filtering is applied.
  */
-structureFilters?: string[] }
+structureFilters?: string[]; 
+/**
+ * Optional named pawn-structure filters (e.g. "carlsbad", "najdorf").
+ * OR semantics within the list: if any selected structure matches, the stat is kept.
+ */
+structureNameFilters?: string[] }
 export type PawnStructureStat = { structure: string; frequency: number; win_rate: number; sample_fen: string | null; games: PawnStructureGame[] }
 export type PlatformFilter = "All" | "Lichess" | "ChessCom"
 export type PlatformInfo = { key: string; label: string; stroke: string }

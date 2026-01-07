@@ -135,6 +135,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
   const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">("player");
   const [pawnMotifFilters, setPawnMotifFilters] = useState<string[]>([]);
+  const [pawnNamedStructureFilters, setPawnNamedStructureFilters] = useState<string[]>([]);
   const [pawnStructures, setPawnStructures] = useState<PawnStructureStat[]>([]);
   const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">("frequency");
   const [pawnLoading, setPawnLoading] = useState(false);
@@ -164,6 +165,25 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       { value: "iqp", label: t("features.dashboard.pawnMotif.iqp", { defaultValue: "Isolated Queen’s Pawn (IQP)" }) },
       { value: "connected_passed", label: t("features.dashboard.pawnMotif.connectedPassed", { defaultValue: "Connected passed pawns" }) },
       { value: "fianchetto", label: t("features.dashboard.pawnMotif.fianchetto", { defaultValue: "Fianchetto pawn structure" }) },
+    ],
+    [t],
+  );
+
+  const namedStructureOptions = useMemo(
+    () => [
+      { value: "carlsbad", label: t("features.dashboard.pawnStructure.carlsbad", { defaultValue: "Carlsbad" }) },
+      { value: "maroczy_bind", label: t("features.dashboard.pawnStructure.maroczyBind", { defaultValue: "Maróczy Bind" }) },
+      { value: "hedgehog", label: t("features.dashboard.pawnStructure.hedgehog", { defaultValue: "Hedgehog" }) },
+      { value: "stonewall", label: t("features.dashboard.pawnStructure.stonewall", { defaultValue: "Stonewall" }) },
+      { value: "scheveningen", label: t("features.dashboard.pawnStructure.scheveningen", { defaultValue: "Scheveningen" }) },
+      { value: "najdorf", label: t("features.dashboard.pawnStructure.najdorf", { defaultValue: "Najdorf" }) },
+      { value: "dragon", label: t("features.dashboard.pawnStructure.dragon", { defaultValue: "Dragon" }) },
+      { value: "benoni", label: t("features.dashboard.pawnStructure.benoni", { defaultValue: "Benoni" }) },
+      { value: "benko", label: t("features.dashboard.pawnStructure.benko", { defaultValue: "Benko Gambit Structure" }) },
+      { value: "french", label: t("features.dashboard.pawnStructure.french", { defaultValue: "French Structure" }) },
+      { value: "slav", label: t("features.dashboard.pawnStructure.slav", { defaultValue: "Slav Structure" }) },
+      { value: "semi_slav_triangle", label: t("features.dashboard.pawnStructure.semiSlavTriangle", { defaultValue: "Semi-Slav Triangle" }) },
+      { value: "kings_indian", label: t("features.dashboard.pawnStructure.kingsIndian", { defaultValue: "King’s Indian Structure" }) },
     ],
     [t],
   );
@@ -386,6 +406,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         playerColor: pawnColorFilter === "any" ? "any" : pawnColorFilter,
         pawnStructureMode: pawnStructureMode,
         structureFilters: pawnMotifFilters,
+        structureNameFilters: pawnNamedStructureFilters,
       };
 
       // Simulate progress during computation
@@ -631,6 +652,18 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                   data={motifOptions}
                   value={pawnMotifFilters}
                   onChange={setPawnMotifFilters}
+                  searchable
+                  clearable
+                  size="xs"
+                  disabled={pawnLoading}
+                />
+
+                <MultiSelect
+                  label={t("features.dashboard.pawnStructures", { defaultValue: "Pawn structures" })}
+                  placeholder={t("features.dashboard.pawnStructuresPlaceholder", { defaultValue: "Select structures..." })}
+                  data={namedStructureOptions}
+                  value={pawnNamedStructureFilters}
+                  onChange={setPawnNamedStructureFilters}
                   searchable
                   clearable
                   size="xs"
