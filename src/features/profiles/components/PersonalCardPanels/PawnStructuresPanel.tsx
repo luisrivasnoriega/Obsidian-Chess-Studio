@@ -30,6 +30,7 @@ import PlayerSidebarCard, {
   type TimeControlFilter,
 } from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
 import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
+import { convertDateRangeToBackend } from "@/utils/playerStats";
 import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels/PanelLoadGate";
 import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
@@ -49,8 +50,6 @@ type PawnStructuresPanelProps = {
 
 const fallbackFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
-
 // Frontend types (camelCase) mapped from backend types (snake_case)
 type PawnStructureGame = {
   gameId?: number;
@@ -69,22 +68,6 @@ type PawnStructureStat = {
   sampleFen?: string;
   games?: PawnStructureGame[];
 };
-
-function calculateEarliestDate(dateRange: DateRange, ratingDates: number[]): number {
-  const lastDate = ratingDates[ratingDates.length - 1];
-  switch (dateRange) {
-    case DateRange.SevenDays:
-      return lastDate - 7 * MILLISECONDS_PER_DAY;
-    case DateRange.ThirtyDays:
-      return lastDate - 30 * MILLISECONDS_PER_DAY;
-    case DateRange.NinetyDays:
-      return lastDate - 90 * MILLISECONDS_PER_DAY;
-    case DateRange.OneYear:
-      return lastDate - 365 * MILLISECONDS_PER_DAY;
-    default:
-      return Math.min(...ratingDates);
-  }
-}
 
 function matchesName(candidate: string | undefined, targets: string[]): boolean {
   if (!candidate || targets.length === 0) return false;
@@ -307,26 +290,6 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     ];
   }, [playerInfo.site_stats_data, t]);
 
-  const dates = useMemo(() => {
-    const gameDates =
-      playerInfo.site_stats_data
-        ?.filter((games) => platform === "all" || normalizePlatform(games.site) === platform)
-        .flatMap((games) =>
-          games.data
-            .filter((game) => {
-              if (timeControl === "any") return true;
-              if (typeof game.time_control !== "string" || !game.time_control) return false;
-              return getTimeControl(games.site, game.time_control) === timeControl;
-            })
-            .map((game) => {
-              if (!game.date) return null;
-              return new Date(game.date.replaceAll(".", "-")).getTime();
-            }),
-        )
-        .filter((date): date is number => Number.isFinite(date)) ?? [];
-
-    return Array.from(new Set(gameDates)).sort((a, b) => a - b);
-  }, [playerInfo.site_stats_data, platform, timeControl]);
 
   const handleSearch = async () => {
     // Keep the source of truth consistent with the other profile tabs:
@@ -392,7 +355,9 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       }
 
       setPawnProgress(40);
-      const earliestDate = dateRange && dates.length > 0 ? calculateEarliestDate(dateRange, dates) : undefined;
+      
+      // Convert dateRange to backend format (all filtering happens in backend)
+      const backendDateRange = convertDateRangeToBackend(dateRange);
       
       // Prepare parameters for the command
       const params: any = {
@@ -401,7 +366,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         platformFilter: platform,
         timeControlFilter: timeControl,
         opponentEloBucket: opponentEloBucket,
-        earliestDate: earliestDate ? new Date(earliestDate).toISOString().split("T")[0] : null,
+        dateRange: backendDateRange,
         moveNumber: pawnMoveFilter,
         playerColor: pawnColorFilter === "any" ? "any" : pawnColorFilter,
         pawnStructureMode: pawnStructureMode,

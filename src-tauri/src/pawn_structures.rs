@@ -1,5 +1,6 @@
 use crate::db::{get_games, GameQueryJs, GameSort, NormalizedGame, QueryOptions, Sides, SortDirection};
 use crate::error::{Error, Result};
+use chrono::Datelike;
 use shakmaty::{fen::Fen, CastlingMode, Chess, Color, EnPassantMode, FromSetup, Position};
 use shakmaty::san::SanPlus;
 use shakmaty::uci::UciMove;
@@ -45,8 +46,10 @@ pub struct PawnStructureOptions {
     #[serde(rename = "opponentEloBucket")]
     pub opponent_elo_bucket: String, // "all" | "any" | "1200" | etc.
 
-    #[serde(rename = "earliestDate")]
-    pub earliest_date: Option<String>,
+    /// Date range filter: "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All" | null
+    /// If null or "All", no date filtering is applied.
+    #[serde(rename = "dateRange", default)]
+    pub date_range: Option<String>,
 
     #[serde(rename = "moveNumber")]
     pub move_number: i32, // 1-based fullmove. Si llega <=0, se toma la posición inicial.
@@ -602,6 +605,35 @@ fn clean_optional_date(opt: &Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Calculate earliest date from date range.
+/// Returns date in PGN format (YYYY.MM.DD) or None if range is "All" or invalid.
+/// Accepts backend format ("SevenDays", "ThirtyDays", "NinetyDays", "OneYear", "All").
+fn calculate_earliest_date_from_range(date_range: &Option<String>) -> Option<String> {
+    let range = date_range.as_ref()?;
+    let range_norm = normalize_filter_value(range);
+    
+    if range_norm == "all" || range_norm.is_empty() {
+        return None;
+    }
+    
+    // Calculate days to subtract based on range
+    // Backend format: "SevenDays", "ThirtyDays", "NinetyDays", "OneYear" (normalized to lowercase)
+    let days = match range_norm.as_str() {
+        "sevendays" => 7,
+        "thirtydays" => 30,
+        "ninetydays" => 90,
+        "oneyear" => 365,
+        _ => return None,
+    };
+    
+    // Get current date in UTC
+    let now = chrono::Utc::now();
+    let earliest = now - chrono::Duration::days(days as i64);
+    
+    // Format as PGN date (YYYY.MM.DD)
+    Some(format!("{:04}.{:02}.{:02}", earliest.year(), earliest.month(), earliest.day()))
+}
+
 fn get_time_control(_site: &str, time_control: &str) -> Option<String> {
     let tc_lower = time_control.to_lowercase();
 
@@ -952,7 +984,8 @@ pub async fn compute_pawn_structures(
     let wanted_motif_mask = motif_filter_mask(&options.structure_filters);
     let wanted_named_structure_mask = named_structure_filter_mask(&options.structure_name_filters);
 
-    let start_date = clean_optional_date(&options.earliest_date);
+    // Calculate start_date from date_range (all filtering happens in backend)
+    let start_date = calculate_earliest_date_from_range(&options.date_range);
 
     let mut game_data: Vec<(i32, NormalizedGame)> = Vec::new();
 
