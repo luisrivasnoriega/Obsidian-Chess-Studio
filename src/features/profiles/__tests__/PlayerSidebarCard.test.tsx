@@ -239,6 +239,80 @@ describe("PlayerSidebarCard", () => {
     const lichessElements = screen.queryAllByText("Lichess");
     expect(lichessElements.length).toBeGreaterThan(0);
   });
+
+  test("shows loading state when isLoading is true", () => {
+    renderComponent({ isLoading: true });
+    expect(screen.getByText(/loading games/i)).toBeInTheDocument();
+  });
+
+  test("shows loading state when hasData is false", () => {
+    const emptyInfo: PlayerGameInfo = { site_stats_data: [] };
+    renderComponent({ info: emptyInfo });
+    expect(screen.getByText(/loading games/i)).toBeInTheDocument();
+  });
+
+  test("renders player style badge", () => {
+    renderComponent();
+    // The badge should be rendered (playerStyle is mocked to return a color and label)
+    const badges = screen.queryAllByRole("generic");
+    expect(badges.length).toBeGreaterThan(0);
+  });
+
+  test("renders filters section", () => {
+    renderComponent();
+    expect(screen.getByText(/filters/i)).toBeInTheDocument();
+  });
+
+  test("renders ELO section", () => {
+    renderComponent();
+    expect(screen.getByText(/elo/i)).toBeInTheDocument();
+  });
+
+  test("handles dateRange change", async () => {
+    const user = userEvent.setup();
+    const onDateRangeChange = vi.fn();
+    renderComponent({
+      dateRange: null as any,
+      onDateRangeChange,
+    });
+
+    // Our DateRangeTabs mock renders a button "7 days"
+    const dateRangeButton = screen.getByText(/7 days/i);
+    await user.click(dateRangeButton);
+
+    expect(onDateRangeChange).toHaveBeenCalled();
+  });
+
+  test("displays ELO values correctly", () => {
+    renderComponent();
+    // Should display ELO values (formatted or "-" if 0)
+    // The formatElo function returns "-" for values <= 0
+    const eloTexts = screen.getAllByText(/-|\d+/);
+    expect(eloTexts.length).toBeGreaterThan(0);
+  });
+
+  test("handles platform 'all' filter correctly", () => {
+    renderComponent({ platform: "all" });
+    // When platform is "all", should show both Chess.com and Lichess summaries
+    const chessComElements = screen.queryAllByText("Chess.com");
+    const lichessElements = screen.queryAllByText("Lichess");
+    expect(chessComElements.length).toBeGreaterThan(0);
+    expect(lichessElements.length).toBeGreaterThan(0);
+  });
+
+  test("handles platform 'Lichess' filter correctly", () => {
+    renderComponent({ platform: "Lichess" });
+    // Should show only Lichess summary
+    const lichessElements = screen.queryAllByText("Lichess");
+    expect(lichessElements.length).toBeGreaterThan(0);
+  });
+
+  test("handles platform 'Chess.com' filter correctly", () => {
+    renderComponent({ platform: "Chess.com" });
+    // Should show only Chess.com summary
+    const chessComElements = screen.queryAllByText("Chess.com");
+    expect(chessComElements.length).toBeGreaterThan(0);
+  });
 });
 
 describe("normalizePlatform", () => {

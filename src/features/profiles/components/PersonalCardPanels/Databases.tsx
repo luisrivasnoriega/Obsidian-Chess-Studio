@@ -13,7 +13,6 @@ import { query_players } from "@/utils/db";
 import { getProfileDbPath } from "@/utils/profileDb";
 import type { Session } from "@/utils/session";
 import PersonalPlayerCard from "../PersonalCard";
-import { PanelLoadGate } from "./PanelLoadGate";
 import { PanelLoadingState } from "./PanelLoadingState";
 
 interface PersonalInfo {

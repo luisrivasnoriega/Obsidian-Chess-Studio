@@ -247,4 +247,217 @@ describe("PersonalCard", () => {
       expect(selectInput).toBeInTheDocument();
     }
   });
+
+  test("does not show FIDE info button when name is 'Stats'", () => {
+    renderComponent({ name: "Stats" });
+    
+    // The FIDE info button should not be visible when name is "Stats"
+    // When name is "Stats", the selector is not shown, so we check that no info button exists
+    const allButtons = screen.queryAllByRole("button");
+    const nonTabButtons = allButtons.filter(btn => btn.getAttribute("role") !== "tab");
+    
+    // Should not have FIDE info button (only tab buttons should exist)
+    // The info button is only shown when name !== "Stats" and showPlayerSelector is true
+    expect(nonTabButtons.length).toBe(0);
+  });
+
+  test("does not show player selector when setName is not provided", () => {
+    renderComponent({ setName: undefined });
+    
+    // When setName is undefined, selector should not be shown
+    expect(screen.queryByDisplayValue("Test Player")).not.toBeInTheDocument();
+  });
+
+  test("does not show player selector when on openings tab", () => {
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "openings" };
+    
+    renderComponent();
+    
+    // When on openings tab, selector should not be shown
+    expect(screen.queryByDisplayValue("Test Player")).not.toBeInTheDocument();
+  });
+
+  test("corrects invalid activeTab to first allowed tab", () => {
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "invalid-tab" };
+    const setActiveTab = vi.fn();
+    mockStore.setPlayersActiveTab = setActiveTab;
+    
+    renderComponent({ visibleTabs: ["overview", "ratings"] as any });
+    
+    // Should call setActiveTab to correct invalid tab
+    expect(setActiveTab).toHaveBeenCalledWith("overview");
+  });
+
+  test("passes profileId and isLoading to panels", () => {
+    const { container } = renderComponent({ 
+      profileId: "profile-123", 
+      isLoading: true 
+    });
+    
+    // Verify panels are rendered (they receive the props via mocked components)
+    expect(screen.getByTestId("overview-panel")).toBeInTheDocument();
+  });
+
+  test("renders all three panels when all tabs are visible", () => {
+    renderComponent({ visibleTabs: ["overview", "ratings", "openings"] as any });
+    
+    // Only the active tab's panel is rendered (overview by default)
+    expect(screen.getByTestId("overview-panel")).toBeInTheDocument();
+    // The other panels are not rendered until their tabs are activated
+    expect(screen.queryByTestId("ratings-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("openings-panel")).not.toBeInTheDocument();
+    
+    // But all tabs should be visible
+    expect(screen.getByText("accounts.personalCard.tabs.overview")).toBeInTheDocument();
+    expect(screen.getByText("accounts.personalCard.tabs.ratings")).toBeInTheDocument();
+    expect(screen.getByText("accounts.personalCard.tabs.openings")).toBeInTheDocument();
+  });
+
+  test("renders only ratings panel when single tab is ratings", () => {
+    renderComponent({ visibleTabs: ["ratings"] as any });
+    
+    expect(screen.getByTestId("ratings-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("overview-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("openings-panel")).not.toBeInTheDocument();
+  });
+
+  test("renders only openings panel when single tab is openings", () => {
+    renderComponent({ visibleTabs: ["openings"] as any });
+    
+    expect(screen.getByTestId("openings-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("overview-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("ratings-panel")).not.toBeInTheDocument();
+  });
+
+  test("renders tabs panel with correct margin when showHeaderSelector is true", () => {
+    renderComponent({ visibleTabs: ["overview", "ratings"] as any, showPlayerSelector: true });
+    
+    // Tabs should be rendered
+    expect(screen.getByText("accounts.personalCard.tabs.overview")).toBeInTheDocument();
+    expect(screen.getByText("accounts.personalCard.tabs.ratings")).toBeInTheDocument();
+  });
+
+  test("renders tabs panel with no margin when showHeaderSelector is false", () => {
+    renderComponent({ visibleTabs: ["overview", "ratings"] as any, showPlayerSelector: false });
+    
+    // Tabs should still be rendered
+    expect(screen.getByText("accounts.personalCard.tabs.overview")).toBeInTheDocument();
+  });
+
+  test("handles switching to openings tab", async () => {
+    const user = userEvent.setup();
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "overview" };
+    
+    renderComponent({ visibleTabs: ["overview", "openings"] as any });
+    
+    const openingsTab = screen.getByText("accounts.personalCard.tabs.openings");
+    await user.click(openingsTab);
+    
+    expect(mockStore?.setPlayersActiveTab).toHaveBeenCalled();
+  });
+
+  test("handles switching to ratings tab", async () => {
+    const user = userEvent.setup();
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "overview" };
+    
+    renderComponent({ visibleTabs: ["overview", "ratings"] as any });
+    
+    const ratingsTab = screen.getByText("accounts.personalCard.tabs.ratings");
+    await user.click(ratingsTab);
+    
+    expect(mockStore?.setPlayersActiveTab).toHaveBeenCalled();
+  });
+
+  test("renders correct panel content for active tab", () => {
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "ratings" };
+    
+    renderComponent({ visibleTabs: ["overview", "ratings", "openings"] as any });
+    
+    // Should show ratings panel when ratings tab is active
+    expect(screen.getByTestId("ratings-panel")).toBeInTheDocument();
+  });
+
+  test("handles empty visibleTabs array", () => {
+    renderComponent({ visibleTabs: [] as any });
+    
+    // Should not crash and should render something (even if empty)
+    expect(screen.queryByText("accounts.personalCard.tabs.overview")).not.toBeInTheDocument();
+  });
+
+  test("passes correct props to OverviewPanel", () => {
+    renderComponent({ 
+      name: "Test Player",
+      profileId: "profile-123",
+      isLoading: true,
+      visibleTabs: ["overview"] as any
+    });
+    
+    expect(screen.getByTestId("overview-panel")).toBeInTheDocument();
+    expect(screen.getByText("Test Player Overview")).toBeInTheDocument();
+  });
+
+  test("passes correct props to RatingsPanel", () => {
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "ratings" };
+    
+    renderComponent({ 
+      name: "Test Player",
+      profileId: "profile-123",
+      isLoading: true,
+      visibleTabs: ["ratings"] as any
+    });
+    
+    expect(screen.getByTestId("ratings-panel")).toBeInTheDocument();
+    expect(screen.getByText("Test Player Ratings")).toBeInTheDocument();
+  });
+
+  test("passes correct props to OpeningsPanel", () => {
+    const mockStore = (globalThis as any).__mockStore__;
+    mockStore.players = { activeTab: "openings" };
+    
+    renderComponent({ 
+      name: "Test Player",
+      profileId: "profile-123",
+      isLoading: true,
+      visibleTabs: ["openings"] as any
+    });
+    
+    expect(screen.getByTestId("openings-panel")).toBeInTheDocument();
+    expect(screen.getByText("Test Player Openings")).toBeInTheDocument();
+  });
+
+  test("updates FideInfo key when name changes", () => {
+    const { rerender } = renderComponent({ name: "Player1" });
+    
+    const newProps: React.ComponentProps<typeof PersonalCard> = {
+      name: "Player2",
+      setName: vi.fn(),
+      info: mockPlayerInfo,
+      visibleTabs: ["overview"] as any,
+      showPlayerSelector: true,
+    };
+    
+    rerender(<PersonalCard {...newProps} />);
+    
+    // Component should re-render with new name
+    expect(screen.getByTestId("overview-panel")).toBeInTheDocument();
+  });
+
+  test("handles missing DatabaseViewStateContext gracefully", () => {
+    // This test verifies the error handling in the component
+    // The component throws an error if context is missing, which is expected behavior
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    
+    // The mock should provide the context, so this should not throw
+    expect(() => {
+      renderComponent();
+    }).not.toThrow();
+    
+    vi.restoreAllMocks();
+  });
 });

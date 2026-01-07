@@ -25,10 +25,3 @@ export const tooltipCursorStyle = {
   stroke: "var(--mantine-color-dark-4)",
   strokeWidth: 1,
 };
-
-export const link = style({
-  cursor: "pointer",
-  ":hover": {
-    textDecoration: "underline",
-  },
-});
