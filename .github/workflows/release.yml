@@ -14,9 +14,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest    # Arm based Macs (M1 and above)
+          - platform: macos-latest
             args: --target aarch64-apple-darwin --bundles dmg
-          - platform: macos-latest    # Intel based Macs
+          - platform: macos-latest
             args: --target x86_64-apple-darwin --bundles dmg
           - platform: ubuntu-22.04
             args: ""
@@ -44,10 +44,10 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
-      - name: Install pnpm CLI
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.26.1
+          run_install: false
 
       - name: Setup Node.js and pnpm cache
         uses: actions/setup-node@v4
