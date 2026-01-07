@@ -11,6 +11,7 @@ import { match, P } from "ts-pattern";
 import { type BestMoves, commands, type EngineOptions, type GoMode, type NormalizedGame } from "@/bindings";
 import { parsePGN, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
+import { isFailedToFetchError, isInNetworkCooldown, startNetworkCooldown } from "@/utils/networkCooldown";
 import {
   getLichessGamesQueryParams,
   getMasterGamesQueryParams,
@@ -208,15 +209,27 @@ export async function getLichessAccount({
   token?: string;
   username?: string;
 }): Promise<LichessAccount | null> {
+  if (isInNetworkCooldown()) return null;
+
   let response: Response;
-  if (token) {
-    response = await fetch(`${baseURL}/account`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } else {
-    const url = `${baseURL}/user/${username}`;
-    response = await fetch(url);
+  try {
+    if (token) {
+      response = await fetch(`${baseURL}/account`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } else {
+      const url = `${baseURL}/user/${username}`;
+      response = await fetch(url);
+    }
+  } catch (e) {
+    if (isFailedToFetchError(e)) {
+      startNetworkCooldown();
+      // No notifications for transient connectivity issues.
+      error(`Failed to fetch Lichess account: ${String(e)}`);
+      return null;
+    }
+    throw e;
   }
   if (!response.ok) {
     error(`Failed to fetch Lichess account: ${response.status} ${response.url}`);

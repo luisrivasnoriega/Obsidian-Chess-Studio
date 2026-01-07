@@ -56,6 +56,354 @@ pub struct PawnStructureOptions {
 
     #[serde(rename = "pawnStructureMode")]
     pub pawn_structure_mode: String, // "player" | "both"
+
+    /// Optional pawn-structure motif filters, applied server-side.
+    /// When empty, no motif filtering is applied.
+    #[serde(rename = "structureFilters", default)]
+    pub structure_filters: Vec<String>,
+}
+
+fn parse_structure_filters(filters: &[String]) -> Vec<String> {
+    filters
+        .iter()
+        .map(|s| normalize_filter_value(s))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PawnSets {
+    // pawn counts per file (0..7)
+    file_counts: [u8; 8],
+    // pawn presence per file+rank (rank 0..7 from White's perspective; 0 = rank1)
+    squares: [[bool; 8]; 8],
+}
+
+fn pawn_sets_from_fen(fen: &str, color: Color) -> PawnSets {
+    let placement = fen.split_whitespace().next().unwrap_or("");
+    let mut squares: Vec<char> = Vec::with_capacity(64);
+    for ch in placement.chars() {
+        if ch == '/' {
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            let n = ch.to_digit(10).unwrap_or(0) as usize;
+            squares.extend(std::iter::repeat('.').take(n));
+        } else {
+            squares.push(ch);
+        }
+    }
+    if squares.len() != 64 {
+        return PawnSets {
+            file_counts: [0; 8],
+            squares: [[false; 8]; 8],
+        };
+    }
+
+    let pawn_char = match color {
+        Color::White => 'P',
+        Color::Black => 'p',
+    };
+
+    let mut out = PawnSets {
+        file_counts: [0; 8],
+        squares: [[false; 8]; 8],
+    };
+
+    // FEN ranks are 8..1; convert to rank index from White's perspective (0..7, 0=rank1)
+    for fen_rank in 0..8 {
+        for file in 0..8 {
+            let idx = fen_rank * 8 + file;
+            if squares[idx] == pawn_char {
+                let white_rank = 7usize.saturating_sub(fen_rank); // fen_rank 0 (rank8) -> 7 (rank1)?? Actually we want 0=rank1, so invert.
+                // Wait: fen_rank 7 (rank1) -> 0, fen_rank 0 (rank8) -> 7
+                let r = white_rank;
+                out.squares[file][r] = true;
+                out.file_counts[file] = out.file_counts[file].saturating_add(1);
+            }
+        }
+    }
+
+    out
+}
+
+fn count_pawn_islands(ps: &PawnSets) -> u8 {
+    let mut islands = 0u8;
+    let mut in_island = false;
+    for f in 0..8 {
+        let has = ps.file_counts[f] > 0;
+        if has && !in_island {
+            islands += 1;
+            in_island = true;
+        } else if !has {
+            in_island = false;
+        }
+    }
+    islands
+}
+
+fn has_isolated_pawn(ps: &PawnSets) -> bool {
+    for f in 0..8 {
+        if ps.file_counts[f] == 0 {
+            continue;
+        }
+        let left = if f > 0 { ps.file_counts[f - 1] } else { 0 };
+        let right = if f < 7 { ps.file_counts[f + 1] } else { 0 };
+        if left == 0 && right == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_doubled_pawns(ps: &PawnSets) -> bool {
+    ps.file_counts.iter().any(|&c| c >= 2)
+}
+
+fn is_passed_pawn(color: Color, ps: &PawnSets, opp: &PawnSets, file: usize, rank: usize) -> bool {
+    // For White: pawns advance to higher ranks; for Black: to lower ranks (from White perspective).
+    let files = [file.saturating_sub(1), file, (file + 1).min(7)];
+    match color {
+        Color::White => {
+            for f in files {
+                for r in (rank + 1)..8 {
+                    if opp.squares[f][r] {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+        Color::Black => {
+            for f in files {
+                for r in 0..rank {
+                    if opp.squares[f][r] {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+    }
+}
+
+fn has_passed_pawn(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
+    for f in 0..8 {
+        for r in 0..8 {
+            if ps.squares[f][r] && is_passed_pawn(color, ps, opp, f, r) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_connected_passed_pawns(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
+    let mut passed_by_file: [bool; 8] = [false; 8];
+    for f in 0..8 {
+        'r: for r in 0..8 {
+            if ps.squares[f][r] && is_passed_pawn(color, ps, opp, f, r) {
+                passed_by_file[f] = true;
+                break 'r;
+            }
+        }
+    }
+    for f in 0..7 {
+        if passed_by_file[f] && passed_by_file[f + 1] {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_hanging_pawns(ps: &PawnSets) -> bool {
+    // Classic heuristic: pawns on c/d without pawns on b/e.
+    let c = ps.file_counts[2] > 0;
+    let d = ps.file_counts[3] > 0;
+    let b = ps.file_counts[1] > 0;
+    let e = ps.file_counts[4] > 0;
+    c && d && !b && !e
+}
+
+fn has_iqp(ps: &PawnSets) -> bool {
+    // Classic IQP heuristic: pawn on d-file, no pawns on c/e.
+    let d = ps.file_counts[3] > 0;
+    let c = ps.file_counts[2] > 0;
+    let e = ps.file_counts[4] > 0;
+    d && !c && !e
+}
+
+fn has_fianchetto(color: Color, ps: &PawnSets) -> bool {
+    match color {
+        Color::White => {
+            // g3 + f2 + h2
+            let g3 = ps.squares[6][2];
+            let f2 = ps.squares[5][1];
+            let h2 = ps.squares[7][1];
+            g3 && f2 && h2
+        }
+        Color::Black => {
+            // g6 + f7 + h7
+            let g6 = ps.squares[6][5];
+            let f7 = ps.squares[5][6];
+            let h7 = ps.squares[7][6];
+            g6 && f7 && h7
+        }
+    }
+}
+
+fn has_minority_attack_pattern(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
+    // Classic heuristic: a+b vs opponent a+b+c (queenside minority).
+    // This is a very rough approximation of the pawn-structure prerequisite for a minority attack.
+    let has_a = ps.file_counts[0] > 0;
+    let has_b = ps.file_counts[1] > 0;
+    let opp_has_a = opp.file_counts[0] > 0;
+    let opp_has_b = opp.file_counts[1] > 0;
+    let opp_has_c = opp.file_counts[2] > 0;
+    // Require both a and b pawns for the attacker, and a+b+c for the defender.
+    // Color is unused here but kept for symmetry/future improvements.
+    let _ = color;
+    has_a && has_b && opp_has_a && opp_has_b && opp_has_c
+}
+
+fn has_backward_pawn(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
+    // Heuristic: pawn behind adjacent-file pawns, with its advance square attacked by an enemy pawn.
+    // This is a simplified detector meant for filtering, not a full strategic evaluator.
+    for f in 0..8 {
+        for r in 0..8 {
+            if !ps.squares[f][r] {
+                continue;
+            }
+
+            // Adjacent friendly pawns are more advanced?
+            let left_advanced = if f > 0 {
+                (0..8).any(|rr| ps.squares[f - 1][rr] && match color { Color::White => rr > r, Color::Black => rr < r })
+            } else {
+                false
+            };
+            let right_advanced = if f < 7 {
+                (0..8).any(|rr| ps.squares[f + 1][rr] && match color { Color::White => rr > r, Color::Black => rr < r })
+            } else {
+                false
+            };
+            if !(left_advanced || right_advanced) {
+                continue;
+            }
+
+            // Advance square exists?
+            let advance_rank = match color {
+                Color::White => {
+                    if r >= 7 { continue; }
+                    r + 1
+                }
+                Color::Black => {
+                    if r == 0 { continue; }
+                    r - 1
+                }
+            };
+
+            // Is the advance square attacked by an enemy pawn?
+            // Enemy pawn attacks depend on enemy color (opponent of `color`).
+            let attacked = match color {
+                Color::White => {
+                    // black pawns attack downwards: from (f-1, advance_rank+1) or (f+1, advance_rank+1)
+                    let src_rank = advance_rank + 1;
+                    if src_rank >= 8 { false } else {
+                        (f > 0 && opp.squares[f - 1][src_rank]) || (f < 7 && opp.squares[f + 1][src_rank])
+                    }
+                }
+                Color::Black => {
+                    // white pawns attack upwards: from (f-1, advance_rank-1) or (f+1, advance_rank-1)
+                    if advance_rank == 0 { false } else {
+                        let src_rank = advance_rank - 1;
+                        (f > 0 && opp.squares[f - 1][src_rank]) || (f < 7 && opp.squares[f + 1][src_rank])
+                    }
+                }
+            };
+            if attacked {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn detect_motif_mask(fen: &str, player_color: Color, mode: &str) -> u32 {
+    let mode_norm = normalize_filter_value(mode);
+    let analyze_both = mode_norm == "both";
+
+    let mut mask: u32 = 0;
+
+    // Bit assignments
+    const ISLANDS: u32 = 1 << 0;
+    const ISOLATED: u32 = 1 << 1;
+    const DOUBLED: u32 = 1 << 2;
+    const PASSED: u32 = 1 << 3;
+    const HANGING: u32 = 1 << 4;
+    const BACKWARD: u32 = 1 << 5;
+    const MINORITY_ATTACK: u32 = 1 << 6;
+    const IQP: u32 = 1 << 7;
+    const CONNECTED_PASSED: u32 = 1 << 8;
+    const FIANCHETTO: u32 = 1 << 9;
+
+    let colors: Vec<Color> = if analyze_both { vec![Color::White, Color::Black] } else { vec![player_color] };
+    for c in colors {
+        let ps = pawn_sets_from_fen(fen, c);
+        let opp = pawn_sets_from_fen(fen, if c == Color::White { Color::Black } else { Color::White });
+
+        if count_pawn_islands(&ps) >= 3 {
+            mask |= ISLANDS;
+        }
+        if has_isolated_pawn(&ps) {
+            mask |= ISOLATED;
+        }
+        if has_doubled_pawns(&ps) {
+            mask |= DOUBLED;
+        }
+        if has_passed_pawn(c, &ps, &opp) {
+            mask |= PASSED;
+        }
+        if has_connected_passed_pawns(c, &ps, &opp) {
+            mask |= CONNECTED_PASSED;
+        }
+        if has_hanging_pawns(&ps) {
+            mask |= HANGING;
+        }
+        if has_backward_pawn(c, &ps, &opp) {
+            mask |= BACKWARD;
+        }
+        if has_minority_attack_pattern(c, &ps, &opp) {
+            mask |= MINORITY_ATTACK;
+        }
+        if has_iqp(&ps) {
+            mask |= IQP;
+        }
+        if has_fianchetto(c, &ps) {
+            mask |= FIANCHETTO;
+        }
+    }
+
+    mask
+}
+
+fn motif_filter_mask(filters: &[String]) -> u32 {
+    let mut mask: u32 = 0;
+    for f in parse_structure_filters(filters) {
+        match f.as_str() {
+            "islands" => mask |= 1 << 0,
+            "isolated" => mask |= 1 << 1,
+            "doubled" => mask |= 1 << 2,
+            "passed" => mask |= 1 << 3,
+            "hanging" => mask |= 1 << 4,
+            "backward" => mask |= 1 << 5,
+            "minority_attack" => mask |= 1 << 6,
+            "iqp" => mask |= 1 << 7,
+            "connected_passed" => mask |= 1 << 8,
+            "fianchetto" => mask |= 1 << 9,
+            _ => {}
+        }
+    }
+    mask
 }
 
 fn normalize_platform(site: &str) -> Option<String> {
@@ -432,6 +780,8 @@ pub async fn compute_pawn_structures(
         }
     };
 
+    let wanted_motif_mask = motif_filter_mask(&options.structure_filters);
+
     let start_date = clean_optional_date(&options.earliest_date);
 
     let mut game_data: Vec<(i32, NormalizedGame)> = Vec::new();
@@ -543,7 +893,7 @@ pub async fn compute_pawn_structures(
         }
     }
 
-    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>)> = HashMap::new();
+    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>, u32)> = HashMap::new();
     let max_games_per_structure = 50;
 
     for (player_id, game) in game_data.iter() {
@@ -568,9 +918,10 @@ pub async fn compute_pawn_structures(
 
         let entry = stats
             .entry(structure_str.clone())
-            .or_insert_with(|| (0, 0.0, Some(fen_str.clone()), Vec::new()));
+            .or_insert_with(|| (0, 0.0, Some(fen_str.clone()), Vec::new(), 0u32));
         entry.0 += 1;
         entry.1 += won;
+        entry.4 |= detect_motif_mask(&fen_str, player_color, &pawn_mode);
 
         if entry.3.len() < max_games_per_structure {
             entry.3.push(PawnStructureGame {
@@ -587,7 +938,15 @@ pub async fn compute_pawn_structures(
 
     let mut results: Vec<PawnStructureStat> = stats
         .into_iter()
-        .map(|(structure, (count, wins, sample_fen, games))| PawnStructureStat {
+        .filter(|(_structure, (_count, _wins, _sample_fen, _games, motif_mask))| {
+            if wanted_motif_mask == 0 {
+                true
+            } else {
+                // AND semantics: when multiple motifs are selected, require all of them.
+                (motif_mask & wanted_motif_mask) == wanted_motif_mask
+            }
+        })
+        .map(|(structure, (count, wins, sample_fen, games, _motif_mask))| PawnStructureStat {
             structure,
             frequency: count,
             win_rate: if count > 0 { wins / count as f64 } else { 0.0 },

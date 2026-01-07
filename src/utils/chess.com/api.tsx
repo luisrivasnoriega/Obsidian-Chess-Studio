@@ -9,6 +9,7 @@ import { ChildNode, defaultGame, makePgn, type PgnNodeData } from "chessops/pgn"
 import { makeSan } from "chessops/san";
 import { z } from "zod";
 import { events } from "@/bindings";
+import { isFailedToFetchError, isInNetworkCooldown, startNetworkCooldown } from "@/utils/networkCooldown";
 import { decodeTCN } from "./tcn";
 
 const baseURL = "https://api.chess.com";
@@ -67,8 +68,21 @@ const ChessComGames = z.object({
 });
 
 export async function getChessComAccount(player: string): Promise<ChessComStats | null> {
+  if (isInNetworkCooldown()) return null;
+
   const url = `${baseURL}/pub/player/${player.toLowerCase()}/stats`;
-  const response = await fetch(url, { headers, method: "GET" });
+  let response: Response;
+  try {
+    response = await fetch(url, { headers, method: "GET" });
+  } catch (e) {
+    if (isFailedToFetchError(e)) {
+      startNetworkCooldown();
+      // No notifications for transient connectivity issues.
+      error(`Failed to fetch Chess.com account: ${String(e)}`);
+      return null;
+    }
+    throw e;
+  }
   if (!response.ok) {
     error(`Failed to fetch Chess.com account: ${response.status} ${response.url}`);
     notifications.show({

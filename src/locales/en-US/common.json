@@ -424,6 +424,21 @@
                           "logFilePath":  "Log file: {{path}}"
                       },
     "dashboard":  {
+                      "pawnFilters":  "Pawn filters",
+                      "pawnMotifs":  "Pawn motifs",
+                      "pawnMotifsPlaceholder":  "Select motifs...",
+                      "pawnMotif":  {
+                                        "islands":  "Pawn islands",
+                                        "isolated":  "Isolated pawn",
+                                        "doubled":  "Doubled pawns",
+                                        "passed":  "Passed pawn",
+                                        "hanging":  "Hanging pawns",
+                                        "backward":  "Backward pawn",
+                                        "minorityAttack":  "Minority attack",
+                                        "iqp":  "Isolated Queen’s Pawn (IQP)",
+                                        "connectedPassed":  "Connected passed pawns",
+                                        "fianchetto":  "Fianchetto pawn structure"
+                                    },
                       "noMainAccount":  "No main account",
                       "estimatedElo":  "Est. Elo",
                       "suggestions":  {

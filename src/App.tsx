@@ -10,6 +10,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { activeProfileIdAtom, activeTabAtom, fontSizeAtom, pieceSetAtom, profilesAtom, sessionsAtom, tabsAtom } from "./state/atoms";
 import { ensurePieceSetCss } from "./utils/pieceSetCss";
+import { isFailedToFetchError, startNetworkCooldown } from "@/utils/networkCooldown";
 
 import "@mantine/charts/styles.css";
 import "@mantine/core/styles.css";
@@ -139,7 +140,14 @@ export const attachConsoleOnce = async (): Promise<(() => void) | null> => {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount, error) => {
+        if (isFailedToFetchError(error)) {
+          // Avoid retry storms when the network is down. Cool down for 10 minutes.
+          startNetworkCooldown();
+          return false;
+        }
+        return failureCount < 1;
+      },
       refetchOnWindowFocus: false,
       staleTime: 1000 * 60 * 5, // 5 minutes
     },

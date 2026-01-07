@@ -26,7 +26,7 @@ import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { mkdir, remove } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import GenericHeader from "@/components/GenericHeader";
@@ -49,6 +49,7 @@ import { parseDate } from "@/utils/format";
 import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
+import { isFailedToFetchError, isInNetworkCooldown, startNetworkCooldown } from "@/utils/networkCooldown";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {
   if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
@@ -84,6 +85,7 @@ export default function ProfilesPage() {
   const profilesPerPage = 5;
   const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
+  const didAutoUpdateAccountsRef = useRef(false);
 
   const sessionsByProfileId = useMemo(() => {
     const map = new Map<string, Session[]>();
@@ -182,7 +184,12 @@ export default function ProfilesPage() {
 
   // Auto-update statistics and download games for all accounts of all profiles
   useEffect(() => {
+    // IMPORTANT: this effect updates `sessions` (via `setSessions`), so it must not re-run on every sessions change.
+    // We run it once when the page is loaded and sessions are available.
+    if (didAutoUpdateAccountsRef.current) return;
     if (sessions.length === 0) return;
+    if (isInNetworkCooldown()) return;
+    didAutoUpdateAccountsRef.current = true;
 
     const run = async () => {
       try {
@@ -267,7 +274,13 @@ export default function ProfilesPage() {
           unwrap(
             await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
           );
-        } catch {
+        } catch (e) {
+          // If we hit a transient network error, start cooldown and stop processing to avoid spam.
+          // Best-effort: keep processing other accounts for non-network errors.
+          if (isFailedToFetchError(e)) {
+            startNetworkCooldown();
+            break;
+          }
           // Best-effort: keep processing other accounts.
         }
       }
@@ -316,14 +329,19 @@ export default function ProfilesPage() {
           unwrap(
             await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
           );
-        } catch {
+        } catch (e) {
+          // If we hit a transient network error, start cooldown and stop processing to avoid spam.
+          if (isFailedToFetchError(e)) {
+            startNetworkCooldown();
+            break;
+          }
           // Best-effort: keep processing other accounts.
         }
       }
     };
 
     void run();
-  }, [activeProfileId, profiles, sessions, setSessions]);
+  }, [activeProfileId, profiles, sessions.length, setSessions]);
 
   const sortedProfiles = useMemo(() => {
     const list = [...filteredProfiles];

@@ -100,6 +100,11 @@ type PlayerSidebarCardProps = {
   onDateRangeChange?: (value: DateRange | null) => void;
   profileId?: string;
   isLoading?: boolean;
+  /**
+   * When true, the card stretches to full container height.
+   * Useful for 2-column layouts where the sidebar should match the panel height.
+   */
+  fullHeight?: boolean;
 };
 
 function formatElo(value: number): string {
@@ -120,6 +125,7 @@ export default function PlayerSidebarCard({
   onDateRangeChange,
   profileId,
   isLoading = false,
+  fullHeight = true,
 }: PlayerSidebarCardProps) {
   const { t } = useTranslation();
   const sessions = useAtomValue(sessionsAtom);
@@ -244,7 +250,14 @@ export default function PlayerSidebarCard({
 
   if (!hasData) {
     return (
-      <Card withBorder radius="md" shadow="sm" bg="var(--mantine-color-dark-6)" h="100%" style={{ overflow: "hidden" }}>
+      <Card
+        withBorder
+        radius="md"
+        shadow="sm"
+        bg="var(--mantine-color-dark-6)"
+        h={fullHeight ? "100%" : undefined}
+        style={{ overflow: "hidden" }}
+      >
         <Stack gap="sm" h="100%" justify="center" align="center" p="md">
           <Loader size="md" />
           <Text size="sm" c="dimmed" ta="center">
@@ -256,7 +269,14 @@ export default function PlayerSidebarCard({
   }
 
   return (
-    <Card withBorder radius="md" shadow="sm" bg="var(--mantine-color-dark-6)" h="100%" style={{ overflow: "hidden" }}>
+    <Card
+      withBorder
+      radius="md"
+      shadow="sm"
+      bg="var(--mantine-color-dark-6)"
+      h={fullHeight ? "100%" : undefined}
+      style={{ overflow: "hidden" }}
+    >
       <Stack gap="sm">
         <Text fz="lg" fw={700} ta="center">
           {playerName}

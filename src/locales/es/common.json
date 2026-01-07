@@ -397,6 +397,21 @@
     "logFilePath": "Archivo de log: {{path}}"
   },
   "dashboard": {
+    "pawnFilters": "Filtros de peones",
+    "pawnMotifs": "Motivos de peones",
+    "pawnMotifsPlaceholder": "Selecciona motivos...",
+    "pawnMotif": {
+      "islands": "Islas de peones",
+      "isolated": "Peón aislado",
+      "doubled": "Peones doblados",
+      "passed": "Peón pasado",
+      "hanging": "Peones colgantes",
+      "backward": "Peón atrasado",
+      "minorityAttack": "Ataque de minoría",
+      "iqp": "Peón dama aislado (IQP)",
+      "connectedPassed": "Peones pasados conectados",
+      "fianchetto": "Estructura de peones de fianchetto"
+    },
     "noMainAccount": "No hay cuenta principal",
     "estimatedElo": "Elo Est.",
     "suggestions": {

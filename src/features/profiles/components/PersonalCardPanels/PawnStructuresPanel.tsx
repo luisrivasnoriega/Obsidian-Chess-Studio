@@ -4,9 +4,11 @@ import {
   Box,
   Button,
   Group,
+  MultiSelect,
   Pagination,
   Paper,
   Progress,
+  ScrollArea,
   SegmentedControl,
   Select,
   Stack,
@@ -132,6 +134,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [pawnMoveFilter, setPawnMoveFilter] = useState(10);
   const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
   const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">("player");
+  const [pawnMotifFilters, setPawnMotifFilters] = useState<string[]>([]);
   const [pawnStructures, setPawnStructures] = useState<PawnStructureStat[]>([]);
   const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">("frequency");
   const [pawnLoading, setPawnLoading] = useState(false);
@@ -148,6 +151,22 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const sessions = useAtomValue(sessionsAtom);
 
   const moveOptions = Array.from({ length: 50 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }));
+
+  const motifOptions = useMemo(
+    () => [
+      { value: "islands", label: t("features.dashboard.pawnMotif.islands", { defaultValue: "Pawn islands" }) },
+      { value: "isolated", label: t("features.dashboard.pawnMotif.isolated", { defaultValue: "Isolated pawn" }) },
+      { value: "doubled", label: t("features.dashboard.pawnMotif.doubled", { defaultValue: "Doubled pawns" }) },
+      { value: "passed", label: t("features.dashboard.pawnMotif.passed", { defaultValue: "Passed pawn" }) },
+      { value: "hanging", label: t("features.dashboard.pawnMotif.hanging", { defaultValue: "Hanging pawns" }) },
+      { value: "backward", label: t("features.dashboard.pawnMotif.backward", { defaultValue: "Backward pawn" }) },
+      { value: "minority_attack", label: t("features.dashboard.pawnMotif.minorityAttack", { defaultValue: "Minority attack" }) },
+      { value: "iqp", label: t("features.dashboard.pawnMotif.iqp", { defaultValue: "Isolated Queen’s Pawn (IQP)" }) },
+      { value: "connected_passed", label: t("features.dashboard.pawnMotif.connectedPassed", { defaultValue: "Connected passed pawns" }) },
+      { value: "fianchetto", label: t("features.dashboard.pawnMotif.fianchetto", { defaultValue: "Fianchetto pawn structure" }) },
+    ],
+    [t],
+  );
 
   const sortedStructures = [...pawnStructures].sort((a, b) =>
     pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate,
@@ -356,7 +375,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       const earliestDate = dateRange && dates.length > 0 ? calculateEarliestDate(dateRange, dates) : undefined;
       
       // Prepare parameters for the command
-      const params = {
+      const params: any = {
         playerIds: Array.from(playerIds),
         colorFilter: pawnColorFilter,
         platformFilter: platform,
@@ -366,6 +385,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         moveNumber: pawnMoveFilter,
         playerColor: pawnColorFilter === "any" ? "any" : pawnColorFilter,
         pawnStructureMode: pawnStructureMode,
+        structureFilters: pawnMotifFilters,
       };
 
       // Simulate progress during computation
@@ -537,82 +557,115 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   return (
     <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
       <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
-        <PlayerSidebarCard
-          playerName={playerName}
-          info={playerInfo}
-          platform={platform}
-          onPlatformChange={setPlatform}
-          timeControl={timeControl}
-          onTimeControlChange={setTimeControl}
-          opponentEloOptions={opponentEloOptions}
-          opponentEloBucket={opponentEloBucket}
-          onOpponentEloChange={setOpponentEloBucket}
-          dateRange={dateRange}
-          onDateRangeChange={setDateRange}
-          profileId={profileId}
-          isLoading={isAnyLoading}
-        />
+        <Stack h="100%" gap="md" style={{ minHeight: 0 }}>
+          <PlayerSidebarCard
+            playerName={playerName}
+            info={playerInfo}
+            platform={platform}
+            onPlatformChange={setPlatform}
+            timeControl={timeControl}
+            onTimeControlChange={setTimeControl}
+            opponentEloOptions={opponentEloOptions}
+            opponentEloBucket={opponentEloBucket}
+            onOpponentEloChange={setOpponentEloBucket}
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
+            profileId={profileId}
+            isLoading={isAnyLoading}
+            fullHeight={false}
+          />
+
+          <Paper
+            withBorder
+            p={0}
+            style={{
+              backgroundColor: "var(--mantine-color-dark-6)",
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <ScrollArea type="auto" style={{ flex: 1 }}>
+              <Stack gap="sm" p="md">
+                <Text size="sm" fw={600}>
+                  {t("features.dashboard.pawnFilters", { defaultValue: "Pawn filters" })}
+                </Text>
+
+                <Select
+                  label={t("features.dashboard.inMove")}
+                  data={moveOptions}
+                  value={pawnMoveFilter.toString()}
+                  onChange={(value) => setPawnMoveFilter(Number.parseInt(value || "10", 10))}
+                  size="xs"
+                  disabled={pawnLoading}
+                />
+
+                <Select
+                  label={t("features.dashboard.playerColor")}
+                  data={[
+                    { value: "white", label: t("features.dashboard.white") },
+                    { value: "black", label: t("features.dashboard.black") },
+                    { value: "any", label: t("features.dashboard.any") },
+                  ]}
+                  value={pawnColorFilter}
+                  onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
+                  size="xs"
+                  disabled={pawnLoading}
+                />
+
+                <SegmentedControl
+                  value={pawnStructureMode}
+                  onChange={(value) => setPawnStructureMode(value as "player" | "both")}
+                  data={[
+                    { label: t("features.dashboard.playerStructure"), value: "player" },
+                    { label: t("features.dashboard.bothStructures"), value: "both" },
+                  ]}
+                  size="xs"
+                  disabled={pawnLoading}
+                />
+
+                <MultiSelect
+                  label={t("features.dashboard.pawnMotifs", { defaultValue: "Pawn motifs" })}
+                  placeholder={t("features.dashboard.pawnMotifsPlaceholder", { defaultValue: "Select motifs..." })}
+                  data={motifOptions}
+                  value={pawnMotifFilters}
+                  onChange={setPawnMotifFilters}
+                  searchable
+                  clearable
+                  size="xs"
+                  disabled={pawnLoading}
+                />
+
+                <Button
+                  leftSection={<IconSearch size={14} />}
+                  onClick={handleSearch}
+                  loading={pawnLoading}
+                  size="xs"
+                  disabled={pawnLoading}
+                >
+                  {t("features.dashboard.search")}
+                </Button>
+
+                {pawnLoading && (
+                  <Stack gap="xs">
+                    <Group justify="space-between" align="center">
+                      <Text size="xs" c="dimmed">
+                        {t("features.dashboard.analyzingPawnStructures", { defaultValue: "Analyzing pawn structures..." })}
+                      </Text>
+                      <Text size="xs" c="dimmed" fw={500}>
+                        {pawnProgress !== null ? `${pawnProgress}%` : "0%"}
+                      </Text>
+                    </Group>
+                    <Progress value={pawnProgress ?? 0} size="md" animated={pawnProgress !== null && pawnProgress < 100} />
+                  </Stack>
+                )}
+              </Stack>
+            </ScrollArea>
+          </Paper>
+        </Stack>
       </Box>
       <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {/* Fixed Header with Filters */}
-        <Paper withBorder p="md" style={{ position: "sticky", top: 0, zIndex: 10, backgroundColor: "var(--mantine-color-body)" }}>
-          <Stack gap="sm">
-            <Text size="sm" fw={600}>
-              {t("common.filters", { defaultValue: "Filters" })}
-            </Text>
-            <Group align="flex-end" wrap="wrap">
-              <Select
-                label={t("features.dashboard.inMove")}
-                data={moveOptions}
-                value={pawnMoveFilter.toString()}
-                onChange={(value) => setPawnMoveFilter(Number.parseInt(value || "10", 10))}
-                style={{ width: 100 }}
-                size="xs"
-                disabled={pawnLoading}
-              />
-              <Select
-                label={t("features.dashboard.playerColor")}
-                data={[
-                  { value: "white", label: t("features.dashboard.white") },
-                  { value: "black", label: t("features.dashboard.black") },
-                  { value: "any", label: t("features.dashboard.any") },
-                ]}
-                value={pawnColorFilter}
-                onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
-                style={{ width: 140 }}
-                size="xs"
-                disabled={pawnLoading}
-              />
-              <SegmentedControl
-                value={pawnStructureMode}
-                onChange={(value) => setPawnStructureMode(value as "player" | "both")}
-                data={[
-                  { label: t("features.dashboard.playerStructure"), value: "player" },
-                  { label: t("features.dashboard.bothStructures"), value: "both" },
-                ]}
-                size="xs"
-                disabled={pawnLoading}
-              />
-              <Button leftSection={<IconSearch size={14} />} onClick={handleSearch} loading={pawnLoading} size="xs" disabled={pawnLoading}>
-                {t("features.dashboard.search")}
-              </Button>
-            </Group>
-            {pawnLoading && (
-              <Stack gap="xs">
-                <Group justify="space-between" align="center">
-                  <Text size="xs" c="dimmed">
-                    {t("features.dashboard.analyzingPawnStructures", { defaultValue: "Analyzing pawn structures..." })}
-                  </Text>
-                  <Text size="xs" c="dimmed" fw={500}>
-                    {pawnProgress !== null ? `${pawnProgress}%` : "0%"}
-                  </Text>
-                </Group>
-                <Progress value={pawnProgress ?? 0} size="md" animated={pawnProgress !== null && pawnProgress < 100} />
-              </Stack>
-            )}
-          </Stack>
-        </Paper>
-
         {/* Scrollable Content with Table */}
         <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
           <PanelLoadGate

@@ -929,7 +929,12 @@ export type OutOpening = { name: string; fen: string }
 export type Outcome = "1-0" | "0-1" | "1/2-1/2" | "*"
 export type PackageManagerResult = { success: boolean; stdout: string; stderr: string }
 export type PawnStructureGame = { game_id: number; white: string; black: string; white_elo: number | null; black_elo: number | null; result: string; fen: string }
-export type PawnStructureOptions = { playerIds: number[]; colorFilter: string; platformFilter: string; timeControlFilter: string; opponentEloBucket: string; earliestDate: string | null; moveNumber: number; playerColor: string; pawnStructureMode: string }
+export type PawnStructureOptions = { playerIds: number[]; colorFilter: string; platformFilter: string; timeControlFilter: string; opponentEloBucket: string; earliestDate: string | null; moveNumber: number; playerColor: string; pawnStructureMode: string; 
+/**
+ * Optional pawn-structure motif filters, applied server-side.
+ * When empty, no motif filtering is applied.
+ */
+structureFilters?: string[] }
 export type PawnStructureStat = { structure: string; frequency: number; win_rate: number; sample_fen: string | null; games: PawnStructureGame[] }
 export type PlatformFilter = "All" | "Lichess" | "ChessCom"
 export type PlatformInfo = { key: string; label: string; stroke: string }
