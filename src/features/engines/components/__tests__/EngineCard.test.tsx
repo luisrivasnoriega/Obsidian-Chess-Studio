@@ -1,0 +1,37 @@
+import React from "react";
+import { beforeAll, describe, expect, test, vi } from "vitest";
+import { render, screen } from "./test-utils";
+import { EngineCard } from "../../components/EngineCard";
+
+beforeAll(() => {
+  if (!globalThis.ResizeObserver) {
+    globalThis.ResizeObserver = class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as any;
+  }
+});
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
+  }),
+}));
+
+describe("EngineCard", () => {
+  const mockOnEdit = vi.fn();
+  const mockOnDelete = vi.fn();
+
+  test("renders without crashing", () => {
+    const engine = {
+      name: "Stockfish",
+      type: "local" as const,
+      path: "/stockfish",
+      elo: 3000,
+    };
+    render(<EngineCard engine={engine} onEdit={mockOnEdit} onDelete={mockOnDelete} />);
+    expect(document.body).toBeTruthy();
+  });
+});
+
