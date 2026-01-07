@@ -387,7 +387,7 @@ describe("PawnStructuresPanel (high coverage)", () => {
     expect(await screen.findByText("S-ok")).toBeInTheDocument();
   });
 
-  test("handleSearch: computes earliestDate from dates + dateRange + platform/timeControl filters", async () => {
+  test("handleSearch: passes dateRange to backend (all filtering happens in backend)", async () => {
     const user = userEvent.setup();
     mockSessions = [
       { profileId: "p1", player: "Player1", lichess: { username: "player1" } },
@@ -420,10 +420,9 @@ describe("PawnStructuresPanel (high coverage)", () => {
     expect(params?.platformFilter).toBe("Lichess");
     expect(params?.timeControlFilter).toBe("blitz");
   
-    // Current component behavior: earliestDate ends up null.
-    // If you fix the component to actually compute earliestDate for dateRange,
-    // change this assertion to the expected date (e.g. "2024-01-03" for 7d).
-    expect(params?.earliestDate).toBeNull();
+    // Component now passes dateRange to backend (backend calculates earliestDate)
+    // dateRange is converted to backend format: "OneYear" -> "OneYear"
+    expect(params?.dateRange).toBe("OneYear");
   });
   
 
