@@ -1379,6 +1379,7 @@
                                     "averageSuccessRating":  "Average Success Rating",
                                     "averageFailRating":  "Average Fail Rating",
                                     "selectDatabase":  "Select database",
+                                    "selectPuzzle":  "Select puzzle",
                                     "ratingRange":  "Rating Range",
                                     "progressive":  "Adaptive",
                                     "hideRating":  "Hide Rating",
@@ -1393,7 +1394,10 @@
                                     "themes":  "Themes",
                                     "selectThemes":  "Select themes",
                                     "openingTags":  "Opening Tags",
-                                    "selectOpeningTags":  "Select opening tags"
+                                    "selectOpeningTags":  "Select opening tags",
+                                    "add":  {
+                                               "title":  "Add Puzzle"
+                                            }
                                 },
                      "tablebase":  {
                                        "title":  "Tablebase",

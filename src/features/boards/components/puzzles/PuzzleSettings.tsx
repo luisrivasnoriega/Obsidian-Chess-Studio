@@ -1,4 +1,5 @@
-import { Center, Checkbox, Divider, Group, Input, MultiSelect, RangeSlider, Select } from "@mantine/core";
+import { ActionIcon, Center, Checkbox, Divider, Group, Input, MultiSelect, RangeSlider, Select } from "@mantine/core";
+import { IconX } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { PuzzleDatabaseInfo } from "@/bindings";
 
@@ -6,6 +7,8 @@ interface PuzzleSettingsProps {
   puzzleDbs: PuzzleDatabaseInfo[];
   selectedDb: string | null;
   onDatabaseChange: (value: string | null) => void;
+  onAddNew: () => void;
+  onDelete: (dbPath: string) => void;
   ratingRange: [number, number];
   onRatingRangeChange: (value: [number, number]) => void;
   minRating: number;
@@ -31,6 +34,8 @@ export const PuzzleSettings = ({
   puzzleDbs,
   selectedDb,
   onDatabaseChange,
+  onAddNew,
+  onDelete,
   ratingRange,
   onRatingRangeChange,
   minRating,
@@ -56,20 +61,47 @@ export const PuzzleSettings = ({
   const isProgressiveDisabled = !dbRatingRange || (dbRatingRange && dbRatingRange[0] === dbRatingRange[1]);
   const isProgressiveChecked = dbRatingRange && dbRatingRange[0] === dbRatingRange[1] ? false : progressive;
 
+  const handleSelectChange = (value: string | null) => {
+    if (value === "add") {
+      onAddNew();
+    } else {
+      onDatabaseChange(value);
+    }
+  };
+
+  const handleDelete = () => {
+    if (selectedDb && selectedDb !== "add") {
+      onDelete(selectedDb);
+    }
+  };
+
   return (
     <>
-      <Select
-        data={puzzleDbs
-          .map((p) => ({
-            label: p.title.split(".db3")[0],
-            value: p.path,
-          }))
-          .concat({ label: `+ ${t("common.addNew")}`, value: "add" })}
-        value={selectedDb}
-        clearable={false}
-        placeholder={t("features.puzzle.selectDatabase")}
-        onChange={onDatabaseChange}
-      />
+      <Group gap="xs" align="flex-end">
+        <Select
+          flex={1}
+          data={puzzleDbs
+            .map((p) => ({
+              label: p.title.split(".db3")[0],
+              value: p.path,
+            }))
+            .concat({ label: `+ ${t("common.addNew")}`, value: "add" })}
+          value={selectedDb}
+          clearable={false}
+          placeholder={t("features.puzzle.selectPuzzle")}
+          onChange={handleSelectChange}
+        />
+        {selectedDb && selectedDb !== "add" && (
+          <ActionIcon
+            color="red"
+            variant="subtle"
+            onClick={handleDelete}
+            title={t("common.delete")}
+          >
+            <IconX size={16} />
+          </ActionIcon>
+        )}
+      </Group>
       <Divider my="sm" />
       {hasThemes && (
         <MultiSelect

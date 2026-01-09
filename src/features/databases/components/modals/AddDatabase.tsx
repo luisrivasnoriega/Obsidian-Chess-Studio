@@ -8,7 +8,6 @@ import {
   Modal,
   Paper,
   ScrollArea,
-  SegmentedControl,
   Stack,
   Tabs,
   Text,
@@ -28,13 +27,11 @@ import { useTranslation } from "react-i18next";
 import { commands, type DatabaseInfo, events, type PuzzleDatabaseInfo } from "@/bindings";
 import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
-import { getDatabases, getDefaultPuzzleDatabases, type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
+import { getDatabases, type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
 import { capitalize } from "@/utils/format";
-import { getPuzzleDatabases } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
 const DB_EXTENSIONS = ["pgn", "pgn.zst"];
-const PUZZLE_EXTENSIONS = ["pgn", "pgn.zst", "csv", "csv.zst", "db", "db3"];
 
 interface DatabaseFormValues extends Partial<Extract<DatabaseInfo, { type: "success" }>> {
   title: string;
@@ -43,12 +40,6 @@ interface DatabaseFormValues extends Partial<Extract<DatabaseInfo, { type: "succ
   filename: string;
 }
 
-interface PuzzleFormValues {
-  title: string;
-  description: string;
-  file: string;
-  filename: string;
-}
 
 interface AddDatabaseProps {
   databases: DatabaseInfo[];
@@ -58,7 +49,6 @@ interface AddDatabaseProps {
   setDatabases: () => void;
   puzzleDbs?: PuzzleDatabaseInfo[];
   setPuzzleDbs?: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
-  initialTab?: "games" | "puzzles";
   redirectTo?: string;
 }
 
@@ -99,16 +89,6 @@ const useFormValidation = (databases: DatabaseInfo[], puzzleDbs: PuzzleDatabaseI
     [databases, t],
   );
 
-  const validatePuzzleTitle = useCallback(
-    (value: string | undefined) => {
-      if (!value) return t("common.requireName");
-      if (puzzleDbs?.find((e) => e.title === `${value}.db3`)) {
-        return t("common.nameAlreadyUsed");
-      }
-      return null;
-    },
-    [puzzleDbs, t],
-  );
 
   const validateFile = useCallback(
     (value: string | undefined) => {
@@ -118,7 +98,7 @@ const useFormValidation = (databases: DatabaseInfo[], puzzleDbs: PuzzleDatabaseI
     [t],
   );
 
-  return { validateDatabaseTitle, validatePuzzleTitle, validateFile };
+  return { validateDatabaseTitle, validateFile };
 };
 
 const useDatabaseOperations = (
@@ -142,25 +122,7 @@ const useDatabaseOperations = (
     [setLoading, setDatabases],
   );
 
-  const importPuzzleFile = useCallback(
-    async (path: string, title: string, description?: string) => {
-      if (!setPuzzleDbs) {
-        throw new Error("Missing required dependencies for puzzle import");
-      }
-
-      const dbPath = await resolve(await appDataDir(), "puzzles", `${title}.db3`);
-      const result = await commands.importPuzzleFile(path, dbPath, title, description ?? null);
-
-      if (result.status === "error") {
-        throw new Error(result.error);
-      }
-
-      await setPuzzleDbs(await getPuzzleDatabases());
-    },
-    [setPuzzleDbs],
-  );
-
-  return { convertDatabase, importPuzzleFile };
+  return { convertDatabase };
 };
 
 function AddDatabase({
@@ -171,68 +133,19 @@ function AddDatabase({
   setDatabases,
   puzzleDbs,
   setPuzzleDbs,
-  initialTab = "games",
   redirectTo,
 }: AddDatabaseProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   
-  // Local state for puzzle databases to ensure we always have the latest
-  const [localPuzzleDbs, setLocalPuzzleDbs] = useState<PuzzleDatabaseInfo[]>(puzzleDbs || []);
-  
-  const { validateDatabaseTitle, validatePuzzleTitle, validateFile } = useFormValidation(databases, localPuzzleDbs);
-  const { convertDatabase, importPuzzleFile } = useDatabaseOperations(setLoading, setDatabases, setPuzzleDbs);
+  const { validateDatabaseTitle, validateFile } = useFormValidation(databases, []);
+  const { convertDatabase } = useDatabaseOperations(setLoading, setDatabases, setPuzzleDbs);
 
   const { defaultDatabases, error, isLoading } = useDefaultDatabases(opened);
-  const {
-    data: defaultPuzzleDbs,
-    error: puzzleError,
-    isLoading: isPuzzleLoading,
-  } = useQuery({
-    queryKey: ["default_puzzle_databases"],
-    queryFn: getDefaultPuzzleDatabases,
-    staleTime: Infinity,
-  });
 
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-  const [firstLevelTab, setFirstLevelTab] = useState<string>(initialTab);
 
-  // Sync local state with prop when it changes
-  useEffect(() => {
-    if (puzzleDbs) {
-      setLocalPuzzleDbs(puzzleDbs);
-    }
-  }, [puzzleDbs]);
-
-  // Refresh puzzle databases when modal opens or when puzzles are updated
-  useEffect(() => {
-    if (!setPuzzleDbs) return;
-
-    const refreshPuzzleDbs = async () => {
-      try {
-        const updatedPuzzleDbs = await getPuzzleDatabases();
-        setPuzzleDbs(updatedPuzzleDbs);
-        setLocalPuzzleDbs(updatedPuzzleDbs);
-      } catch {}
-    };
-
-    // Refresh when modal opens - use a small delay to ensure file system is updated
-    if (opened) {
-      // Immediate refresh
-      refreshPuzzleDbs();
-      // Also refresh after a short delay to catch any file system caching issues
-      const timeoutId = setTimeout(refreshPuzzleDbs, 100);
-      return () => clearTimeout(timeoutId);
-    }
-
-    // Listen for puzzle database updates (e.g., when a database is deleted)
-    window.addEventListener("puzzles:updated", refreshPuzzleDbs);
-
-    return () => {
-      window.removeEventListener("puzzles:updated", refreshPuzzleDbs);
-    };
-  }, [setPuzzleDbs, opened]);
 
   const databaseForm = useForm<DatabaseFormValues>({
     initialValues: {
@@ -248,18 +161,6 @@ function AddDatabase({
     },
   });
 
-  const puzzleForm = useForm<PuzzleFormValues>({
-    initialValues: {
-      title: "",
-      description: "",
-      file: "",
-      filename: "",
-    },
-    validate: {
-      title: validatePuzzleTitle,
-      file: validateFile,
-    },
-  });
 
   const handleDatabaseSubmit = useCallback(
     async (values: DatabaseFormValues) => {
@@ -284,28 +185,6 @@ function AddDatabase({
     [convertDatabase, setOpened, databaseForm, redirectTo, navigate, t],
   );
 
-  const handlePuzzleSubmit = useCallback(
-    async (values: PuzzleFormValues) => {
-      if (values.file && values.title) {
-        try {
-          setImporting(true);
-          setImportError(null);
-          await importPuzzleFile(values.file, values.title, values.description);
-          setOpened(false);
-          puzzleForm.reset();
-
-          if (redirectTo) {
-            navigate({ to: redirectTo });
-          }
-        } catch (error) {
-          setImportError(error instanceof Error ? error.message : t("errors.failedToImportPuzzleFile"));
-        } finally {
-          setImporting(false);
-        }
-      }
-    },
-    [importPuzzleFile, setOpened, puzzleForm, redirectTo, navigate, t],
-  );
 
   const handleDatabaseFileSelect = useCallback(async () => {
     const selected = await open({
@@ -329,27 +208,6 @@ function AddDatabase({
     }
   }, [databaseForm]);
 
-  const handlePuzzleFileSelect = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Puzzle files",
-          extensions: PUZZLE_EXTENSIONS,
-        },
-      ],
-    });
-
-    if (!selected || typeof selected === "object") return;
-
-    const filename = extractFilename(selected);
-    puzzleForm.setFieldValue("file", selected);
-    puzzleForm.setFieldValue("filename", filename);
-
-    if (!puzzleForm.values.title && filename) {
-      puzzleForm.setFieldValue("title", generateTitleFromFilename(filename));
-    }
-  }, [puzzleForm]);
 
   const [positionCacheInstalled, setPositionCacheInstalled] = useState(false);
   
@@ -390,168 +248,77 @@ function AddDatabase({
     [databases],
   );
 
-  const installedPuzzleTitles = useMemo(() => {
-    // Use local state which is always up-to-date
-    // Normalize titles: remove .db3 extension if present for comparison
-    const normalizedTitles = localPuzzleDbs.map((db) => {
-      const title = db.title;
-      const normalized = title.endsWith(".db3") ? title.slice(0, -4) : title;
-      return normalized;
-    });
-    return new Set(normalizedTitles);
-  }, [localPuzzleDbs]);
 
   const handleModalClose = useCallback(() => {
     setOpened(false);
     setImportError(null);
-    setFirstLevelTab(initialTab);
     databaseForm.reset();
-    puzzleForm.reset();
-  }, [setOpened, databaseForm, puzzleForm, initialTab]);
+  }, [setOpened, databaseForm]);
 
   return (
     <Modal opened={opened} onClose={handleModalClose} title={t("features.databases.add.title")} size="lg">
       <Stack gap="md">
-        <SegmentedControl
-          value={firstLevelTab}
-          onChange={setFirstLevelTab}
-          data={[
-            { label: t("features.databases.category.games", "Games"), value: "games" },
-            { label: t("features.databases.category.puzzles", "Puzzles"), value: "puzzles" },
-          ]}
-          fullWidth
-        />
+        <Tabs defaultValue="web">
+          <Tabs.List grow>
+            <Tabs.Tab value="web">{t("features.databases.add.web")}</Tabs.Tab>
+            <Tabs.Tab value="local">{t("common.local")}</Tabs.Tab>
+          </Tabs.List>
 
-        {firstLevelTab === "games" && (
-          <Tabs defaultValue="web">
-            <Tabs.List grow>
-              <Tabs.Tab value="web">{t("features.databases.add.web")}</Tabs.Tab>
-              <Tabs.Tab value="local">{t("common.local")}</Tabs.Tab>
-            </Tabs.List>
-
-            <Tabs.Panel value="web" pt="xs">
-              {isLoading ? (
-                <Center>
-                  <Loader />
-                </Center>
-              ) : (
-                <ScrollArea.Autosize h={500} offsetScrollbars>
-                  <Stack>
-                    {defaultDatabases?.map((db, i) => (
-                      <DatabaseCard
-                        key={`${db.title}-${i}`}
-                        database={db}
-                        databaseId={i}
-                        setDatabases={setDatabases}
-                        initInstalled={
-                          // Position Cache is stored in AppData root, NOT in db folder
-                          // So it should be checked separately, not via installedDatabaseTitles
-                          db.title === "Position Cache"
-                            ? positionCacheInstalled
-                            : installedDatabaseTitles.has(db.title)
-                        }
-                      />
-                    ))}
-                    {error && (
-                      <Alert icon={<IconAlertCircle size="1rem" />} title={t("common.error")} color="red">
-                        {t("features.databases.add.errorFetch")}
-                      </Alert>
-                    )}
-                  </Stack>
-                </ScrollArea.Autosize>
-              )}
-            </Tabs.Panel>
-
-            <Tabs.Panel value="local" pt="xs">
-              <form onSubmit={databaseForm.onSubmit(handleDatabaseSubmit)}>
+          <Tabs.Panel value="web" pt="xs">
+            {isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
+            ) : (
+              <ScrollArea.Autosize h={500} offsetScrollbars>
                 <Stack>
-                  <TextInput label={t("common.name")} withAsterisk {...databaseForm.getInputProps("title")} />
-
-                  <TextInput label={t("common.description")} {...databaseForm.getInputProps("description")} />
-
-                  <FileInput
-                    label={t("common.pgnFile")}
-                    description={t("features.databases.add.clickToSelectPGN")}
-                    onClick={handleDatabaseFileSelect}
-                    filename={databaseForm.values.filename || null}
-                    error={databaseForm.errors.file}
-                  />
-
-                  <Button fullWidth type="submit">
-                    {t("common.convert", "Convert")}
-                  </Button>
-                </Stack>
-              </form>
-            </Tabs.Panel>
-          </Tabs>
-        )}
-
-        {firstLevelTab === "puzzles" && (
-          <Tabs defaultValue="puzzleWeb">
-            <Tabs.List grow>
-              <Tabs.Tab value="puzzleWeb">{t("features.databases.add.web")}</Tabs.Tab>
-              <Tabs.Tab value="puzzleLocal">{t("common.local")}</Tabs.Tab>
-            </Tabs.List>
-
-            <Tabs.Panel value="puzzleWeb" pt="xs">
-              {isPuzzleLoading ? (
-                <Center>
-                  <Loader />
-                </Center>
-              ) : (
-                <ScrollArea.Autosize mah={500} offsetScrollbars>
-                  <Stack>
-                    {defaultPuzzleDbs?.map((db, i) => {
-                      const isInstalled = installedPuzzleTitles.has(db.title);
-                      return (
-                        <PuzzleDbCard
-                          key={`puzzle-db-${db.title}-${i}`}
-                          puzzleDb={db}
-                          databaseId={i}
-                          setPuzzleDbs={setPuzzleDbs || (() => {})}
-                          initInstalled={isInstalled}
-                        />
-                      );
-                    })}
-                    {puzzleError && (
-                      <Alert icon={<IconAlertCircle size="1rem" />} title={t("common.error")} color="red">
-                        {t("features.databases.add.errorFetch")}
-                      </Alert>
-                    )}
-                  </Stack>
-                </ScrollArea.Autosize>
-              )}
-            </Tabs.Panel>
-
-            <Tabs.Panel value="puzzleLocal" pt="xs">
-              <form onSubmit={puzzleForm.onSubmit(handlePuzzleSubmit)}>
-                <Stack>
-                  <TextInput label={t("common.name")} withAsterisk {...puzzleForm.getInputProps("title")} />
-
-                  <TextInput label={t("common.description")} {...puzzleForm.getInputProps("description")} />
-
-                  <FileInput
-                    label={t("features.files.fileType.puzzle")}
-                    description={t("features.databases.add.clickToSelectPGN")}
-                    onClick={handlePuzzleFileSelect}
-                    filename={puzzleForm.values.filename || null}
-                    error={puzzleForm.errors.file}
-                  />
-
-                  {importError && (
+                  {defaultDatabases?.map((db, i) => (
+                    <DatabaseCard
+                      key={`${db.title}-${i}`}
+                      database={db}
+                      databaseId={i}
+                      setDatabases={setDatabases}
+                      initInstalled={
+                        // Position Cache is stored in AppData root, NOT in db folder
+                        // So it should be checked separately, not via installedDatabaseTitles
+                        db.title === "Position Cache"
+                          ? positionCacheInstalled
+                          : installedDatabaseTitles.has(db.title)
+                      }
+                    />
+                  ))}
+                  {error && (
                     <Alert icon={<IconAlertCircle size="1rem" />} title={t("common.error")} color="red">
-                      {importError}
+                      {t("features.databases.add.errorFetch")}
                     </Alert>
                   )}
-
-                  <Button fullWidth type="submit" loading={importing}>
-                    {importing ? t("common.importing") : t("common.import")}
-                  </Button>
                 </Stack>
-              </form>
-            </Tabs.Panel>
-          </Tabs>
-        )}
+              </ScrollArea.Autosize>
+            )}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="local" pt="xs">
+            <form onSubmit={databaseForm.onSubmit(handleDatabaseSubmit)}>
+              <Stack>
+                <TextInput label={t("common.name")} withAsterisk {...databaseForm.getInputProps("title")} />
+
+                <TextInput label={t("common.description")} {...databaseForm.getInputProps("description")} />
+
+                <FileInput
+                  label={t("common.pgnFile")}
+                  description={t("features.databases.add.clickToSelectPGN")}
+                  onClick={handleDatabaseFileSelect}
+                  filename={databaseForm.values.filename || null}
+                  error={databaseForm.errors.file}
+                />
+
+                <Button fullWidth type="submit">
+                  {t("common.convert", "Convert")}
+                </Button>
+              </Stack>
+            </form>
+          </Tabs.Panel>
+        </Tabs>
       </Stack>
     </Modal>
   );

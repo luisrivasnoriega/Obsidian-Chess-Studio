@@ -49,6 +49,10 @@ export const usePuzzleDatabase = () => {
     const loadDatabases = () => {
       getPuzzleDatabases().then((databases) => {
         setPuzzleDbs(databases);
+        // Si hay un puzzle seleccionado pero ya no existe en la lista, limpiar la selección
+        if (selectedDb && !databases.some((db) => db.path === selectedDb)) {
+          setSelectedDb(null);
+        }
       });
     };
     
@@ -60,7 +64,7 @@ export const usePuzzleDatabase = () => {
     return () => {
       window.removeEventListener("puzzles:updated", loadDatabases);
     };
-  }, []);
+  }, [selectedDb, setSelectedDb]);
 
   // Migrate legacy values where `selectedDb` was stored as a filename (e.g. "puzzles.db3")
   // into the full absolute path expected by the Rust commands.

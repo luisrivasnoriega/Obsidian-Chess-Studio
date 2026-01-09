@@ -3,7 +3,6 @@ import {
   Badge,
   Box,
   Button,
-  Chip,
   Divider,
   Drawer,
   Group,
@@ -26,7 +25,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
-import { readDir } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { DataTable } from "mantine-datatable";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -36,12 +34,10 @@ import { commands } from "@/bindings";
 import GenericCard from "@/components/GenericCard";
 import * as classes from "@/components/GenericCard/styles.css";
 import GenericHeader, { type SortState } from "@/components/GenericHeader";
-import { processEntriesRecursively } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { referenceDbAtom } from "@/state/atoms";
 import { useActiveDatabaseViewStore } from "@/state/store/database";
 import { getDatabases, type SuccessDatabaseInfo } from "@/utils/db";
-import { getPuzzleDatabases } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 import AddDatabase from "./components/modals/AddDatabase";
 import { PlayerSearchInput } from "./components/PlayerSearchInput";
@@ -87,20 +83,7 @@ function isPuzzleDatabase(db: UnifiedDatabase): db is UnifiedDatabase & {
   return db.dbType === "puzzle";
 }
 
-type DatabaseCategory = "all" | "games" | "puzzles";
 
-const CATEGORY_OPTIONS = [
-  { labelKey: "features.databases.category.games", value: "games" as const },
-  { labelKey: "features.databases.category.puzzles", value: "puzzles" as const },
-] as const;
-
-type DatabaseSource = "all" | "locals" | "lichess" | "chesscom";
-
-const SOURCE_OPTIONS = [
-  { labelKey: "features.databases.source.locals", value: "locals" as const },
-  { labelKey: "features.databases.source.lichess", value: "lichess" as const },
-  { labelKey: "features.databases.source.chesscom", value: "chesscom" as const },
-] as const;
 
 export default function DatabasesPage() {
   const { t } = useTranslation();
@@ -120,24 +103,11 @@ export default function DatabasesPage() {
     refetch();
   };
 
-  const { data: files } = useQuery({
-    queryKey: ["file-directory"],
-    queryFn: fetchPuzzleFiles,
-  });
-
-  const [puzzleDbs, setPuzzleDbs] = useState<PuzzleDatabaseInfo[]>([]);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortState>({ field: "name", direction: "asc" });
-  // Initialize category from search.tab parameter
-  const [category, setCategory] = useState<DatabaseCategory>(() => {
-    if (search.tab === "puzzles") return "puzzles";
-    if (search.tab === "games") return "games";
-    return "all";
-  });
-  const [source, setSource] = useState<DatabaseSource>("all");
   const [convertLoading, setConvertLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -147,27 +117,9 @@ export default function DatabasesPage() {
 
   const { layout } = useResponsiveLayout();
 
-  // Update category when search.tab changes
-  useEffect(() => {
-    if (search.tab === "puzzles") {
-      setCategory("puzzles");
-    } else if (search.tab === "games") {
-      setCategory("games");
-    } else if (!search.tab && !search.value) {
-      // Only reset to "all" if there's no tab and no value parameter
-      // This prevents resetting when navigating away from add modal
-      setCategory("all");
-    }
-  }, [search.tab, search.value]);
-
   useEffect(() => {
     if (search.value === "add") {
       setOpen(true);
-      if (search.tab === "puzzles") {
-        setCategory("puzzles");
-      } else if (search.tab === "games") {
-        setCategory("games");
-      }
 
       navigate({
         to: "/databases",
@@ -177,11 +129,6 @@ export default function DatabasesPage() {
     }
   }, [search.value, search.tab, navigate]);
 
-  useEffect(() => {
-    if (files) {
-      getPuzzleDatabases().then(setPuzzleDbs);
-    }
-  }, [files]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -198,28 +145,21 @@ export default function DatabasesPage() {
   }, []);
 
   const unifiedDatabases = useMemo(() => {
-    const gameDbs: UnifiedDatabase[] = (databases ?? []).map((db) => ({
-      ...db,
-      dbType: "game" as const,
-    }));
-
-    const puzzleDbsList: UnifiedDatabase[] = puzzleDbs
-      .filter((db) => db.puzzleCount)
+    // Filter out profile databases (they start with "profile_") and only include local game databases
+    const gameDbs: UnifiedDatabase[] = (databases ?? [])
+      .filter((db) => {
+        // Exclude profile databases
+        const filename = db.filename?.toLowerCase() || "";
+        return !filename.startsWith("profile_");
+      })
       .map((db) => ({
         ...db,
-        dbType: "puzzle" as const,
-        type: "success" as const,
-        file: db.path,
-        filename: db.title,
-        indexed: false,
-        player_count: 0,
-        event_count: 0,
-        game_count: db.puzzleCount,
-        storage_size: db.storageSize,
+        dbType: "game" as const,
       }));
 
-    return [...gameDbs, ...puzzleDbsList];
-  }, [databases, puzzleDbs]);
+    // Don't include puzzle databases - only show local game databases
+    return gameDbs;
+  }, [databases]);
 
   const selectedDatabase = useMemo(
     () => unifiedDatabases.find((db) => db.file === selected) ?? null,
@@ -229,12 +169,12 @@ export default function DatabasesPage() {
   const isReference = referenceDatabase === selectedDatabase?.file;
 
   const filteredDatabases = useMemo(() => {
-    return filterAndSortDatabases(unifiedDatabases, category, source, query, sortBy, t);
-  }, [unifiedDatabases, category, source, query, sortBy, t]);
+    return filterAndSortDatabases(unifiedDatabases, query, sortBy, t);
+  }, [unifiedDatabases, query, sortBy, t]);
 
   const handleDatabaseDoubleClick = useCallback(
     (database: UnifiedDatabase) => {
-      if (!isSuccessDatabase(database) || isPuzzleDatabase(database)) return;
+      if (!isSuccessDatabase(database)) return;
 
       navigate({
         to: "/databases/$databaseId",
@@ -254,21 +194,17 @@ export default function DatabasesPage() {
   );
 
   const refreshPuzzleDatabases = useCallback(async () => {
-    if (files) {
-      const updatedPuzzleDbs = await getPuzzleDatabases();
-      setPuzzleDbs(updatedPuzzleDbs);
-    }
-  }, [files]);
+    // No-op: puzzles are not shown in this page
+  }, []);
 
   const sortOptions = [
     { value: "name", label: t("common.name", "Name") },
     { value: "games", label: t("features.databases.card.games", "Games") },
   ];
 
-  // Determine title and search placeholder based on current tab
-  const headerTitle =
-    search.tab === "puzzles" ? t("features.sidebar.puzzles", "Puzzles") : t("features.databases.title");
-  const searchPlaceholder = search.tab === "puzzles" ? "Search puzzles" : "Search databases";
+  // Determine title and search placeholder
+  const headerTitle = t("features.databases.title");
+  const searchPlaceholder = "Search databases";
 
   return (
     <>
@@ -286,43 +222,12 @@ export default function DatabasesPage() {
         pageKey="databases"
         filters={
           <>
-            <Stack gap="xs">
-              <Group>
-                {CATEGORY_OPTIONS.map((option) => (
-                  <Chip
-                    key={option.value}
-                    variant="outline"
-                    onChange={() => {
-                      setCategory(option.value === category ? "all" : option.value);
-                    }}
-                    checked={option.value === category}
-                  >
-                    {t(option.labelKey)}
-                  </Chip>
-                ))}
+            {progress && convertLoading && (
+              <Group align="center" justify="space-between" maw={200}>
+                <Text fz="xs">{progress.total} games</Text>
+                <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
               </Group>
-              <Group>
-                {SOURCE_OPTIONS.map((option) => (
-                  <Chip
-                    key={option.value}
-                    variant="outline"
-                    onChange={() => {
-                      setSource(option.value === source ? "all" : option.value);
-                    }}
-                    checked={option.value === source}
-                  >
-                    {t(option.labelKey)}
-                  </Chip>
-                ))}
-              </Group>
-
-              {progress && convertLoading && (
-                <Group align="center" justify="space-between" maw={200}>
-                  <Text fz="xs">{progress.total} games</Text>
-                  <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
-                </Group>
-              )}
-            </Stack>
+            )}
           </>
         }
         actions={
@@ -375,9 +280,8 @@ export default function DatabasesPage() {
         setOpened={setOpen}
         setLoading={setConvertLoading}
         setDatabases={mutate}
-        puzzleDbs={puzzleDbs}
-        setPuzzleDbs={setPuzzleDbs}
-        initialTab={search.tab || "games"}
+        puzzleDbs={[]}
+        setPuzzleDbs={() => {}}
         redirectTo={search.redirect}
       />
     </>
@@ -1130,38 +1034,15 @@ function IndexInput({
   );
 }
 
-async function fetchPuzzleFiles() {
-  const { appDataDir, resolve } = await import("@tauri-apps/api/path");
-  const appDir = await appDataDir();
-  const puzzlesDir = await resolve(appDir, "puzzles");
-  try {
-    const entries = await readDir(puzzlesDir);
-    return processEntriesRecursively(puzzlesDir, entries);
-  } catch {
-    return [];
-  }
-}
 
 function filterAndSortDatabases(
   databases: UnifiedDatabase[],
-  category: DatabaseCategory,
-  source: DatabaseSource,
   query: string,
   sortBy: SortState,
   // biome-ignore lint/suspicious/noExplicitAny: Translation function type
   _t: any,
 ): UnifiedDatabase[] {
   let filtered = databases;
-
-  if (category === "games") {
-    filtered = filtered.filter(isGameDatabase);
-  } else if (category === "puzzles") {
-    filtered = filtered.filter(isPuzzleDatabase);
-  }
-
-  if (source !== "all") {
-    filtered = filtered.filter((db) => getDatabaseSource(db) === source);
-  }
 
   if (query.trim()) {
     const q = query.toLowerCase();
@@ -1194,30 +1075,6 @@ function filterAndSortDatabases(
   });
 }
 
-function getDatabaseSource(db: UnifiedDatabase): Exclude<DatabaseSource, "all"> {
-  const haystack = (() => {
-    if (!isSuccessDatabase(db)) {
-      return db.file.toLowerCase();
-    }
-
-    return [db.title, db.filename, db.file, db.description ?? ""].join(" ").toLowerCase();
-  })();
-
-  if (haystack.includes("_lichess.db3") || haystack.includes(" lichess") || haystack.includes("lichess ")) {
-    return "lichess";
-  }
-  if (
-    haystack.includes("_chesscom.db3") ||
-    haystack.includes(" chess.com") ||
-    haystack.includes("chess.com ") ||
-    haystack.includes(" chesscom") ||
-    haystack.includes("chesscom ")
-  ) {
-    return "chesscom";
-  }
-
-  return "locals";
-}
 
 // biome-ignore lint/suspicious/noExplicitAny: Translation function type
 function getDatabaseStats(database: UnifiedDatabase, t: any) {

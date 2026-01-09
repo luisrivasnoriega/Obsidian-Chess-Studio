@@ -1573,7 +1573,7 @@ pub async fn get_players_game_info(
 }
 
 /// Delete a database file and cleanup resources
-/// FIXED: Force close all connections before deletion to prevent "database is locked"
+/// OPTIMIZED: Removed PRAGMA optimize (unnecessary before deletion), reduced wait times, and close connections first
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_database(
@@ -1585,29 +1585,20 @@ pub async fn delete_database(
 
     let path_str = file.to_string_lossy().into_owned();
 
-
     // STEP 1: Cancel any ongoing searches by acquiring all permits
     // This will stop new searches and wait for current ones to complete
     let _permits = state.new_request.clone();
     let permit1 = _permits.acquire().await.ok();
     let permit2 = _permits.acquire().await.ok();
 
-    // STEP 2: Run PRAGMA optimize before closing connections
-    if let Ok(mut db) = get_db_or_create(&state, &path_str, ConnectionOptions::default()) {
-        let _ = diesel::sql_query("PRAGMA optimize").execute(&mut db);
-    }
-
-    // Drop permits after optimize
-    drop(permit1);
-    drop(permit2);
-
-    // Remove from connection pool - this drops the pool and closes all connections
+    // STEP 2: Remove from connection pool FIRST - this closes all connections
+    // Do this BEFORE any database operations to ensure connections are closed immediately
     if let Some((_, pool)) = state.connection_pool.remove(&path_str) {
         // Force drop the pool to close all connections immediately
         drop(pool);
     }
 
-    // Clear any cached data for this database (both in-memory and persistent cache)
+    // STEP 3: Clear in-memory cache (do this after closing connections)
     let cache_keys_to_remove: Vec<_> = state
         .line_cache
         .iter()
@@ -1619,25 +1610,27 @@ pub async fn delete_database(
         state.line_cache.remove(&key);
     }
 
-    // Clear persistent position cache for this database
-    if let Err(e) = crate::db::position_cache::clear_cache_for_database(&app, &file) {
-        let _ = e;
-    }
+    // Drop permits after cleanup
+    drop(permit1);
+    drop(permit2);
 
-    // INCREASED: Wait longer for OS to release all file handles
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // STEP 4: Clear persistent position cache (non-blocking, errors are ignored)
+    // This operation can be slow, but we don't wait for it to complete
+    let _ = crate::db::position_cache::clear_cache_for_database(&app, &file);
 
-    // Try up to 3 times with increasing delays
-    for attempt in 1..=3 {
+    // STEP 5: Brief wait for OS to release file handles (reduced from 500ms to 100ms)
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // STEP 6: Try to delete with fewer retries and shorter delays
+    for attempt in 1..=2 {
         if file.exists() {
             match remove_file(&file) {
                 Ok(_) => {
                     return Ok(());
                 }
-                Err(e) if attempt < 3 => {
-                    let _ = e;
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
-                        .await;
+                Err(e) if attempt < 2 => {
+                    // Shorter delay: 200ms instead of 500ms * attempt
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
                 Err(e) => {
                     return Err(Error::Io(e));

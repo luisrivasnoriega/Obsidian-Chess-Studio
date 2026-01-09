@@ -92,7 +92,7 @@ export function AddPuzzle({
   });
 
   return (
-    <Modal opened={opened} onClose={() => setOpened(false)} title={t("features.databases.add.title")}>
+    <Modal opened={opened} onClose={() => setOpened(false)} title={t("features.puzzle.add.title")}>
       <Tabs defaultValue="web">
         <Tabs.List>
           <Tabs.Tab value="web">{t("features.databases.add.web")}</Tabs.Tab>

@@ -1,8 +1,9 @@
-import { Divider, Grid, Paper, ScrollArea } from "@mantine/core";
-import { useNavigate } from "@tanstack/react-router";
+import { Divider, Grid, Paper, ScrollArea, Text } from "@mantine/core";
+import { modals } from "@mantine/modals";
 import { useAtom } from "jotai";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
+import { useTranslation } from "react-i18next";
 import ChallengeHistory from "@/components/ChallengeHistory";
 import GameNotation from "@/components/GameNotation";
 import MoveControls from "@/components/MoveControls";
@@ -18,18 +19,18 @@ import {
 import { commands } from "@/bindings";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import { navigateToDatabasesWithModal } from "@/utils/navigation";
 import { getAdaptivePuzzleRange, PUZZLE_DEBUG_LOGS } from "@/utils/puzzles";
 import { debugNavLog } from "@/utils/debugNav";
 import { unwrap } from "@/utils/unwrap";
+import { getPuzzleDatabases } from "@/utils/puzzles";
 import PuzzleBoard from "./PuzzleBoard";
 import { PuzzleControls } from "./PuzzleControls";
 import { PuzzleSettings } from "./PuzzleSettings";
 import { PuzzleStatistics } from "./PuzzleStatistics";
 import { PuzzleVariantsPanel } from "./PuzzleVariantsPanel";
+import { AddPuzzle } from "./AddPuzzle";
 
 function Puzzles({ id }: { id: string }) {
-  const navigate = useNavigate();
   const store = useContext(TreeStateContext);
   if (!store) throw new Error("TreeStateContext not found");
   const reset = useStore(store, (s) => s.reset);
@@ -37,6 +38,7 @@ function Puzzles({ id }: { id: string }) {
   // Custom hooks for state management
   const {
     puzzleDbs,
+    setPuzzleDbs,
     selectedDb,
     setSelectedDb,
     ratingRange,
@@ -47,6 +49,9 @@ function Puzzles({ id }: { id: string }) {
     generatePuzzle: generatePuzzleFromDb,
     clearPuzzleCache,
   } = usePuzzleDatabase();
+
+  const { t } = useTranslation();
+  const [addPuzzleModalOpened, setAddPuzzleModalOpened] = useState(false);
 
   useEffect(() => {
     debugNavLog("puzzles:mount", { id, selectedDb, puzzleDbs: puzzleDbs.length });
@@ -165,19 +170,59 @@ function Puzzles({ id }: { id: string }) {
 
   const handleDatabaseChange = (value: string | null) => {
     PUZZLE_DEBUG_LOGS && logger.debug("Database changed:", value);
-
-    if (value === "add") {
-      navigateToDatabasesWithModal(navigate, {
-        tab: "puzzles",
-        redirectTo: "/puzzles",
-      });
-    } else {
-      setSelectedDb(value);
-      // Reset filters when database changes
-      setThemes([]);
-      setOpeningTags([]);
-    }
+    setSelectedDb(value);
+    // Reset filters when database changes
+    setThemes([]);
+    setOpeningTags([]);
   };
+
+  const handleAddNew = useCallback(() => {
+    setAddPuzzleModalOpened(true);
+  }, []);
+
+  const handleDeletePuzzle = useCallback(
+    (dbPath: string) => {
+      modals.openConfirmModal({
+        title: t("features.databases.delete.title"),
+        withCloseButton: false,
+        children: (
+          <>
+            <Text>{t("features.databases.delete.message")}</Text>
+            <Text>{t("common.cannotUndo")}</Text>
+          </>
+        ),
+        labels: { confirm: t("common.remove"), cancel: t("common.cancel") },
+        confirmProps: { color: "red" },
+        onConfirm: async () => {
+          // Actualización optimista: remover el puzzle de la lista inmediatamente
+          setPuzzleDbs((prev) => prev.filter((db) => db.path !== dbPath));
+          // Si el puzzle eliminado era el seleccionado, limpiar la selección
+          if (selectedDb === dbPath) {
+            setSelectedDb(null);
+          }
+          // Eliminar el archivo en segundo plano
+          commands.deleteDatabase(dbPath).catch((error) => {
+            logger.error("Failed to delete puzzle database:", error);
+            // Si falla, recargar la lista para restaurar el estado
+            getPuzzleDatabases().then((updatedPuzzleDbs) => {
+              setPuzzleDbs(updatedPuzzleDbs);
+            });
+          });
+          // Recargar la lista en segundo plano para sincronizar
+          getPuzzleDatabases()
+            .then((updatedPuzzleDbs) => {
+              setPuzzleDbs(updatedPuzzleDbs);
+            })
+            .catch((error) => {
+              logger.error("Failed to reload puzzle databases:", error);
+            });
+          // Notificar a otros componentes
+          window.dispatchEvent(new Event("puzzles:updated"));
+        },
+      });
+    },
+    [selectedDb, setSelectedDb, setPuzzleDbs, t],
+  );
 
   // Load database column info and distinct values when database changes
   useEffect(() => {
@@ -309,6 +354,7 @@ function Puzzles({ id }: { id: string }) {
   }, [selectedDb]);
 
   return (
+    <>
     <Grid h="100%" gutter="md" style={{ flex: 1, minHeight: 0 }}>
       <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
         <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -317,6 +363,8 @@ function Puzzles({ id }: { id: string }) {
               puzzleDbs={puzzleDbs}
               selectedDb={selectedDb}
               onDatabaseChange={handleDatabaseChange}
+              onAddNew={handleAddNew}
+              onDelete={handleDeletePuzzle}
               ratingRange={ratingRange}
               onRatingRangeChange={setRatingRange}
               minRating={minRating}
@@ -397,6 +445,14 @@ function Puzzles({ id }: { id: string }) {
         </Paper>
       </Grid.Col>
     </Grid>
+
+    <AddPuzzle
+      puzzleDbs={puzzleDbs}
+      opened={addPuzzleModalOpened}
+      setOpened={setAddPuzzleModalOpened}
+      setPuzzleDbs={setPuzzleDbs}
+    />
+    </>
   );
 }
 

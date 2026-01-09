@@ -1246,6 +1246,7 @@
       "averageSuccessRating": "Elo medio de éxito",
       "averageFailRating": "Elo medio de fallo",
       "selectDatabase": "Seleccionar base de datos",
+      "selectPuzzle": "Seleccionar puzzle",
       "ratingRange": "Rango de Elo",
       "progressive": "Adaptativo",
       "hideRating": "Ocultar Elo",
@@ -1261,7 +1262,10 @@
       "themes": "Temas",
       "selectThemes": "Seleccionar temas",
       "openingTags": "Etiquetas de Apertura",
-      "selectOpeningTags": "Seleccionar etiquetas de apertura"
+      "selectOpeningTags": "Seleccionar etiquetas de apertura",
+      "add": {
+        "title": "Añadir Puzzle"
+      }
     },
     "tablebase": {
       "title": "Base de finales",
