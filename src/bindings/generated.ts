@@ -684,6 +684,22 @@ async upsertVariantPosition(fen: string, engine: string, recommendedMove: string
     else return { status: "error", error: e  as any };
 }
 },
+async generatePuzzleVariantsFromTree(root: TreeNodeDto, orientation: string, selectedDepth: number) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async buildVariantsTree(request: BuildVariantsTreeRequest) : Promise<Result<BuildVariantsTreeResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("build_variants_tree", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async analysisDbSetAnalyzedGame(gameId: string, analyzedPgn: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_analyzed_game", { gameId, analyzedPgn }) };
@@ -872,6 +888,8 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
  * Event payload for best-move updates (emitted to frontend).
  */
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
+export type BuildVariantsTreeRequest = { root: TreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
+export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
@@ -894,6 +912,7 @@ export type EngineOption = { name: string; value: string }
  * Options for configuring engine analysis (FEN, moves, extra UCI options).
  */
 export type EngineOptions = { fen: string; moves: string[]; extraOptions: EngineOption[] }
+export type EngineRequestDto = { name: string; path: string; extraOptions?: EngineOption[] }
 export type Event = { id: number; name: string | null }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
@@ -909,15 +928,37 @@ game_details_limit?: bigint | null; player1?: number | null; player2?: number | 
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
+export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
 /**
  * Engine search mode (depth, time, nodes, etc).
  */
 export type GoMode = { t: "PlayersTime"; c: PlayersTime } | { t: "Depth"; c: number } | { t: "Time"; c: number } | { t: "Nodes"; c: number } | { t: "Infinite" }
+export type LichessGamesOptionsDto = { variant?: string | null; speeds?: string[] | null; ratings?: number[] | null; 
+/**
+ * Serialized from JS Date as ISO string (or omitted).
+ */
+since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null; recentGames?: number | null; player?: string | null; color: string }
+export type LineDto = { moves: MoveSpecDto[] }
+export type MasterGamesOptionsDto = { since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null }
 export type MonthData = { name: string; count: bigint }
 /**
  * Analysis result for a single move/position.
  */
 export type MoveAnalysis = { best: BestMoves[]; novelty: boolean; is_sacrifice: boolean }
+export type MoveSpecDto = { 
+/**
+ * We now prefer SAN for stability with the frontend tree store.
+ * (Frontend still supports SAN or UCI, but SAN is the default here.)
+ */
+value: string; 
+/**
+ * "db" | "engine"
+ */
+source?: string | null; 
+/**
+ * Raw DB stats when the move is sourced from a database.
+ */
+white?: number | null; black?: number | null; draws?: number | null; total?: number | null }
 export type NormalizedGame = { id: number; fen: string; event: string; event_id: number; site: string; site_id: number; date?: string | null; time?: string | null; round?: string | null; white: string; white_id: number; white_elo?: number | null; black: string; black_id: number; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
 export type OpeningInfo = { eco: string; opening: string; variation: string }
 export type OpeningStats = { name: string; games: bigint; won: bigint; draw: bigint; lost: bigint }
@@ -1018,6 +1059,8 @@ export type TimeControlFilter = "Any" | "Bullet" | "Blitz" | "Rapid" | "Classica
 export type Token = { type: "ParenOpen" } | { type: "ParenClose" } | { type: "Comment"; value: string } | { type: "San"; value: string } | { type: "Header"; value: { tag: string; value: string } } | { type: "Nag"; value: string } | { type: "Outcome"; value: string }
 export type TournamentQuery = { options: QueryOptions<TournamentSort>; name: string | null }
 export type TournamentSort = "id" | "name"
+export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
+export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
 /**
  * Represents a UCI option definition.
  */

@@ -15,6 +15,7 @@ use once_cell::sync::Lazy;
 use rand::Rng;
 use serde::Deserialize;
 use serde::Serialize;
+use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Position};
 use specta::Type;
 use tauri::{path::BaseDirectory, Emitter, Manager};
 
@@ -526,6 +527,10 @@ impl PuzzleCache {
 
             let mut db = diesel::SqliteConnection::establish(file)?;
 
+            // Some third-party or legacy puzzle databases may be missing nullable columns that our
+            // Diesel schema expects. Add them if needed to avoid runtime "no such column" errors.
+            ensure_puzzles_optional_columns(&mut db)?;
+
             // Check if migration is needed first (only migrate if tables don't exist)
             let needs_migration = {
                 use diesel::prelude::*;
@@ -658,6 +663,35 @@ impl PuzzleCache {
             None
         }
     }
+}
+
+/// Ensures the `puzzles` table contains the nullable columns expected by the app.
+///
+/// Some external databases may omit these columns; we add them as nullable TEXT so
+/// the rest of the query layer can remain stable.
+fn ensure_puzzles_optional_columns(db: &mut diesel::SqliteConnection) -> Result<(), Error> {
+    use diesel::deserialize::QueryableByName;
+    use diesel::sql_query;
+    #[derive(QueryableByName)]
+    struct ColumnInfo {
+        #[diesel(sql_type = diesel::sql_types::Text, column_name = "name")]
+        name: String,
+    }
+
+    let columns: Vec<ColumnInfo> = sql_query("PRAGMA table_info(puzzles)").load(db)?;
+    let has = |col: &str| columns.iter().any(|c| c.name == col);
+
+    if !has("themes") {
+        db.batch_execute("ALTER TABLE puzzles ADD COLUMN themes TEXT;")?;
+    }
+    if !has("game_url") {
+        db.batch_execute("ALTER TABLE puzzles ADD COLUMN game_url TEXT;")?;
+    }
+    if !has("opening_tags") {
+        db.batch_execute("ALTER TABLE puzzles ADD COLUMN opening_tags TEXT;")?;
+    }
+
+    Ok(())
 }
 
 /// Gets a random puzzle from the database within the specified rating range
@@ -1538,6 +1572,115 @@ pub async fn validate_puzzle_database(file: PathBuf) -> Result<bool, Error> {
     Ok(true)
 }
 
+fn strip_move_number_prefix(token: &str) -> &str {
+    // Examples we want to handle:
+    // - "1." / "1..." (sometimes separated tokens)
+    // - "1.e4" / "1...e5" (sometimes combined tokens)
+    let mut t = token.trim();
+    let mut idx = 0usize;
+    for c in t.chars() {
+        if c.is_ascii_digit() || c == '.' {
+            idx += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if idx > 0 {
+        t = &t[idx..];
+    }
+    if t.starts_with("...") {
+        t = &t[3..];
+    }
+    t.trim()
+}
+
+fn is_result_token(tok: &str) -> bool {
+    matches!(tok, "1-0" | "0-1" | "1/2-1/2" | "*")
+}
+
+fn is_move_number_token(tok: &str) -> bool {
+    let t = tok.trim();
+    !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+fn tokenize_puzzle_movetext(movetext: &str) -> Vec<String> {
+    movetext
+        .split_whitespace()
+        .filter_map(|raw| {
+            if raw.is_empty() {
+                return None;
+            }
+            if raw.starts_with('$') && raw[1..].chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+
+            let mut t = strip_move_number_prefix(raw).to_string();
+            if t.is_empty() {
+                return None;
+            }
+
+            // Trim trailing move-number dots (e.g. "2." token)
+            while t.ends_with('.') && is_move_number_token(&t) {
+                t.pop();
+            }
+
+            let t = t.trim();
+            if t.is_empty() {
+                return None;
+            }
+            if is_result_token(t) || is_move_number_token(t) {
+                return None;
+            }
+
+            Some(t.to_string())
+        })
+        .collect()
+}
+
+fn token_to_move(token: &str, pos: &Chess) -> Option<shakmaty::Move> {
+    // Prefer SAN(+suffix), then fall back to UCI.
+    if let Ok(sp) = SanPlus::from_ascii(token.as_bytes()) {
+        if let Ok(mv) = sp.san.to_move(pos) {
+            return Some(mv);
+        }
+    }
+    if let Ok(uci) = UciMove::from_ascii(token.as_bytes()) {
+        if let Ok(mv) = uci.to_move(pos) {
+            return Some(mv);
+        }
+    }
+    None
+}
+
+fn normalize_pgn_puzzle_moves_to_uci(fen: &str, movetext: &str) -> Result<String, Error> {
+    let fen: Fen = fen.parse()?;
+    let mut pos: Chess = fen.into_position(CastlingMode::Standard)?;
+
+    let tokens = tokenize_puzzle_movetext(movetext);
+    if tokens.is_empty() {
+        return Err(Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "No moves found in puzzle movetext",
+        )));
+    }
+
+    let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+    for tok in tokens {
+        let mv = token_to_move(&tok, &pos).ok_or_else(|| {
+            Error::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to parse puzzle move token: {}", tok),
+            ))
+        })?;
+
+        let uci = mv.to_uci(CastlingMode::Standard).to_string();
+        pos.play_unchecked(&mv);
+        out.push(uci);
+    }
+
+    Ok(out.join(" "))
+}
+
 /// Imports puzzles from a PGN file
 async fn import_puzzles_from_pgn(
     source_file: &PathBuf,
@@ -1569,6 +1712,19 @@ async fn import_puzzles_from_pgn(
             ),
         ))
     })?;
+
+    let puzzles: Vec<NewPuzzle> = puzzles
+        .into_iter()
+        .filter_map(|mut puzzle| {
+            match normalize_pgn_puzzle_moves_to_uci(&puzzle.fen, &puzzle.moves) {
+                Ok(uci_moves) => {
+                    puzzle.moves = uci_moves;
+                    Some(puzzle)
+                }
+                Err(_) => None,
+            }
+        })
+        .collect();
 
     if puzzles.is_empty() {
         return Err(Error::IoError(std::io::Error::new(
@@ -1640,6 +1796,19 @@ async fn import_puzzles_from_compressed(
             ),
         ))
     })?;
+
+    let puzzles: Vec<NewPuzzle> = puzzles
+        .into_iter()
+        .filter_map(|mut puzzle| {
+            match normalize_pgn_puzzle_moves_to_uci(&puzzle.fen, &puzzle.moves) {
+                Ok(uci_moves) => {
+                    puzzle.moves = uci_moves;
+                    Some(puzzle)
+                }
+                Err(_) => None,
+            }
+        })
+        .collect();
 
     if puzzles.is_empty() {
         return Err(Error::IoError(std::io::Error::new(

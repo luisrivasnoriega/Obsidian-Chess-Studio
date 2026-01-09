@@ -168,7 +168,7 @@ fn has_doubled_pawns(ps: &PawnSets) -> bool {
     ps.file_counts.iter().any(|&c| c >= 2)
 }
 
-fn is_passed_pawn(color: Color, ps: &PawnSets, opp: &PawnSets, file: usize, rank: usize) -> bool {
+fn is_passed_pawn(color: Color, _ps: &PawnSets, opp: &PawnSets, file: usize, rank: usize) -> bool {
     // For White: pawns advance to higher ranks; for Black: to lower ranks (from White perspective).
     let files = [file.saturating_sub(1), file, (file + 1).min(7)];
     match color {

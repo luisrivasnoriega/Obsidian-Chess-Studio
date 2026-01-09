@@ -199,9 +199,15 @@ function Puzzles({ id }: { id: string }) {
         // First verify the file exists before attempting to load info
         const { exists } = await import("@tauri-apps/plugin-fs");
         const { appDataDir, resolve } = await import("@tauri-apps/api/path");
-        const appDataDirPath = await appDataDir();
-        const dbPath = await resolve(appDataDirPath, "puzzles", selectedDb);
-        
+        // `selectedDb` is usually stored as an absolute path; but older state can still hold
+        // just the filename. Handle both.
+        let dbPath = selectedDb;
+        const looksLikePath = dbPath.includes("/") || dbPath.includes("\\") || dbPath.includes(":");
+        if (!looksLikePath) {
+          const appDataDirPath = await appDataDir();
+          dbPath = await resolve(appDataDirPath, "puzzles", dbPath);
+        }
+
         const fileExists = await exists(dbPath);
         if (!fileExists) {
           PUZZLE_DEBUG_LOGS && logger.debug("Database file does not exist yet:", dbPath);
@@ -211,34 +217,16 @@ function Puzzles({ id }: { id: string }) {
           setOpeningTagsOptions([]);
           return;
         }
-        
-        // Load column check and themes/opening_tags in parallel for better performance
-        const [columnsResult, themesResult, tagsResult] = await Promise.all([
-          commands.checkPuzzleDbColumns(selectedDb).catch((err) => {
-            // Silently handle "file not found" or "file is empty" errors
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            if (errorMsg.includes("does not exist") || errorMsg.includes("is empty")) {
-              return { status: "error" as const, error: errorMsg };
-            }
-            throw err;
-          }),
-          // Start loading themes immediately (will be filtered by column check)
-          commands.getPuzzleThemes(selectedDb).catch((err) => {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            if (errorMsg.includes("does not exist") || errorMsg.includes("is empty")) {
-              return { status: "error" as const, error: errorMsg };
-            }
-            return { status: "error" as const, error: "" };
-          }),
-          // Start loading opening_tags immediately
-          commands.getPuzzleOpeningTags(selectedDb).catch((err) => {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            if (errorMsg.includes("does not exist") || errorMsg.includes("is empty")) {
-              return { status: "error" as const, error: errorMsg };
-            }
-            return { status: "error" as const, error: "" };
-          }),
-        ]);
+
+        // Check schema first; only fetch distinct values when those columns exist.
+        const columnsResult = await commands.checkPuzzleDbColumns(dbPath).catch((err) => {
+          // Silently handle "file not found" or "file is empty" errors
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          if (errorMsg.includes("does not exist") || errorMsg.includes("is empty")) {
+            return { status: "error" as const, error: errorMsg };
+          }
+          throw err;
+        });
 
         if (cancelled) return;
 
@@ -249,18 +237,30 @@ function Puzzles({ id }: { id: string }) {
           setHasThemes(hasThemesCol);
           setHasOpeningTags(hasOpeningTagsCol);
 
-          // Use the pre-loaded results
+          const [themesResult, tagsResult] = await Promise.all([
+            hasThemesCol
+              ? commands.getPuzzleThemes(dbPath).catch(() => ({ status: "error" as const, error: "" }))
+              : Promise.resolve({ status: "ok" as const, data: [] }),
+            hasOpeningTagsCol
+              ? commands.getPuzzleOpeningTags(dbPath).catch(() => ({ status: "error" as const, error: "" }))
+              : Promise.resolve({ status: "ok" as const, data: [] }),
+          ]);
+
+          if (cancelled) return;
+
           if (hasThemesCol && themesResult.status === "ok") {
             PUZZLE_DEBUG_LOGS && logger.debug("Themes groups count:", themesResult.data.length);
             // Backend returns ThemeGroup[] with group and items, convert to format for MultiSelect
             const themesData = themesResult.data as unknown as Array<{ group: string; items: Array<{ value: string; label: string }> }>;
-            setThemesOptions(themesData.map(group => ({
-              group: group.group,
-              items: group.items.map(opt => ({
-                value: opt.value,
-                label: opt.label,
+            setThemesOptions(
+              themesData.map((group) => ({
+                group: group.group,
+                items: group.items.map((opt) => ({
+                  value: opt.value,
+                  label: opt.label,
+                })),
               })),
-            })));
+            );
           } else {
             setThemesOptions([]);
           }
@@ -269,10 +269,12 @@ function Puzzles({ id }: { id: string }) {
             PUZZLE_DEBUG_LOGS && logger.debug("Opening tags options count:", tagsResult.data.length);
             // Backend returns OpeningTagOption[] with value and label, convert to format for MultiSelect
             const tagsData = tagsResult.data as unknown as Array<{ value: string; label: string }>;
-            setOpeningTagsOptions(tagsData.map(opt => ({
-              value: opt.value,
-              label: opt.label,
-            })));
+            setOpeningTagsOptions(
+              tagsData.map((opt) => ({
+                value: opt.value,
+                label: opt.label,
+              })),
+            );
           } else {
             setOpeningTagsOptions([]);
           }

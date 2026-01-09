@@ -17,6 +17,8 @@ mod package_manager;
 mod pawn_structures;
 mod pgn;
 mod puzzle;
+mod puzzle_variants;
+mod variants_builder;
 mod variant_positions;
 
 use std::sync::Arc;
@@ -62,6 +64,8 @@ use crate::puzzle::{
     check_puzzle_db_columns, get_puzzle, get_puzzle_db_info, get_puzzle_opening_tags,
     get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file, validate_puzzle_database,
 };
+use crate::puzzle_variants::generate_puzzle_variants_from_tree;
+use crate::variants_builder::build_variants_tree;
 use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
 use crate::{
@@ -185,6 +189,8 @@ pub async fn run() {
             find_executable_path,
             get_variant_position,
             upsert_variant_position,
+            generate_puzzle_variants_from_tree,
+            build_variants_tree,
             analysis_db_set_analyzed_game,
             analysis_db_get_analyzed_game,
             analysis_db_get_all_analyzed_games,
