@@ -1,6 +1,7 @@
 use crate::chess::types::{EngineOption, EngineOptions, GoMode};
 use crate::db::{GameQueryJs, PositionStats, PositionQueryJs};
 use crate::error::{Error, Result};
+use crate::variant_positions;
 use crate::AppState;
 use chrono::{Datelike, DateTime, FixedOffset};
 use log;
@@ -836,7 +837,9 @@ async fn get_engine_best_move(
     };
 
     let tab = "variants-builder-backend".to_string();
-    let go_mode = GoMode::Time(std::cmp::max(1, req.engine_ms));
+    let requested_ms_u32 = std::cmp::max(1, req.engine_ms);
+    let requested_ms_i64 = requested_ms_u32 as i64;
+    let go_mode = GoMode::Time(requested_ms_u32);
 
     let mut extra = engine.extra_options.clone();
     if req.is960 && !extra.iter().any(|o| o.name == "UCI_Chess960") {
@@ -844,6 +847,56 @@ async fn get_engine_best_move(
             name: "UCI_Chess960".to_string(),
             value: "true".to_string(),
         });
+    }
+
+    // ---------------------------------------------------------------------
+    // Engine cache: VariantPositions.db3 (SQLite)
+    //
+    // Rules:
+    // - If cached ms >= requested ms: use cached move (no engine call).
+    // - If cached ms < requested ms: compute, store, and return new move.
+    // - If no cache row: compute, store, and return.
+    // ---------------------------------------------------------------------
+
+    let mut extra_sig = extra.clone();
+    extra_sig.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.value.cmp(&b.value)));
+    let extra_sig_s = extra_sig
+        .iter()
+        .map(|o| format!("{}={}", o.name.trim(), o.value.trim()))
+        .collect::<Vec<_>>()
+        .join(";");
+
+    let engine_sig = format!(
+        "{}|{}|is960={}|{}",
+        engine.name.trim(),
+        engine.path.trim(),
+        req.is960,
+        extra_sig_s
+    );
+
+    let fen_owned = fen.to_string();
+    let engine_sig_owned = engine_sig.clone();
+    let app_for_cache = app.clone();
+
+    let cached = tokio::task::spawn_blocking(move || {
+        variant_positions::get_variant_position(app_for_cache, fen_owned, engine_sig_owned)
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .flatten();
+
+    if let Some(entry) = cached {
+        if entry.ms >= requested_ms_i64 && !entry.recommended_move.trim().is_empty() {
+            log::debug!(
+                "variants_builder engine cache hit: fen_key={} engine={} cached_ms={} requested_ms={}",
+                fen_identity_key(fen),
+                engine_sig,
+                entry.ms,
+                requested_ms_i64
+            );
+            return Ok(Some(entry.recommended_move));
+        }
     }
 
     let options = EngineOptions {
@@ -894,10 +947,28 @@ async fn get_engine_best_move(
 
     // Convert engine UCI to SAN for stability with frontend tree stores.
     if let Some(uci) = last_best_uci {
-        match uci_to_san(fen, &uci, req.is960) {
-            Ok(san) => Ok(Some(san)),
-            Err(_) => Ok(Some(uci)), // fallback to UCI
-        }
+        let picked = match uci_to_san(fen, &uci, req.is960) {
+            Ok(san) => san,
+            Err(_) => uci, // fallback to UCI
+        };
+
+        // Best-effort upsert: only overwrites if ms is higher (handled in SQL).
+        let app_for_write = app.clone();
+        let fen_for_write = fen.to_string();
+        let engine_for_write = engine_sig.clone();
+        let mv_for_write = picked.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            variant_positions::upsert_variant_position(
+                app_for_write,
+                fen_for_write,
+                engine_for_write,
+                mv_for_write,
+                requested_ms_i64,
+            )
+        })
+        .await;
+
+        Ok(Some(picked))
     } else {
         Ok(None)
     }
