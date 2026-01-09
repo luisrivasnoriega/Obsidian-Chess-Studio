@@ -345,7 +345,7 @@ async deleteDbGame(file: string, gameId: number) : Promise<Result<null, string>>
 },
 /**
  * Delete a database file and cleanup resources
- * FIXED: Force close all connections before deletion to prevent "database is locked"
+ * OPTIMIZED: Removed PRAGMA optimize (unnecessary before deletion), reduced wait times, and close connections first
  */
 async deleteDatabase(file: string) : Promise<Result<null, string>> {
     try {
