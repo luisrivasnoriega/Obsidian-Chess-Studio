@@ -80,6 +80,12 @@ fn canonicalize_solution(solution: &str) -> String {
         .to_string()
 }
 
+fn normalize_san_token(san: &str) -> String {
+    // Best-effort normalization for legacy SAN strings that may include prefixes like "...e5".
+    // The frontend typically stores SAN without move-number/ellipsis prefixes.
+    san.trim_start_matches('.').trim().to_string()
+}
+
 fn build_solution_text(start_fen: &str, sans: &[String]) -> Result<String> {
     let start_turn = fen_turn(start_fen)?;
     let mut move_number = fen_fullmove_number(start_fen);
@@ -242,10 +248,14 @@ fn generate_puzzle_variants_from_tree_impl(
         });
     }
 
-    // Only nodes where MY SIDE branches are valid puzzle start points.
-    // This matches the requested behavior: if you're white, start puzzles from FEN with "w".
+    // Puzzles must always include a prior "system" move (the opponent's move) before the solver acts.
+    // That means the puzzle starts one ply earlier than the branching node:
+    // - Start FEN: opponent to move
+    // - First move in the solution: forced opponent move
+    // - Then: solver chooses among variations (depth counts solver moves only)
     fn traverse_and_collect(
         node: &TreeNodeDto,
+        parent: Option<&TreeNodeDto>,
         puzzle_side: Side,
         selected_depth: u32,
         counter: &mut usize,
@@ -256,6 +266,7 @@ fn generate_puzzle_variants_from_tree_impl(
 
         fn inner(
             node: &TreeNodeDto,
+            parent: Option<&TreeNodeDto>,
             puzzle_side: Side,
             selected_depth: u32,
             depth: u32,
@@ -273,60 +284,81 @@ fn generate_puzzle_variants_from_tree_impl(
                 .iter()
                 .filter(|c| c.san.as_deref().unwrap_or("").trim().len() > 0)
                 .collect();
-            let has_variations = children_with_san.len() > 1;
+            let has_continuations = !children_with_san.is_empty();
 
-            if turn == puzzle_side && has_variations {
-                let lines = collect_lines_from_position(node, puzzle_side, selected_depth)?;
-                for line in lines {
-                    let solution = build_solution_text(&node.fen, &line)?;
-                    if solution.is_empty() {
-                        continue;
+            // Branching node: solver to move with multiple variations.
+            // We only generate a puzzle if there's a parent node (so we can include the forced system move).
+            if turn == puzzle_side && has_continuations {
+                if let Some(parent) = parent {
+                    let parent_turn = fen_turn(&parent.fen)?;
+                    let forced_system_move = node
+                        .san
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+
+                    // Parent must be the opponent to move; the move leading here is the forced system move.
+                    if parent_turn != puzzle_side {
+                        if let Some(forced_system_move) = forced_system_move {
+                            let lines = collect_lines_from_position(node, puzzle_side, selected_depth)?;
+                            for line in lines {
+                                let mut sans: Vec<String> = Vec::with_capacity(line.len() + 1);
+                                sans.push(normalize_san_token(forced_system_move));
+                                sans.extend(line);
+
+                                let solution = build_solution_text(&parent.fen, &sans)?;
+                                if solution.is_empty() {
+                                    continue;
+                                }
+                                let canonical = canonicalize_solution(&solution);
+                                let start_key = fen_identity_key(&parent.fen);
+                                let dedupe_key = format!("{start_key}|{canonical}");
+                                if dedupe.contains(&dedupe_key) {
+                                    continue;
+                                }
+                                dedupe.insert(dedupe_key);
+
+                                *counter += 1;
+                                let current_date = chrono::Local::now().format("%Y.%m.%d").to_string();
+                                let (white_name, black_name) = match puzzle_side {
+                                    Side::White => ("Puzzle", "?"),
+                                    Side::Black => ("?", "Puzzle"),
+                                };
+
+                                out.push_str(&format!(r#"[Event "Mini puzzle {n}"]"#, n = *counter));
+                                out.push('\n');
+                                out.push_str(r#"[Site "Local"]"#);
+                                out.push('\n');
+                                out.push_str(&format!(r#"[Date "{current_date}"]"#));
+                                out.push('\n');
+                                out.push_str(r#"[Round "-"]"#);
+                                out.push('\n');
+                                out.push_str(&format!(r#"[White "{white_name}"]"#));
+                                out.push('\n');
+                                out.push_str(&format!(r#"[Black "{black_name}"]"#));
+                                out.push('\n');
+                                out.push_str(r#"[Result "*"]"#);
+                                out.push('\n');
+                                out.push_str(r#"[SetUp "1"]"#);
+                                out.push('\n');
+                                out.push_str(&format!(r#"[FEN "{fen}"]"#, fen = parent.fen));
+                                out.push('\n');
+                                out.push_str(&format!(r#"[Solution "{solution}"]"#));
+                                out.push('\n');
+                                out.push('\n');
+                                out.push_str(&solution);
+                                out.push('\n');
+                                out.push('\n');
+                            }
+                        }
                     }
-                    let canonical = canonicalize_solution(&solution);
-                    let start_key = fen_identity_key(&node.fen);
-                    let dedupe_key = format!("{start_key}|{canonical}");
-                    if dedupe.contains(&dedupe_key) {
-                        continue;
-                    }
-                    dedupe.insert(dedupe_key);
-
-                    *counter += 1;
-                    let current_date = chrono::Local::now().format("%Y.%m.%d").to_string();
-                    let (white_name, black_name) = match puzzle_side {
-                        Side::White => ("Puzzle", "?"),
-                        Side::Black => ("?", "Puzzle"),
-                    };
-
-                    out.push_str(&format!(r#"[Event "Mini puzzle {n}"]"#, n = *counter));
-                    out.push('\n');
-                    out.push_str(r#"[Site "Local"]"#);
-                    out.push('\n');
-                    out.push_str(&format!(r#"[Date "{current_date}"]"#));
-                    out.push('\n');
-                    out.push_str(r#"[Round "-"]"#);
-                    out.push('\n');
-                    out.push_str(&format!(r#"[White "{white_name}"]"#));
-                    out.push('\n');
-                    out.push_str(&format!(r#"[Black "{black_name}"]"#));
-                    out.push('\n');
-                    out.push_str(r#"[Result "*"]"#);
-                    out.push('\n');
-                    out.push_str(r#"[SetUp "1"]"#);
-                    out.push('\n');
-                    out.push_str(&format!(r#"[FEN "{fen}"]"#, fen = node.fen));
-                    out.push('\n');
-                    out.push_str(&format!(r#"[Solution "{solution}"]"#));
-                    out.push('\n');
-                    out.push('\n');
-                    out.push_str(&solution);
-                    out.push('\n');
-                    out.push('\n');
                 }
             }
 
             for child in children_with_san {
                 inner(
                     child,
+                    Some(node),
                     puzzle_side,
                     selected_depth,
                     depth + 1,
@@ -341,6 +373,7 @@ fn generate_puzzle_variants_from_tree_impl(
 
         inner(
             node,
+            parent,
             puzzle_side,
             selected_depth,
             0,
@@ -354,7 +387,7 @@ fn generate_puzzle_variants_from_tree_impl(
     let mut counter: usize = 0;
     let mut dedupe: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    traverse_and_collect(root, puzzle_side, selected_depth, &mut counter, &mut dedupe, &mut out)?;
+    traverse_and_collect(root, None, puzzle_side, selected_depth, &mut counter, &mut dedupe, &mut out)?;
 
     Ok(GeneratePuzzleVariantsResponse { pgn: out, count: counter })
 }
@@ -383,55 +416,66 @@ mod tests {
     }
 
     #[test]
-    fn puzzles_start_on_my_side_to_move_white() {
-        // Root: white to move, has 2 variations (this should be a puzzle start for white).
-        // After 1. e4 -> black to move (single move), then white to move again.
+    fn puzzles_start_with_forced_system_move_white() {
+        // Root: black to move (system), plays a forced move to a position where white has variations.
         let tree = n(
-            "8/8/8/8/8/8/8/8 w - - 0 1",
+            "8/8/8/8/8/8/8/8 b - - 0 1",
             None,
             vec![
                 n(
-                    "8/8/8/8/8/8/8/8 b - - 0 1",
-                    Some("e4"),
-                    vec![n(
-                        "8/8/8/8/8/8/8/8 w - - 0 2",
-                        Some("...e5"),
-                        vec![],
-                    )],
-                ),
-                n(
-                    "8/8/8/8/8/8/8/8 b - - 0 1",
-                    Some("d4"),
-                    vec![n(
-                        "8/8/8/8/8/8/8/8 w - - 0 2",
-                        Some("...d5"),
-                        vec![],
-                    )],
+                    "8/8/8/8/8/8/8/8 w - - 0 2",
+                    Some("e5"),
+                    vec![
+                        n("8/8/8/8/8/8/8/8 b - - 0 2", Some("Nf3"), vec![]),
+                        n("8/8/8/8/8/8/8/8 b - - 0 2", Some("Bc4"), vec![]),
+                    ],
                 ),
             ],
         );
 
         let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1).unwrap();
-        assert_eq!(res.count, 2, "Two alternative first moves should produce two puzzles at depth=1");
+        assert_eq!(res.count, 2, "Two alternative white replies should produce two puzzles at depth=1");
         assert!(
-            res.pgn.contains(r#"[FEN "8/8/8/8/8/8/8/8 w - - 0 1"]"#),
-            "Puzzle FEN must be white-to-move"
+            res.pgn.contains(r#"[FEN "8/8/8/8/8/8/8/8 b - - 0 1"]"#),
+            "Puzzle FEN must be the position before the system move"
         );
         assert!(
-            res.pgn.contains(r#"[Solution "1. e4"]"#) || res.pgn.contains(r#"[Solution "1. d4"]"#),
-            "Solution must start with white move number"
+            res.pgn.contains(r#"[Solution "1... e5 2. Nf3"]"#)
+                || res.pgn.contains(r#"[Solution "1... e5 2. Bc4"]"#),
+            "Solution must include the forced system move first"
         );
     }
 
     #[test]
-    fn puzzles_do_not_start_on_opponent_turn() {
-        // Root: black to move with variations; for white orientation, should produce 0 puzzles.
+    fn puzzles_work_with_single_solver_move() {
+        // Root: black to move (system), plays a forced move; white has exactly one reply.
         let tree = n(
             "8/8/8/8/8/8/8/8 b - - 0 1",
             None,
+            vec![n(
+                "8/8/8/8/8/8/8/8 w - - 0 2",
+                Some("e5"),
+                vec![n("8/8/8/8/8/8/8/8 b - - 0 2", Some("Nf3"), vec![])],
+            )],
+        );
+
+        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1).unwrap();
+        assert_eq!(res.count, 1, "A single forced reply should still generate a puzzle");
+        assert!(
+            res.pgn.contains(r#"[Solution "1... e5 2. Nf3"]"#),
+            "Solution must include the forced system move first"
+        );
+    }
+
+    #[test]
+    fn puzzles_do_not_start_at_root_without_system_move() {
+        // Root: white to move with variations (no prior system move), should produce 0 puzzles.
+        let tree = n(
+            "8/8/8/8/8/8/8/8 w - - 0 1",
+            None,
             vec![
-                n("8/8/8/8/8/8/8/8 w - - 0 2", Some("...e5"), vec![]),
-                n("8/8/8/8/8/8/8/8 w - - 0 2", Some("...c5"), vec![]),
+                n("8/8/8/8/8/8/8/8 b - - 0 1", Some("e4"), vec![]),
+                n("8/8/8/8/8/8/8/8 b - - 0 1", Some("d4"), vec![]),
             ],
         );
 

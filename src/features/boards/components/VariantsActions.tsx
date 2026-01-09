@@ -1,4 +1,4 @@
-import { Button } from "@mantine/core";
+import { Button, Group } from "@mantine/core";
 import { IconGitBranch, IconPuzzle } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 
@@ -14,10 +14,7 @@ export function VariantsActions(props: Props) {
   const { treeBuilderRunning, onOpenPuzzle, onOpenTreeBuilder, onCancelTreeBuilder } = props;
 
   return (
-    <>
-      <Button leftSection={<IconPuzzle size={18} />} onClick={onOpenPuzzle} variant="light" fullWidth mt="xs">
-        {t("common.generatePuzzles")}
-      </Button>
+    <Group grow mt="xs">
       <Button
         leftSection={<IconGitBranch size={18} />}
         onClick={() => {
@@ -27,13 +24,14 @@ export function VariantsActions(props: Props) {
           }
           onOpenTreeBuilder();
         }}
-        variant="light"
-        fullWidth
-        mt="xs"
+        variant="default"
       >
         {treeBuilderRunning ? t("common.cancel") : t("features.board.variants.treeBuilder.button")}
       </Button>
-    </>
+      <Button leftSection={<IconPuzzle size={18} />} onClick={onOpenPuzzle} variant="default">
+        {t("common.generatePuzzles")}
+      </Button>
+    </Group>
   );
 }
 

@@ -1741,7 +1741,8 @@
     "missingPosition": "Falta la posición",
     "variantPositionsCacheUnavailable": "Caché de posiciones de variantes no disponible: {{message}}",
     "unknownError": "Error desconocido",
-    "puzzleDepthTooDeep": "La profundidad no puede exceder la profundidad de puzzles disponible (max {{max}})"
+    "puzzleDepthTooDeep": "La profundidad no puede exceder la profundidad de puzzles disponible (max {{max}})",
+    "puzzleVariantsNeedSystemMove": "Solo puedes generar variantes de puzzles después de crear la primera variante (se requiere una jugada previa del sistema)."
   },
   "window": {
     "minimize": "Minimizar ventana",

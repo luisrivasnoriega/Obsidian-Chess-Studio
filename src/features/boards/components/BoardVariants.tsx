@@ -164,26 +164,27 @@ function BoardVariants() {
         return best;
       };
 
-      const traverse = (node: TreeNode): number => {
+      const traverse = (node: TreeNode, isRoot: boolean): number => {
         const turn = getFenTurn(node.fen);
         const childrenWithSan = node.children.filter((c) => c.san);
-        const hasVariations = childrenWithSan.length > 1;
+        const hasContinuations = childrenWithSan.length > 0;
 
         let best = 0;
 
         // Only nodes where MY SIDE branches are valid puzzle start points
-        if (turn && turn === puzzleColor && hasVariations) {
+        // (but never the root, because puzzles always include a prior system move).
+        if (!isRoot && turn && turn === puzzleColor && hasContinuations) {
           best = Math.max(best, maxFromNode(node));
         }
 
         for (const child of childrenWithSan) {
-          best = Math.max(best, traverse(child));
+          best = Math.max(best, traverse(child, false));
         }
 
         return best;
       };
 
-      return traverse(root);
+      return traverse(root, true);
     },
     [getFenTurn],
   );
@@ -203,16 +204,6 @@ function BoardVariants() {
         const root = store.getState().root;
 
         const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
-
-        const maxDepth = getMaxPuzzleMoveDepth(root, puzzleColor);
-        if (selectedDepth < 1 || selectedDepth > maxDepth) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("errors.puzzleDepthTooDeep", { max: maxDepth }),
-            color: "red",
-          });
-          return;
-        }
 
         if (!documentDir) {
           notifications.show({
@@ -301,7 +292,7 @@ function BoardVariants() {
         });
       }
     },
-    [store, boardOrientation, documentDir, getMaxPuzzleMoveDepth, getVariantBaseName, t],
+    [store, boardOrientation, documentDir, getVariantBaseName, t],
   );
 
   const reloadBoard = useCallback(async () => {
@@ -825,9 +816,17 @@ function BoardVariants() {
             treeBuilderRunning={treeBuilderRunning}
             onOpenPuzzle={() => {
               const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
-              const depth = Math.max(1, getMaxPuzzleMoveDepth(store.getState().root, puzzleColor));
-              setMaxPuzzleDepth(depth);
-              setPuzzleDepth(Math.min(puzzleDepth, depth));
+              const maxDepth = getMaxPuzzleMoveDepth(store.getState().root, puzzleColor);
+              if (maxDepth < 1) {
+                notifications.show({
+                  title: t("common.error"),
+                  message: t("errors.puzzleVariantsNeedSystemMove"),
+                  color: "red",
+                });
+                return;
+              }
+              setMaxPuzzleDepth(maxDepth);
+              setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
               setPuzzleModalOpened(true);
             }}
             onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
