@@ -599,12 +599,6 @@ fn is_all_any(value: &str) -> bool {
     v.is_empty() || v == "any" || v == "all"
 }
 
-fn clean_optional_date(opt: &Option<String>) -> Option<String> {
-    opt.as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 /// Calculate earliest date from date range.
 /// Returns date in PGN format (YYYY.MM.DD) or None if range is "All" or invalid.
 /// Accepts backend format ("SevenDays", "ThirtyDays", "NinetyDays", "OneYear", "All").
@@ -1217,18 +1211,6 @@ mod tests {
         assert!(is_all_any(" ALL "));
         assert!(!is_all_any("blitz"));
         assert!(!is_all_any("white"));
-    }
-
-    #[test]
-    fn clean_optional_date_works() {
-        let none: Option<String> = None;
-        assert_eq!(clean_optional_date(&none), None);
-
-        let empty = Some("   ".to_string());
-        assert_eq!(clean_optional_date(&empty), None);
-
-        let d = Some("2024-01-01".to_string());
-        assert_eq!(clean_optional_date(&d), Some("2024-01-01".to_string()));
     }
 
     #[test]

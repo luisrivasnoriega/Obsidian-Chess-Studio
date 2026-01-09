@@ -8,6 +8,7 @@ import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
+import { getSolvedPgnPuzzleIndexes } from "@/utils/pgnPuzzleProgress";
 import { getPuzzleDatabases, PUZZLE_DEBUG_LOGS, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
@@ -197,15 +198,73 @@ export const usePuzzleDatabase = () => {
       throw new Error("Puzzle database not found in cache");
     }
 
+    // Check if this is a puzzle variants file and if we should filter unsolved puzzles
+    let isPuzzleVariants = false;
+    let shouldFilterUnsolved = false;
+
+    if (random && db.endsWith(".pgn")) {
+      try {
+        const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
+        const metadataPath = db.replace(/\.pgn$/i, ".info");
+        if (await exists(metadataPath)) {
+          const raw = await readTextFile(metadataPath);
+          const metadata = JSON.parse(raw) as { type?: string; tags?: unknown };
+          if (metadata.type === "puzzle") {
+            const tags = Array.isArray(metadata.tags)
+              ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
+              : [];
+            isPuzzleVariants = tags.includes("puzzle-variants");
+
+            if (isPuzzleVariants) {
+              // Check if not 100% complete
+              const totalPuzzles = unwrap(await commands.countPgnGames(db));
+              const solvedIndexes = getSolvedPgnPuzzleIndexes(db);
+              const solvedCount = solvedIndexes.length;
+              shouldFilterUnsolved = solvedCount < totalPuzzles;
+
+              PUZZLE_DEBUG_LOGS &&
+                logger.debug("Puzzle variants progress check:", {
+                  totalPuzzles,
+                  solvedCount,
+                  shouldFilterUnsolved,
+                });
+            }
+          }
+        }
+      } catch (error) {
+        PUZZLE_DEBUG_LOGS && logger.debug("Error checking puzzle variants metadata:", error);
+        // Continue with normal logic if metadata check fails
+      }
+    }
+
     if (
       localPuzzleDb.generated.minRating !== minRating ||
       localPuzzleDb.generated.maxRating !== maxRating ||
       localPuzzleDb.generated.random !== random ||
       localPuzzleDb.generated.counter >= localPuzzleDb.puzzles.length
     ) {
-      const puzzle_indexes = localPuzzleDb.puzzles
+      let puzzle_indexes = localPuzzleDb.puzzles
         .map((p, i) => (p.rating >= minRating && p.rating <= maxRating ? i : -1))
         .filter((i) => i !== -1);
+
+      // If puzzle variants and random mode and not 100% complete, filter out solved puzzles
+      if (isPuzzleVariants && random && shouldFilterUnsolved) {
+        const solvedIndexes = getSolvedPgnPuzzleIndexes(db);
+        const solvedSet = new Set(solvedIndexes);
+        puzzle_indexes = puzzle_indexes.filter((idx) => !solvedSet.has(idx));
+
+        PUZZLE_DEBUG_LOGS &&
+          logger.debug("Filtered unsolved puzzles:", {
+            originalCount: localPuzzleDb.puzzles.length,
+            afterRatingFilter: puzzle_indexes.length + solvedIndexes.filter(
+              (i) =>
+                localPuzzleDb.puzzles[i]?.rating >= minRating &&
+                localPuzzleDb.puzzles[i]?.rating <= maxRating,
+            ).length,
+            unsolvedCount: puzzle_indexes.length,
+            solvedCount: solvedIndexes.length,
+          });
+      }
 
       localPuzzleDb.generated = {
         minRating,
