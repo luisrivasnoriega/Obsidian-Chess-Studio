@@ -1,10 +1,10 @@
 import { Box } from "@mantine/core";
-import { useElementSize, useForceUpdate, useHotkeys } from "@mantine/hooks";
-import { type Move, makeUci, type NormalMove, parseSquare } from "chessops";
+import { useElementSize, useHotkeys } from "@mantine/hooks";
+import { type Move, parseUci, type NormalMove, parseSquare } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import equal from "fast-deep-equal";
 import { useAtomValue, useSetAtom } from "jotai";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { Chessground } from "@/components/Chessground";
 import { TreeStateContext } from "@/components/TreeStateContext";
@@ -44,12 +44,35 @@ function PuzzleBoard({
   const position = useStore(store, (s) => s.position);
   const makeMove = useStore(store, (s) => s.makeMove);
   const makeMoves = useStore(store, (s) => s.makeMoves);
-  const reset = useForceUpdate();
+  const reset = useStore(store, (s) => s.reset);
+  const setFen = useStore(store, (s) => s.setFen);
 
   const currentNode = useMemo(() => getNodeAtPath(root, position), [root, position]);
 
   const puzzle = puzzles[currentPuzzle] ?? null;
-  const [ended, setEnded] = useState(false);
+  const [hasMistake, setHasMistake] = useState(false);
+  const prevPuzzleIndexRef = useRef(currentPuzzle);
+  const isProcessingMoveRef = useRef(false);
+
+  // Reset tree when puzzle changes
+  useEffect(() => {
+    if (prevPuzzleIndexRef.current !== currentPuzzle && puzzle) {
+      PUZZLE_DEBUG_LOGS && logger.debug("Puzzle changed, resetting tree", { from: prevPuzzleIndexRef.current, to: currentPuzzle });
+      reset();
+      // Ensure we start the next puzzle from a clean tree state (no leftover moves)
+      setFen(puzzle.fen);
+      if (puzzle.moves.length % 2 === 0 && puzzle.moves.length > 0) {
+        const firstMove = parseUci(puzzle.moves[0]);
+        if (firstMove) {
+          makeMove({ payload: firstMove, mainline: true });
+        }
+      }
+      setHasMistake(false);
+      setPendingMove(null);
+      isProcessingMoveRef.current = false;
+      prevPuzzleIndexRef.current = currentPuzzle;
+    }
+  }, [currentPuzzle, makeMove, puzzle, reset, setFen]);
 
   const [pos] = useMemo(() => positionFromFen(currentNode.fen), [currentNode.fen]);
 
@@ -77,10 +100,19 @@ function PuzzleBoard({
   const expectedMainlinePath = useMemo(() => Array(currentMove).fill(0), [currentMove]);
   const turn = pos?.turn || "white";
   const orientation = useMemo(() => {
-    // For puzzles, the board should be oriented to the side that must move (current turn).
-    // This ensures the player always sees the board from their perspective.
-    return turn;
-  }, [turn]);
+    // Keep board orientation stable for the entire puzzle (including "View solution").
+    // If the puzzle starts with the system move already applied (even number of moves),
+    // orient to the player's side-to-move after that first move.
+    if (!puzzle || !initialPos) return "white";
+
+    const startPos = initialPos.clone();
+    if (puzzle.moves.length % 2 === 0 && puzzle.moves.length > 0) {
+      const firstMove = parseUci(puzzle.moves[0]);
+      if (firstMove) startPos.play(firstMove);
+    }
+
+    return startPos.turn;
+  }, [initialPos, puzzle]);
 
   const [pendingMove, setPendingMove] = useState<NormalMove | null>(null);
 
@@ -93,64 +125,93 @@ function PuzzleBoard({
   useHotkeys([[keyMap.BLINDFOLD.keys, () => setBlindfold((v) => !v)]]);
 
   function checkMove(move: Move) {
+    // Prevent multiple rapid moves from bugging the puzzle
+    if (isProcessingMoveRef.current) {
+      PUZZLE_DEBUG_LOGS && logger.debug("Move already being processed, ignoring");
+      return;
+    }
+
     if (!pos) return;
     if (!puzzle) return;
 
-    const newPos = pos.clone();
-    const uci = uciNormalize(pos, move, false);
-    newPos.play(move);
+    isProcessingMoveRef.current = true;
+    try {
+      const newPos = pos.clone();
+      const uci = uciNormalize(pos, move, false);
+      newPos.play(move);
 
-    const expectedMove = puzzle.moves[currentMove];
+      const expectedMove = puzzle.moves[currentMove];
 
-    PUZZLE_DEBUG_LOGS &&
-      logger.debug("Checking move:", {
-        uci,
-        expectedMove,
-        currentMove,
-        totalMoves: puzzle.moves.length,
-        isCheckmate: newPos.isCheckmate(),
-        isCorrect: expectedMove === uci || newPos.isCheckmate(),
-      });
+      PUZZLE_DEBUG_LOGS &&
+        logger.debug("Checking move:", {
+          uci,
+          expectedMove,
+          currentMove,
+          totalMoves: puzzle.moves.length,
+          isCheckmate: newPos.isCheckmate(),
+          isCorrect: expectedMove === uci || newPos.isCheckmate(),
+        });
 
-    if (expectedMove === uci || newPos.isCheckmate()) {
-      if (currentMove === puzzle.moves.length - 1) {
-        if (puzzle.completion === "incomplete") {
-          changeCompletion("correct");
-          recordPuzzleSolved();
-          if (puzzle.source?.type === "pgn") {
-            recordPgnPuzzleSolved(puzzle.source.path, puzzle.source.index);
+      if (expectedMove === uci || newPos.isCheckmate()) {
+        if (currentMove === puzzle.moves.length - 1) {
+          // Puzzles are "one attempt": if you ever got it wrong, it stays incorrect.
+          // So we only mark as correct if it was never marked incorrect before.
+          if (puzzle.completion === "incomplete") {
+            changeCompletion("correct");
+            recordPuzzleSolved();
+            if (puzzle.source?.type === "pgn") {
+              recordPgnPuzzleSolved(puzzle.source.path, puzzle.source.index);
+            }
+          }
+          setHasMistake(false);
+
+          if (db && (jumpToNext === "success" || jumpToNext === "success-and-failure")) {
+            PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (success)");
+            // Reset tree before generating next puzzle to avoid visual glitches
+            reset();
+            generatePuzzle(db);
+            return;
           }
         }
-        setEnded(false);
 
-        if (db && (jumpToNext === "success" || jumpToNext === "success-and-failure")) {
-          PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (success)");
-          generatePuzzle(db);
-        }
+        const newMoves = puzzle.moves.slice(currentMove, currentMove + 2);
+        makeMoves({
+          payload: newMoves,
+          mainline: true,
+          changeHeaders: false,
+        });
+        return;
       }
-      const newMoves = puzzle.moves.slice(currentMove, currentMove + 2);
-      makeMoves({
-        payload: newMoves,
-        mainline: true,
-        changeHeaders: false,
-      });
-    } else {
-      makeMove({
-        payload: move,
-        changePosition: false,
-        changeHeaders: false,
-      });
-      if (!ended) {
+
+      // Incorrect move:
+      // - mark completion as incorrect (only once)
+      // - snap back to initial puzzle position and allow retry
+      if (puzzle.completion === "incomplete") {
         changeCompletion("incorrect");
+      }
+      setHasMistake(true);
+      setPendingMove(null);
 
-        if (db && jumpToNext === "success-and-failure") {
-          PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (failure)");
-          generatePuzzle(db);
+      // If configured, jump to next puzzle on failure
+      if (db && jumpToNext === "success-and-failure") {
+        PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (failure)");
+        reset();
+        generatePuzzle(db);
+        return;
+      }
+
+      // Otherwise, revert back to initial puzzle position for retry
+      reset();
+      setFen(puzzle.fen);
+      if (puzzle.moves.length % 2 === 0 && puzzle.moves.length > 0) {
+        const firstMove = parseUci(puzzle.moves[0]);
+        if (firstMove) {
+          makeMove({ payload: firstMove, mainline: true });
         }
       }
-      setEnded(true);
+    } finally {
+      isProcessingMoveRef.current = false;
     }
-    reset();
   }
 
   const { ref: parentRef, width: parentWidth, height: parentHeight } = useElementSize();
@@ -187,9 +248,12 @@ function PuzzleBoard({
           movable={{
             free: false,
             color: puzzle && equal(position, expectedMainlinePath) ? turn : undefined,
-            dests: dests,
+            dests,
             events: {
               after: (orig, dest) => {
+                // Prevent multiple rapid move submissions
+                if (isProcessingMoveRef.current) return;
+
                 const from = parseSquare(orig);
                 const to = parseSquare(dest);
                 if (!from || !to) return;

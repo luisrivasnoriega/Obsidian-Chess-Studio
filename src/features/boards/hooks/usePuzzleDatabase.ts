@@ -8,7 +8,7 @@ import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import { getSolvedPgnPuzzleIndexes } from "@/utils/pgnPuzzleProgress";
+import { getSolvedPgnPuzzleIndexes, isPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
 import { getPuzzleDatabases, PUZZLE_DEBUG_LOGS, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
@@ -241,7 +241,7 @@ export const usePuzzleDatabase = () => {
       localPuzzleDb.generated.minRating !== minRating ||
       localPuzzleDb.generated.maxRating !== maxRating ||
       localPuzzleDb.generated.random !== random ||
-      localPuzzleDb.generated.counter >= localPuzzleDb.puzzles.length
+      localPuzzleDb.generated.counter >= localPuzzleDb.generated.puzzle_indexes.length
     ) {
       let puzzle_indexes = localPuzzleDb.puzzles
         .map((p, i) => (p.rating >= minRating && p.rating <= maxRating ? i : -1))
@@ -255,15 +255,20 @@ export const usePuzzleDatabase = () => {
 
         PUZZLE_DEBUG_LOGS &&
           logger.debug("Filtered unsolved puzzles:", {
-            originalCount: localPuzzleDb.puzzles.length,
-            afterRatingFilter: puzzle_indexes.length + solvedIndexes.filter(
-              (i) =>
-                localPuzzleDb.puzzles[i]?.rating >= minRating &&
-                localPuzzleDb.puzzles[i]?.rating <= maxRating,
-            ).length,
+            db,
+            ratingRange: [minRating, maxRating],
             unsolvedCount: puzzle_indexes.length,
-            solvedCount: solvedIndexes.length,
+            solvedCountTotal: solvedIndexes.length,
           });
+      }
+
+      // For random selection (inOrder=false), we want "random but no repeats" until exhausted.
+      // Shuffle the candidate list once, then walk through it with `counter`.
+      if (random && puzzle_indexes.length > 1) {
+        for (let i = puzzle_indexes.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [puzzle_indexes[i], puzzle_indexes[j]] = [puzzle_indexes[j], puzzle_indexes[i]];
+        }
       }
 
       localPuzzleDb.generated = {
@@ -275,23 +280,38 @@ export const usePuzzleDatabase = () => {
       };
     }
 
-    const { puzzle_indexes, counter } = localPuzzleDb.generated;
+    const { puzzle_indexes } = localPuzzleDb.generated;
     if (!puzzle_indexes.length) return null;
 
-    const idx = random
-      ? puzzle_indexes[Math.floor(Math.random() * puzzle_indexes.length)]
-      : puzzle_indexes[counter % puzzle_indexes.length];
+      // Select next index:
+      // - If random=true: walk shuffled list to avoid repeats.
+      // - If random=false: walk list in order (existing behavior).
+    let attempts = 0;
+    while (attempts < puzzle_indexes.length) {
+      const idx = puzzle_indexes[localPuzzleDb.generated.counter % puzzle_indexes.length];
+      localPuzzleDb.generated.counter += 1;
 
-    const selectedGame = localPuzzleDb.puzzles[idx];
-    localPuzzleDb.generated.counter += 1;
+      // If this is a puzzle-variants file and we are filtering unsolved, skip entries that
+      // became solved since the list was generated.
+      if (isPuzzleVariants && random && shouldFilterUnsolved) {
+          if (isPgnPuzzleSolved(db, idx)) {
+          attempts += 1;
+          continue;
+        }
+      }
 
-    if (!selectedGame.puzzle) {
-      selectedGame.puzzle = await createPuzzleFromGame(selectedGame);
+      const selectedGame = localPuzzleDb.puzzles[idx];
+      if (!selectedGame) return null;
+
+      if (!selectedGame.puzzle) {
+        selectedGame.puzzle = await createPuzzleFromGame(selectedGame);
+      }
+
+      selectedGame.puzzle.source = { type: "pgn", path: db, index: selectedGame.index };
+      return selectedGame.puzzle;
     }
 
-    selectedGame.puzzle.source = { type: "pgn", path: db, index: selectedGame.index };
-
-    return selectedGame.puzzle;
+    return null;
   };
 
   const createPuzzleFromGame = async (selectedGame: CachedPuzzle): Promise<Puzzle> => {
