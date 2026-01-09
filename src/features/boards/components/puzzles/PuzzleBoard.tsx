@@ -15,7 +15,7 @@ import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import { recordPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
+import { recordPgnPuzzleAttempted, recordPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
 import { recordPuzzleSolved } from "@/utils/puzzleStreak";
 import type { Completion, Puzzle } from "@/utils/puzzles";
 import { PUZZLE_DEBUG_LOGS } from "@/utils/puzzles";
@@ -191,6 +191,9 @@ function PuzzleBoard({
       }
       setHasMistake(true);
       setPendingMove(null);
+      if (puzzle.source?.type === "pgn") {
+        recordPgnPuzzleAttempted(puzzle.source.path, puzzle.source.index);
+      }
 
       // If configured, jump to next puzzle on failure
       if (db && jumpToNext === "success-and-failure") {

@@ -8,7 +8,11 @@ import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import { getSolvedPgnPuzzleIndexes, isPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
+import {
+  getAttemptedPgnPuzzleCount,
+  getSolvedPgnPuzzleIndexes,
+  isPgnPuzzleAttempted,
+} from "@/utils/pgnPuzzleProgress";
 import { getPuzzleDatabases, PUZZLE_DEBUG_LOGS, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
@@ -200,7 +204,7 @@ export const usePuzzleDatabase = () => {
 
     // Check if this is a puzzle variants file and if we should filter unsolved puzzles
     let isPuzzleVariants = false;
-    let shouldFilterUnsolved = false;
+    let shouldFilterUnattempted = false;
 
     if (random && db.endsWith(".pgn")) {
       try {
@@ -216,17 +220,16 @@ export const usePuzzleDatabase = () => {
             isPuzzleVariants = tags.includes("puzzle-variants");
 
             if (isPuzzleVariants) {
-              // Check if not 100% complete
+              // Check if not 100% attempted (for puzzle variants we don't want repeats until all are attempted)
               const totalPuzzles = unwrap(await commands.countPgnGames(db));
-              const solvedIndexes = getSolvedPgnPuzzleIndexes(db);
-              const solvedCount = solvedIndexes.length;
-              shouldFilterUnsolved = solvedCount < totalPuzzles;
+              const attemptedCount = getAttemptedPgnPuzzleCount(db);
+              shouldFilterUnattempted = attemptedCount < totalPuzzles;
 
               PUZZLE_DEBUG_LOGS &&
                 logger.debug("Puzzle variants progress check:", {
                   totalPuzzles,
-                  solvedCount,
-                  shouldFilterUnsolved,
+                  attemptedCount,
+                  shouldFilterUnattempted,
                 });
             }
           }
@@ -248,17 +251,14 @@ export const usePuzzleDatabase = () => {
         .filter((i) => i !== -1);
 
       // If puzzle variants and random mode and not 100% complete, filter out solved puzzles
-      if (isPuzzleVariants && random && shouldFilterUnsolved) {
-        const solvedIndexes = getSolvedPgnPuzzleIndexes(db);
-        const solvedSet = new Set(solvedIndexes);
-        puzzle_indexes = puzzle_indexes.filter((idx) => !solvedSet.has(idx));
+      if (isPuzzleVariants && random && shouldFilterUnattempted) {
+        puzzle_indexes = puzzle_indexes.filter((idx) => !isPgnPuzzleAttempted(db, idx));
 
         PUZZLE_DEBUG_LOGS &&
-          logger.debug("Filtered unsolved puzzles:", {
+          logger.debug("Filtered unattempted puzzles:", {
             db,
             ratingRange: [minRating, maxRating],
-            unsolvedCount: puzzle_indexes.length,
-            solvedCountTotal: solvedIndexes.length,
+            unattemptedCount: puzzle_indexes.length,
           });
       }
 
@@ -291,13 +291,11 @@ export const usePuzzleDatabase = () => {
       const idx = puzzle_indexes[localPuzzleDb.generated.counter % puzzle_indexes.length];
       localPuzzleDb.generated.counter += 1;
 
-      // If this is a puzzle-variants file and we are filtering unsolved, skip entries that
-      // became solved since the list was generated.
-      if (isPuzzleVariants && random && shouldFilterUnsolved) {
-          if (isPgnPuzzleSolved(db, idx)) {
-          attempts += 1;
-          continue;
-        }
+      // If this is a puzzle-variants file and we are filtering unattempted, skip entries that
+      // became attempted since the list was generated.
+      if (isPuzzleVariants && random && shouldFilterUnattempted && isPgnPuzzleAttempted(db, idx)) {
+        attempts += 1;
+        continue;
       }
 
       const selectedGame = localPuzzleDb.puzzles[idx];
@@ -307,8 +305,13 @@ export const usePuzzleDatabase = () => {
         selectedGame.puzzle = await createPuzzleFromGame(selectedGame);
       }
 
-      selectedGame.puzzle.source = { type: "pgn", path: db, index: selectedGame.index };
-      return selectedGame.puzzle;
+      // IMPORTANT: return a fresh puzzle object so session completion mutations do not leak into the cache.
+      return {
+        ...selectedGame.puzzle,
+        moves: [...selectedGame.puzzle.moves],
+        completion: "incomplete",
+        source: { type: "pgn", path: db, index: selectedGame.index },
+      };
     }
 
     return null;
