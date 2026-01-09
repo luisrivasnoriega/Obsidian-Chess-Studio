@@ -10,7 +10,7 @@ use specta::Type;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::time::{sleep, Duration};
 
 use shakmaty::fen::Fen;
@@ -304,6 +304,27 @@ pub struct BuildVariantsTreeResponse {
 }
 
 // -----------------------------------------------------------------------------
+// Progress events (backend -> frontend)
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VariantsBuilderProgressPayload {
+    start_path: Vec<u32>,
+    moves: Vec<MoveSpecDto>,
+}
+
+fn emit_variants_builder_progress(app: &AppHandle, start_path: &[u32], moves: &[MoveSpecDto]) {
+    let _ = app.emit(
+        "variants_builder_progress",
+        VariantsBuilderProgressPayload {
+            start_path: start_path.to_vec(),
+            moves: moves.to_vec(),
+        },
+    );
+}
+
+// -----------------------------------------------------------------------------
 // Explorer (lichess.ovh) response subset
 // -----------------------------------------------------------------------------
 
@@ -319,6 +340,7 @@ struct ExplorerMove {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ExplorerOpening {
     #[serde(default)]
     eco: Option<String>,
@@ -328,6 +350,7 @@ struct ExplorerOpening {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ExplorerPositionData {
     #[serde(default)]
     moves: Vec<ExplorerMove>,
@@ -929,6 +952,7 @@ async fn build_variants_tree_impl(
         req: &BuildVariantsTreeRequest,
         app: AppHandle,
         state: tauri::State<'_, AppState>,
+        start_path: &[u32],
         my_side: Side,
         fen_owners: &mut HashMap<String, String>,
         path_stack: &mut Vec<String>,
@@ -1023,10 +1047,12 @@ async fn build_variants_tree_impl(
                 };
 
                 current_line.push(step);
+                emit_variants_builder_progress(&app, start_path, current_line);
                 Box::pin(rec(
                     req,
                     app.clone(),
                     state.clone(),
+                    start_path,
                     my_side,
                     fen_owners,
                     path_stack,
@@ -1082,10 +1108,12 @@ async fn build_variants_tree_impl(
                             }
                         };
                         current_line.push(step);
+                        emit_variants_builder_progress(&app, start_path, current_line);
                         Box::pin(rec(
                             req,
                             app.clone(),
                             state.clone(),
+                            start_path,
                             my_side,
                             fen_owners,
                             path_stack,
@@ -1117,10 +1145,12 @@ async fn build_variants_tree_impl(
                     };
 
                     current_line.push(step);
+                    emit_variants_builder_progress(&app, start_path, current_line);
                     Box::pin(rec(
                         req,
                         app.clone(),
                         state.clone(),
+                        start_path,
                         my_side,
                         fen_owners,
                         path_stack,
@@ -1150,6 +1180,7 @@ async fn build_variants_tree_impl(
         req,
         app,
         state,
+        &req.start_path,
         my_side,
         &mut fen_owners,
         &mut path_stack,

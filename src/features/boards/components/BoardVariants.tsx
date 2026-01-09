@@ -4,6 +4,7 @@ import { Box, Portal } from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
@@ -477,97 +478,19 @@ function BoardVariants() {
         throw new Error(t("errors.missingPosition"));
       }
 
-      const toDto = (node: TreeNode): { fen: string; san?: string | null; children: any[] } => ({
-        fen: node.fen,
-        san: node.san ?? null,
-        children: node.children.map(toDto),
-      });
-
-      const engineExtraOptions =
-        selectedEngineSettings?.settings?.map((s) => ({
-          name: s.name,
-          value: s.value?.toString() ?? "",
-        })) ?? [];
-
-      const localDbPath = localOptions.path ?? referenceDatabase ?? null;
-
-      const toIso = (value: unknown) => {
-        if (value == null) return undefined;
-        if (value instanceof Date) return value.toISOString();
-        if (typeof value === "string") return value;
-        return undefined;
-      };
-
-      const lichessOptionsDto = {
-        ...(lichessOptions as any),
-        since: toIso((lichessOptions as any)?.since),
-        until: toIso((lichessOptions as any)?.until),
-      };
-
-      const masterOptionsDto = {
-        ...(masterOptions as any),
-        since: toIso((masterOptions as any)?.since),
-        until: toIso((masterOptions as any)?.until),
-      };
-
-      const res = await buildVariantsTreeBackend({
-        root: toDto(store.getState().root),
-        startPath,
-        orientation: boardOrientation === "black" ? "black" : "white",
-        is960,
-        dbType,
-        localDbPath,
-        lichessOptions: lichessOptionsDto as any,
-        masterOptions: masterOptionsDto as any,
-        mode: treeBuilderMode,
-        engine:
-          selectedEngine && selectedEngine.type === "local"
-            ? {
-                name: selectedEngine.name,
-                path: selectedEngine.path,
-                extraOptions: engineExtraOptions,
-              }
-            : null,
-        engineMs: treeBuilderEngineMs,
-        coverage: treeBuilderCoverage,
-        minMoves: treeBuilderMinMoves,
-        depth: treeBuilderDepth,
-      });
-
-      if (treeBuilderCancelRef.current) return;
-
-      let expandedAny = false;
-      let lastAppliedPosition: number[] | null = null;
-
-      for (const line of res.lines) {
-        if (treeBuilderCancelRef.current) break;
-
-        const state = store.getState();
-        state.goToMove([...startPath]);
-
-        const moves = line.moves.map((m) => m.value);
-
-        const beforePos = [...store.getState().position];
-        state.makeMoves({ payload: moves, mainline: false, changeHeaders: false });
-        const afterPos = [...store.getState().position];
-
-        if (afterPos.length === beforePos.length) {
-          // eslint-disable-next-line no-console
-          console.warn("buildVariantsTree: could not apply line", { moves, startPath });
-          continue;
-        }
-
-        expandedAny = true;
-        lastAppliedPosition = afterPos;
-
-        // Yield to the UI so users can see the board advance as lines are applied.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
+      const attachDbCommentsForLine = (lineMoves: Array<{
+        value: string;
+        source?: "db" | "engine";
+        white?: number;
+        black?: number;
+        draws?: number;
+        total?: number;
+      }>) => {
         // Attach DB stats to each created node as a comment.
         try {
           let path = [...startPath];
 
-          for (const step of line.moves) {
+          for (const step of lineMoves) {
             if (treeBuilderCancelRef.current) break;
 
             const fresh = store.getState();
@@ -606,6 +529,132 @@ function BoardVariants() {
           }
         } catch {
           // Ignore comment attach errors
+        }
+      };
+
+      const toDto = (node: TreeNode): { fen: string; san?: string | null; children: any[] } => ({
+        fen: node.fen,
+        san: node.san ?? null,
+        children: node.children.map(toDto),
+      });
+
+      const engineExtraOptions =
+        selectedEngineSettings?.settings?.map((s) => ({
+          name: s.name,
+          value: s.value?.toString() ?? "",
+        })) ?? [];
+
+      const localDbPath = localOptions.path ?? referenceDatabase ?? null;
+
+      const toIso = (value: unknown) => {
+        if (value == null) return undefined;
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === "string") return value;
+        return undefined;
+      };
+
+      const lichessOptionsDto = {
+        ...(lichessOptions as any),
+        since: toIso((lichessOptions as any)?.since),
+        until: toIso((lichessOptions as any)?.until),
+      };
+
+      const masterOptionsDto = {
+        ...(masterOptions as any),
+        since: toIso((masterOptions as any)?.since),
+        until: toIso((masterOptions as any)?.until),
+      };
+
+      let expandedAny = false;
+      let lastAppliedPosition: number[] | null = null;
+
+      // Stream progress from the backend: each event contains the current prefix line (moves)
+      // so we can update the UI while the tree is still being generated.
+      const unlistenProgress = listen("variants_builder_progress", (event: any) => {
+        if (treeBuilderCancelRef.current) return;
+        const payload = event?.payload as { startPath?: number[]; moves?: Array<{ value: string }> } | undefined;
+        const payloadStartPath = payload?.startPath;
+        const payloadMoves = payload?.moves;
+        if (!payloadStartPath || !Array.isArray(payloadStartPath) || !payloadMoves || !Array.isArray(payloadMoves)) return;
+
+        const state = store.getState();
+        state.goToMove([...payloadStartPath]);
+        const moves = payloadMoves.map((m) => m.value);
+        const beforePos = [...store.getState().position];
+        state.makeMoves({ payload: moves, mainline: false, changeHeaders: false });
+        const afterPos = [...store.getState().position];
+
+        if (afterPos.length === beforePos.length) return;
+
+        expandedAny = true;
+        lastAppliedPosition = afterPos;
+      });
+
+      let res: Awaited<ReturnType<typeof buildVariantsTreeBackend>> | null = null;
+      try {
+        res = await buildVariantsTreeBackend({
+          root: toDto(store.getState().root),
+          startPath,
+          orientation: boardOrientation === "black" ? "black" : "white",
+          is960,
+          dbType,
+          localDbPath,
+          lichessOptions: lichessOptionsDto as any,
+          masterOptions: masterOptionsDto as any,
+          mode: treeBuilderMode,
+          engine:
+            selectedEngine && selectedEngine.type === "local"
+              ? {
+                  name: selectedEngine.name,
+                  path: selectedEngine.path,
+                  extraOptions: engineExtraOptions,
+                }
+              : null,
+          engineMs: treeBuilderEngineMs,
+          coverage: treeBuilderCoverage,
+          minMoves: treeBuilderMinMoves,
+          depth: treeBuilderDepth,
+        });
+      } finally {
+        unlistenProgress.then((fn) => fn());
+      }
+
+      if (treeBuilderCancelRef.current) return;
+
+      if (!expandedAny) {
+        // Fallback: if we didn't receive streaming events (or they were ignored),
+        // apply the returned full lines as we did before.
+        for (const line of res?.lines ?? []) {
+          if (treeBuilderCancelRef.current) break;
+
+          const state = store.getState();
+          state.goToMove([...startPath]);
+
+          const moves = line.moves.map((m) => m.value);
+
+          const beforePos = [...store.getState().position];
+          state.makeMoves({ payload: moves, mainline: false, changeHeaders: false });
+          const afterPos = [...store.getState().position];
+
+          if (afterPos.length === beforePos.length) {
+            // eslint-disable-next-line no-console
+            console.warn("buildVariantsTree: could not apply line", { moves, startPath });
+            continue;
+          }
+
+          expandedAny = true;
+          lastAppliedPosition = afterPos;
+
+          // Yield to the UI so users can see the board advance as lines are applied.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+          attachDbCommentsForLine(line.moves);
+        }
+      } else {
+        // If streaming already built the nodes, just attach DB comments from the final response.
+        for (const line of res?.lines ?? []) {
+          if (treeBuilderCancelRef.current) break;
+          attachDbCommentsForLine(line.moves);
         }
       }
 
