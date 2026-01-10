@@ -190,6 +190,7 @@ async fn fetch_explorer(url: reqwest::Url) -> Result<ExplorerPositionData> {
 // -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[specta(rename = "VariantsTreeNodeDto")]
 #[serde(rename_all = "camelCase")]
 pub struct TreeNodeDto {
     pub fen: String,

@@ -684,7 +684,7 @@ async upsertVariantPosition(fen: string, engine: string, recommendedMove: string
     else return { status: "error", error: e  as any };
 }
 },
-async generatePuzzleVariantsFromTree(root: TreeNodeDto, orientation: string, selectedDepth: number) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
+async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: string, selectedDepth: number) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth }) };
 } catch (e) {
@@ -888,7 +888,7 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
  * Event payload for best-move updates (emitted to frontend).
  */
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
-export type BuildVariantsTreeRequest = { root: TreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
+export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
@@ -1026,6 +1026,7 @@ storageSize: bigint;
  * Full path to the database file
  */
 path: string }
+export type PuzzleTreeNodeDto = { fen: string; san?: string | null; children?: PuzzleTreeNodeDto[] }
 export type QueryOptions<SortT> = { skipCount: boolean; page?: number | null; pageSize?: number | null; sort: SortT; direction: SortDirection }
 export type QueryResponse<T> = { data: T; count: number | null }
 export type RatingDataPoint = { date: bigint; chesscom: number | null; lichess: number | null }
@@ -1059,8 +1060,6 @@ export type TimeControlFilter = "Any" | "Bullet" | "Blitz" | "Rapid" | "Classica
 export type Token = { type: "ParenOpen" } | { type: "ParenClose" } | { type: "Comment"; value: string } | { type: "San"; value: string } | { type: "Header"; value: { tag: string; value: string } } | { type: "Nag"; value: string } | { type: "Outcome"; value: string }
 export type TournamentQuery = { options: QueryOptions<TournamentSort>; name: string | null }
 export type TournamentSort = "id" | "name"
-export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
-export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
 /**
  * Represents a UCI option definition.
  */
@@ -1087,6 +1086,7 @@ export type UciOptionConfig =
 { type: "string"; value: { name: string; default: string | null } }
 export type UpdateGame = { fen: string; event: string; site: string; date?: string | null; time?: string | null; round?: string | null; white: string; white_elo?: number | null; black: string; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
 export type VariantPosition = { fen: string; engine: string; recommended_move: string; ms: bigint }
+export type VariantsTreeNodeDto = { fen: string; san?: string | null; children?: VariantsTreeNodeDto[] }
 
 /** tauri-specta globals **/
 

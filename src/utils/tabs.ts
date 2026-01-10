@@ -200,8 +200,8 @@ export async function saveToFile({
     if (userChoice === null) return false;
     filePath = userChoice;
     const fileName = await getFileNameWithoutExtension(filePath);
-    const isTempSourceFile = tab?.source?.type === "file" && isTempImportFile(tab?.source?.path);
-    const tempSourcePath = isTempSourceFile ? tab?.source?.path : null;
+    const tempSourcePath =
+      tab?.source?.type === "file" && isTempImportFile(tab.source.path) ? tab.source.path : null;
 
     // If this is a variants file, create the .info file with type "variants"
     if (isVariantsFile) {

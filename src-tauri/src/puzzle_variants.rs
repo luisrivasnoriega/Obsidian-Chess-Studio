@@ -2,6 +2,7 @@ use crate::error::{Error, Result};
 use specta::Type;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[specta(rename = "PuzzleTreeNodeDto")]
 #[serde(rename_all = "camelCase")]
 pub struct TreeNodeDto {
     pub fen: String,
