@@ -32,6 +32,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const navigate = useNavigate();
   const { layout } = useResponsiveLayout();
   const gameState = useAtomValue(currentGameStateAtom);
+  const isCompactHeader = layout.chessBoard.layoutType === "mobile";
 
   const {
     tabs,
@@ -190,10 +191,14 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
     [openTabInNewWindow, setTabs, tabs],
   );
 
+  const headerPadding = isCompactHeader ? "xs" : "sm";
+  const headerGap = isCompactHeader ? "xs" : "sm";
+  const trailingSpacerWidth = layout.menuBar.displayWindowControls ? "3rem" : isCompactHeader ? "0.5rem" : "1.5rem";
+
   return (
     <Box h="100%" style={{ display: "flex", alignItems: "center" }} data-tauri-drag-region>
       <DragDropContext onDragEnd={onDragEnd}>
-        <Group h="100%" px="sm" gap="xs" wrap="nowrap" style={{ flex: 1, minWidth: 0 }} data-tauri-drag-region>
+        <Group h="100%" px={headerPadding} gap={headerGap} wrap="nowrap" style={{ flex: 1, minWidth: 0 }} data-tauri-drag-region>
           <Menu shadow="md" position="bottom-start" transitionProps={{ duration: 0 }}>
             <Menu.Target>
               <ActionIcon variant="subtle" size="lg" aria-label="Menu" data-tauri-drag-region={false}>
@@ -273,7 +278,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
             </ScrollArea>
           )}
 
-          <Box w="3rem" h="100%" data-tauri-drag-region />
+          <Box w={trailingSpacerWidth} h="100%" data-tauri-drag-region />
 
           {layout.menuBar.displayWindowControls && (
             <Box data-tauri-drag-region={false}>

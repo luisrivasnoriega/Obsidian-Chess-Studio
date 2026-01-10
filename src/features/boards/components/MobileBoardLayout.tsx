@@ -4,7 +4,6 @@ import { useToggle } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import { memo, Suspense, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import GameNotation from "@/components/GameNotation";
 import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
@@ -77,8 +76,8 @@ function MobileBoardLayout({
   practicing,
 
   // Analysis props
-  topBar = false,
-  editingCard,
+  topBar: _topBar = false,
+  editingCard: _editingCard,
   isLoading = false,
   error = null,
   onRetry,
@@ -106,8 +105,9 @@ function MobileBoardLayout({
   hideFooterControls = false,
 }: MobileBoardLayoutProps) {
   const { t } = useTranslation();
-  const [isCollapsed, toggleCollapsed] = useToggle([false, true]);
+  const [isCollapsed, toggleCollapsed] = useToggle([true, false]);
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
+  const showAnalysisPanel = currentTabType !== "play";
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
 
@@ -137,61 +137,73 @@ function MobileBoardLayout({
     );
   }
   return (
-    <Stack h="100%" gap="xs" justify="space-between" align="stretch">
-      <Paper withBorder p="xs">
-        <Group justify="space-between" align="center">
-          <Text fw={700}>{t("features.board.tabs.analysis")}</Text>
-          <ActionIcon variant="subtle" onClick={() => toggleCollapsed()}>
-            {isCollapsed ? <IconChevronDown size="1rem" /> : <IconChevronUp size="1rem" />}
-          </ActionIcon>
-        </Group>
-        <Collapse in={!isCollapsed} transitionDuration={200} transitionTimingFunction="linear">
-          <Box mt="xs">
-            <Suspense fallback={<ResponsiveSkeleton type="default" />}>
-              <AnalysisPanel />
-            </Suspense>
-          </Box>
-        </Collapse>
-      </Paper>
+    <Stack gap="sm" align="stretch">
+      {showAnalysisPanel && (
+        <Paper withBorder p="xs">
+          <Group justify="space-between" align="center">
+            <Text fw={700} size="sm">
+              {t("features.board.tabs.analysis")}
+            </Text>
+            <ActionIcon variant="subtle" onClick={() => toggleCollapsed()}>
+              {isCollapsed ? <IconChevronDown size="1rem" /> : <IconChevronUp size="1rem" />}
+            </ActionIcon>
+          </Group>
+          <Collapse in={!isCollapsed} transitionDuration={200} transitionTimingFunction="linear">
+            <Box mt="xs">
+              <Suspense fallback={<ResponsiveSkeleton type="default" />}>
+                <AnalysisPanel />
+              </Suspense>
+            </Box>
+          </Collapse>
+        </Paper>
+      )}
 
-      <Board
-        dirty={dirty}
-        editingMode={editingMode}
-        toggleEditingMode={toggleEditingMode}
-        viewOnly={viewOnly}
-        disableVariations={disableVariations}
-        movable={movable}
-        boardRef={boardRef}
-        saveFile={saveFile}
-        reload={reload}
-        addGame={addGame}
-        canTakeBack={canTakeBack}
-        whiteTime={whiteTime}
-        blackTime={blackTime}
-        practicing={practicing}
-        // Board controls props
-        viewPawnStructure={viewPawnStructure}
-        setViewPawnStructure={setViewPawnStructure}
-        takeSnapshot={takeSnapshot}
-        deleteMove={deleteMove}
-        changeTabType={changeTabType}
-        currentTabType={currentTabType}
-        eraseDrawablesOnClick={eraseDrawablesOnClick}
-        clearShapes={clearShapes}
-        toggleOrientation={toggleOrientation}
-        currentTabSourceType={currentTabSourceType}
-        selectedPiece={selectedPiece}
-        setSelectedPiece={setSelectedPiece}
-        // Start Game props
-        startGame={startGame}
-        gameState={gameState}
-        startGameDisabled={startGameDisabled}
-        hideClockSpaces={hideClockSpaces}
-        hideEvalBar={hideEvalBar}
-        hideFooterControls={hideFooterControls}
-      />
-
-      {editingMode && editingCard ? editingCard : <GameNotation topBar={topBar} />}
+      <Box
+        style={{
+          width: "100%",
+          maxWidth: "100%",
+          aspectRatio: "1 / 1",
+          maxHeight: "60vh",
+          alignSelf: "center",
+        }}
+      >
+        <Board
+          dirty={dirty}
+          editingMode={editingMode}
+          toggleEditingMode={toggleEditingMode}
+          viewOnly={viewOnly}
+          disableVariations={disableVariations}
+          movable={movable}
+          boardRef={boardRef}
+          saveFile={saveFile}
+          reload={reload}
+          addGame={addGame}
+          canTakeBack={canTakeBack}
+          whiteTime={whiteTime}
+          blackTime={blackTime}
+          practicing={practicing}
+          // Board controls props
+          viewPawnStructure={viewPawnStructure}
+          setViewPawnStructure={setViewPawnStructure}
+          takeSnapshot={takeSnapshot}
+          deleteMove={deleteMove}
+          changeTabType={changeTabType}
+          currentTabType={currentTabType}
+          eraseDrawablesOnClick={eraseDrawablesOnClick}
+          clearShapes={clearShapes}
+          toggleOrientation={toggleOrientation}
+          currentTabSourceType={currentTabSourceType}
+          selectedPiece={selectedPiece}
+          setSelectedPiece={setSelectedPiece}
+          // Start Game props
+          startGame={startGame}
+          gameState={gameState}
+          startGameDisabled={startGameDisabled}
+          hideClockSpaces={hideClockSpaces}
+          hideEvalBar={hideEvalBar}
+          hideFooterControls={hideFooterControls}
+        />
+      </Box>
     </Stack>
   );
 }

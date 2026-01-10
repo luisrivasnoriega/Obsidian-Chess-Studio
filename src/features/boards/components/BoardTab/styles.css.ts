@@ -1,10 +1,24 @@
 import { style } from "@vanilla-extract/css";
+import { DEFAULT_THEME } from "@mantine/core";
 import { vars } from "@/styles/theme";
 
 export const tab = style({
   cursor: "unset",
+  paddingLeft: "0.6rem",
   paddingRight: 9,
   marginRight: 5,
+  "@media": {
+    [`(width < ${DEFAULT_THEME.breakpoints.md})`]: {
+      paddingLeft: "0.45rem",
+      paddingRight: 6,
+      marginRight: 3,
+    },
+    [`(width < ${DEFAULT_THEME.breakpoints.sm})`]: {
+      paddingLeft: "0.35rem",
+      paddingRight: 4,
+      marginRight: 2,
+    },
+  },
   [vars.lightSelector]: {
     backgroundColor: "transparent",
     color: vars.colors.gray[9],
@@ -36,17 +50,41 @@ export const selected = style({
 
 export const input = style({
   minWidth: "5rem",
+  maxWidth: "14rem",
   fontSize: "0.8rem",
   paddingTop: "0.4rem",
   paddingBottom: "0.4rem",
   outline: "none",
   textAlign: "start",
+  display: "block",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  "@media": {
+    [`(width < ${DEFAULT_THEME.breakpoints.md})`]: {
+      maxWidth: "10rem",
+      fontSize: "0.75rem",
+      paddingTop: "0.3rem",
+      paddingBottom: "0.3rem",
+    },
+    [`(width < ${DEFAULT_THEME.breakpoints.sm})`]: {
+      maxWidth: "8rem",
+      fontSize: "0.7rem",
+      paddingTop: "0.25rem",
+      paddingBottom: "0.25rem",
+    },
+  },
 });
 
 export const closeTabBtn = style({
   boxSizing: "content-box",
   padding: "0.3rem",
   transition: "background-color 100ms ease",
+  "@media": {
+    [`(width < ${DEFAULT_THEME.breakpoints.md})`]: {
+      padding: "0.2rem",
+    },
+  },
   ":hover": {
     backgroundColor: "rgba(255, 255, 255, 0.1)",
   },

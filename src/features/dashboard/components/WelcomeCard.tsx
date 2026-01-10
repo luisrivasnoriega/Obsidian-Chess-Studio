@@ -5,6 +5,7 @@ import { useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 interface WelcomeCardProps {
   isFirstOpen: boolean;
@@ -34,8 +35,12 @@ export function WelcomeCard({
 }: WelcomeCardProps) {
   const { t } = useTranslation();
   const currentThemeId = useAtomValue(currentThemeIdAtom);
+  const { layout } = useResponsiveLayout();
   const [imageError, setImageError] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
+  const isCompact = layout.settings.layoutType === "mobile";
+  const photoSize = isCompact ? 96 : 140;
+  const heroImageSize = isCompact ? 180 : 280;
 
   // Convert file path to URL if needed (for local files)
   // If it's already a URL (http/https) or tauri://, use it directly
@@ -99,129 +104,162 @@ export function WelcomeCard({
   }
 
   return (
-    <Card shadow="sm" p="lg" radius="md" withBorder>
-      <Group align="center" justify="flex-start" wrap="nowrap" gap="xl">
-        {/* Left column: FIDE profile photo - only show if it exists */}
-        {photoUrl ? (
-          <Box
-            style={{
-              position: "relative",
-              borderRadius: "12px",
-              overflow: "hidden",
-              border: "3px solid var(--mantine-color-blue-6)",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-              flexShrink: 0,
-            }}
-          >
-            <Image
-              src={photoUrl}
-              alt="FIDE Profile Photo"
-              width={140}
-              height={140}
-              fit="cover"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
+    <Card shadow="sm" p={isCompact ? "md" : "lg"} radius="md" withBorder>
+      <Stack gap={isCompact ? "md" : "lg"}>
+        <Group
+          align={isCompact ? "flex-start" : "center"}
+          justify="flex-start"
+          wrap={isCompact ? "wrap" : "nowrap"}
+          gap={isCompact ? "md" : "xl"}
+        >
+          {/* Left column: FIDE profile photo - only show if it exists */}
+          {photoUrl ? (
+            <Box
+              style={{
+                position: "relative",
+                borderRadius: "12px",
+                overflow: "hidden",
+                border: "3px solid var(--mantine-color-blue-6)",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                flexShrink: 0,
               }}
-            />
-          </Box>
-        ) : null}
+            >
+              <Image
+                src={photoUrl}
+                alt="FIDE Profile Photo"
+                width={photoSize}
+                height={photoSize}
+                fit="cover"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            </Box>
+          ) : null}
 
-        {/* Central column: Information and actions */}
-        <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
-          <Stack gap={4}>
-            <Title order={1} fw={800}>
-              {welcomeMessage}
-            </Title>
-            <Text size="sm" c="dimmed">
-              {t("features.dashboard.welcome.desc")}
-            </Text>
+          {/* Central column: Information and actions */}
+          <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
+            <Stack gap={4}>
+              <Title order={1} fw={800}>
+                {welcomeMessage}
+              </Title>
+              <Text size="sm" c="dimmed">
+                {t("features.dashboard.welcome.desc")}
+              </Text>
+            </Stack>
+
+            {/* FIDE Information */}
+            {fideInfo && (fideInfo.title || fideInfo.age || fideInfo.worldRank || fideInfo.nationalRank) && (
+              <Group gap="md" wrap="wrap">
+                {fideInfo.title && (
+                  <Badge size="lg" color="yellow" variant="light">
+                    {fideInfo.title}
+                  </Badge>
+                )}
+                {fideInfo.age && (
+                  <Badge size="lg" color="blue" variant="light">
+                    {fideInfo.age} {t("common.years")}
+                  </Badge>
+                )}
+                {fideInfo.worldRank && (
+                  <Badge size="lg" color="grape" variant="light">
+                    World #{fideInfo.worldRank}
+                  </Badge>
+                )}
+                {fideInfo.nationalRank && (
+                  <Badge size="lg" color="teal" variant="light">
+                    National #{fideInfo.nationalRank}
+                  </Badge>
+                )}
+              </Group>
+            )}
+
+            {/* Ratings FIDE */}
+            {fideInfo && (fideInfo.standardRating || fideInfo.rapidRating || fideInfo.blitzRating) && (
+              <Group gap="xl" align="flex-start" wrap="wrap">
+                {fideInfo.standardRating && (
+                  <Stack gap={2} align="center">
+                    <Text size="xs" c="teal.6" fw={500}>
+                      {t("features.dashboard.editProfile.standard")}
+                    </Text>
+                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
+                      {fideInfo.standardRating}
+                    </Text>
+                  </Stack>
+                )}
+                {fideInfo.rapidRating && (
+                  <Stack gap={2} align="center">
+                    <Text size="xs" c="teal.6" fw={500}>
+                      {t("features.dashboard.editProfile.rapid")}
+                    </Text>
+                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
+                      {fideInfo.rapidRating}
+                    </Text>
+                  </Stack>
+                )}
+                {fideInfo.blitzRating && (
+                  <Stack gap={2} align="center">
+                    <Text size="xs" c="yellow.6" fw={500}>
+                      {t("features.dashboard.editProfile.blitz")}
+                    </Text>
+                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="yellow.6" fw={700} lh={1}>
+                      {fideInfo.blitzRating}
+                    </Text>
+                  </Stack>
+                )}
+              </Group>
+            )}
+
+            {/* Action buttons */}
+            <Group gap="xs" mt="xs" wrap={isCompact ? "wrap" : "nowrap"}>
+              <Button
+                radius="md"
+                onClick={onPlayChess}
+                leftSection={<IconChess size={18} />}
+                fullWidth={isCompact}
+              >
+                {t("features.dashboard.cards.playChess.button")}
+              </Button>
+              <Button
+                variant="light"
+                radius="md"
+                onClick={onImportGame}
+                leftSection={<IconUpload size={18} />}
+                fullWidth={isCompact}
+              >
+                {t("features.tabs.importGame.button")}
+              </Button>
+            </Group>
           </Stack>
 
-          {/* FIDE Information */}
-          {fideInfo && (fideInfo.title || fideInfo.age || fideInfo.worldRank || fideInfo.nationalRank) && (
-            <Group gap="md" wrap="wrap">
-              {fideInfo.title && (
-                <Badge size="lg" color="yellow" variant="light">
-                  {fideInfo.title}
-                </Badge>
-              )}
-              {fideInfo.age && (
-                <Badge size="lg" color="blue" variant="light">
-                  {fideInfo.age} {t("common.years")}
-                </Badge>
-              )}
-              {fideInfo.worldRank && (
-                <Badge size="lg" color="grape" variant="light">
-                  World #{fideInfo.worldRank}
-                </Badge>
-              )}
-              {fideInfo.nationalRank && (
-                <Badge size="lg" color="teal" variant="light">
-                  National #{fideInfo.nationalRank}
-                </Badge>
-              )}
-            </Group>
+          {!isCompact && (
+            <Box style={{ flexShrink: 0, marginLeft: "auto" }}>
+              <Image
+                src={backgroundImageSrc}
+                alt={backgroundImageAlt}
+                radius="lg"
+                onError={handleImageError}
+                width={heroImageSize}
+                height={heroImageSize}
+                fit="contain"
+              />
+            </Box>
           )}
+        </Group>
 
-          {/* Ratings FIDE */}
-          {fideInfo && (fideInfo.standardRating || fideInfo.rapidRating || fideInfo.blitzRating) && (
-            <Group gap="xl" align="flex-start">
-              {fideInfo.standardRating && (
-                <Stack gap={2} align="center">
-                  <Text size="xs" c="teal.6" fw={500}>
-                    {t("features.dashboard.editProfile.standard")}
-                  </Text>
-                  <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
-                    {fideInfo.standardRating}
-                  </Text>
-                </Stack>
-              )}
-              {fideInfo.rapidRating && (
-                <Stack gap={2} align="center">
-                  <Text size="xs" c="teal.6" fw={500}>
-                    {t("features.dashboard.editProfile.rapid")}
-                  </Text>
-                  <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
-                    {fideInfo.rapidRating}
-                  </Text>
-                </Stack>
-              )}
-              {fideInfo.blitzRating && (
-                <Stack gap={2} align="center">
-                  <Text size="xs" c="yellow.6" fw={500}>
-                    {t("features.dashboard.editProfile.blitz")}
-                  </Text>
-                  <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="yellow.6" fw={700} lh={1}>
-                    {fideInfo.blitzRating}
-                  </Text>
-                </Stack>
-              )}
-            </Group>
-          )}
-
-          {/* Action buttons */}
-          <Group gap="xs" mt="xs">
-            <Button radius="md" onClick={onPlayChess} leftSection={<IconChess size={18} />}>
-              {t("features.dashboard.cards.playChess.button")}
-            </Button>
-            <Button variant="light" radius="md" onClick={onImportGame} leftSection={<IconUpload size={18} />}>
-              {t("features.tabs.importGame.button")}
-            </Button>
-          </Group>
-        </Stack>
-
-        <Box style={{ flexShrink: 0, marginLeft: "auto" }}>
-          <Image
-            src={backgroundImageSrc}
-            alt={backgroundImageAlt}
-            radius="lg"
-            onError={handleImageError}
-            width={280}
-            height={280}
-            fit="contain"
-          />
-        </Box>
-      </Group>
+        {isCompact && (
+          <Box style={{ width: "100%" }}>
+            <Image
+              src={backgroundImageSrc}
+              alt={backgroundImageAlt}
+              radius="lg"
+              onError={handleImageError}
+              style={{ width: "100%", height: heroImageSize }}
+              fit="cover"
+            />
+          </Box>
+        )}
+      </Stack>
     </Card>
   );
 }

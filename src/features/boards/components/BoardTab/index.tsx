@@ -5,6 +5,7 @@ import cx from "clsx";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ContentEditable } from "@/components/ContentEditable";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import type { Tab } from "@/utils/tabs";
 import * as classes from "./styles.css";
 
@@ -35,6 +36,8 @@ export function BoardTab({
     toggleRenaming(false);
   });
   const { t } = useTranslation();
+  const { layout } = useResponsiveLayout();
+  const isCompact = layout.chessBoard.layoutType === "mobile";
   const { colorScheme } = useMantineColorScheme();
   const osColorScheme = useColorScheme();
   
@@ -77,6 +80,7 @@ export function BoardTab({
             [classes.flashDark]: isFlashing && isDark,
           })}
           variant="default"
+          size={isCompact ? "xs" : "sm"}
           fw="normal"
           data-tauri-drag-region={false}
           styles={isFlashing ? {

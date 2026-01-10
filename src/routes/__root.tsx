@@ -14,7 +14,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { Dirs } from "@/App";
+import type { Dirs } from "@/types/dirs";
 import AboutModal from "@/components/About";
 import { getSpotlightActions } from "@/components/spotlightActions";
 import { SideBar } from "@/components/Sidebar";

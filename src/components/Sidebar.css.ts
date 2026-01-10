@@ -1,4 +1,5 @@
 import { style } from "@vanilla-extract/css";
+import { DEFAULT_THEME } from "@mantine/core";
 import { vars } from "@/styles/theme";
 
 export const link = style({
@@ -6,16 +7,27 @@ export const link = style({
   height: "3rem",
   display: "flex",
   alignItems: "center",
+  borderRadius: vars.radius.md,
   "@media": {
-    [`(width >= ${vars.breakpoints.sm})`]: {
-      borderLeft: "3px solid transparent",
-      borderRight: "3px solid transparent",
+    [`(width < ${DEFAULT_THEME.breakpoints.md})`]: {
+      width: "2.75rem",
+      height: "2.75rem",
     },
-    [`(width < ${vars.breakpoints.sm})`]: {
-      borderTop: "3px solid transparent",
+    [`(width < ${DEFAULT_THEME.breakpoints.sm})`]: {
+      width: "2.5rem",
+      height: "2.5rem",
     },
   },
   justifyContent: "center",
+  selectors: {
+    '&[data-position="navbar"]': {
+      borderLeft: "3px solid transparent",
+      borderRight: "3px solid transparent",
+    },
+    '&[data-position="footer"]': {
+      borderTop: "3px solid transparent",
+    },
+  },
   [vars.lightSelector]: {
     color: vars.colors.gray[7],
   },
@@ -26,9 +38,11 @@ export const link = style({
   ":hover": {
     [vars.lightSelector]: {
       color: vars.colors.dark[5],
+      backgroundColor: vars.colors.gray[0],
     },
     [vars.darkSelector]: {
       color: vars.colors.gray[0],
+      backgroundColor: vars.colors.dark[6],
     },
   },
 });
@@ -41,11 +55,11 @@ export const active = style({
     color: vars.colors.white,
   },
 
-  "@media": {
-    [`(width >= ${vars.breakpoints.sm})`]: {
+  selectors: {
+    '&[data-position="navbar"]': {
       borderLeftColor: vars.colors.primary,
     },
-    [`(width < ${vars.breakpoints.sm})`]: {
+    '&[data-position="footer"]': {
       borderTopColor: vars.colors.primary,
     },
   },

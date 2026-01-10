@@ -1,5 +1,5 @@
 import type { Piece } from "@lichess-org/chessground/types";
-import { Box, Portal } from "@mantine/core";
+import { Portal, ScrollArea, Stack } from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
@@ -363,49 +363,12 @@ function BoardAnalysis() {
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
 
-  return (
-    <>
-      <EvalListener />
-      {isMobileLayout ? (
-        // Mobile layout: ResponsiveBoard handles everything, no Portal needed
-        <Box style={{ width: "100%", flex: 1, overflow: "hidden" }}>
-          <ResponsiveBoard
-            practicing={practicing}
-            dirty={dirty}
-            editingMode={editingMode}
-            toggleEditingMode={toggleEditingMode}
-            boardRef={boardRef}
-            saveFile={saveFile}
-            reload={reloadBoard}
-            addGame={addGame}
-            topBar={false}
-            editingCard={
-              editingMode ? (
-                <EditingCard
-                  boardRef={boardRef}
-                  setEditingMode={toggleEditingMode}
-                  selectedPiece={selectedPiece}
-                  setSelectedPiece={setSelectedPiece}
-                />
-              ) : undefined
-            }
-            // Board controls props
-            viewPawnStructure={viewPawnStructure}
-            setViewPawnStructure={setViewPawnStructure}
-            selectedPiece={selectedPiece}
-            setSelectedPiece={setSelectedPiece}
-            canTakeBack={false} // Analysis mode doesn't support take back
-            changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
-            currentTabType="analysis"
-            clearShapes={clearShapes}
-            disableVariations={false}
-            currentTabSourceType={currentTab?.source?.type}
-          />
-        </Box>
-      ) : (
-        // Desktop layout: Use Portal system with Mosaic layout
-        <>
-          <Portal target="#left" style={{ height: "100%" }}>
+  if (isMobileLayout) {
+    return (
+      <>
+        <EvalListener />
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack gap="md">
             <ResponsiveBoard
               practicing={practicing}
               dirty={dirty}
@@ -438,17 +401,69 @@ function BoardAnalysis() {
               disableVariations={false}
               currentTabSourceType={currentTab?.source?.type}
             />
-          </Portal>
-          <Portal target="#topRight" style={{ height: "100%" }}>
-            <ResponsiveAnalysisPanels
-              currentTab={currentTabSelected}
-              onTabChange={(v) => setCurrentTabSelected(v || "info")}
-              isRepertoire={isRepertoire}
-              isPuzzle={isPuzzle}
+            <GameNotationWrapper
+              topBar
+              editingMode={editingMode}
+              editingCard={
+                <EditingCard
+                  boardRef={boardRef}
+                  setEditingMode={toggleEditingMode}
+                  selectedPiece={selectedPiece}
+                  setSelectedPiece={setSelectedPiece}
+                />
+              }
             />
-          </Portal>
-        </>
-      )}
+          </Stack>
+        </ScrollArea>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <EvalListener />
+      <Portal target="#left" style={{ height: "100%" }}>
+        <ResponsiveBoard
+          practicing={practicing}
+          dirty={dirty}
+          editingMode={editingMode}
+          toggleEditingMode={toggleEditingMode}
+          boardRef={boardRef}
+          saveFile={saveFile}
+          reload={reloadBoard}
+          addGame={addGame}
+          topBar={false}
+          editingCard={
+            editingMode ? (
+              <EditingCard
+                boardRef={boardRef}
+                setEditingMode={toggleEditingMode}
+                selectedPiece={selectedPiece}
+                setSelectedPiece={setSelectedPiece}
+              />
+            ) : undefined
+          }
+          // Board controls props
+          viewPawnStructure={viewPawnStructure}
+          setViewPawnStructure={setViewPawnStructure}
+          selectedPiece={selectedPiece}
+          setSelectedPiece={setSelectedPiece}
+          canTakeBack={false} // Analysis mode doesn't support take back
+          changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
+          currentTabType="analysis"
+          clearShapes={clearShapes}
+          disableVariations={false}
+          currentTabSourceType={currentTab?.source?.type}
+        />
+      </Portal>
+      <Portal target="#topRight" style={{ height: "100%" }}>
+        <ResponsiveAnalysisPanels
+          currentTab={currentTabSelected}
+          onTabChange={(v) => setCurrentTabSelected(v || "info")}
+          isRepertoire={isRepertoire}
+          isPuzzle={isPuzzle}
+        />
+      </Portal>
       <GameNotationWrapper
         topBar
         editingMode={editingMode}

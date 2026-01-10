@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { TreeStateContext } from "@/components/TreeStateContext";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
   allEnabledAtom,
@@ -42,6 +43,8 @@ import TablebaseInfo from "./TablebaseInfo";
 
 function AnalysisPanel() {
   const { t } = useTranslation();
+  const { layout } = useResponsiveLayout();
+  const isCompact = layout.chessBoard.layoutType === "mobile";
 
   const store = useContext(TreeStateContext)!;
   const rootFen = useStore(store, (s) => s.root.fen);
@@ -160,24 +163,49 @@ function AnalysisPanel() {
   const [pos] = positionFromFen(currentNodeFen);
   const navigate = useNavigate();
 
+  const panelStyle = isCompact
+    ? { width: "100%" }
+    : {
+        overflow: "hidden",
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        flexDirection: "column" as const,
+      };
+
   return (
-    <Stack h="100%" style={{ minHeight: 0, minWidth: 0 }}>
+    <Stack h={isCompact ? "auto" : "100%"} style={{ minHeight: isCompact ? undefined : 0, minWidth: 0 }}>
       <Tabs
-        h="100%"
-        orientation="vertical"
-        placement="right"
+        h={isCompact ? undefined : "100%"}
+        orientation={isCompact ? "horizontal" : "vertical"}
+        placement={isCompact ? "top" : "right"}
         value={effectiveTab}
         onChange={(v) => setTab(v!)}
-        style={{
-          display: "flex",
-          flex: 1,
-          minHeight: 0,
-          minWidth: 0,
-          overflow: "hidden",
-        }}
+        style={
+          isCompact
+            ? { minWidth: 0 }
+            : {
+                display: "flex",
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "hidden",
+              }
+        }
         keepMounted={false}
       >
-        <Tabs.List>
+        <Tabs.List
+          style={
+            isCompact
+              ? {
+                  flexWrap: "nowrap",
+                  overflowX: "auto",
+                  gap: "0.5rem",
+                  paddingBottom: "0.25rem",
+                }
+              : undefined
+          }
+        >
           <Tabs.Tab value="engines">{t("features.board.analysis.engines")}</Tabs.Tab>
           <Tabs.Tab value="report">{t("features.board.analysis.report")}</Tabs.Tab>
           <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
@@ -186,13 +214,7 @@ function AnalysisPanel() {
         </Tabs.List>
         <Tabs.Panel
           value="engines"
-          style={{
-            overflow: "hidden",
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            flexDirection: "column",
-          }}
+          style={panelStyle}
         >
           <ScrollArea
             offsetScrollbars
@@ -307,26 +329,14 @@ function AnalysisPanel() {
         <Tabs.Panel
           value="report"
           pt="xs"
-          style={{
-            overflow: "hidden",
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            flexDirection: "column",
-          }}
+          style={panelStyle}
         >
           <ReportPanel />
         </Tabs.Panel>
         <Tabs.Panel
           value="logs"
           pt="xs"
-          style={{
-            overflow: "hidden",
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            flexDirection: "column",
-          }}
+          style={panelStyle}
         >
           <LogsPanel />
         </Tabs.Panel>

@@ -1438,10 +1438,10 @@ function BoardGame() {
     error !== null ||
     gameState !== "settingUp";
 
-  return (
-    <>
-      {isMobileLayout ? (
-        <Box style={{ width: "100%", flex: 1, overflow: "hidden" }}>
+  if (isMobileLayout) {
+    return (
+      <ScrollArea h="100%" offsetScrollbars>
+        <Stack gap="md">
           <ResponsiveBoard
             dirty={false}
             editingMode={false}
@@ -1464,176 +1464,184 @@ function BoardGame() {
             gameState={gameState}
             startGameDisabled={error !== null}
           />
-        </Box>
-      ) : (
-        <>
-          <Portal target="#left" style={{ height: "100%" }}>
-            <ResponsiveBoard
-              dirty={false}
-              editingMode={false}
-              toggleEditingMode={() => undefined}
-              viewOnly={gameState !== "playing"}
-              disableVariations
-              boardRef={boardRef}
-              canTakeBack={onePlayerIsEngine}
-              movable={movable}
-              whiteTime={gameState === "playing" ? (whiteTime ?? undefined) : undefined}
-              blackTime={gameState === "playing" ? (blackTime ?? undefined) : undefined}
-              topBar={false}
-              viewPawnStructure={viewPawnStructure}
-              setViewPawnStructure={setViewPawnStructure}
-              selectedPiece={selectedPiece}
-              setSelectedPiece={setSelectedPiece}
-              changeTabType={changeToAnalysisMode}
-              currentTabType="play"
-              startGame={startGame}
-              gameState={gameState}
-              startGameDisabled={error !== null}
-            />
-          </Portal>
-          <Portal target="#topRight" style={{ height: "100%", overflow: "hidden" }}>
-            <Paper withBorder shadow="sm" p="md" h="100%">
-              {gameState === "settingUp" && (
-                <ScrollArea h="100%" offsetScrollbars>
-                  <Stack>
-                    <Group>
-                      <Text flex={1} ta="center" fz="lg" fw="bold">
-                        {match(inputColor)
-                          .with("white", () => t("chess.white"))
-                          .with("random", () => t("chess.random"))
-                          .with("black", () => t("chess.black"))
-                          .exhaustive()}
-                      </Text>
-                      <ActionIcon onClick={cycleColor}>
-                        <IconArrowsExchange />
-                      </ActionIcon>
-                      <Text flex={1} ta="center" fz="lg" fw="bold">
-                        {match(inputColor)
-                          .with("white", () => t("chess.black"))
-                          .with("random", () => t("chess.random"))
-                          .with("black", () => t("chess.white"))
-                          .exhaustive()}
-                      </Text>
-                    </Group>
-                    <Box flex={1}>
-                      <Group style={{ alignItems: "start" }}>
-                        <OpponentForm
-                          sameTimeControl={sameTimeControl}
-                          opponent={player1Settings}
-                          setOpponent={setPlayer1Settings}
-                          setOtherOpponent={setPlayer2Settings}
-                          engines={engines}
-                          enginesState={enginesState}
-                        />
-                        <Divider orientation="vertical" />
-                        <OpponentForm
-                          sameTimeControl={sameTimeControl}
-                          opponent={player2Settings}
-                          setOpponent={setPlayer2Settings}
-                          setOtherOpponent={setPlayer1Settings}
-                          engines={engines}
-                          enginesState={enginesState}
-                        />
-                      </Group>
-                    </Box>
-                    <Group justify="flex-start">
-                      <Checkbox
-                        label={t("game.sameTimeControl")}
-                        checked={sameTimeControl}
-                        onChange={handleSameTimeControlChange}
-                      />
-                    </Group>
-                    <Divider label={t("game.startingPosition")} />
-                    <Stack gap="md">
-                      <InputWrapper
-                        label={t("game.fen")}
-                        error={fenError}
-                        description={t("game.fenDescription")}
+          <GameNotationWrapper topBar />
+          {isFromVariants && (
+            <Button leftSection={<IconPuzzle size={18} />} onClick={generatePuzzles} variant="light" fullWidth>
+              {t("common.generatePuzzles")}
+            </Button>
+          )}
+        </Stack>
+      </ScrollArea>
+    );
+  }
+
+  return (
+    <>
+      <Portal target="#left" style={{ height: "100%" }}>
+        <ResponsiveBoard
+          dirty={false}
+          editingMode={false}
+          toggleEditingMode={() => undefined}
+          viewOnly={gameState !== "playing"}
+          disableVariations
+          boardRef={boardRef}
+          canTakeBack={onePlayerIsEngine}
+          movable={movable}
+          whiteTime={gameState === "playing" ? (whiteTime ?? undefined) : undefined}
+          blackTime={gameState === "playing" ? (blackTime ?? undefined) : undefined}
+          topBar={false}
+          viewPawnStructure={viewPawnStructure}
+          setViewPawnStructure={setViewPawnStructure}
+          selectedPiece={selectedPiece}
+          setSelectedPiece={setSelectedPiece}
+          changeTabType={changeToAnalysisMode}
+          currentTabType="play"
+          startGame={startGame}
+          gameState={gameState}
+          startGameDisabled={error !== null}
+        />
+      </Portal>
+      <Portal target="#topRight" style={{ height: "100%", overflow: "hidden" }}>
+        <Paper withBorder shadow="sm" p="md" h="100%">
+          {gameState === "settingUp" && (
+            <ScrollArea h="100%" offsetScrollbars>
+              <Stack>
+                <Group>
+                  <Text flex={1} ta="center" fz="lg" fw="bold">
+                    {match(inputColor)
+                      .with("white", () => t("chess.white"))
+                      .with("random", () => t("chess.random"))
+                      .with("black", () => t("chess.black"))
+                      .exhaustive()}
+                  </Text>
+                  <ActionIcon onClick={cycleColor}>
+                    <IconArrowsExchange />
+                  </ActionIcon>
+                  <Text flex={1} ta="center" fz="lg" fw="bold">
+                    {match(inputColor)
+                      .with("white", () => t("chess.black"))
+                      .with("random", () => t("chess.random"))
+                      .with("black", () => t("chess.white"))
+                      .exhaustive()}
+                  </Text>
+                </Group>
+                <Box flex={1}>
+                  <Group style={{ alignItems: "start" }}>
+                    <OpponentForm
+                      sameTimeControl={sameTimeControl}
+                      opponent={player1Settings}
+                      setOpponent={setPlayer1Settings}
+                      setOtherOpponent={setPlayer2Settings}
+                      engines={engines}
+                      enginesState={enginesState}
+                    />
+                    <Divider orientation="vertical" />
+                    <OpponentForm
+                      sameTimeControl={sameTimeControl}
+                      opponent={player2Settings}
+                      setOpponent={setPlayer2Settings}
+                      setOtherOpponent={setPlayer1Settings}
+                      engines={engines}
+                      enginesState={enginesState}
+                    />
+                  </Group>
+                </Box>
+                <Group justify="flex-start">
+                  <Checkbox
+                    label={t("game.sameTimeControl")}
+                    checked={sameTimeControl}
+                    onChange={handleSameTimeControlChange}
+                  />
+                </Group>
+                <Divider label={t("game.startingPosition")} />
+                <Stack gap="md">
+                  <InputWrapper
+                    label={t("game.fen")}
+                    error={fenError}
+                    description={t("game.fenDescription")}
+                    styles={{
+                      label: {
+                        marginBottom: "0.25rem",
+                      },
+                      description: {
+                        marginTop: "0.25rem",
+                        marginBottom: "0.5rem",
+                      },
+                    }}
+                  >
+                    <Group gap="xs" wrap="nowrap" align="flex-end">
+                      <TextInput
+                        ref={fenInputRef}
+                        style={{ flex: 1 }}
+                        placeholder={INITIAL_FEN}
+                        value={customFen}
+                        radius="md"
+                        size="sm"
+                        variant="filled"
+                        onChange={(e) => {
+                          const newFen = e.target.value;
+                          setCustomFen(newFen);
+                          if (newFen.trim()) {
+                            validateFen(newFen);
+                          } else {
+                            setFenError(null);
+                          }
+                        }}
+                        onPaste={(e) => {
+                          // Ensure state is updated immediately on paste
+                          const pastedValue = e.clipboardData.getData("text");
+                          setTimeout(() => {
+                            setCustomFen(pastedValue);
+                            if (pastedValue.trim()) {
+                              validateFen(pastedValue);
+                            } else {
+                              setFenError(null);
+                            }
+                          }, 0);
+                        }}
+                        error={!!fenError}
                         styles={{
-                          label: {
-                            marginBottom: "0.25rem",
-                          },
-                          description: {
-                            marginTop: "0.25rem",
-                            marginBottom: "0.5rem",
+                          input: {
+                            fontFamily: "monospace",
+                            fontSize: "0.85rem",
+                            whiteSpace: "nowrap",
+                            overflowX: "auto",
                           },
                         }}
+                      />
+                      <ActionIcon
+                        variant="light"
+                        color="blue"
+                        onClick={applyFen}
+                        disabled={!!fenError || (!customFen.trim() && root.fen === INITIAL_FEN)}
+                        title={t("game.applyFen")}
+                        size="lg"
                       >
-                        <Group gap="xs" wrap="nowrap" align="flex-end">
-                          <TextInput
-                            ref={fenInputRef}
-                            style={{ flex: 1 }}
-                            placeholder={INITIAL_FEN}
-                            value={customFen}
-                            radius="md"
-                            size="sm"
-                            variant="filled"
-                            onChange={(e) => {
-                              const newFen = e.target.value;
-                              setCustomFen(newFen);
-                              if (newFen.trim()) {
-                                validateFen(newFen);
-                              } else {
-                                setFenError(null);
-                              }
-                            }}
-                            onPaste={(e) => {
-                              // Ensure state is updated immediately on paste
-                              const pastedValue = e.clipboardData.getData("text");
-                              setTimeout(() => {
-                                setCustomFen(pastedValue);
-                                if (pastedValue.trim()) {
-                                  validateFen(pastedValue);
-                                } else {
-                                  setFenError(null);
-                                }
-                              }, 0);
-                            }}
-                            error={!!fenError}
-                            styles={{
-                              input: {
-                                fontFamily: "monospace",
-                                fontSize: "0.85rem",
-                                whiteSpace: "nowrap",
-                                overflowX: "auto",
-                              },
-                            }}
-                          />
-                          <ActionIcon
-                            variant="light"
-                            color="blue"
-                            onClick={applyFen}
-                            disabled={!!fenError || (!customFen.trim() && root.fen === INITIAL_FEN)}
-                            title={t("game.applyFen")}
-                            size="lg"
-                          >
-                            <IconCheck size={18} />
-                          </ActionIcon>
-                        </Group>
-                      </InputWrapper>
-                    </Stack>
-                  </Stack>
-                </ScrollArea>
-              )}
-              {(gameState === "playing" || gameState === "gameOver") && (
-                <Stack h="100%">
-                  <Box flex={1}>
-                    <GameInfo headers={headers} />
-                  </Box>
-                  <Group grow>
-                    <Button onClick={handleNewGame} leftSection={<IconPlus />}>
-                      {t("keybindings.newGame")}
-                    </Button>
-                    <Button variant="default" onClick={changeToAnalysisMode} leftSection={<IconZoomCheck />}>
-                      {t("keybindings.analyzePosition")}
-                    </Button>
-                  </Group>
+                        <IconCheck size={18} />
+                      </ActionIcon>
+                    </Group>
+                  </InputWrapper>
                 </Stack>
-              )}
-            </Paper>
-          </Portal>
-        </>
-      )}
+              </Stack>
+            </ScrollArea>
+          )}
+          {(gameState === "playing" || gameState === "gameOver") && (
+            <Stack h="100%">
+              <Box flex={1}>
+                <GameInfo headers={headers} />
+              </Box>
+              <Group grow>
+                <Button onClick={handleNewGame} leftSection={<IconPlus />}>
+                  {t("keybindings.newGame")}
+                </Button>
+                <Button variant="default" onClick={changeToAnalysisMode} leftSection={<IconZoomCheck />}>
+                  {t("keybindings.analyzePosition")}
+                </Button>
+              </Group>
+            </Stack>
+          )}
+        </Paper>
+      </Portal>
       <GameNotationWrapper topBar>
         <Stack gap="xs">
           <MoveControls

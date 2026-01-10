@@ -2,7 +2,7 @@ import type { AppShellProps } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { type } from "@tauri-apps/plugin-os";
 import { useMemo } from "react";
-import { vars } from "@/styles/theme";
+import { DEFAULT_THEME } from "@mantine/core";
 
 // Platform types
 export type Platform = "desktop" | "mobile" | "web";
@@ -93,9 +93,10 @@ export const useResponsiveLayout: () => {
   performanceMetrics: PerformanceMetrics;
 } = () => {
   const platform = getPlatform();
-  const smallScreenMax = useMediaQuery(`(width < ${vars.breakpoints.sm})`);
-  const largeScreenMax = useMediaQuery(`(width < ${vars.breakpoints.lg})`);
-  const extraLargeScreenMax = useMediaQuery(`(width < ${vars.breakpoints.xl})`);
+  const smallScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.sm})`);
+  const mediumScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
+  const largeScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.lg})`);
+  const extraLargeScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.xl})`);
 
   return useMemo(() => {
     const startTime = performance.now();
@@ -105,23 +106,23 @@ export const useResponsiveLayout: () => {
 
     // Platform-specific mobile detection
     const isMobileOS = platform === "mobile";
-    const isMobile = isMobileOS;
-    const isMobileOrSmallScreen = isMobileOS || smallScreenMax;
+    const isPhoneLayout = isMobileOS || smallScreenMax;
+    const isTabletLayout = isMobileOS || mediumScreenMax;
 
-    const menuBarMode: MenuBarMode = isMobile ? "disabled" : "custom";
-    const sideBarPosition: SideBarPosition = isMobileOrSmallScreen ? "footer" : "navbar";
-    const panelsType: PanelsType = isMobile || useDrawerOnDesktop ? "drawer" : "sidepanel";
+    const menuBarMode: MenuBarMode = "custom";
+    const sideBarPosition: SideBarPosition = isTabletLayout ? "footer" : "navbar";
+    const panelsType: PanelsType = isTabletLayout || useDrawerOnDesktop ? "drawer" : "sidepanel";
     const drawerPosition: DrawerPosition = "bottom";
-    const settingsLayoutType: LayoutType = isMobileOrSmallScreen ? "mobile" : "desktop";
-    const chessBoardLayoutType: LayoutType = isMobileOrSmallScreen ? "mobile" : "desktop";
+    const settingsLayoutType: LayoutType = isTabletLayout ? "mobile" : "desktop";
+    const chessBoardLayoutType: LayoutType = isTabletLayout ? "mobile" : "desktop";
 
-    const databasesDensity: DatabasesDensity = isMobileOrSmallScreen
+    const databasesDensity: DatabasesDensity = isTabletLayout
       ? "compact"
       : extraLargeScreenMax
         ? "comfortable"
         : "normal";
-    const databasesLayoutType: LayoutType = isMobile || largeScreenMax ? "mobile" : "desktop";
-    const twoColumnLayoutType: LayoutType = isMobile || largeScreenMax ? "mobile" : "desktop";
+    const databasesLayoutType: LayoutType = isTabletLayout || largeScreenMax ? "mobile" : "desktop";
+    const twoColumnLayoutType: LayoutType = isTabletLayout || largeScreenMax ? "mobile" : "desktop";
 
     // AppShell states
     const isHeaderCollapsed = menuBarMode === "disabled";
@@ -129,10 +130,16 @@ export const useResponsiveLayout: () => {
     const isNavbarCollapsed = sideBarPosition !== "navbar";
 
     // Layout dimensions
-    const headerHeight = isHeaderCollapsed ? "0rem" : !isMobile ? "2.6rem" : "2.3rem";
+    const headerHeight = isHeaderCollapsed
+      ? "0rem"
+      : isPhoneLayout
+        ? "3.25rem"
+        : isTabletLayout
+          ? "3rem"
+          : "2.6rem";
     const navbarWidth = isNavbarCollapsed ? "0rem" : "3rem";
-    const footerHeight = isFooterCollapsed ? "0rem" : isMobile ? "4rem" : "3rem";
-    const marginTop = isMobile ? "3rem" : "0rem";
+    const footerHeight = isFooterCollapsed ? "0rem" : isPhoneLayout ? "3.75rem" : "3.25rem";
+    const marginTop = isHeaderCollapsed && isPhoneLayout ? "3rem" : "0rem";
 
     // Calculated dimensions
     const headerOffset = !isHeaderCollapsed ? headerHeight : "0rem";
@@ -145,7 +152,7 @@ export const useResponsiveLayout: () => {
       // App shell configuration
       menuBar: {
         mode: menuBarMode,
-        displayWindowControls: !isMobile,
+        displayWindowControls: !isTabletLayout,
       },
       sidebar: {
         position: sideBarPosition,
@@ -172,8 +179,8 @@ export const useResponsiveLayout: () => {
       },
 
       // Game-specific layout
-      gameInfoCollapsedByDefault: isMobileOrSmallScreen,
-      gameNotationUnderBoard: isMobile,
+      gameInfoCollapsedByDefault: isTabletLayout,
+      gameNotationUnderBoard: isPhoneLayout,
 
       // Panel configuration
       panels: {
@@ -206,7 +213,7 @@ export const useResponsiveLayout: () => {
       },
       chessBoard: {
         layoutType: chessBoardLayoutType,
-        touchOptimized: isMobileOrSmallScreen,
+        touchOptimized: isTabletLayout,
         maintainAspectRatio: true,
       },
     };
@@ -225,5 +232,5 @@ export const useResponsiveLayout: () => {
       mainContentHeight,
       performanceMetrics,
     };
-  }, [platform, smallScreenMax, extraLargeScreenMax, largeScreenMax]);
+  }, [platform, smallScreenMax, mediumScreenMax, extraLargeScreenMax, largeScreenMax]);
 };

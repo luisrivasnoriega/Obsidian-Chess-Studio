@@ -78,6 +78,7 @@ function GameNotationWrapper({
       gap: isNotationUnderBoard ? "md" : "xs",
     };
   }, [layout.gameNotationUnderBoard]);
+  const renderInline = layout.chessBoard.layoutType === "mobile";
 
   // Show loading state
   if (isLoading || isInitializing) {
@@ -108,7 +109,7 @@ function GameNotationWrapper({
   );
 
   const analysisContent = (
-    <Stack h="100%" gap={positioning.gap} style={{ flexDirection: positioning.stackDirection }}>
+    <Stack h={renderInline ? "auto" : "100%"} gap={positioning.gap} style={{ flexDirection: positioning.stackDirection }}>
       {editingMode && editingCard ? (
         editingCard
       ) : hasCustomNotation ? (
@@ -124,17 +125,17 @@ function GameNotationWrapper({
     </Stack>
   );
 
-  // Position the analysis content based on layout
-  if (positioning.isNotationUnderBoard) {
-    // Position under the board for mobile/small screens
-    return (
-      <Portal target={positioning.portalTarget} style={{ height: "100%" }}>
-        {analysisContent}
-      </Portal>
-    );
+  if (renderInline) {
+    return analysisContent;
   }
 
-  // Position in side panel for desktop/large screens
+  const portalTarget =
+    typeof document !== "undefined" ? document.querySelector(positioning.portalTarget) : null;
+
+  if (!portalTarget) {
+    return analysisContent;
+  }
+
   return (
     <Portal target={positioning.portalTarget} style={{ height: "100%" }}>
       {analysisContent}

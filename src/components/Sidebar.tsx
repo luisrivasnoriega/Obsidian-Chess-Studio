@@ -36,16 +36,18 @@ interface NavbarLinkProps {
 function NavbarLink({ url, icon: Icon, label }: NavbarLinkProps) {
   const matchesRoute = useMatchRoute();
   const { layout } = useResponsiveLayout();
+  const isFooter = layout.sidebar.position === "footer";
   const isActive = matchesRoute({ to: url, fuzzy: url !== "/" });
   return (
-    <Tooltip label={label} position={layout.sidebar.position === "footer" ? "top" : "right"}>
+    <Tooltip label={label} position={isFooter ? "top" : "right"}>
       <Link
         to={url}
         className={cx(classes.link, {
           [classes.active]: isActive,
         })}
+        data-position={isFooter ? "footer" : "navbar"}
       >
-        <Icon size={layout.sidebar.position === "footer" ? "2.0rem" : "1.5rem"} stroke={1.5} />
+        <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
       </Link>
     </Tooltip>
   );
@@ -61,9 +63,10 @@ function MayaActionLink({
   onClick: (e?: React.MouseEvent) => void;
 }) {
   const { layout } = useResponsiveLayout();
+  const isFooter = layout.sidebar.position === "footer";
 
   return (
-    <Tooltip label={label} position={layout.sidebar.position === "footer" ? "top" : "right"}>
+    <Tooltip label={label} position={isFooter ? "top" : "right"}>
       <a
         href="#"
         onClick={(e) => {
@@ -71,8 +74,9 @@ function MayaActionLink({
           onClick(e);
         }}
         className={cx(classes.link)}
+        data-position={isFooter ? "footer" : "navbar"}
       >
-        <Icon size={layout.sidebar.position === "footer" ? "2.0rem" : "1.5rem"} stroke={1.5} />
+        <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
       </a>
     </Tooltip>
   );
@@ -282,13 +286,13 @@ export function SideBar() {
 
     return (
       <AppShellSection grow>
-        <Group justify="center" gap="md">
+        <Group justify="center" gap="xs" wrap="nowrap">
           {visibleLinks}
           <Menu shadow="md" position="top">
             <Menu.Target>
               <Tooltip label={t("sidebar.more")} position="top">
-                <ActionIcon variant="subtle" size="xl" className={classes.link}>
-                  <IconMenu2 size="2.0rem" stroke={1.5} />
+                <ActionIcon variant="subtle" size="lg" className={classes.link} data-position="footer">
+                  <IconMenu2 size="1.8rem" stroke={1.5} />
                 </ActionIcon>
               </Tooltip>
             </Menu.Target>
@@ -331,6 +335,7 @@ export function SideBar() {
               className={cx(classes.link, {
                 [classes.active]: matchesRoute({ to: "/settings/keyboard-shortcuts", fuzzy: true }),
               })}
+              data-position="navbar"
             >
               <IconKeyboard size="1.5rem" stroke={1.5} />
             </Link>
@@ -341,6 +346,7 @@ export function SideBar() {
               className={cx(classes.link, {
                 [classes.active]: matchesRoute({ to: "/settings", fuzzy: true }),
               })}
+              data-position="navbar"
             >
               <IconSettings size="1.5rem" stroke={1.5} />
             </Link>

@@ -35,14 +35,11 @@ import { IS_DEV } from "./config";
 import i18n from "./i18n";
 import { routeTree } from "./routeTree.gen";
 import type { VersionCheckResult } from "./services/version-checker";
+import type { Dirs } from "@/types/dirs";
 import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
 import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
 import { ensureProfilesInitialized } from "./utils/profiles";
-
-export type Dirs = {
-  documentDir: string;
-};
 
 type InitializationState = "loading" | "initialized" | "error";
 

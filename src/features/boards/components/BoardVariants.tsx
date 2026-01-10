@@ -1,6 +1,6 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import { makeSan } from "chessops/san";
-import { Box, Portal } from "@mantine/core";
+import { Box, Portal, ScrollArea, Stack } from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
@@ -33,6 +33,7 @@ import {
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
+import { commands } from "@/bindings/generated";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { createFile, isTempImportFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
@@ -430,7 +431,7 @@ function BoardVariants() {
       // Store the start node info for metadata update at the end
       const startFenForMetadata = startNode.fen;
 
-      const attachDbCommentsForLine = (lineMoves: Array<{
+      const attachDbCommentsForLine = async (lineMoves: Array<{
         value: string;
         source?: "db" | "engine";
         white?: number;
@@ -438,9 +439,35 @@ function BoardVariants() {
         draws?: number;
         total?: number;
       }>) => {
-        // Attach DB stats to each created node as a comment.
+        // Attach opening names to each created node as a comment.
         try {
           let path = [...startPath];
+          
+          // Get opening from start position if it exists
+          let lastKnownOpening: string | null = null;
+          try {
+            const startNode = getNodeAtPath(store.getState().root, startPath);
+            if (startNode) {
+              const res = await commands.getOpeningFromFen(startNode.fen);
+              if (res.status === "ok" && res.data) {
+                lastKnownOpening = res.data;
+              } else {
+                const resInfo = await commands.getOpeningInfoFromFen(startNode.fen);
+                if (resInfo.status === "ok" && resInfo.data) {
+                  const { opening, variation } = resInfo.data;
+                  lastKnownOpening = variation && variation.trim().length > 0 ? `${opening}: ${variation}` : opening;
+                }
+              }
+              // Filter out empty/invalid openings
+              if (lastKnownOpening === "" || lastKnownOpening === "Empty Board" || lastKnownOpening === "Starting Position") {
+                lastKnownOpening = null;
+              }
+            }
+          } catch {
+            // Ignore opening lookup errors for start position
+          }
+
+          const ourSide = boardOrientation === "black" ? "black" : "white";
 
           for (const step of lineMoves) {
             if (treeBuilderCancelRef.current) break;
@@ -452,6 +479,8 @@ function BoardVariants() {
             const [pos] = positionFromFen(node.fen);
             if (!pos || pos.isEnd()) break;
 
+            const isOpponentMove = pos.turn !== ourSide;
+
             const parsed = parseSanOrUci(pos, step.value);
             if (!parsed) break;
 
@@ -461,24 +490,50 @@ function BoardVariants() {
             const nextIdx = node.children.findIndex((c) => c.san === san);
             if (nextIdx < 0) break;
 
+            // Calculate move number and format before moving
+            const isBlackMove = node.halfMoves % 2 === 0;
+            const moveNumber = Math.ceil((node.halfMoves + 1) / 2);
+            const moveText = isBlackMove ? `${moveNumber}... ${san}` : `${moveNumber}. ${san}`;
+
             path = [...path, nextIdx];
 
-            if (
-              step.source === "db" &&
-              typeof step.total === "number" &&
-              step.total > 0 &&
-              step.white != null &&
-              step.black != null &&
-              step.draws != null
-            ) {
-              const total = step.total;
-              const pct = (n: number) => `${((n / total) * 100).toFixed(1)}%`;
-              const comment = `DB: ${total} games | White ${pct(step.white)} Draw ${pct(step.draws)} Black ${pct(step.black)}`;
+            // Get the node after the move
+            store.getState().goToMove(path);
+            const curState = store.getState();
+            const cur = getNodeAtPath(curState.root, curState.position);
+            if (!cur) continue;
 
-              store.getState().goToMove(path);
-              const curState = store.getState();
-              const cur = getNodeAtPath(curState.root, curState.position);
+            // Try to get opening from current position
+            let currentOpening: string | null = null;
+            try {
+              const res = await commands.getOpeningFromFen(cur.fen);
+              if (res.status === "ok" && res.data) {
+                currentOpening = res.data;
+              } else {
+                const resInfo = await commands.getOpeningInfoFromFen(cur.fen);
+                if (resInfo.status === "ok" && resInfo.data) {
+                  const { opening, variation } = resInfo.data;
+                  currentOpening = variation && variation.trim().length > 0 ? `${opening}: ${variation}` : opening;
+                }
+              }
+            } catch {
+              // Ignore opening lookup errors
+            }
 
+            let comment: string | null = null;
+
+            if (currentOpening && currentOpening !== "" && currentOpening !== "Empty Board" && currentOpening !== "Starting Position") {
+              // Current position has an opening name
+              comment = `[${currentOpening}]`;
+              lastKnownOpening = currentOpening;
+            } else if (lastKnownOpening) {
+              // Current position doesn't have an opening, but we have a previous one
+              comment = `[${lastKnownOpening} - ${moveText}]`;
+            }
+            // If no opening at all, don't add a comment
+
+            // Only attach comments on opponent moves (variant side).
+            if (comment && isOpponentMove) {
               const prev = (cur?.comment ?? "").trim();
               if (!prev) {
                 store.getState().setComment(comment);
@@ -610,13 +665,13 @@ function BoardVariants() {
           // Yield to the UI so users can see the board advance as lines are applied.
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-          attachDbCommentsForLine(line.moves);
+          await attachDbCommentsForLine(line.moves);
         }
       } else {
-        // If streaming already built the nodes, just attach DB comments from the final response.
+        // If streaming already built the nodes, just attach opening comments from the final response.
         for (const line of res?.lines ?? []) {
           if (treeBuilderCancelRef.current) break;
-          attachDbCommentsForLine(line.moves);
+          await attachDbCommentsForLine(line.moves);
         }
       }
 
@@ -799,47 +854,13 @@ function BoardVariants() {
     currentTab,
   ]);
 
-  return (
-    <>
-      {/* Disable EvalListener during build variants to avoid engine event loops */}
-      {!treeBuilderRunning && <EvalListener />}
-      {isMobileLayout ? (
-        <Box style={{ width: "100%", flex: 1, overflow: "hidden" }}>
-          <ResponsiveBoard
-            practicing={practicing}
-            dirty={dirty}
-            editingMode={editingMode}
-            toggleEditingMode={toggleEditingMode}
-            boardRef={boardRef}
-            saveFile={saveFile}
-            reload={reloadBoard}
-            addGame={addGame}
-            topBar={topBar}
-            editingCard={
-              editingMode ? (
-                <EditingCard
-                  boardRef={boardRef}
-                  setEditingMode={toggleEditingMode}
-                  selectedPiece={selectedPiece}
-                  setSelectedPiece={setSelectedPiece}
-                />
-              ) : undefined
-            }
-            viewPawnStructure={viewPawnStructure}
-            setViewPawnStructure={setViewPawnStructure}
-            selectedPiece={selectedPiece}
-            setSelectedPiece={setSelectedPiece}
-            canTakeBack={false}
-            changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
-            currentTabType="analysis"
-            clearShapes={clearShapes}
-            disableVariations={false}
-            currentTabSourceType={currentTab?.source?.type || undefined}
-          />
-        </Box>
-      ) : (
-        <>
-          <Portal target="#left" style={{ height: "100%" }}>
+  if (isMobileLayout) {
+    return (
+      <>
+        {/* Disable EvalListener during build variants to avoid engine event loops */}
+        {!treeBuilderRunning && <EvalListener />}
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack gap="md">
             <ResponsiveBoard
               practicing={practicing}
               dirty={dirty}
@@ -849,7 +870,7 @@ function BoardVariants() {
               saveFile={saveFile}
               reload={reloadBoard}
               addGame={addGame}
-              topBar={false}
+              topBar={topBar}
               editingCard={
                 editingMode ? (
                   <EditingCard
@@ -871,18 +892,95 @@ function BoardVariants() {
               disableVariations={false}
               currentTabSourceType={currentTab?.source?.type || undefined}
             />
-          </Portal>
+            <GameNotationWrapper
+              topBar
+              editingMode={editingMode}
+              editingCard={
+                <EditingCard
+                  boardRef={boardRef}
+                  setEditingMode={toggleEditingMode}
+                  selectedPiece={selectedPiece}
+                  setSelectedPiece={setSelectedPiece}
+                />
+              }
+            >
+              <>
+                <VariantsNotation topBar={topBar} editingMode={editingMode} />
+                <VariantsActions
+                  treeBuilderRunning={treeBuilderRunning}
+                  onOpenPuzzle={() => {
+                    // Use treeBuilderDepth as the maximum depth for puzzles
+                    // This ensures the puzzle depth matches the depth configured in build variants
+                    const maxDepth = treeBuilderDepth;
+                    if (maxDepth < 1) {
+                      notifications.show({
+                        title: t("common.error"),
+                        message: t("errors.puzzleVariantsNeedSystemMove"),
+                        color: "red",
+                      });
+                      return;
+                    }
+                    setMaxPuzzleDepth(maxDepth);
+                    setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
+                    setPuzzleModalOpened(true);
+                  }}
+                  onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
+                  onCancelTreeBuilder={cancelTreeBuilder}
+                />
+              </>
+            </GameNotationWrapper>
+          </Stack>
+        </ScrollArea>
+      </>
+    );
+  }
 
-          <Portal target="#topRight" style={{ height: "100%" }}>
-            <ResponsiveAnalysisPanels
-              currentTab={currentTabSelected}
-              onTabChange={(v) => setCurrentTabSelected(v || "info")}
-              isRepertoire={isRepertoire}
-              isPuzzle={isPuzzle}
-            />
-          </Portal>
-        </>
-      )}
+  return (
+    <>
+      {/* Disable EvalListener during build variants to avoid engine event loops */}
+      {!treeBuilderRunning && <EvalListener />}
+      <Portal target="#left" style={{ height: "100%" }}>
+        <ResponsiveBoard
+          practicing={practicing}
+          dirty={dirty}
+          editingMode={editingMode}
+          toggleEditingMode={toggleEditingMode}
+          boardRef={boardRef}
+          saveFile={saveFile}
+          reload={reloadBoard}
+          addGame={addGame}
+          topBar={false}
+          editingCard={
+            editingMode ? (
+              <EditingCard
+                boardRef={boardRef}
+                setEditingMode={toggleEditingMode}
+                selectedPiece={selectedPiece}
+                setSelectedPiece={setSelectedPiece}
+              />
+            ) : undefined
+          }
+          viewPawnStructure={viewPawnStructure}
+          setViewPawnStructure={setViewPawnStructure}
+          selectedPiece={selectedPiece}
+          setSelectedPiece={setSelectedPiece}
+          canTakeBack={false}
+          changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
+          currentTabType="analysis"
+          clearShapes={clearShapes}
+          disableVariations={false}
+          currentTabSourceType={currentTab?.source?.type || undefined}
+        />
+      </Portal>
+
+      <Portal target="#topRight" style={{ height: "100%" }}>
+        <ResponsiveAnalysisPanels
+          currentTab={currentTabSelected}
+          onTabChange={(v) => setCurrentTabSelected(v || "info")}
+          isRepertoire={isRepertoire}
+          isPuzzle={isPuzzle}
+        />
+      </Portal>
 
       <GameNotationWrapper
         topBar

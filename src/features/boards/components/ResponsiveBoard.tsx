@@ -165,54 +165,50 @@ function ResponsiveBoard({
     return (
       <Box
         ref={containerRef}
-        style={{ width: "100%", height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}
+        style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}
       >
         <ResponsiveLoadingWrapper isLoading={false}>
-          <Stack h="100%" gap="xs">
-            <Box flex={1}>
-              <MobileBoardLayout
-                dirty={dirty}
-                editingMode={editingMode}
-                toggleEditingMode={toggleEditingMode}
-                viewOnly={viewOnly}
-                disableVariations={disableVariations}
-                movable={movable}
-                boardRef={boardRef}
-                saveFile={saveFile}
-                reload={reload}
-                addGame={addGame}
-                canTakeBack={canTakeBack}
-                whiteTime={whiteTime}
-                blackTime={blackTime}
-                practicing={practicing}
-                topBar={topBar}
-                editingCard={editingCard}
-                isLoading={isLoading}
-                error={error}
-                onRetry={onRetry}
-                // Board controls props
-                viewPawnStructure={viewPawnStructure}
-                setViewPawnStructure={setViewPawnStructure}
-                takeSnapshot={takeSnapshot}
-                deleteMove={deleteMove}
-                changeTabType={changeTabType}
-                currentTabType={currentTabType}
-                eraseDrawablesOnClick={eraseDrawablesOnClick}
-                clearShapes={clearShapes}
-                toggleOrientation={toggleOrientation}
-                currentTabSourceType={currentTabSourceType}
-                selectedPiece={selectedPiece}
-                setSelectedPiece={setSelectedPiece}
-                // Start Game props
-                startGame={startGame}
-                gameState={gameState}
-                startGameDisabled={startGameDisabled}
-                hideClockSpaces={hideClockSpaces}
-                hideEvalBar={hideEvalBar}
-                hideFooterControls={hideFooterControls}
-              />
-            </Box>
-          </Stack>
+          <MobileBoardLayout
+            dirty={dirty}
+            editingMode={editingMode}
+            toggleEditingMode={toggleEditingMode}
+            viewOnly={viewOnly}
+            disableVariations={disableVariations}
+            movable={movable}
+            boardRef={boardRef}
+            saveFile={saveFile}
+            reload={reload}
+            addGame={addGame}
+            canTakeBack={canTakeBack}
+            whiteTime={whiteTime}
+            blackTime={blackTime}
+            practicing={practicing}
+            topBar={topBar}
+            editingCard={editingCard}
+            isLoading={isLoading}
+            error={error}
+            onRetry={onRetry}
+            // Board controls props
+            viewPawnStructure={viewPawnStructure}
+            setViewPawnStructure={setViewPawnStructure}
+            takeSnapshot={takeSnapshot}
+            deleteMove={deleteMove}
+            changeTabType={changeTabType}
+            currentTabType={currentTabType}
+            eraseDrawablesOnClick={eraseDrawablesOnClick}
+            clearShapes={clearShapes}
+            toggleOrientation={toggleOrientation}
+            currentTabSourceType={currentTabSourceType}
+            selectedPiece={selectedPiece}
+            setSelectedPiece={setSelectedPiece}
+            // Start Game props
+            startGame={startGame}
+            gameState={gameState}
+            startGameDisabled={startGameDisabled}
+            hideClockSpaces={hideClockSpaces}
+            hideEvalBar={hideEvalBar}
+            hideFooterControls={hideFooterControls}
+          />
         </ResponsiveLoadingWrapper>
       </Box>
     );
