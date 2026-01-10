@@ -76,12 +76,15 @@ function BoardAnalysis() {
             });
             return;
           }
-          await saveToFile({
+          const saved = await saveToFile({
             dir: documentDir,
             setCurrentTab,
             tab: currentTab,
             store,
           });
+          if (!saved) {
+            return;
+          }
         }
 
         if (showNotification) {

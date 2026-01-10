@@ -125,13 +125,15 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
                 const noopSetCurrentTab: Dispatch<SetStateAction<Tab>> = () => {};
                 const tabStore = createTreeStore(value);
                 const documentDir = await getDocumentDir();
-                await saveToFile({
+                const saved = await saveToFile({
                   dir: documentDir,
                   setCurrentTab: noopSetCurrentTab,
                   tab: tab,
                   store: tabStore,
                 });
-                await closeTab(value, true);
+                if (saved) {
+                  await closeTab(value, true);
+                }
               })();
             },
             onCancel: () => {

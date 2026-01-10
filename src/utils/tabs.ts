@@ -183,7 +183,7 @@ export async function saveToFile({
   store: StoreApi<TreeStoreState>;
   setTabs?: React.Dispatch<React.SetStateAction<Tab[]>>;
   isVariantsFile?: boolean;
-}) {
+}): Promise<boolean> {
   let filePath: string;
   if (tab?.source?.type === "file" && !isTempImportFile(tab?.source?.path)) {
     filePath = tab.source.path;
@@ -197,20 +197,12 @@ export async function saveToFile({
         },
       ],
     });
-    if (userChoice === null) return;
+    if (userChoice === null) return false;
     filePath = userChoice;
     const fileName = await getFileNameWithoutExtension(filePath);
-    if (tab?.source?.type === "file" && isTempImportFile(tab?.source?.path)) {
-      const count = unwrap(await commands.countPgnGames(tab?.source?.path ?? ""));
-      const games = unwrap(await commands.readGames(tab?.source?.path ?? "", 0, count - 1));
-      const pgn = games.join("");
-      await createFile({
-        filename: fileName,
-        filetype: "game",
-        pgn,
-        dir: dir,
-      });
-    }
+    const isTempSourceFile = tab?.source?.type === "file" && isTempImportFile(tab?.source?.path);
+    const tempSourcePath = isTempSourceFile ? tab?.source?.path : null;
+
     // If this is a variants file, create the .info file with type "variants"
     if (isVariantsFile) {
       const { writeTextFile } = await import("@tauri-apps/plugin-fs");
@@ -239,6 +231,40 @@ export async function saveToFile({
         },
       };
     });
+
+    // If we are saving a temp import file, write the entire multi-game PGN to the chosen path
+    // (replacing the current game with the latest store state).
+    if (tempSourcePath) {
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const count = unwrap(await commands.countPgnGames(tempSourcePath));
+      const games = unwrap(await commands.readGames(tempSourcePath, 0, Math.max(0, count - 1)));
+      const gameIndex = tab?.gameNumber || 0;
+      const updatedGame = `${getPGNFromReportView(store.getState().root, {
+        headers: store.getState().headers,
+        comments: true,
+        extraMarkups: true,
+        glyphs: true,
+        variations: true,
+      })}\n\n`;
+      // Be defensive: if parsing yielded 0 games (or gameNumber is out of range),
+      // ensure we still write a non-empty PGN file.
+      if (games.length === 0) {
+        games.push(updatedGame);
+      } else if (gameIndex >= 0 && gameIndex < games.length) {
+        games[gameIndex] = updatedGame;
+      } else if (gameIndex === games.length) {
+        // Append as a new game at the end (0-based indexing)
+        games.push(updatedGame);
+      } else {
+        // Out-of-range: clamp to last game to avoid writing an empty file
+        games[games.length - 1] = updatedGame;
+      }
+
+      const combined = games.join("");
+      await writeTextFile(filePath, combined.trim().length > 0 ? combined : `${updatedGame}`);
+      store.getState().save();
+      return true;
+    }
   }
   await commands.writeGame(
     filePath,
@@ -264,6 +290,7 @@ export async function saveToFile({
       prev.map((t) => (t.value === tabValue ? { ...t, name: fileName } : t)),
     );
   }
+  return true;
 }
 
 export async function saveTab(

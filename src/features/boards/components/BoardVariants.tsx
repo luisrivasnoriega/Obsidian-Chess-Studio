@@ -114,7 +114,7 @@ function BoardVariants() {
             });
             return;
           }
-          await saveToFile({
+          const saved = await saveToFile({
             dir: documentDir,
             setCurrentTab,
             tab: currentTab,
@@ -122,6 +122,9 @@ function BoardVariants() {
             setTabs,
             isVariantsFile: true,
           });
+          if (!saved) {
+            return;
+          }
           if (showNotification) {
             notifications.show({
               title: t("common.save"),

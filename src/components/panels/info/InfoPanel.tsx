@@ -112,12 +112,15 @@ function GameSelectorAccordion({
             if (!documentDir) {
               return;
             }
-            saveToFile({
+            const saved = await saveToFile({
               dir: documentDir,
               setCurrentTab,
               tab: currentTab,
               store,
             });
+            if (!saved) {
+              return;
+            }
           }
           setPage(tempPage, true);
         },
