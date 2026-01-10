@@ -2,13 +2,14 @@ import type { Piece } from "@lichess-org/chessground/types";
 import { ActionIcon, Box, Collapse, Group, Paper, Stack, Text } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
-import { memo, Suspense, useCallback, useEffect, useState } from "react";
+import { memo, Suspense, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import GameNotation from "@/components/GameNotation";
 import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import Board from "./Board";
+import { useSimulatedInit } from "./hooks/useSimulatedInit";
 
 interface MobileBoardLayoutProps {
   // Board props
@@ -105,38 +106,15 @@ function MobileBoardLayout({
   hideFooterControls = false,
 }: MobileBoardLayoutProps) {
   const { t } = useTranslation();
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [initializationError, setInitializationError] = useState<Error | null>(null);
   const [isCollapsed, toggleCollapsed] = useToggle([false, true]);
+  const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
 
-  // Handle initialization
-  useEffect(() => {
-    const initializeLayout = async () => {
-      try {
-        setIsInitializing(true);
-        setInitializationError(null);
-
-        // Simulate initialization time for smooth UX
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        setIsInitializing(false);
-      } catch (error) {
-        setInitializationError(error as Error);
-        setIsInitializing(false);
-      }
-    };
-
-    initializeLayout();
-  }, []);
-
   // Error handling
   const handleRetry = useCallback(() => {
-    setInitializationError(null);
-    setIsInitializing(true);
-    onRetry?.();
-  }, [onRetry]);
+    retry();
+  }, [retry]);
 
   // Show loading state
   if (isLoading || isInitializing) {

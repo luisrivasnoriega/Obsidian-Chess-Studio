@@ -14,11 +14,9 @@ import { keyMapAtom } from "@/state/keybindings";
 import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import { logger } from "@/utils/logger";
 import { recordPgnPuzzleAttempted, recordPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
 import { recordPuzzleSolved } from "@/utils/puzzleStreak";
 import type { Completion, Puzzle } from "@/utils/puzzles";
-import { PUZZLE_DEBUG_LOGS } from "@/utils/puzzles";
 import { getNodeAtPath, treeIteratorMainLine } from "@/utils/treeReducer";
 
 function PuzzleBoard({
@@ -57,7 +55,6 @@ function PuzzleBoard({
   // Reset tree when puzzle changes
   useEffect(() => {
     if (prevPuzzleIndexRef.current !== currentPuzzle && puzzle) {
-      PUZZLE_DEBUG_LOGS && logger.debug("Puzzle changed, resetting tree", { from: prevPuzzleIndexRef.current, to: currentPuzzle });
       reset();
       // Ensure we start the next puzzle from a clean tree state (no leftover moves)
       setFen(puzzle.fen);
@@ -127,7 +124,6 @@ function PuzzleBoard({
   function checkMove(move: Move) {
     // Prevent multiple rapid moves from bugging the puzzle
     if (isProcessingMoveRef.current) {
-      PUZZLE_DEBUG_LOGS && logger.debug("Move already being processed, ignoring");
       return;
     }
 
@@ -141,16 +137,6 @@ function PuzzleBoard({
       newPos.play(move);
 
       const expectedMove = puzzle.moves[currentMove];
-
-      PUZZLE_DEBUG_LOGS &&
-        logger.debug("Checking move:", {
-          uci,
-          expectedMove,
-          currentMove,
-          totalMoves: puzzle.moves.length,
-          isCheckmate: newPos.isCheckmate(),
-          isCorrect: expectedMove === uci || newPos.isCheckmate(),
-        });
 
       if (expectedMove === uci || newPos.isCheckmate()) {
         if (currentMove === puzzle.moves.length - 1) {
@@ -166,7 +152,6 @@ function PuzzleBoard({
           setHasMistake(false);
 
           if (db && (jumpToNext === "success" || jumpToNext === "success-and-failure")) {
-            PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (success)");
             // Reset tree before generating next puzzle to avoid visual glitches
             reset();
             generatePuzzle(db);
@@ -197,7 +182,6 @@ function PuzzleBoard({
 
       // If configured, jump to next puzzle on failure
       if (db && jumpToNext === "success-and-failure") {
-        PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (failure)");
         reset();
         generatePuzzle(db);
         return;

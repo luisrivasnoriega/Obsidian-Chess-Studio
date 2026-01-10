@@ -36,9 +36,13 @@ function PiecesGrid({
           <Piece
             key={role + color}
             putPiece={(to, piece) => {
-              const setup = parseFen(fen).unwrap();
-              setup.board.set(to, piece);
-              onPut(makeFen(setup));
+              try {
+                const setup = parseFen(fen).unwrap();
+                setup.board.set(to, piece);
+                onPut(makeFen(setup));
+              } catch {
+                // Ignore invalid FEN edits (should be prevented upstream)
+              }
             }}
             // @ts-expect-error
             boardRef={boardRef}

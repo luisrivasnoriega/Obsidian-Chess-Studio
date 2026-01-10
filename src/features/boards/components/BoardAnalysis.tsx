@@ -31,7 +31,6 @@ import EvalListener from "./EvalListener";
 import GameNotationWrapper from "./GameNotationWrapper";
 import ResponsiveAnalysisPanels from "./ResponsiveAnalysisPanels";
 import ResponsiveBoard from "./ResponsiveBoard";
-import { debugNavLog } from "@/utils/debugNav";
 
 function BoardAnalysis() {
   const { t } = useTranslation();
@@ -45,10 +44,6 @@ function BoardAnalysis() {
   const boardRef = useRef<HTMLDivElement | null>(null);
 
   const store = useContext(TreeStateContext)!;
-  useEffect(() => {
-    debugNavLog("board-analysis:mount", { documentDir });
-    return () => debugNavLog("board-analysis:unmount");
-  }, [documentDir]);
 
   const dirty = useStore(store, (s) => s.dirty);
 

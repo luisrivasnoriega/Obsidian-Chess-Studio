@@ -418,6 +418,7 @@ function Board({
   );
 
   useEffect(() => {
+    if (typeof document === "undefined") return;
     const linkId = "view-pawn-structure-css";
 
     if (viewPawnStructure) {

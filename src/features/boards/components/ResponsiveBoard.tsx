@@ -1,12 +1,13 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import { Box, Stack } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import Board from "./Board";
+import { useSimulatedInit } from "./hooks/useSimulatedInit";
 import MobileBoardLayout from "./MobileBoardLayout";
 
 interface ResponsiveBoardProps {
@@ -99,8 +100,7 @@ function ResponsiveBoard({
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
   const { ref: containerRef } = useElementSize();
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [initializationError, setInitializationError] = useState<Error | null>(null);
+  const { isInitializing, initializationError, retry } = useSimulatedInit();
 
   // Get responsive layout properties
   const boardDimensions = useMemo(
@@ -111,31 +111,10 @@ function ResponsiveBoard({
     [layout.chessBoard.layoutType, layout.chessBoard.maintainAspectRatio],
   );
 
-  // Handle board initialization
-  useEffect(() => {
-    const initializeBoard = async () => {
-      try {
-        setIsInitializing(true);
-        setInitializationError(null);
-
-        // Simulate initialization time for smooth UX
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        setIsInitializing(false);
-      } catch (error) {
-        setInitializationError(error as Error);
-        setIsInitializing(false);
-      }
-    };
-
-    initializeBoard();
-  }, []);
-
   // Error handling for board initialization
   const handleRetry = useCallback(() => {
-    setInitializationError(null);
-    setIsInitializing(true);
-  }, []);
+    retry();
+  }, [retry]);
 
   // Board container styles - let the Board component handle its own sizing
   const boardContainerStyle = useMemo(

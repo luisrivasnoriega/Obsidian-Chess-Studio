@@ -128,6 +128,7 @@ function EngineListener({
     progress: number;
   } | null>(null);
   const timerRef = useRef<number | null>(null);
+  const searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
 
   const flushPending = () => {
     const pending = pendingRef.current;
@@ -185,7 +186,11 @@ function EngineListener({
         timerRef.current = null;
       }
       pendingRef.current = null;
-      unlisten.then((f) => f());
+      void unlisten
+        .then((f) => f())
+        .catch(() => {
+          // Ignore unlisten errors (e.g. already removed)
+        });
     };
   }, [
     activeTab,
@@ -193,7 +198,7 @@ function EngineListener({
     settings.enabled,
     isGameOver,
     searchingFen,
-    JSON.stringify(searchingMoves),
+    searchingMovesKey,
     engine.name,
     setEngineVariation,
     setProgress,

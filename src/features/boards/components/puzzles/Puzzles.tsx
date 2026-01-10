@@ -18,9 +18,7 @@ import {
 } from "@/state/atoms";
 import { commands } from "@/bindings";
 import { positionFromFen } from "@/utils/chessops";
-import { logger } from "@/utils/logger";
-import { getAdaptivePuzzleRange, PUZZLE_DEBUG_LOGS } from "@/utils/puzzles";
-import { debugNavLog } from "@/utils/debugNav";
+import { getAdaptivePuzzleRange } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 import { getPuzzleDatabases } from "@/utils/puzzles";
 import PuzzleBoard from "./PuzzleBoard";
@@ -52,11 +50,6 @@ function Puzzles({ id }: { id: string }) {
 
   const { t } = useTranslation();
   const [addPuzzleModalOpened, setAddPuzzleModalOpened] = useState(false);
-
-  useEffect(() => {
-    debugNavLog("puzzles:mount", { id, selectedDb, puzzleDbs: puzzleDbs.length });
-    return () => debugNavLog("puzzles:unmount", { id });
-  }, [id, puzzleDbs.length, selectedDb]);
 
   const { puzzles, currentPuzzle, changeCompletion, addPuzzle, clearSession, selectPuzzle } = usePuzzleSession(id);
 
@@ -99,15 +92,6 @@ function Puzzles({ id }: { id: string }) {
       range = calculateProgressiveRange();
     }
 
-    PUZZLE_DEBUG_LOGS &&
-      logger.debug("Generating puzzle:", {
-        db: selectedDb,
-        range,
-        progressive,
-        inOrder,
-        playerRating,
-      });
-
     try {
       const puzzle = await generatePuzzleFromDb(
         selectedDb,
@@ -116,16 +100,8 @@ function Puzzles({ id }: { id: string }) {
         themes.length > 0 ? themes : undefined,
         openingTags.length > 0 ? openingTags : undefined,
       );
-      PUZZLE_DEBUG_LOGS &&
-        logger.debug("Generated puzzle:", {
-          fen: puzzle.fen,
-          rating: puzzle.rating,
-          moves: puzzle.moves,
-        });
       addPuzzle(puzzle);
-    } catch (error) {
-      logger.error("Failed to generate puzzle:", error);
-    }
+    } catch {}
   };
 
   const calculateProgressiveRange = (): [number, number] => {
@@ -141,21 +117,11 @@ function Puzzles({ id }: { id: string }) {
     min = Math.max(minRating, Math.min(min, maxRating));
     max = Math.max(minRating, Math.min(max, maxRating));
 
-    PUZZLE_DEBUG_LOGS &&
-      logger.debug("Adaptive range calculation:", {
-        playerRating,
-        recentResults: completedResults,
-        originalRange: range,
-        clampedRange: [min, max],
-        dbBounds: [minRating, maxRating],
-      });
-
     setRatingRange([min, max]);
     return [min, max];
   };
 
   const handleClearSession = () => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Clearing puzzle session");
     clearSession();
     if (selectedDb) {
       clearPuzzleCache(selectedDb);
@@ -169,7 +135,6 @@ function Puzzles({ id }: { id: string }) {
   };
 
   const handleDatabaseChange = (value: string | null) => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Database changed:", value);
     setSelectedDb(value);
     // Reset filters when database changes
     setThemes([]);
@@ -194,29 +159,26 @@ function Puzzles({ id }: { id: string }) {
         labels: { confirm: t("common.remove"), cancel: t("common.cancel") },
         confirmProps: { color: "red" },
         onConfirm: async () => {
-          // Actualización optimista: remover el puzzle de la lista inmediatamente
+          // Optimistic update: remove the puzzle database from the list immediately
           setPuzzleDbs((prev) => prev.filter((db) => db.path !== dbPath));
-          // Si el puzzle eliminado era el seleccionado, limpiar la selección
+          // If the deleted puzzle database was selected, clear the selection
           if (selectedDb === dbPath) {
             setSelectedDb(null);
           }
-          // Eliminar el archivo en segundo plano
+          // Delete the file in the background
           commands.deleteDatabase(dbPath).catch((error) => {
-            logger.error("Failed to delete puzzle database:", error);
-            // Si falla, recargar la lista para restaurar el estado
+            // If it fails, reload the list to restore state
             getPuzzleDatabases().then((updatedPuzzleDbs) => {
               setPuzzleDbs(updatedPuzzleDbs);
             });
           });
-          // Recargar la lista en segundo plano para sincronizar
+          // Reload the list in the background to sync
           getPuzzleDatabases()
             .then((updatedPuzzleDbs) => {
               setPuzzleDbs(updatedPuzzleDbs);
             })
-            .catch((error) => {
-              logger.error("Failed to reload puzzle databases:", error);
-            });
-          // Notificar a otros componentes
+            .catch(() => {});
+          // Notify other components
           window.dispatchEvent(new Event("puzzles:updated"));
         },
       });
@@ -239,8 +201,6 @@ function Puzzles({ id }: { id: string }) {
 
     const loadDatabaseInfo = async () => {
       try {
-        PUZZLE_DEBUG_LOGS && logger.debug("Loading database info for:", selectedDb);
-        
         // First verify the file exists before attempting to load info
         const { exists } = await import("@tauri-apps/plugin-fs");
         const { appDataDir, resolve } = await import("@tauri-apps/api/path");
@@ -255,7 +215,6 @@ function Puzzles({ id }: { id: string }) {
 
         const fileExists = await exists(dbPath);
         if (!fileExists) {
-          PUZZLE_DEBUG_LOGS && logger.debug("Database file does not exist yet:", dbPath);
           setHasThemes(false);
           setHasOpeningTags(false);
           setThemesOptions([]);
@@ -275,10 +234,8 @@ function Puzzles({ id }: { id: string }) {
 
         if (cancelled) return;
 
-        PUZZLE_DEBUG_LOGS && logger.debug("Columns result:", columnsResult);
         if (columnsResult.status === "ok") {
           const [hasThemesCol, hasOpeningTagsCol] = columnsResult.data;
-          PUZZLE_DEBUG_LOGS && logger.debug("Has themes:", hasThemesCol, "Has opening tags:", hasOpeningTagsCol);
           setHasThemes(hasThemesCol);
           setHasOpeningTags(hasOpeningTagsCol);
 
@@ -294,7 +251,6 @@ function Puzzles({ id }: { id: string }) {
           if (cancelled) return;
 
           if (hasThemesCol && themesResult.status === "ok") {
-            PUZZLE_DEBUG_LOGS && logger.debug("Themes groups count:", themesResult.data.length);
             // Backend returns ThemeGroup[] with group and items, convert to format for MultiSelect
             const themesData = themesResult.data as unknown as Array<{ group: string; items: Array<{ value: string; label: string }> }>;
             setThemesOptions(
@@ -311,7 +267,6 @@ function Puzzles({ id }: { id: string }) {
           }
 
           if (hasOpeningTagsCol && tagsResult.status === "ok") {
-            PUZZLE_DEBUG_LOGS && logger.debug("Opening tags options count:", tagsResult.data.length);
             // Backend returns OpeningTagOption[] with value and label, convert to format for MultiSelect
             const tagsData = tagsResult.data as unknown as Array<{ value: string; label: string }>;
             setOpeningTagsOptions(
@@ -325,7 +280,6 @@ function Puzzles({ id }: { id: string }) {
           }
         } else {
           // Database doesn't exist or is empty - silently handle this
-          PUZZLE_DEBUG_LOGS && logger.debug("Columns check failed (database may not be installed):", columnsResult.error);
           setHasThemes(false);
           setHasOpeningTags(false);
           setThemesOptions([]);
@@ -333,11 +287,6 @@ function Puzzles({ id }: { id: string }) {
         }
       } catch (error) {
         if (!cancelled) {
-          // Only log non-expected errors (file not found/empty are expected if DB not installed)
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          if (!errorMsg.includes("does not exist") && !errorMsg.includes("is empty")) {
-            logger.error("Failed to load database column info:", error);
-          }
           setHasThemes(false);
           setHasOpeningTags(false);
           setThemesOptions([]);

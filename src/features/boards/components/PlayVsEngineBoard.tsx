@@ -24,7 +24,6 @@ import { activeTabAtom, currentGameStateAtom, currentPlayersAtom, tabsAtom } fro
 import { getMainLine, getOpening, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
-import { debugNavLog } from "@/utils/debugNav";
 import type { TreeNode } from "@/utils/treeReducer";
 import { createFullLayout, DEFAULT_MOSAIC_LAYOUT } from "../constants";
 import BoardGame, { useClockTimer } from "./BoardGame";
@@ -51,11 +50,6 @@ function PlayVsEngineBoardContent() {
   const boardRef = useRef<HTMLDivElement | null>(null);
 
   const store = useContext(TreeStateContext)!;
-
-  useEffect(() => {
-    debugNavLog("play-vs-engine:mount", { activeTab, tabs: tabs.length });
-    return () => debugNavLog("play-vs-engine:unmount");
-  }, [activeTab, tabs.length]);
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
   const headers = useStore(store, (s) => s.headers);

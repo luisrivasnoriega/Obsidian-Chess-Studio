@@ -139,7 +139,6 @@ function BoardVariants() {
             color: "red",
           });
         }
-        console.error("Failed to save file:", error);
       }
     },
     [setCurrentTab, currentTab, documentDir, store, setStoreSave, setTabs, treeBuilderRunning, t],
@@ -461,9 +460,17 @@ function BoardVariants() {
 
             path = [...path, nextIdx];
 
-            if (step.source === "db" && step.total && step.white != null && step.black != null && step.draws != null) {
-              const pct = (n: number) => `${((n / step.total!) * 100).toFixed(1)}%`;
-              const comment = `DB: ${step.total} games | White ${pct(step.white)} Draw ${pct(step.draws)} Black ${pct(step.black)}`;
+            if (
+              step.source === "db" &&
+              typeof step.total === "number" &&
+              step.total > 0 &&
+              step.white != null &&
+              step.black != null &&
+              step.draws != null
+            ) {
+              const total = step.total;
+              const pct = (n: number) => `${((n / total) * 100).toFixed(1)}%`;
+              const comment = `DB: ${total} games | White ${pct(step.white)} Draw ${pct(step.draws)} Black ${pct(step.black)}`;
 
               store.getState().goToMove(path);
               const curState = store.getState();
@@ -566,7 +573,11 @@ function BoardVariants() {
           depth: treeBuilderDepth,
         });
       } finally {
-        unlistenProgress.then((fn) => fn());
+        void unlistenProgress
+          .then((fn) => fn())
+          .catch(() => {
+            // Ignore unlisten errors (e.g. listener already removed)
+          });
       }
 
       if (treeBuilderCancelRef.current) return;
@@ -587,8 +598,6 @@ function BoardVariants() {
           const afterPos = [...store.getState().position];
 
           if (afterPos.length === beforePos.length) {
-            // eslint-disable-next-line no-console
-            console.warn("buildVariantsTree: could not apply line", { moves, startPath });
             continue;
           }
 
@@ -624,12 +633,6 @@ function BoardVariants() {
 
       if (!treeBuilderCancelRef.current) {
         // Update metadata in .info file if this is a variants file
-        console.log("buildVariantsTree completed, checking if should update metadata", {
-          currentTabSourceType: currentTab?.source?.type,
-          currentTabMetadataType: currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : undefined,
-          currentTabPath: currentTab?.source?.type === "file" ? currentTab.source.path : undefined,
-        });
-
         // Check if this is a variants file - either from tab metadata or by checking the .info file
         const isVariantsFile =
           (currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "variants") ||
@@ -643,8 +646,8 @@ function BoardVariants() {
 
           if (await exists(infoPath)) {
             try {
-              const fileMetadata = JSON.parse(await readTextFile(infoPath));
-              isActuallyVariants = fileMetadata.type === "variants";
+              const fileMetadata = JSON.parse(await readTextFile(infoPath)) as unknown;
+              isActuallyVariants = (fileMetadata as any)?.type === "variants";
             } catch {
               // If parsing fails, assume it's not a variants file
             }
@@ -656,8 +659,6 @@ function BoardVariants() {
               const { getOpening } = await import("@/utils/chess");
               const root = store.getState().root;
 
-              console.log("Updating variants metadata", { infoPath, currentTabPath: currentTab.source.path });
-
               let metadata: { type: string; tags: string[] } = {
                 type: "variants",
                 tags: [],
@@ -666,14 +667,14 @@ function BoardVariants() {
               if (await exists(infoPath)) {
                 try {
                   const existingContent = await readTextFile(infoPath);
-                  metadata = JSON.parse(existingContent);
-                  console.log("Loaded existing metadata", metadata);
+                  const parsed = JSON.parse(existingContent) as any;
+                  metadata = {
+                    type: typeof parsed?.type === "string" ? parsed.type : "variants",
+                    tags: Array.isArray(parsed?.tags) ? parsed.tags.filter((t: unknown): t is string => typeof t === "string") : [],
+                  };
                 } catch (parseError) {
-                  console.error("Failed to parse existing metadata", parseError);
                   // If parsing fails, use default
                 }
-              } else {
-                console.log("Info file does not exist, will create new one");
               }
 
               // Use the requested depth from the modal (not the calculated tree depth)
@@ -682,11 +683,9 @@ function BoardVariants() {
               // Use the start FEN and opening (where build variants started)
               // Use the stored startFenForMetadata from when build started
               const startFen = startFenForMetadata;
-              console.log("Metadata info", { requestedDepth, startFen, rootFen: root.fen, startPath });
 
               // Get opening from the start position (where build variants began)
               const opening = await getOpening(root, startPath);
-              console.log("Opening from start position", opening);
 
               // Get database info - format: "local -nombre-" or "lichess"
               const databaseName =
@@ -700,7 +699,6 @@ function BoardVariants() {
               const engineName = selectedEngine?.name || null;
               const engineMs = treeBuilderEngineMs;
               const variantsCount = res?.lines?.length || 0;
-              console.log("Database and engine", { databaseName, engineName, engineMs, variantsCount, dbType });
 
               // Update tags - remove old metadata tags
               metadata.tags = (metadata.tags || []).filter(
@@ -745,21 +743,10 @@ function BoardVariants() {
               }
 
               const metadataJson = JSON.stringify(metadata, null, 2);
-              console.log("Writing metadata", { infoPath, metadata, metadataJson });
               await writeTextFile(infoPath, metadataJson);
-              console.log("Metadata written successfully");
             } catch (error) {
-              console.error("Failed to update variants metadata:", error);
             }
-          } else {
-            console.log("File exists but is not a variants file according to .info");
           }
-        } else {
-          console.log("Skipping metadata update - not a file tab or no path", {
-            sourceType: currentTab?.source?.type,
-            metadataType: currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : undefined,
-            path: currentTab?.source?.type === "file" ? currentTab.source.path : undefined,
-          });
         }
 
         notifications.show({
@@ -779,9 +766,6 @@ function BoardVariants() {
               : error && typeof error === "object"
                 ? JSON.stringify(error)
                 : t("errors.unknownError");
-
-      // eslint-disable-next-line no-console
-      console.error("buildVariantsTree failed", error);
 
       notifications.show({
         title: t("common.error"),
@@ -810,10 +794,6 @@ function BoardVariants() {
     treeBuilderMode,
     treeBuilderRunning,
     currentTab,
-    dbType,
-    localOptions.path,
-    referenceDatabase,
-    selectedEngine,
   ]);
 
   return (

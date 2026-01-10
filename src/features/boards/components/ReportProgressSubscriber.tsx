@@ -15,7 +15,7 @@ function ReportProgressSubscriber({ id }: Props) {
   const lastRef = useRef<{ t: number; p: number }>({ t: 0, p: -1 });
 
   useEffect(() => {
-    const unlisten = events.reportProgress.listen(async ({ payload }) => {
+    const unlisten = events.reportProgress.listen(({ payload }) => {
       if (payload.id !== id) return;
       if (payload.finished) {
         setInProgress(false);
@@ -32,7 +32,11 @@ function ReportProgressSubscriber({ id }: Props) {
       }
     });
     return () => {
-      unlisten.then((f) => f());
+      void unlisten
+        .then((f) => f())
+        .catch(() => {
+          // Ignore unlisten errors (e.g. already removed)
+        });
     };
   }, [id, setCompleted, setInProgress, setProgress]);
 

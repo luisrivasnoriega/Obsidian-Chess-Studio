@@ -56,7 +56,7 @@ export const PuzzleControls = ({
 
     createTab({
       tab: {
-        name: "Puzzle Analysis",
+        name: t("features.puzzle.analysisTabName"),
         type: "analysis",
       },
       setTabs,
@@ -81,8 +81,10 @@ export const PuzzleControls = ({
     for (let i = 0; i < currentPuzzle.moves.length; i++) {
       if (!isShowingSolutionRef.current) break;
 
+      const parsed = parseUci(currentPuzzle.moves[i]);
+      if (!parsed) break;
       makeMove({
-        payload: parseUci(currentPuzzle.moves[i])!,
+        payload: parsed,
         mainline: true,
       });
       await new Promise((r) => setTimeout(r, 500));

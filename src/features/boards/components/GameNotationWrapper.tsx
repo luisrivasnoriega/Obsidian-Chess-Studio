@@ -7,7 +7,8 @@ import MoveControls from "@/components/MoveControls";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeTabAtom, currentTabAtom } from "@/state/atoms";
+import { currentTabAtom } from "@/state/atoms";
+import { useSimulatedInit } from "./hooks/useSimulatedInit";
 
 interface GameNotationWrapperProps {
   topBar?: boolean;
@@ -30,8 +31,6 @@ function GameNotationWrapper({
 }: GameNotationWrapperProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [initializationError, setInitializationError] = useState<Error | null>(null);
   const currentTab = useAtomValue(currentTabAtom);
   const [initialVariationState, setInitialVariationState] = useState<"variations" | "repertoire" | "report">("report");
 
@@ -61,32 +60,12 @@ function GameNotationWrapper({
     }
   }, [currentTab?.value]);
 
-  // Handle analysis panel initialization
-  useEffect(() => {
-    const initializeAnalysis = async () => {
-      try {
-        setIsInitializing(true);
-        setInitializationError(null);
-
-        // Simulate initialization time for smooth UX
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        setIsInitializing(false);
-      } catch (error) {
-        setInitializationError(error as Error);
-        setIsInitializing(false);
-      }
-    };
-
-    initializeAnalysis();
-  }, []);
+  const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
 
   // Error handling for analysis panel initialization
   const handleRetry = useCallback(() => {
-    setInitializationError(null);
-    setIsInitializing(true);
-    onRetry?.();
-  }, [onRetry]);
+    retry();
+  }, [retry]);
 
   // Calculate responsive positioning
   const positioning = useMemo(() => {

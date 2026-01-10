@@ -1418,6 +1418,7 @@
                                     "inOrder":  "In Order",
                                     "newPuzzle":  "New Puzzle",
                                     "analyzePosition":  "Analyze Position",
+                                    "analysisTabName":  "Puzzle Analysis",
                                     "clearSession":  "Clear Session",
                                     "showingSolution":  "Showing Solution",
                                     "viewSolution":  "View Solution",

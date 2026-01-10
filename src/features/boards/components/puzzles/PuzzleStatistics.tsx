@@ -1,11 +1,9 @@
 import { Badge, Group, Text } from "@mantine/core";
 import { useAtom } from "jotai";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { hidePuzzleRatingAtom, maxPuzzlePlayerRatingAtom, puzzlePlayerRatingAtom } from "@/state/atoms";
-import { logger } from "@/utils/logger";
 import type { Puzzle } from "@/utils/puzzles";
-import { PUZZLE_DEBUG_LOGS } from "@/utils/puzzles";
 
 interface PuzzleStatisticsProps {
   currentPuzzle?: Puzzle;
@@ -17,22 +15,30 @@ export const PuzzleStatistics = ({ currentPuzzle }: PuzzleStatisticsProps) => {
   const [playerRating] = useAtom(puzzlePlayerRatingAtom);
   const [maxPlayerRating, setMaxPlayerRating] = useAtom(maxPuzzlePlayerRatingAtom);
   const [showNewMax, setShowNewMax] = useState(false);
+  const hideNewMaxTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const displayRating = currentPuzzle?.completion === "incomplete" && hideRating ? "?" : currentPuzzle?.rating;
 
   // Check for new max rating
   useEffect(() => {
+    if (hideNewMaxTimeoutRef.current) {
+      clearTimeout(hideNewMaxTimeoutRef.current);
+      hideNewMaxTimeoutRef.current = null;
+    }
     if (playerRating > maxPlayerRating) {
-      PUZZLE_DEBUG_LOGS &&
-        logger.debug("New max rating achieved:", {
-          oldMax: Math.round(maxPlayerRating),
-          newMax: Math.round(playerRating),
-          improvement: Math.round(playerRating - maxPlayerRating),
-        });
       setMaxPlayerRating(playerRating);
       setShowNewMax(true);
-      setTimeout(() => setShowNewMax(false), 5000);
+      hideNewMaxTimeoutRef.current = setTimeout(() => {
+        setShowNewMax(false);
+        hideNewMaxTimeoutRef.current = null;
+      }, 5000);
     }
+    return () => {
+      if (hideNewMaxTimeoutRef.current) {
+        clearTimeout(hideNewMaxTimeoutRef.current);
+        hideNewMaxTimeoutRef.current = null;
+      }
+    };
   }, [playerRating, maxPlayerRating, setMaxPlayerRating]);
 
   return (
