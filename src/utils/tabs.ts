@@ -8,8 +8,9 @@ import type { TreeStoreState } from "@/state/store/tree";
 import { createFile, getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
 import { setTabState } from "@/utils/tabStateStorage";
 import { unwrap } from "@/utils/unwrap";
-import { getMoveText, getPGN, getPGNFromReportView, parsePGN } from "./chess";
+import { getMoveText, getPGN, getPGNFromReportView, getOpening, parsePGN } from "./chess";
 import { formatDateToPGN } from "./format";
+import { getTreeStats } from "./repertoire";
 import type { GameHeaders, TreeNode, TreeState } from "./treeReducer";
 
 const dbGameMetadataSchema = z.object({
@@ -173,11 +174,15 @@ export async function saveToFile({
   tab,
   setCurrentTab,
   store,
+  setTabs,
+  isVariantsFile = false,
 }: {
   dir: string;
   tab: Tab | undefined;
   setCurrentTab: React.Dispatch<React.SetStateAction<Tab>>;
   store: StoreApi<TreeStoreState>;
+  setTabs?: React.Dispatch<React.SetStateAction<Tab[]>>;
+  isVariantsFile?: boolean;
 }) {
   let filePath: string;
   if (tab?.source?.type === "file" && !isTempImportFile(tab?.source?.path)) {
@@ -206,11 +211,28 @@ export async function saveToFile({
         dir: dir,
       });
     }
+    // If this is a variants file, create the .info file with type "variants"
+    if (isVariantsFile) {
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const infoPath = filePath.replace(".pgn", ".info");
+      await writeTextFile(
+        infoPath,
+        JSON.stringify({
+          type: "variants",
+          tags: [],
+        }),
+      );
+    }
+
     setCurrentTab((prev) => {
       return {
         ...prev,
         source: {
-          ...(prev.source ?? { type: "file", numGames: 1, metadata: { type: "game", tags: [] } }),
+          ...(prev.source ?? {
+            type: "file",
+            numGames: 1,
+            metadata: isVariantsFile ? { type: "variants", tags: [] } : { type: "game", tags: [] },
+          }),
           name: fileName,
           path: filePath,
           lastModified: Date.now(),
@@ -230,9 +252,24 @@ export async function saveToFile({
     })}\n\n`,
   );
   store.getState().save();
+
+  // For variants files, update tab name (but not metadata - that's done in buildVariantsTree)
+  const shouldUpdateTabName =
+    isVariantsFile || (tab?.source?.type === "file" && tab.source.metadata?.type === "variants");
+  
+  if (shouldUpdateTabName && setTabs && tab.value) {
+    const fileName = await getFileNameWithoutExtension(filePath);
+    setTabs((prev) =>
+      prev.map((t) => (t.value === tab.value ? { ...t, name: fileName } : t)),
+    );
+  }
 }
 
-export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
+export async function saveTab(
+  tab: Tab,
+  store: StoreApi<TreeStoreState>,
+  setTabs?: React.Dispatch<React.SetStateAction<Tab[]>>,
+) {
   if (tab.source?.type === "file") {
     // Generate PGN from the report view structure (matches what's displayed in the report view)
     const pgn = `${getPGNFromReportView(store.getState().root, {
@@ -244,6 +281,17 @@ export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
     })}\n\n`;
 
     await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn);
+
+    // For variants files, update tab name only
+    // Metadata (opening, fen, depth, database, engine, etc.) is updated in buildVariantsTree
+    if (tab.source.metadata?.type === "variants") {
+      const fileName = tab.source.name;
+      if (setTabs) {
+        setTabs((prev) =>
+          prev.map((t) => (t.value === tab.value ? { ...t, name: fileName } : t)),
+        );
+      }
+    }
   } else if (tab.source?.type === "db") {
     const headers = store.getState().headers;
     // Generate PGN from the report view structure (matches what's displayed in the report view)

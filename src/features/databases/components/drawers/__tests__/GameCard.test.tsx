@@ -54,7 +54,7 @@ describe("GameCard", () => {
       id: 1,
       white: "Player1",
       black: "Player2",
-      result: "1-0",
+      result: "1-0" as const,
       date: "2024.01.01",
       site: "Lichess",
       event: "Rated Blitz game",

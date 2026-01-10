@@ -151,6 +151,12 @@ function EngineListener({
 
   useEffect(() => {
     if (!settings.enabled) return;
+    
+    // Skip if this is the variants-builder-backend tab (used during build variants)
+    if (activeTab && activeTab.includes("variants-builder")) {
+      return;
+    }
+    
     const unlisten = events.bestMovesPayload.listen(({ payload }) => {
       const ev = payload.bestLines;
       if (
@@ -159,7 +165,9 @@ function EngineListener({
         payload.fen === searchingFen &&
         equal(payload.moves, searchingMoves) &&
         settings.enabled &&
-        !isGameOver
+        !isGameOver &&
+        // Skip events from variants-builder-backend tab
+        payload.tab !== "variants-builder-backend"
       ) {
         // Throttle UI updates to keep analysis smooth (avoid dozens of renders/sec)
         pendingRef.current = { ev, progress: payload.progress };
@@ -207,6 +215,14 @@ function EngineListener({
 
   useThrottledEffect(
     () => {
+      // Skip if this is the variants-builder-backend tab (used during build variants)
+      if (activeTab && activeTab.includes("variants-builder")) {
+        if (engine.type === "local") {
+          stopEngine(engine, activeTab);
+        }
+        return;
+      }
+
       if (settings.enabled) {
         if (isGameOver) {
           if (engine.type === "local") {

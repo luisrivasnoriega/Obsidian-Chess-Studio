@@ -6,6 +6,7 @@ import {
   IconCpu,
   IconDatabase,
   IconFiles,
+  IconGitBranch,
   IconKeyboard,
   IconLayoutDashboard,
   IconMenu2,
@@ -88,6 +89,7 @@ const secondaryLinksData = [
   { icon: IconDatabase, label: "databases", url: "/databases" },
   { icon: IconCpu, label: "engines", url: "/engines" },
   { icon: IconFiles, label: "files", url: "/files" },
+  { icon: IconGitBranch, label: "variants", url: "/variants" },
 ];
 
 // Sección terciaria (configuración/avanzado)

@@ -24,7 +24,7 @@ vi.mock("@mantine/form", async (importOriginal) => {
   return {
     ...actual,
     useForm: () => ({
-      values: { name: "", path: "", type: "local" as const },
+      values: { name: "", version: "", path: "", type: "local" as const },
       setFieldValue: vi.fn(),
       getInputProps: (name: string) => ({ name, value: "" }),
       onSubmit: vi.fn(),
@@ -54,6 +54,7 @@ describe("EngineForm", () => {
     const form = useForm({
       initialValues: {
         name: "",
+        version: "",
         path: "",
         type: "local" as const,
       },

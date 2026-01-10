@@ -32,12 +32,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 describe("FideInfo", () => {
   test("renders when opened", () => {
-    render(<FideInfo opened={true} onClose={vi.fn()} name="Test Player" />);
+    render(<FideInfo opened={true} setOpened={vi.fn()} name="Test Player" />);
     expect(document.body).toBeTruthy();
   });
 
   test("does not render when closed", () => {
-    render(<FideInfo opened={false} onClose={vi.fn()} name="Test Player" />);
+    render(<FideInfo opened={false} setOpened={vi.fn()} name="Test Player" />);
     expect(document.body).toBeTruthy();
   });
 });

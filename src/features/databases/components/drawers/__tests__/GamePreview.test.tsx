@@ -54,7 +54,7 @@ vi.mock("zustand", () => ({
 
 describe("GamePreview", () => {
   test("renders without crashing", () => {
-    render(<GamePreview gameId={1} file="/test.db" />);
+    render(<GamePreview pgn="1. e4 e5 2. Nf3" />);
     expect(document.body).toBeTruthy();
   });
 });

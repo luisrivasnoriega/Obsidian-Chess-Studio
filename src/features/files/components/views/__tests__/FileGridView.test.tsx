@@ -51,7 +51,17 @@ vi.mock("@/utils/unwrap", () => ({
 
 describe("FileGridView", () => {
   test("renders without crashing", () => {
-    render(<FileGridView entries={[]} />);
+    render(
+      <FileGridView
+        files={[]}
+        isLoading={false}
+        selectedFile={null}
+        setSelectedFile={vi.fn()}
+        search=""
+        filter=""
+        gridCols={3}
+      />
+    );
     expect(document.body).toBeTruthy();
   });
 });

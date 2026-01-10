@@ -20,9 +20,9 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("FavoriteGamesTab", () => {
-  const mockOnAnalyzeLocal = vi.fn();
-  const mockOnAnalyzeChessCom = vi.fn();
-  const mockOnAnalyzeLichess = vi.fn();
+  const mockOnAnalyzeLocalGame = vi.fn();
+  const mockOnAnalyzeChessComGame = vi.fn();
+  const mockOnAnalyzeLichessGame = vi.fn();
   const mockOnToggleFavoriteLocal = vi.fn();
   const mockOnToggleFavoriteChessCom = vi.fn();
   const mockOnToggleFavoriteLichess = vi.fn();
@@ -34,13 +34,14 @@ describe("FavoriteGamesTab", () => {
         localGames={[]}
         chessComGames={[]}
         lichessGames={[]}
-        onAnalyzeLocal={mockOnAnalyzeLocal}
-        onAnalyzeChessCom={mockOnAnalyzeChessCom}
-        onAnalyzeLichess={mockOnAnalyzeLichess}
+        chessComUsernames={[]}
+        lichessUsernames={[]}
+        onAnalyzeLocalGame={mockOnAnalyzeLocalGame}
+        onAnalyzeChessComGame={mockOnAnalyzeChessComGame}
+        onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
         onToggleFavoriteLocal={mockOnToggleFavoriteLocal}
         onToggleFavoriteChessCom={mockOnToggleFavoriteChessCom}
         onToggleFavoriteLichess={mockOnToggleFavoriteLichess}
-        limit={10}
       />
     );
     expect(document.body).toBeTruthy();

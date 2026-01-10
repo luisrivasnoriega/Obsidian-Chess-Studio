@@ -28,6 +28,7 @@ import {
   lichessOptionsAtom,
   masterOptionsAtom,
   referenceDbAtom,
+  tabsAtom,
   tabEngineSettingsFamily,
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
@@ -55,6 +56,7 @@ function BoardVariants() {
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
   const [viewPawnStructure, setViewPawnStructure] = useState(false);
   const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
+  const [tabs, setTabs] = useAtom(tabsAtom);
   const autoSave = useAtomValue(autoSaveAtom);
   const { data: dirs } = useQuery({ queryKey: ["dirs"], queryFn: loadDirectories, staleTime: Infinity });
   const documentDir = dirs?.documentDir ?? null;
@@ -62,6 +64,9 @@ function BoardVariants() {
   const activeTab = useAtomValue(activeTabAtom);
 
   const store = useContext(TreeStateContext)!;
+
+  // Declare treeBuilderRunning early so it can be used in useDebouncedAutoSave
+  const [treeBuilderRunning, setTreeBuilderRunning] = useState(false);
 
   const dirty = useStore(store, (s) => s.dirty);
 
@@ -80,13 +85,18 @@ function BoardVariants() {
 
   const saveFile = useCallback(
     async (showNotification = true) => {
+      // Don't save during build variants
+      if (treeBuilderRunning) {
+        return;
+      }
+
       try {
         if (
           currentTab?.source != null &&
           currentTab?.source?.type === "file" &&
           !isTempImportFile(currentTab?.source?.path)
         ) {
-          await saveTab(currentTab, store);
+          await saveTab(currentTab, store, setTabs);
           setStoreSave();
           if (showNotification) {
             notifications.show({
@@ -109,6 +119,8 @@ function BoardVariants() {
             setCurrentTab,
             tab: currentTab,
             store,
+            setTabs,
+            isVariantsFile: true,
           });
           if (showNotification) {
             notifications.show({
@@ -118,15 +130,19 @@ function BoardVariants() {
             });
           }
         }
-      } catch {
-        notifications.show({
-          title: t("common.error"),
-          message: t("common.failedToSaveFile"),
-          color: "red",
-        });
+      } catch (error) {
+        // Only show error if not during build variants
+        if (!treeBuilderRunning && showNotification) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("common.failedToSaveFile"),
+            color: "red",
+          });
+        }
+        console.error("Failed to save file:", error);
       }
     },
-    [setCurrentTab, currentTab, documentDir, store, setStoreSave, t],
+    [setCurrentTab, currentTab, documentDir, store, setStoreSave, setTabs, treeBuilderRunning, t],
   );
 
   // Generate puzzles from variants
@@ -305,9 +321,10 @@ function BoardVariants() {
     }
   }, [currentTab, setStoreState]);
 
+  // Disable auto-save during build variants to avoid errors
   useDebouncedAutoSave({
     store,
-    enabled: autoSave,
+    enabled: autoSave && !treeBuilderRunning,
     isFileTab: currentTab?.source?.type === "file",
     save: () => saveFile(false),
   });
@@ -399,7 +416,6 @@ function BoardVariants() {
   const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
   const [treeBuilderOpened, setTreeBuilderOpened] = useState(false);
-  const [treeBuilderRunning, setTreeBuilderRunning] = useState(false);
   const [treeBuilderMode, setTreeBuilderMode] = useState<"engine" | "winrate">("engine");
   const [treeBuilderDepth, setTreeBuilderDepth] = useState(8);
   const [treeBuilderCoverage, setTreeBuilderCoverage] = useState(90);
@@ -468,6 +484,9 @@ function BoardVariants() {
       if (!startNode?.fen) {
         throw new Error(t("errors.missingPosition"));
       }
+
+      // Store the start node info for metadata update at the end
+      const startFenForMetadata = startNode.fen;
 
       const attachDbCommentsForLine = (lineMoves: Array<{
         value: string;
@@ -664,6 +683,145 @@ function BoardVariants() {
       }
 
       if (!treeBuilderCancelRef.current) {
+        // Update metadata in .info file if this is a variants file
+        console.log("buildVariantsTree completed, checking if should update metadata", {
+          currentTabSourceType: currentTab?.source?.type,
+          currentTabMetadataType: currentTab?.source?.metadata?.type,
+          currentTabPath: currentTab?.source?.path,
+        });
+
+        // Check if this is a variants file - either from tab metadata or by checking the .info file
+        const isVariantsFile =
+          (currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "variants") ||
+          (currentTab?.source?.type === "file" && currentTab.source.path);
+
+        if (isVariantsFile && currentTab?.source?.type === "file" && currentTab.source.path) {
+          // Verify it's actually a variants file by checking the .info file
+          const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
+          const infoPath = currentTab.source.path.replace(".pgn", ".info");
+          let isActuallyVariants = false;
+
+          if (await exists(infoPath)) {
+            try {
+              const fileMetadata = JSON.parse(await readTextFile(infoPath));
+              isActuallyVariants = fileMetadata.type === "variants";
+            } catch {
+              // If parsing fails, assume it's not a variants file
+            }
+          }
+
+          if (isActuallyVariants) {
+            try {
+              const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+              const { getOpening } = await import("@/utils/chess");
+              const root = store.getState().root;
+
+              console.log("Updating variants metadata", { infoPath, currentTabPath: currentTab.source.path });
+
+              let metadata: { type: string; tags: string[] } = {
+                type: "variants",
+                tags: [],
+              };
+
+              if (await exists(infoPath)) {
+                try {
+                  const existingContent = await readTextFile(infoPath);
+                  metadata = JSON.parse(existingContent);
+                  console.log("Loaded existing metadata", metadata);
+                } catch (parseError) {
+                  console.error("Failed to parse existing metadata", parseError);
+                  // If parsing fails, use default
+                }
+              } else {
+                console.log("Info file does not exist, will create new one");
+              }
+
+              // Use the requested depth from the modal (not the calculated tree depth)
+              const requestedDepth = treeBuilderDepth;
+              
+              // Use the start FEN and opening (where build variants started)
+              // Use the stored startFenForMetadata from when build started
+              const startFen = startFenForMetadata;
+              console.log("Metadata info", { requestedDepth, startFen, rootFen: root.fen, startPath });
+
+              // Get opening from the start position (where build variants began)
+              const opening = await getOpening(root, startPath);
+              console.log("Opening from start position", opening);
+
+              // Get database info - format: "local -nombre-" or "lichess"
+              const databaseName =
+                dbType === "local" && localOptions.path
+                  ? `local -${localOptions.path.split(/[/\\]/).pop()?.replace(/\.db3?$/i, "") || "unknown"}`
+                  : dbType === "local" && referenceDatabase
+                    ? `local -${referenceDatabase.split(/[/\\]/).pop()?.replace(/\.db3?$/i, "") || "unknown"}`
+                    : dbType === "lch_all" || dbType === "lch_master"
+                      ? "lichess"
+                      : null;
+              const engineName = selectedEngine?.name || null;
+              const engineMs = treeBuilderEngineMs;
+              const variantsCount = res?.lines?.length || 0;
+              console.log("Database and engine", { databaseName, engineName, engineMs, variantsCount, dbType });
+
+              // Update tags - remove old metadata tags
+              metadata.tags = (metadata.tags || []).filter(
+                (tag) =>
+                  !tag.startsWith("opening:") &&
+                  !tag.startsWith("fen:") &&
+                  !tag.startsWith("depth:") &&
+                  !tag.startsWith("database:") &&
+                  !tag.startsWith("engine:") &&
+                  !tag.startsWith("engineMs:") &&
+                  !tag.startsWith("variantsCount:"),
+              );
+
+              // Add new metadata tags
+              if (opening) {
+                metadata.tags.push(`opening:${opening}`);
+              }
+              if (startFen) {
+                metadata.tags.push(`fen:${startFen}`);
+              }
+              // Use requested depth from modal
+              if (requestedDepth > 0) {
+                metadata.tags.push(`depth:${requestedDepth}`);
+              }
+              if (databaseName) {
+                metadata.tags.push(`database:${databaseName}`);
+              }
+              if (engineName) {
+                metadata.tags.push(`engine:${engineName}`);
+              }
+              if (engineMs > 0) {
+                metadata.tags.push(`engineMs:${engineMs}`);
+              }
+              if (variantsCount > 0) {
+                metadata.tags.push(`variantsCount:${variantsCount}`);
+              }
+
+              // Ensure metadata has correct structure
+              metadata.type = "variants";
+              if (!Array.isArray(metadata.tags)) {
+                metadata.tags = [];
+              }
+
+              const metadataJson = JSON.stringify(metadata, null, 2);
+              console.log("Writing metadata", { infoPath, metadata, metadataJson });
+              await writeTextFile(infoPath, metadataJson);
+              console.log("Metadata written successfully");
+            } catch (error) {
+              console.error("Failed to update variants metadata:", error);
+            }
+          } else {
+            console.log("File exists but is not a variants file according to .info");
+          }
+        } else {
+          console.log("Skipping metadata update - not a file tab or no path", {
+            sourceType: currentTab?.source?.type,
+            metadataType: currentTab?.source?.metadata?.type,
+            path: currentTab?.source?.path,
+          });
+        }
+
         notifications.show({
           title: t("common.success"),
           message: t("features.board.variants.treeBuilder.done"),
@@ -711,11 +869,17 @@ function BoardVariants() {
     treeBuilderMinMoves,
     treeBuilderMode,
     treeBuilderRunning,
+    currentTab,
+    dbType,
+    localOptions.path,
+    referenceDatabase,
+    selectedEngine,
   ]);
 
   return (
     <>
-      <EvalListener />
+      {/* Disable EvalListener during build variants to avoid engine event loops */}
+      {!treeBuilderRunning && <EvalListener />}
       {isMobileLayout ? (
         <Box style={{ width: "100%", flex: 1, overflow: "hidden" }}>
           <ResponsiveBoard
@@ -815,8 +979,9 @@ function BoardVariants() {
           <VariantsActions
             treeBuilderRunning={treeBuilderRunning}
             onOpenPuzzle={() => {
-              const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
-              const maxDepth = getMaxPuzzleMoveDepth(store.getState().root, puzzleColor);
+              // Use treeBuilderDepth as the maximum depth for puzzles
+              // This ensures the puzzle depth matches the depth configured in build variants
+              const maxDepth = treeBuilderDepth;
               if (maxDepth < 1) {
                 notifications.show({
                   title: t("common.error"),

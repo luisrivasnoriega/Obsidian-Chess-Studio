@@ -29,6 +29,7 @@ import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
 import { getDatabases, type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
 import { capitalize } from "@/utils/format";
+import { getPuzzleDatabases } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
 const DB_EXTENSIONS = ["pgn", "pgn.zst"];

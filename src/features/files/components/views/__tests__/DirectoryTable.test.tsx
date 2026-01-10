@@ -67,7 +67,17 @@ vi.mock("mantine-contextmenu", () => ({
 
 describe("DirectoryTable", () => {
   test("renders without crashing", () => {
-    render(<DirectoryTable entries={[]} />);
+    render(
+      <DirectoryTable
+        files={[]}
+        isLoading={false}
+        setFiles={vi.fn()}
+        selectedFile={null}
+        setSelectedFile={vi.fn()}
+        search=""
+        filter=""
+      />
+    );
     expect(document.body).toBeTruthy();
   });
 });

@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as VariantsRouteImport } from './routes/variants'
 import { Route as TournamentsRouteImport } from './routes/tournaments'
 import { Route as PuzzlesRouteImport } from './routes/puzzles'
 import { Route as ProfilesRouteImport } from './routes/profiles'
@@ -28,6 +29,11 @@ import { Route as LearnPracticeRouteImport } from './routes/learn/practice'
 import { Route as LearnLessonsRouteImport } from './routes/learn/lessons'
 import { Route as DatabasesDatabaseIdRouteImport } from './routes/databases/$databaseId'
 
+const VariantsRoute = VariantsRouteImport.update({
+  id: '/variants',
+  path: '/variants',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TournamentsRoute = TournamentsRouteImport.update({
   id: '/tournaments',
   path: '/tournaments',
@@ -132,6 +138,7 @@ export interface FileRoutesByFullPath {
   '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
+  '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
   '/learn/lessons': typeof LearnLessonsRoute
   '/learn/practice': typeof LearnPracticeRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
+  '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
   '/learn/lessons': typeof LearnLessonsRoute
   '/learn/practice': typeof LearnPracticeRoute
@@ -171,6 +179,7 @@ export interface FileRoutesById {
   '/profiles': typeof ProfilesRoute
   '/puzzles': typeof PuzzlesRoute
   '/tournaments': typeof TournamentsRoute
+  '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
   '/learn/lessons': typeof LearnLessonsRoute
   '/learn/practice': typeof LearnPracticeRoute
@@ -193,6 +202,7 @@ export interface FileRouteTypes {
     | '/profiles'
     | '/puzzles'
     | '/tournaments'
+    | '/variants'
     | '/databases/$databaseId'
     | '/learn/lessons'
     | '/learn/practice'
@@ -211,6 +221,7 @@ export interface FileRouteTypes {
     | '/profiles'
     | '/puzzles'
     | '/tournaments'
+    | '/variants'
     | '/databases/$databaseId'
     | '/learn/lessons'
     | '/learn/practice'
@@ -231,6 +242,7 @@ export interface FileRouteTypes {
     | '/profiles'
     | '/puzzles'
     | '/tournaments'
+    | '/variants'
     | '/databases/$databaseId'
     | '/learn/lessons'
     | '/learn/practice'
@@ -252,12 +264,20 @@ export interface RootRouteChildren {
   ProfilesRoute: typeof ProfilesRoute
   PuzzlesRoute: typeof PuzzlesRoute
   TournamentsRoute: typeof TournamentsRoute
+  VariantsRoute: typeof VariantsRoute
   DatabasesDatabaseIdRoute: typeof DatabasesDatabaseIdRoute
   DatabasesIndexRoute: typeof DatabasesIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/variants': {
+      id: '/variants'
+      path: '/variants'
+      fullPath: '/variants'
+      preLoaderRoute: typeof VariantsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tournaments': {
       id: '/tournaments'
       path: '/tournaments'
@@ -429,6 +449,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfilesRoute: ProfilesRoute,
   PuzzlesRoute: PuzzlesRoute,
   TournamentsRoute: TournamentsRoute,
+  VariantsRoute: VariantsRoute,
   DatabasesDatabaseIdRoute: DatabasesDatabaseIdRoute,
   DatabasesIndexRoute: DatabasesIndexRoute,
 }

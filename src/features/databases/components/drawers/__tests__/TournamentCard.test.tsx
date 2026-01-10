@@ -60,7 +60,7 @@ vi.mock("zustand", async (importOriginal) => {
 describe("TournamentCard", () => {
   test("renders without crashing", () => {
     const tournament = { id: 1, name: "Test Tournament" };
-    render(<TournamentCard tournament={tournament} file="/test.db" mutate={vi.fn()} />);
+    render(<TournamentCard tournament={tournament} file="/test.db" />);
     expect(document.body).toBeTruthy();
   });
 });

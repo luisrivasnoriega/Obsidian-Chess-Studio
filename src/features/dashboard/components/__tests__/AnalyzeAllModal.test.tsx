@@ -21,15 +21,15 @@ vi.mock("react-i18next", () => ({
 
 describe("AnalyzeAllModal", () => {
   const mockOnClose = vi.fn();
-  const mockOnConfirm = vi.fn();
+  const mockOnAnalyze = vi.fn().mockResolvedValue(undefined);
 
   test("renders when opened", () => {
-    render(<AnalyzeAllModal opened={true} onClose={mockOnClose} onConfirm={mockOnConfirm} />);
+    render(<AnalyzeAllModal opened={true} onClose={mockOnClose} onAnalyze={mockOnAnalyze} gameCount={10} />);
     expect(document.body).toBeTruthy();
   });
 
   test("does not render when closed", () => {
-    render(<AnalyzeAllModal opened={false} onClose={mockOnClose} onConfirm={mockOnConfirm} />);
+    render(<AnalyzeAllModal opened={false} onClose={mockOnClose} onAnalyze={mockOnAnalyze} gameCount={10} />);
     // Modal should not be visible when closed
     expect(document.body).toBeTruthy();
   });

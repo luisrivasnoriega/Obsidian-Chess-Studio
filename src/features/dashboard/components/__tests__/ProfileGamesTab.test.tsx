@@ -20,7 +20,9 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("ProfileGamesTab", () => {
-  const mockOnAnalyze = vi.fn();
+  const mockOnAnalyzeLocalGame = vi.fn();
+  const mockOnAnalyzeChessComGame = vi.fn();
+  const mockOnAnalyzeLichessGame = vi.fn();
   const profileUsernames = ["player1", "player2"];
 
   test("renders without crashing", () => {
@@ -30,9 +32,10 @@ describe("ProfileGamesTab", () => {
         chessComGames={[]}
         lichessGames={[]}
         profileUsernames={profileUsernames}
-        onAnalyze={mockOnAnalyze}
-        limit={10}
-        isLoading={false}
+        onAnalyzeLocalGame={mockOnAnalyzeLocalGame}
+        onAnalyzeChessComGame={mockOnAnalyzeChessComGame}
+        onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
+        isLoadingOnline={false}
       />
     );
     expect(document.body).toBeTruthy();

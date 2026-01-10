@@ -35,6 +35,7 @@ describe("EditEngine", () => {
     const engine = {
       name: "Stockfish",
       type: "local" as const,
+      version: "1.0",
       path: "/stockfish",
       elo: 3000,
     };

@@ -20,11 +20,8 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("CreateTournamentForm", () => {
-  const mockOnSubmit = vi.fn();
-  const mockOnCancel = vi.fn();
-
   test("renders without crashing", () => {
-    render(<CreateTournamentForm onSubmit={mockOnSubmit} onCancel={mockOnCancel} />);
+    render(<CreateTournamentForm lichessToken={null} accountName={null} />);
     expect(document.body).toBeTruthy();
   });
 });

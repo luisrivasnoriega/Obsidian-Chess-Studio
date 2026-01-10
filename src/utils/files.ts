@@ -74,9 +74,12 @@ export async function openFile(
   // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
   const firstGameTree = await parsePGN(games[0]);
 
+  // For variants files, use the file name as the tab name
+  const tabName = fileType === "variants" ? fileName : (getGameName(firstGameTree?.headers) || "Multiple Games");
+
   const tabId = await createTab({
     tab: {
-      name: getGameName(firstGameTree?.headers) || "Multiple Games",
+      name: tabName,
       type: "analysis",
     },
     setTabs,

@@ -37,6 +37,7 @@ describe("EnginesGrid", () => {
       {
         type: "local" as const,
         name: "Test Engine",
+        version: "1.0",
         path: "/test/engine",
       },
     ];

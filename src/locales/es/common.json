@@ -621,13 +621,14 @@
       "databases": "Bases de datos",
       "engines": "Motores",
       "puzzles": "Puzzles",
+      "tournaments": "Torneos",
+      "variants": "Variantes",
       "learn": "Aprender",
       "settings": "Configuración",
       "keyboardShortcuts": "Atajos de teclado",
       "quickPlay": "Jugar rápido",
       "quickAnalyze": "Analizar rápido",
-      "quickPuzzles": "Puzzles rápidos",
-      "tournaments": "Torneos"
+      "quickPuzzles": "Puzzles rápidos"
     },
     "dashboard": {
       "any": "Cualquiera",
@@ -1016,7 +1017,33 @@
           "missingDb": "Selecciona una base de datos local en el panel Database para usar jugadas de la base de datos.",
           "noProgress": "No se pudo avanzar desde esta posición. Revisa las opciones de la base de datos o del motor.",
           "done": "La generación de variantes ha finalizado."
-        }
+        },
+        "title": "Variantes",
+        "name": "Nombre",
+        "opening": "Apertura",
+        "fen": "FEN",
+        "depth": "Profundidad",
+        "database": "Base de datos",
+        "engine": "Motor",
+        "engineMs": "Tiempo del Motor (ms)",
+        "variantsCount": "Variantes",
+        "comments": "Comentarios / Referencias",
+        "createNew": "Crear Nueva",
+        "searchPlaceholder": "Buscar variantes...",
+        "deleteConfirm": "¿Estás seguro de que quieres eliminar esta variante?",
+        "deleted": "Variante eliminada exitosamente",
+        "deleteError": "Error al eliminar la variante",
+        "empty": "No se encontraron variantes. Crea una nueva variante para comenzar.",
+        "noResults": "No hay variantes que coincidan con tus criterios de búsqueda.",
+        "editComments": "Editar Comentarios / Referencias",
+        "commentsDescription": "Agrega comentarios o referencias para esta variante",
+        "commentsPlaceholder": "Ingresa comentarios o referencias...",
+        "commentsSaved": "Comentarios guardados exitosamente",
+        "commentsSaveError": "Error al guardar los comentarios",
+        "nameRequired": "El nombre es obligatorio",
+        "namePlaceholder": "Ingresa el nombre de la variante...",
+        "createError": "Error al crear la variante",
+        "saveComments": "Guardar Comentarios"
       },
       "annotate": {
         "writeHere": "Escribe aquí..."

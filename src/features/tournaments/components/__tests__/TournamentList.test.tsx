@@ -21,7 +21,7 @@ vi.mock("react-i18next", () => ({
 
 describe("TournamentList", () => {
   test("renders without crashing", () => {
-    render(<TournamentList tournaments={[]} />);
+    render(<TournamentList lichessToken={null} accountName={null} />);
     expect(document.body).toBeTruthy();
   });
 });

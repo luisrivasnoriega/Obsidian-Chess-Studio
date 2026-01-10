@@ -6,9 +6,9 @@ import type { SortState } from "@/components/GenericHeader";
 
 describe("useEngineFiltering", () => {
   const engines: Engine[] = [
-    { name: "Stockfish", type: "local", path: "/stockfish", elo: 3000 },
-    { name: "Komodo", type: "local", path: "/komodo", elo: 2800 },
-    { name: "Cloud Engine", type: "cloud", url: "https://api.example.com" },
+    { name: "Stockfish", type: "local", version: "1.0", path: "/stockfish", elo: 3000 },
+    { name: "Komodo", type: "local", version: "1.0", path: "/komodo", elo: 2800 },
+    { name: "Cloud Engine", type: "chessdb", url: "https://api.example.com" },
   ];
 
   test("returns all indices when query is empty", () => {

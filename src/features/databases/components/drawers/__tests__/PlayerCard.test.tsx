@@ -35,7 +35,7 @@ vi.mock("@/utils/unwrap", () => ({
 
 describe("PlayerCard", () => {
   test("renders without crashing", () => {
-    const player = { id: 1, name: "Test Player" };
+    const player = { id: 1, name: "Test Player", elo: null };
     render(<PlayerCard player={player} file="/test.db" />);
     expect(document.body).toBeTruthy();
   });

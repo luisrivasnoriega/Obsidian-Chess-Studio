@@ -20,17 +20,15 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("EngineCard", () => {
-  const mockOnEdit = vi.fn();
-  const mockOnDelete = vi.fn();
-
   test("renders without crashing", () => {
     const engine = {
       name: "Stockfish",
       type: "local" as const,
+      version: "1.0",
       path: "/stockfish",
       elo: 3000,
     };
-    render(<EngineCard engine={engine} onEdit={mockOnEdit} onDelete={mockOnDelete} />);
+    render(<EngineCard engine={engine} />);
     expect(document.body).toBeTruthy();
   });
 });

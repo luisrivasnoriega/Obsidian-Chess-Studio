@@ -23,12 +23,12 @@ describe("PlayerStatsModal", () => {
   const mockOnClose = vi.fn();
 
   test("renders when opened", () => {
-    render(<PlayerStatsModal opened={true} onClose={mockOnClose} playerName="Test Player" />);
+    render(<PlayerStatsModal opened={true} onClose={mockOnClose} result={null} />);
     expect(document.body).toBeTruthy();
   });
 
   test("does not render when closed", () => {
-    render(<PlayerStatsModal opened={false} onClose={mockOnClose} playerName="Test Player" />);
+    render(<PlayerStatsModal opened={false} onClose={mockOnClose} result={null} />);
     expect(document.body).toBeTruthy();
   });
 });

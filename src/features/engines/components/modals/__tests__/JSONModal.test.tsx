@@ -20,10 +20,24 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("JSONModal", () => {
-  const mockOnClose = vi.fn();
+  const mockToggleOpened = vi.fn();
+  const mockSetEngine = vi.fn();
+  const mockEngine = {
+    type: "local" as const,
+    name: "Test Engine",
+    version: "1.0",
+    path: "/test/engine",
+  };
 
   test("renders when opened", () => {
-    render(<JSONModal opened={true} onClose={mockOnClose} data={{ test: "data" }} />);
+    render(
+      <JSONModal
+        opened={true}
+        toggleOpened={mockToggleOpened}
+        engine={mockEngine}
+        setEngine={mockSetEngine}
+      />
+    );
     expect(document.body).toBeTruthy();
   });
 });

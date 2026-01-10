@@ -80,11 +80,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 describe("AddEngine", () => {
-  const mockOnClose = vi.fn();
-  const mockOnAdd = vi.fn();
+  const mockSetOpened = vi.fn();
 
   test("renders when opened", () => {
-    render(<AddEngine opened={true} onClose={mockOnClose} onAdd={mockOnAdd} />);
+    render(<AddEngine opened={true} setOpened={mockSetOpened} />);
     expect(document.body).toBeTruthy();
   });
 });

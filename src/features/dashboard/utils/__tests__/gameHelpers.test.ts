@@ -16,11 +16,13 @@ describe("gameHelpers", () => {
   describe("createLocalGameHeaders", () => {
     test("creates headers with standard FEN when initialFen is not provided", () => {
       const game: GameRecord = {
+        id: "test-id",
         timestamp: Date.now(),
-        white: { name: "White Player" },
-        black: { name: "Black Player" },
+        white: { type: "human", name: "White Player" },
+        black: { type: "human", name: "Black Player" },
         result: "1-0",
         moves: [],
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
       };
       const headers = createLocalGameHeaders(game);
       expect(headers.white).toBe("White Player");
@@ -32,11 +34,13 @@ describe("gameHelpers", () => {
     test("creates headers with custom FEN when initialFen is provided", () => {
       const customFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
       const game: GameRecord = {
+        id: "test-id",
         timestamp: Date.now(),
-        white: { name: "White" },
-        black: { name: "Black" },
+        white: { type: "human", name: "White" },
+        black: { type: "human", name: "Black" },
         result: "1/2-1/2",
         moves: [],
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         initialFen: customFen,
       };
       const headers = createLocalGameHeaders(game);
@@ -114,12 +118,14 @@ describe("gameHelpers", () => {
   describe("createPgnFromLocalGame", () => {
     test("creates complete PGN from local game", () => {
       const game: GameRecord = {
+        id: "test-id",
         timestamp: Date.now(),
-        white: { name: "White" },
-        black: { name: "Black" },
+        white: { type: "human", name: "White" },
+        black: { type: "human", name: "Black" },
         result: "1-0",
         moves: ["e4", "e5", "Nf3"],
         timeControl: "600+0",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
       };
       const pgn = createPgnFromLocalGame(game);
       expect(pgn).toContain("[White \"White\"]");

@@ -38,7 +38,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 describe("CloudEngineSettings", () => {
   test("renders without crashing", () => {
     const mockEngine = {
-      type: "cloud" as const,
+      type: "chessdb" as const,
       name: "Test Engine",
       url: "https://example.com",
     };
