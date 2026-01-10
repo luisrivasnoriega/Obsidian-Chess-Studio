@@ -1060,7 +1060,6 @@ export type Token = { type: "ParenOpen" } | { type: "ParenClose" } | { type: "Co
 export type TournamentQuery = { options: QueryOptions<TournamentSort>; name: string | null }
 export type TournamentSort = "id" | "name"
 export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
-export type TreeNodeDto = { fen: string; san?: string | null; children?: TreeNodeDto[] }
 /**
  * Represents a UCI option definition.
  */

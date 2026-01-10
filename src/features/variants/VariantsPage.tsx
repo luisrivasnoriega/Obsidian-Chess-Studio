@@ -36,19 +36,7 @@ import { createFile, openFile } from "@/utils/files";
 import { notifications } from "@mantine/notifications";
 import { defaultPGN, parsePGN } from "@/utils/chess";
 import { VariantGridView } from "./components/VariantGridView";
-
-type VariantInfo = {
-  name: string;
-  path: string;
-  opening: string | null;
-  fen: string | null;
-  depth: number | null;
-  database: string | null;
-  engine: string | null;
-  engineMs: number | null;
-  variantsCount: number | null;
-  comments: string | null;
-};
+import type { VariantInfo } from "./types";
 
 async function loadVariants(): Promise<VariantInfo[]> {
   const dirs = await loadDirectories();
@@ -92,9 +80,9 @@ async function loadVariants(): Promise<VariantInfo[]> {
       const referencesTag = tags.find((tag) => tag.startsWith("references:"))?.slice("references:".length).trim() || null;
       const comments = commentsTag || referencesTag || null;
 
-      // Fallback to PGN headers if metadata tags don't exist
-      const opening = openingTag || gameTree?.headers?.opening || gameTree?.headers?.["ECO"] || null;
-      const fen = fenTag || gameTree?.headers?.fen || (gameTree?.headers?.["SetUp"] === "1" ? gameTree?.headers?.["FEN"] : null);
+      // Fallback to PGN-derived headers if metadata tags don't exist
+      const opening = openingTag || gameTree?.headers?.eco || null;
+      const fen = fenTag || gameTree?.headers?.fen || null;
 
       variants.push({
         name: file.name,
@@ -201,7 +189,7 @@ export default function VariantsPage() {
         pgn: defaultPGN(),
       });
 
-      console.log("Create file result:", { isOk: result.isOk, isErr: result.isErr, hasError: !!result.error });
+      console.log("Create file result:", { isOk: result.isOk, isErr: result.isErr });
 
       if (result.isOk) {
         console.log("File created successfully:", result.value.path);
@@ -268,7 +256,7 @@ export default function VariantsPage() {
       
       // Remove old comments/references tags
       metadata.tags = (metadata.tags || []).filter(
-        (tag) => !tag.startsWith("comments:") && !tag.startsWith("references:"),
+        (tag: string) => !tag.startsWith("comments:") && !tag.startsWith("references:"),
       );
 
       // Add new comments tag if not empty
@@ -420,7 +408,10 @@ export default function VariantsPage() {
       sortable: true,
       render: (variant: VariantInfo) =>
         variant.fen ? (
-          <Code size="xs" style={{ maxWidth: 300 }} truncate>
+          <Code
+            fz="xs"
+            style={{ maxWidth: 300, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
             {variant.fen}
           </Code>
         ) : (
@@ -590,7 +581,7 @@ export default function VariantsPage() {
           <VariantGridView
             variants={filteredAndSorted}
             isLoading={isLoading}
-            onEdit={handleEdit}
+            onEdit={(variant) => void handleEdit(variant)}
             onDelete={handleDelete}
             onEditComments={handleEditComments}
             gridCols={gridCols}

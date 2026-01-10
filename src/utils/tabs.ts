@@ -257,10 +257,11 @@ export async function saveToFile({
   const shouldUpdateTabName =
     isVariantsFile || (tab?.source?.type === "file" && tab.source.metadata?.type === "variants");
   
-  if (shouldUpdateTabName && setTabs && tab.value) {
+  if (shouldUpdateTabName && setTabs && tab?.value) {
     const fileName = await getFileNameWithoutExtension(filePath);
+    const tabValue = tab.value;
     setTabs((prev) =>
-      prev.map((t) => (t.value === tab.value ? { ...t, name: fileName } : t)),
+      prev.map((t) => (t.value === tabValue ? { ...t, name: fileName } : t)),
     );
   }
 }

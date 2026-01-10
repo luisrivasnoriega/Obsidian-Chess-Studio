@@ -10,19 +10,7 @@ import {
 } from "@mantine/core";
 import { IconEdit, IconEye, IconGitBranch, IconTrash } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
-
-type VariantInfo = {
-  name: string;
-  path: string;
-  opening: string | null;
-  fen: string | null;
-  depth: number | null;
-  database: string | null;
-  engine: string | null;
-  engineMs: number | null;
-  variantsCount: number | null;
-  comments: string | null;
-};
+import type { VariantInfo } from "../types";
 
 interface VariantCardProps {
   variant: VariantInfo;
@@ -103,7 +91,7 @@ export function VariantCard({ variant, isSelected, onEdit, onDelete, onEditComme
             <Text size="xs" fw={500} c="dimmed">
               {t("features.variants.fen", { defaultValue: "FEN" })}:
             </Text>
-            <Code size="xs" style={{ wordBreak: "break-all" }}>
+            <Code fz="xs" style={{ wordBreak: "break-all" }}>
               {variant.fen}
             </Code>
           </Stack>

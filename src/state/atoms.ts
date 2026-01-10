@@ -364,25 +364,31 @@ export const bestMovesFamily = atomFamily(
       const engines = get(loadableEnginesAtom);
       if (!(engines.state === "hasData")) return new Map();
       const bestMoves = new Map<number, { pv: string[]; winChance: number }[]>();
+
+      // Perf: compute the final position once (not once per engine).
+      const [basePos] = positionFromFen(fen);
+      let finalFen = INITIAL_FEN;
+      let finalTurn: "white" | "black" = "white";
+      if (basePos) {
+        for (const move of gameMoves) {
+          const m = parseUci(move);
+          if (!m) break;
+          basePos.play(m);
+        }
+        finalFen = makeFen(basePos.toSetup());
+        finalTurn = basePos.turn;
+      }
+
       let n = 0;
       for (const engine of engines.data.filter((e) => e.loaded)) {
         const engineMoves = get(engineMovesFamily({ tab, engine: engine.name }));
-        const [pos] = positionFromFen(fen);
-        let finalFen = INITIAL_FEN;
-        if (pos) {
-          for (const move of gameMoves) {
-            const m = parseUci(move);
-            pos.play(m!);
-          }
-          finalFen = makeFen(pos.toSetup());
-        }
         const moves = engineMoves.get(`${swapMove(finalFen)}:`) || engineMoves.get(`${fen}:${gameMoves.join(",")}`);
         if (moves && moves.length > 0) {
-          const bestWinChange = getWinChance(normalizeScore(moves[0].score.value, pos?.turn || "white"));
+          const bestWinChange = getWinChance(normalizeScore(moves[0].score.value, finalTurn));
           bestMoves.set(
             n,
             moves.reduce<{ pv: string[]; winChance: number }[]>((acc, m) => {
-              const winChance = getWinChance(normalizeScore(m.score.value, pos?.turn || "white"));
+              const winChance = getWinChance(normalizeScore(m.score.value, finalTurn));
               if (bestWinChange - winChance < 10) {
                 acc.push({ pv: m.uciMoves, winChance });
               }

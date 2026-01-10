@@ -232,45 +232,59 @@ function Board({
     }),
   );
 
-  async function makeMove(move: NormalMove) {
-    if (!pos) return;
-    const san = makeSan(pos, move);
-    if (practicing) {
-      const c = deck.positions.find((c) => c.fen === currentNode.fen);
-      if (!c) {
-        return;
-      }
+  const makeMove = useCallback(
+    async (move: NormalMove) => {
+      if (!pos) return;
+      const san = makeSan(pos, move);
+      if (practicing) {
+        const c = deck.positions.find((c) => c.fen === currentNode.fen);
+        if (!c) {
+          return;
+        }
 
-      let isRecalled = true;
-      if (san !== c?.answer) {
-        isRecalled = false;
-      }
-      const i = deck.positions.indexOf(c);
+        let isRecalled = true;
+        if (san !== c?.answer) {
+          isRecalled = false;
+        }
+        const i = deck.positions.indexOf(c);
 
-      if (!isRecalled) {
-        notifications.show({
-          title: t("common.incorrect"),
-          message: t("features.board.practice.correctMoveWas", { move: c.answer }),
-          color: "red",
-        });
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        goToNext();
+        if (!isRecalled) {
+          notifications.show({
+            title: t("common.incorrect"),
+            message: t("features.board.practice.correctMoveWas", { move: c.answer }),
+            color: "red",
+          });
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          goToNext();
+        } else {
+          storeMakeMove({
+            payload: move,
+          });
+          setPendingMove(null);
+        }
+
+        updateCardPerformance(setDeck, i, c.card, isRecalled ? 4 : 1);
       } else {
         storeMakeMove({
           payload: move,
+          clock: pos.turn === "white" ? whiteTime : blackTime,
         });
         setPendingMove(null);
       }
-
-      updateCardPerformance(setDeck, i, c.card, isRecalled ? 4 : 1);
-    } else {
-      storeMakeMove({
-        payload: move,
-        clock: pos.turn === "white" ? whiteTime : blackTime,
-      });
-      setPendingMove(null);
-    }
-  }
+    },
+    [
+      blackTime,
+      currentNode.fen,
+      deck.positions,
+      goToNext,
+      pos,
+      practicing,
+      setDeck,
+      storeMakeMove,
+      t,
+      whiteTime,
+    ],
+  );
 
   const shapes = useMemo(() => {
     const nextShapes: DrawShape[] = [];
@@ -282,14 +296,12 @@ function Board({
         if (bestWinChance == null) continue;
 
         for (const [variationIndex, { pv, winChance }] of bestMoves.entries()) {
-          const posClone = pos.clone();
           let prevSquare: string | null = null;
 
           for (const [moveIndex, uci] of pv.entries()) {
             const move = parseUci(uci) as NormalMove | undefined;
             if (!move) break;
 
-            posClone.play(move);
             const from = makeSquare(move.from);
             const to = makeSquare(move.to);
             if (!from || !to) break;
@@ -465,6 +477,100 @@ function Board({
   const lastMove =
     currentNode.move && square !== undefined ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!] : undefined;
 
+  // ---------------------------------------------------------------------------
+  // Performance: keep Chessground config object references stable across frequent
+  // engine updates (score/progress), to avoid calling chessground api.set(...) on
+  // every render while dragging pieces.
+
+  const animationConfig = useMemo(() => ({ enabled: !editingMode }), [editingMode]);
+  const premovableConfig = useMemo(() => ({ enabled: false }), []);
+
+  const onAfterMove = useCallback(
+    (orig: string, dest: string, metadata: { ctrlKey?: boolean }) => {
+      if (editingMode) return;
+
+      const from = parseSquare(orig);
+      const to = parseSquare(dest);
+      if (!from || !to) return;
+
+      if (!pos) return;
+      if (
+        pos.board.get(from)?.role === "pawn" &&
+        ((dest[1] === "8" && turn === "white") || (dest[1] === "1" && turn === "black"))
+      ) {
+        if (autoPromote && !metadata.ctrlKey) {
+          makeMove({
+            from,
+            to,
+            promotion: "queen",
+          });
+        } else {
+          setPendingMove({
+            from,
+            to,
+          });
+        }
+      } else {
+        makeMove({
+          from,
+          to,
+        });
+      }
+    },
+    [autoPromote, editingMode, makeMove, pos, turn],
+  );
+
+  const movableConfig = useMemo(
+    () => ({
+      free: editingMode,
+      color: movableColor,
+      dests:
+        editingMode || viewOnly
+          ? undefined
+          : disableVariations && currentNode.children.length > 0
+            ? undefined
+            : dests,
+      showDests,
+      events: {
+        after: onAfterMove,
+      },
+    }),
+    [currentNode.children.length, dests, disableVariations, editingMode, movableColor, onAfterMove, showDests, viewOnly],
+  );
+
+  const draggableConfig = useMemo(
+    () => ({
+      enabled: !viewPawnStructure && !layout.chessBoard.touchOptimized,
+      deleteOnDropOff: editingMode,
+    }),
+    [editingMode, layout.chessBoard.touchOptimized, viewPawnStructure],
+  );
+
+  const selectableConfig = useMemo(
+    () => ({
+      enabled: layout.chessBoard.touchOptimized,
+    }),
+    [layout.chessBoard.touchOptimized],
+  );
+
+  const onDrawableChange = useCallback(
+    (next: DrawShape[]) => {
+      setShapes(next);
+    },
+    [setShapes],
+  );
+
+  const drawableConfig = useMemo(
+    () => ({
+      enabled: true,
+      visible: true,
+      defaultSnapToValidMove: snapArrows,
+      autoShapes: shapes,
+      onChange: onDrawableChange,
+    }),
+    [onDrawableChange, shapes, snapArrows],
+  );
+
   return (
     <Box w="100%" h="100%">
       <Box
@@ -596,76 +702,18 @@ function Board({
                 setBoardFen={setBoardFen}
                 orientation={orientation}
                 fen={currentNode.fen}
-                animation={{ enabled: !editingMode }}
+                animation={animationConfig}
                 coordinates={showCoordinates !== "none"}
                 coordinatesOnSquares={showCoordinates === "all"}
-                movable={{
-                  free: editingMode,
-                  color: movableColor,
-                  dests:
-                    editingMode || viewOnly
-                      ? undefined
-                      : disableVariations && currentNode.children.length > 0
-                        ? undefined
-                        : dests,
-                  showDests,
-                  events: {
-                    after(orig, dest, metadata) {
-                      if (!editingMode) {
-                        const from = parseSquare(orig)!;
-                        const to = parseSquare(dest)!;
-
-                        if (pos) {
-                          if (
-                            pos.board.get(from)?.role === "pawn" &&
-                            ((dest[1] === "8" && turn === "white") || (dest[1] === "1" && turn === "black"))
-                          ) {
-                            if (autoPromote && !metadata.ctrlKey) {
-                              makeMove({
-                                from,
-                                to,
-                                promotion: "queen",
-                              });
-                            } else {
-                              setPendingMove({
-                                from,
-                                to,
-                              });
-                            }
-                          } else {
-                            makeMove({
-                              from,
-                              to,
-                            });
-                          }
-                        }
-                      }
-                    },
-                  },
-                }}
+                movable={movableConfig}
                 turnColor={turn}
                 check={pos?.isCheck()}
                 lastMove={editingMode ? undefined : lastMove}
-                premovable={{
-                  enabled: false,
-                }}
+                premovable={premovableConfig}
                 // Leverage Chessground's built-in touch optimization
-                draggable={{
-                  enabled: !viewPawnStructure && !layout.chessBoard.touchOptimized,
-                  deleteOnDropOff: editingMode,
-                }}
-                selectable={{
-                  enabled: layout.chessBoard.touchOptimized,
-                }}
-                drawable={{
-                  enabled: true,
-                  visible: true,
-                  defaultSnapToValidMove: snapArrows,
-                  autoShapes: shapes,
-                  onChange: (shapes) => {
-                    setShapes(shapes);
-                  },
-                }}
+                draggable={draggableConfig}
+                selectable={selectableConfig}
+                drawable={drawableConfig}
               />
             </Box>
           </Box>

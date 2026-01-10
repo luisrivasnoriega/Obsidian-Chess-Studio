@@ -145,66 +145,6 @@ function BoardVariants() {
     [setCurrentTab, currentTab, documentDir, store, setStoreSave, setTabs, treeBuilderRunning, t],
   );
 
-  // Generate puzzles from variants
-  const getFenTurn = useCallback((fen: string): "white" | "black" | null => {
-    const parts = fen.trim().split(/\s+/);
-    const turn = parts[1];
-    if (turn === "w") return "white";
-    if (turn === "b") return "black";
-    return null;
-  }, []);
-
-  // Max depth must match the same "start at MY branching node" rule as generatePuzzles.
-  const getMaxPuzzleMoveDepth = useCallback(
-    (root: TreeNode, puzzleColor: "white" | "black"): number => {
-      const memo = new WeakMap<TreeNode, number>();
-
-      const maxFromNode = (node: TreeNode): number => {
-        const cached = memo.get(node);
-        if (cached != null) return cached;
-
-        const turn = getFenTurn(node.fen);
-        if (!turn || node.children.length === 0) {
-          memo.set(node, 0);
-          return 0;
-        }
-
-        const add = turn === puzzleColor ? 1 : 0;
-        let best = 0;
-        for (const child of node.children) {
-          if (!child.san) continue;
-          best = Math.max(best, add + maxFromNode(child));
-        }
-
-        memo.set(node, best);
-        return best;
-      };
-
-      const traverse = (node: TreeNode, isRoot: boolean): number => {
-        const turn = getFenTurn(node.fen);
-        const childrenWithSan = node.children.filter((c) => c.san);
-        const hasContinuations = childrenWithSan.length > 0;
-
-        let best = 0;
-
-        // Only nodes where MY SIDE branches are valid puzzle start points
-        // (but never the root, because puzzles always include a prior system move).
-        if (!isRoot && turn && turn === puzzleColor && hasContinuations) {
-          best = Math.max(best, maxFromNode(node));
-        }
-
-        for (const child of childrenWithSan) {
-          best = Math.max(best, traverse(child, false));
-        }
-
-        return best;
-      };
-
-      return traverse(root, true);
-    },
-    [getFenTurn],
-  );
-
   const getVariantBaseName = useCallback(() => {
     if (currentTab?.source?.type === "file" && currentTab.source.path) {
       const parts = currentTab.source.path.split(/[/\\]/);
@@ -686,8 +626,8 @@ function BoardVariants() {
         // Update metadata in .info file if this is a variants file
         console.log("buildVariantsTree completed, checking if should update metadata", {
           currentTabSourceType: currentTab?.source?.type,
-          currentTabMetadataType: currentTab?.source?.metadata?.type,
-          currentTabPath: currentTab?.source?.path,
+          currentTabMetadataType: currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : undefined,
+          currentTabPath: currentTab?.source?.type === "file" ? currentTab.source.path : undefined,
         });
 
         // Check if this is a variants file - either from tab metadata or by checking the .info file
@@ -817,8 +757,8 @@ function BoardVariants() {
         } else {
           console.log("Skipping metadata update - not a file tab or no path", {
             sourceType: currentTab?.source?.type,
-            metadataType: currentTab?.source?.metadata?.type,
-            path: currentTab?.source?.path,
+            metadataType: currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : undefined,
+            path: currentTab?.source?.type === "file" ? currentTab.source.path : undefined,
           });
         }
 
