@@ -125,7 +125,8 @@ export const useResponsiveLayout: () => {
     const twoColumnLayoutType: LayoutType = isTabletLayout || largeScreenMax ? "mobile" : "desktop";
 
     // AppShell states
-    const isHeaderCollapsed = menuBarMode === "disabled";
+    // menuBarMode is always "custom", so header is never collapsed
+    const isHeaderCollapsed = false;
     const isFooterCollapsed = sideBarPosition !== "footer";
     const isNavbarCollapsed = sideBarPosition !== "navbar";
 

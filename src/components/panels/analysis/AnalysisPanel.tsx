@@ -178,7 +178,7 @@ function AnalysisPanel() {
       <Tabs
         h={isCompact ? undefined : "100%"}
         orientation={isCompact ? "horizontal" : "vertical"}
-        placement={isCompact ? "top" : "right"}
+        placement={isCompact ? undefined : "right"}
         value={effectiveTab}
         onChange={(v) => setTab(v!)}
         style={

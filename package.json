@@ -1,6 +1,6 @@
 {
   "name": "obsidian-chess-studio",
-  "version": "1.11.0",
+  "version": "1.13.1",
   "type": "module",
   "packageManager": "pnpm@10.27.0",
   "scripts": {
