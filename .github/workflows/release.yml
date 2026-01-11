@@ -72,11 +72,130 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Obsidian Chess Studio ${{ github.ref_name }}
           releaseBody: "Obsidian Chess Studio (OCS) release ${{ github.ref_name }}. See the assets to download and install."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 
   release_android:
+    needs: release_desktop
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Setup Rust toolchain (Android)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js and pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: Install app dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync app version to tag
+        run: pnpm update-version ${{ github.ref_name }}
+
+      # -----------------------------
+      # Android Signing: decode keystore
+      # -----------------------------
+      - name: Decode Android keystore
+        shell: bash
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/ocs-release.jks
+          ls -la $RUNNER_TEMP/ocs-release.jks
+
+      - name: Build the app (Android)
+        env:
+          CI: false
+        run: pnpm android:build
+
+      # -----------------------------
+      # Sign the release APK produced by the build
+      # -----------------------------
+      - name: Sign Release APK (zipalign + apksigner)
+        shell: bash
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ZIPALIGN="$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+
+          if [ ! -f "$ZIPALIGN" ] || [ ! -f "$APKSIGNER" ]; then
+            echo "ERROR: zipalign/apksigner not found under build-tools;36.0.0"
+            ls -la "$ANDROID_SDK_ROOT/build-tools/36.0.0" || true
+            exit 1
+          fi
+
+          # Find unsigned release APK (common outputs)
+          UNSIGNED_APK=$(find src-tauri/gen/android -type f -name "*release-unsigned*.apk" | head -n 1)
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "ERROR: Could not find *release-unsigned*.apk. Listing APKs for debugging:"
+            find src-tauri/gen/android -type f -name "*.apk" | sed 's/^/ - /'
+            exit 1
+          fi
+
+          echo "Unsigned APK: $UNSIGNED_APK"
+
+          mkdir -p dist
+          "$ZIPALIGN" -v -p 4 "$UNSIGNED_APK" dist/ocs-release-aligned.apk
+
+          "$APKSIGNER" sign \
+            --ks "$RUNNER_TEMP/ocs-release.jks" \
+            --ks-pass env:KS_PASS \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass env:KEY_PASS \
+            --out dist/ocs-release-signed.apk \
+            dist/ocs-release-aligned.apk
+
+          "$APKSIGNER" verify --verbose --print-certs dist/ocs-release-signed.apk
+
+      - name: Upload Signed APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          files: |
+            dist/ocs-release-signed.apk
+
     needs: release_desktop
     permissions:
       contents: write
@@ -141,6 +260,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref_name }}
-          draft: true
+          draft: false
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
