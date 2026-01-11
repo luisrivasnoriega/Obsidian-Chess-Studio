@@ -520,14 +520,6 @@ This comparison uses *current premium versions* (e.g., ChessBase ’26) and focu
 - **Downloadable content:** Multiple **very large databases** (multi-GB) ✅
 - **Engines:** Multiple engines (analysis/play) ✅
 
-### ChessBase ’26 (Program only)
-- **Price:** Paid ❌ (≈ €199.90)
-- **License:** Proprietary ❌
-- **Modern UI:** ❌ (classic Windows-style UI)
-- **Cross-platform (Desktop):** Windows only ❌
-- **Downloadable content:** Databases are typically **separate purchases** (Big/Mega/Corr, etc.) ⚠️
-- **Engines:** Strong engine integration (multi-engine via UCI) ✅
-
 ### ChessBase ’26 Premium Package
 - **Price:** Paid ❌ (≈ €499.90)
 - **What you get (bundle):**
@@ -539,20 +531,6 @@ This comparison uses *current premium versions* (e.g., ChessBase ’26) and focu
   - ChessBase Magazine (digital)
 - **Cross-platform (Desktop):** Windows only ❌
 - **Engines:** Strong engine integration (multi-engine via UCI) ✅
-
-### Chess Assistant 26
-- **Price:** Paid ❌ (varies by store)
-- **License:** Proprietary ❌
-- **Cross-platform (Desktop):** Windows only ❌
-- **Downloadable content:** Large downloadable databases (e.g., Huge Base + correspondence DB) ✅
-- **Engines:** Very strong multi-engine support (UCI / UCI2 / WinBoard / MCS) ✅
-
-### HIARCS Chess Explorer Pro
-- **Price:** Paid ❌ (starts around €74.95)
-- **License:** Proprietary ❌
-- **Cross-platform (Desktop):** macOS + Windows ✅
-- **Downloadable content:** Commercial DB/analysis ecosystem ⚠️
-- **Engines:** Includes HIARCS engine + analysis/database features ✅
 
 ### Arena
 - **Price:** Free ✅
@@ -568,18 +546,10 @@ This comparison uses *current premium versions* (e.g., ChessBase ’26) and focu
 - **Engines:** UCI engine support ✅
 - **Modern UI:** ❌
 
-
-| Feature | Obsidian Chess Studio | ChessBase | Arena | Scid |
-|---------|--------------|-----------|-------|------|
-| **Price** | Free ✅ | $199+ ❌ | Free ✅ | Free ✅ |
-| **Modern UI** | ✅ | ❌ | ❌ | ❌ |
-| **Cross-platform** | ✅ | Windows only ❌ | Windows only ❌ | ✅ |
-| **Open Source** | ✅ | ❌ | ❌ | ✅ |
-
 ## Roadmap
 
 - [ ] **Mobile App (WIP)**
-- [ ] **Cloud Async**
+- [ ] **Cloud Sync**
 
 ## Contributing
 
