@@ -55,6 +55,9 @@ jobs:
       - name: Run frontend unit tests
         run: pnpm test
 
+      - name: Build frontend bundle
+        run: pnpm build-vite
+
       - name: Run backend unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 

@@ -497,6 +497,79 @@ Tests are automatically run on every commit and pull request via GitHub Actions,
 ## Comparison
 
 | Feature | Obsidian Chess Studio | ChessBase | Arena | Scid |
+|---------|------------------------|----------|-------|------|
+| **Price** | Free ✅ | Paid ❌ | Free ✅ | Free ✅ |
+| **Modern UI** | ✅ | 🟡 | ❌ | ❌ |
+| **Cross-platform (Desktop)** | ✅ | Windows only ❌ | Windows only ❌ | ✅ |
+| **Mobile App** | ⏳ WIP | ✅ | ❌ | ❌ |
+| **Cloud Sync (async)** | 🔮 Planned | ✅ | ❌ | ❌ |
+| **Open Source** | ✅ | ❌ | ❌ | ✅ |
+| **Downloadable Databases (multi-GB)** | ✅ | ✅ | 🟡 | 🟡 |
+| **Multi-Engine Analysis (simultaneous)** | ✅ | ✅ | 🟡 | 🟡 |
+| **Online Account Sync (Lichess/Chess.com)** | ✅ | 🟡 | ❌ | ❌ |
+| **Tablebases** | ✅ | 🟡 | 🟡 | 🟡 |
+
+
+This comparison uses *current premium versions* (e.g., ChessBase ’26) and focuses on the workflow OCS targets: modern UX, cross-platform, large downloadable databases, and multi-engine analysis.
+
+### Obsidian Chess Studio (OCS)
+- **Price:** Free ✅
+- **License:** Open Source ✅
+- **Modern UI:** ✅
+- **Cross-platform (Desktop):** ✅
+- **Downloadable content:** Multiple **very large databases** (multi-GB) ✅
+- **Engines:** Multiple engines (analysis/play) ✅
+
+### ChessBase ’26 (Program only)
+- **Price:** Paid ❌ (≈ €199.90)
+- **License:** Proprietary ❌
+- **Modern UI:** ❌ (classic Windows-style UI)
+- **Cross-platform (Desktop):** Windows only ❌
+- **Downloadable content:** Databases are typically **separate purchases** (Big/Mega/Corr, etc.) ⚠️
+- **Engines:** Strong engine integration (multi-engine via UCI) ✅
+
+### ChessBase ’26 Premium Package
+- **Price:** Paid ❌ (≈ €499.90)
+- **What you get (bundle):**
+  - ChessBase ’26 program
+  - 1-year Premium membership
+  - Mega Database 2026
+  - Corr Database 2026
+  - Update Service through 31.12.2026 (≈ 5,000 games/week)
+  - ChessBase Magazine (digital)
+- **Cross-platform (Desktop):** Windows only ❌
+- **Engines:** Strong engine integration (multi-engine via UCI) ✅
+
+### Chess Assistant 26
+- **Price:** Paid ❌ (varies by store)
+- **License:** Proprietary ❌
+- **Cross-platform (Desktop):** Windows only ❌
+- **Downloadable content:** Large downloadable databases (e.g., Huge Base + correspondence DB) ✅
+- **Engines:** Very strong multi-engine support (UCI / UCI2 / WinBoard / MCS) ✅
+
+### HIARCS Chess Explorer Pro
+- **Price:** Paid ❌ (starts around €74.95)
+- **License:** Proprietary ❌
+- **Cross-platform (Desktop):** macOS + Windows ✅
+- **Downloadable content:** Commercial DB/analysis ecosystem ⚠️
+- **Engines:** Includes HIARCS engine + analysis/database features ✅
+
+### Arena
+- **Price:** Free ✅
+- **License:** Freeware (not Open Source) ⚠️
+- **Cross-platform (Desktop):** Windows only ❌
+- **Engines:** UCI + WinBoard engine support ✅
+- **Modern UI:** ❌
+
+### Scid vs. PC
+- **Price:** Free ✅
+- **License:** Open Source ✅
+- **Cross-platform (Desktop):** ✅
+- **Engines:** UCI engine support ✅
+- **Modern UI:** ❌
+
+
+| Feature | Obsidian Chess Studio | ChessBase | Arena | Scid |
 |---------|--------------|-----------|-------|------|
 | **Price** | Free ✅ | $199+ ❌ | Free ✅ | Free ✅ |
 | **Modern UI** | ✅ | ❌ | ❌ | ❌ |
@@ -505,9 +578,8 @@ Tests are automatically run on every commit and pull request via GitHub Actions,
 
 ## Roadmap
 
-- [ ] **Web Version**
-- [ ] **Mobile App**
-- [ ] **Cloud Sync**
+- [ ] **Mobile App (WIP)**
+- [ ] **Cloud Async**
 
 ## Contributing
 
