@@ -1,13 +1,19 @@
-import type { Piece } from "@lichess-org/chessground/types";
+import type { Color, Piece } from "@lichess-org/chessground/types";
 import { ActionIcon, Box, Collapse, Group, Paper, Stack, Text } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
-import { memo, Suspense, useCallback } from "react";
+import { useAtom } from "jotai";
+import { memo, Suspense, useCallback, useContext } from "react";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
+import MoveControls from "@/components/MoveControls";
 import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
+import { TreeStateContext } from "@/components/TreeStateContext";
+import { currentEvalOpenAtom } from "@/state/atoms";
 import Board from "./Board";
+import EvalBar from "./EvalBar";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
 
 interface MobileBoardLayoutProps {
@@ -50,6 +56,7 @@ interface MobileBoardLayoutProps {
 
   // Start Game props
   startGame?: () => void;
+  endGame?: () => void;
   gameState?: "settingUp" | "playing" | "gameOver";
   startGameDisabled?: boolean;
   // Hide clock spaces, eval bar and footer controls for compact mode (e.g., PlayVsEngineBoard)
@@ -98,6 +105,7 @@ function MobileBoardLayout({
 
   // Start Game props
   startGame,
+  endGame,
   gameState,
   startGameDisabled,
   hideClockSpaces = false,
@@ -108,6 +116,11 @@ function MobileBoardLayout({
   const [isCollapsed, toggleCollapsed] = useToggle([true, false]);
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
   const showAnalysisPanel = currentTabType !== "play";
+  const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
+  const store = useContext(TreeStateContext)!;
+  const score = useStore(store, (s) => s.currentNode().score?.value ?? null);
+  const orientation = useStore(store, (s) => (s.headers.orientation ?? "white") as Color);
+  const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
 
@@ -136,8 +149,9 @@ function MobileBoardLayout({
       </Stack>
     );
   }
+
   return (
-    <Stack gap="sm" align="stretch">
+    <Stack gap="xs" align="stretch">
       {showAnalysisPanel && (
         <Paper withBorder p="xs">
           <Group justify="space-between" align="center">
@@ -160,11 +174,10 @@ function MobileBoardLayout({
 
       <Box
         style={{
-          width: "100%",
-          maxWidth: "100%",
           aspectRatio: "1 / 1",
-          maxHeight: "60vh",
-          alignSelf: "center",
+          height: "100vw",
+          width: "100%",
+          maxWidth: "100vw",
         }}
       >
         <Board
@@ -199,11 +212,53 @@ function MobileBoardLayout({
           startGame={startGame}
           gameState={gameState}
           startGameDisabled={startGameDisabled}
-          hideClockSpaces={hideClockSpaces}
-          hideEvalBar={hideEvalBar}
-          hideFooterControls={hideFooterControls}
+          hideClockSpaces={hideClockSpacesResolved}
+          hideEvalBar={true}
+          hideFooterControls={true}
         />
       </Box>
+
+      {!hideEvalBar && (
+        <Box
+          style={{
+            width: "100%",
+            paddingLeft: "0.75rem",
+            paddingRight: "0.75rem",
+            marginTop: "0.5rem",
+          }}
+          onClick={() => setEvalOpen((v) => !v)}
+        >
+          <EvalBar score={score} orientation={orientation} layout="horizontal" />
+        </Box>
+      )}
+
+      {!hideFooterControls && (
+        <MoveControls
+          viewPawnStructure={viewPawnStructure}
+          setViewPawnStructure={setViewPawnStructure}
+          takeSnapshot={takeSnapshot}
+          canTakeBack={canTakeBack}
+          deleteMove={deleteMove}
+          changeTabType={changeTabType}
+          currentTabType={currentTabType}
+          eraseDrawablesOnClick={eraseDrawablesOnClick}
+          clearShapes={clearShapes}
+          disableVariations={disableVariations}
+          editingMode={editingMode}
+          toggleEditingMode={toggleEditingMode}
+          saveFile={saveFile}
+          reload={reload}
+          addGame={addGame}
+          toggleOrientation={toggleOrientation}
+          currentTabSourceType={currentTabSourceType}
+          startGame={startGame}
+          endGame={endGame}
+          gameState={gameState}
+          startGameDisabled={startGameDisabled}
+        />
+      )}
+
+      {editingMode && _editingCard ? _editingCard : null}
     </Stack>
   );
 }

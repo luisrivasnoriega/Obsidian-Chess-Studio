@@ -1440,7 +1440,7 @@ function BoardGame() {
 
   if (isMobileLayout) {
     return (
-      <ScrollArea h="100%" offsetScrollbars>
+      <ScrollArea h="100%">
         <Stack gap="md">
           <ResponsiveBoard
             dirty={false}
@@ -1461,6 +1461,7 @@ function BoardGame() {
             changeTabType={changeToAnalysisMode}
             currentTabType="play"
             startGame={startGame}
+            endGame={endGame}
             gameState={gameState}
             startGameDisabled={error !== null}
           />

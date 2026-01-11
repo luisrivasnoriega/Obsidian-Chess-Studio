@@ -34,6 +34,8 @@ const fullLayout = createFullLayout();
 const ProfilesPage = lazy(() => import("@/features/profiles/ProfilesPage"));
 
 export default function BoardsPage() {
+  const { layout } = useResponsiveLayout();
+  const isMobileLayout = layout.chessBoard.layoutType === "mobile";
   const {
     tabs,
     activeTab,
@@ -87,27 +89,32 @@ export default function BoardsPage() {
         }}
       >
         <Box style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
-          {tabs.map((tab) => (
-            <Tabs.Panel
-              key={tab.value}
-              value={tab.value}
-              h="100%"
-              w="100%"
-              px={tab.type === "play" ? 0 : "md"}
-              pb={tab.type === "play" ? 0 : "md"}
-              pt={tab.type === "play" ? 0 : undefined}
-              style={{
-                flex: 1,
-                minHeight: 0,
-                minWidth: 0,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
-              }}
-            >
-              <TabSwitch tab={tab} />
-            </Tabs.Panel>
-          ))}
+          {tabs.map((tab) => {
+            const panelPadding = isMobileLayout ? 0 : tab.type === "play" ? 0 : "md";
+            const panelPaddingTop = isMobileLayout ? 0 : tab.type === "play" ? 0 : undefined;
+
+            return (
+              <Tabs.Panel
+                key={tab.value}
+                value={tab.value}
+                h="100%"
+                w="100%"
+                px={panelPadding}
+                pb={panelPadding}
+                pt={panelPaddingTop}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <TabSwitch tab={tab} />
+              </Tabs.Panel>
+            );
+          })}
         </Box>
       </Tabs>
     </DragDropContext>

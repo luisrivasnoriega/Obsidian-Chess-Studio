@@ -3,8 +3,6 @@
 //! This module provides the `GameAnalysisService` struct, which exposes methods to analyze chess games move-by-move using a UCI-compatible engine.
 //! It integrates with the database for novelty detection and annotates sacrifices, supporting progress reporting for UI updates.
 
-use std::path::PathBuf;
-
 use shakmaty::{fen::Fen, uci::UciMove, CastlingMode, Chess, EnPassantMode, Position};
 use vampirc_uci::parse_one;
 
@@ -13,6 +11,7 @@ use crate::error::Error;
 use crate::AppState;
 
 use super::evaluation::naive_eval;
+use super::engine_path::resolve_engine_path;
 use super::process::{parse_uci_attrs, EngineProcess};
 use super::types::{AnalysisOptions, EngineOption, MoveAnalysis, ReportProgress};
 use tauri_specta::Event;
@@ -46,7 +45,7 @@ impl GameAnalysisService {
         state: tauri::State<'_, AppState>,
         app: tauri::AppHandle,
     ) -> Result<Vec<MoveAnalysis>, Error> {
-        let path = PathBuf::from(&engine);
+        let path = resolve_engine_path(&engine, &app);
         let mut analysis: Vec<MoveAnalysis> = Vec::new();
 
         let (mut proc, mut reader) = EngineProcess::new(path).await?;

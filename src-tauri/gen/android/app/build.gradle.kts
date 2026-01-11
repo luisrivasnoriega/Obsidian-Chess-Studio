@@ -45,6 +45,16 @@ android {
             )
         }
     }
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
     kotlinOptions {
         jvmTarget = "1.8"
     }

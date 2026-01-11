@@ -14,13 +14,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: ubuntu-22.04
+            android: true
+            args: ""
           - platform: macos-latest
+            android: false
             args: --target aarch64-apple-darwin --bundles dmg
           - platform: macos-latest
+            android: false
             args: --target x86_64-apple-darwin --bundles dmg
           - platform: ubuntu-22.04
+            android: false
             args: ""
           - platform: windows-latest
+            android: false
             args: --bundles nsis
     runs-on: ${{ matrix.platform }}
 
@@ -34,10 +41,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      - name: Setup Java (Android only)
+        if: matrix.android == true
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK (Android only)
+        if: matrix.android == true
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages (Android only)
+        if: matrix.android == true
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
+
       - name: Setup Rust toolchain
+        if: matrix.android != true
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Setup Rust toolchain (Android only)
+        if: matrix.android == true
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
@@ -61,7 +93,8 @@ jobs:
       - name: Sync app version to tag
         run: pnpm update-version ${{ github.ref_name }}
 
-      - name: Build the app
+      - name: Build the app (Desktop)
+        if: matrix.android != true
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,3 +108,20 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Build the app (Android)
+        if: matrix.android == true
+        env:
+          CI: false
+        run: pnpm android:build
+
+      - name: Upload APK to GitHub Release (Android only)
+        if: matrix.android == true
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk

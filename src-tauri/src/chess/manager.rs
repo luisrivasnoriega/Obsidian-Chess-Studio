@@ -3,7 +3,6 @@
 //! This module provides the `EngineManager` struct, which manages engine processes, handles best-move queries,
 //! and spawns background tasks for engine output parsing and progress reporting.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::info;
@@ -13,6 +12,7 @@ use tokio::sync::Mutex;
 use crate::error::Error;
 use crate::AppState;
 
+use super::engine_path::resolve_engine_path;
 use super::process::EngineProcess;
 use super::types::{EngineLog, EngineOptions, GoMode};
 
@@ -54,7 +54,7 @@ impl<'a> EngineManager<'a> {
         options: EngineOptions,
         app: tauri::AppHandle,
     ) -> Result<Option<(f32, Vec<super::types::BestMoves>)>, Error> {
-        let path = PathBuf::from(&engine);
+        let path = resolve_engine_path(&engine, &app);
         let key = (tab.clone(), engine.clone());
 
         // If an engine process already exists for this key, reuse or update it.

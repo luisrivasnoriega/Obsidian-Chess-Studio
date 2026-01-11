@@ -232,12 +232,13 @@ export function SideBar() {
 
   // Para compatibilidad con código existente (footer/mobile)
   const dashboardLink = primaryNavLinks[0];
+  const profilesLink = primaryNavLinks[1];
   const secondaryLinks = [...secondaryNavLinks, ...tertiaryNavLinks];
   const actionLinks = [...primaryActionLinks, tertiaryActionLink];
 
   if (layout.sidebar.position === "footer") {
     // Show only first 4 links on mobile
-    const footerLinks = [dashboardLink, ...actionLinks, ...secondaryLinks];
+    const footerLinks = [dashboardLink, ...actionLinks, ...(profilesLink ? [profilesLink] : []), ...secondaryLinks];
     const visibleLinks = footerLinks.slice(0, 4);
 
     // For burger menu, we need to render Menu.Items directly

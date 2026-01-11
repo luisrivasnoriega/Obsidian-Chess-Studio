@@ -627,7 +627,7 @@ function Board({
               </Box>
             </Box>
           )}
-          {!hideEvalBar && (
+          {!hideEvalBar && layout.chessBoard.layoutType !== "mobile" && (
             <Box
               h="100%"
               style={{
@@ -747,46 +747,48 @@ function Board({
             />
           </Portal>
         )}
-        <Group justify="space-between" h={hideClockSpaces ? "auto" : "2.125rem"}>
-          {!hideClockSpaces && materialDiff && (
-            <Group ml="2.5rem">
-              {hasClock && <Clock color={orientation} turn={turn} whiteTime={whiteTime} blackTime={blackTime} />}
-              <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={orientation} />
-            </Group>
-          )}
+        {!hideFooterControls && (
+          <Group justify="space-between" h={hideClockSpaces ? "auto" : "2.125rem"}>
+            {!hideClockSpaces && materialDiff && (
+              <Group ml="2.5rem">
+                {hasClock && <Clock color={orientation} turn={turn} whiteTime={whiteTime} blackTime={blackTime} />}
+                <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={orientation} />
+              </Group>
+            )}
 
-          {error && (
-            <Text ta="center" c="red">
-              {t(chessopsError(error))}
-            </Text>
-          )}
+            {error && (
+              <Text ta="center" c="red">
+                {t(chessopsError(error))}
+              </Text>
+            )}
 
-          {moveInput && <MoveInput currentNode={currentNode} />}
+            {moveInput && <MoveInput currentNode={currentNode} />}
 
-          {showDesktopSideControls && !hasBoardControlsRail && (
-            <BoardControlsMenu
-              viewPawnStructure={viewPawnStructure ?? localViewPawnStructure}
-              setViewPawnStructure={setViewPawnStructure ?? setLocalViewPawnStructure}
-              takeSnapshot={takeSnapshot ?? localTakeSnapshot}
-              canTakeBack={canTakeBack}
-              deleteMove={deleteMove ?? storeDeleteMove}
-              changeTabType={changeTabType ?? localChangeTabType}
-              currentTabType={currentTabType}
-              eraseDrawablesOnClick={eraseDrawablesOnClick ?? storeEraseDrawablesOnClick}
-              clearShapes={clearShapes ?? storeClearShapes}
-              disableVariations={disableVariations}
-              editingMode={editingMode}
-              toggleEditingMode={toggleEditingMode}
-              saveFile={saveFile}
-              reload={reload}
-              addGame={addGame}
-              toggleOrientation={toggleOrientation ?? localToggleOrientation}
-              currentTabSourceType={currentTabSourceType}
-              dirty={dirty}
-              autoSave={false}
-            />
-          )}
-        </Group>
+            {showDesktopSideControls && !hasBoardControlsRail && (
+              <BoardControlsMenu
+                viewPawnStructure={viewPawnStructure ?? localViewPawnStructure}
+                setViewPawnStructure={setViewPawnStructure ?? setLocalViewPawnStructure}
+                takeSnapshot={takeSnapshot ?? localTakeSnapshot}
+                canTakeBack={canTakeBack}
+                deleteMove={deleteMove ?? storeDeleteMove}
+                changeTabType={changeTabType ?? localChangeTabType}
+                currentTabType={currentTabType}
+                eraseDrawablesOnClick={eraseDrawablesOnClick ?? storeEraseDrawablesOnClick}
+                clearShapes={clearShapes ?? storeClearShapes}
+                disableVariations={disableVariations}
+                editingMode={editingMode}
+                toggleEditingMode={toggleEditingMode}
+                saveFile={saveFile}
+                reload={reload}
+                addGame={addGame}
+                toggleOrientation={toggleOrientation ?? localToggleOrientation}
+                currentTabSourceType={currentTabSourceType}
+                dirty={dirty}
+                autoSave={false}
+              />
+            )}
+          </Group>
+        )}
 
         {/* MoveControls with board controls menu */}
         {!hideFooterControls && layout.chessBoard.layoutType === "mobile" && (

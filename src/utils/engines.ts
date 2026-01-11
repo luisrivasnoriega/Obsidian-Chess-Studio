@@ -23,6 +23,30 @@ const ENGINES = [
   {
     name: "Stockfish",
     version: "17.1",
+    os: "android",
+    bmi2: true,
+    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8-dotprod.tar",
+    path: "stockfish/stockfish-android-armv8-dotprod",
+    elo: 3635,
+  },
+  {
+    name: "Stockfish",
+    version: "17.1",
+    os: "android",
+    bmi2: false,
+    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8.tar",
+    path: "stockfish/stockfish-android-armv8",
+    elo: 3635,
+  },
+  {
+    name: "Stockfish",
+    version: "17.1",
     os: "windows",
     bmi2: true,
     image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
@@ -581,7 +605,22 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
     queryKey: ["default-engines", os],
     queryFn: async () => {
       const bmi2: boolean = await commands.isBmi2Compatible();
-      const availableEngines = ENGINES.filter((e) => e.os === os && e.bmi2 === bmi2);
+      const normalizedOs = normalizeEngineOs(os);
+      const shouldFilterByBmi2 =
+        normalizedOs === "windows" || normalizedOs === "macos" || normalizedOs === "linux";
+      const osMatches = normalizedOs
+        ? ENGINES.filter((e) => e.os === normalizedOs && (!shouldFilterByBmi2 || e.bmi2 === bmi2))
+        : [];
+      const androidDefault =
+        normalizedOs === "android"
+          ? osMatches.find((engine) => engine.bmi2 === false) ?? osMatches[0]
+          : null;
+      const availableEngines =
+        osMatches.length > 0 || normalizedOs !== null
+          ? androidDefault
+            ? [androidDefault]
+            : osMatches
+          : ENGINES.filter((e) => e.installMethod === "download" && e.bmi2 === bmi2);
 
       const supportedEngines = await Promise.all(
         availableEngines.map(async (engine) => {
@@ -601,4 +640,19 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
     error,
     isLoading,
   };
+}
+
+function normalizeEngineOs(os: Platform | undefined): "windows" | "macos" | "linux" | "android" | "ios" | null {
+  if (!os) return null;
+
+  switch (os) {
+    case "windows":
+    case "macos":
+    case "linux":
+    case "android":
+    case "ios":
+      return os;
+    default:
+      return null;
+  }
 }

@@ -11,6 +11,7 @@ import {
 import { useAtomValue } from "jotai";
 import { memo, useCallback, useContext, useEffect, useRef } from "react";
 import { useStore } from "zustand";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { keyMapAtom } from "@/state/keybindings";
 import BoardControlsMenu from "./BoardControlsMenu";
 import { TreeStateContext } from "./TreeStateContext";
@@ -70,6 +71,10 @@ function MoveControls({
   startGameDisabled,
 }: MoveControlsProps) {
   const store = useContext(TreeStateContext)!;
+  const { layout } = useResponsiveLayout();
+  const isCompact = layout.chessBoard.layoutType === "mobile";
+  const actionSize = isCompact ? "md" : "lg";
+  const iconSize = isCompact ? "1.1rem" : "1.3rem";
   const nextRaw = useStore(store, (s) => s.goToNext);
   const previousRaw = useStore(store, (s) => s.goToPrevious);
   const start = useStore(store, (s) => s.goToStart);
@@ -307,48 +312,54 @@ function MoveControls({
   ]);
 
   return (
-    <Group grow gap="xs">
+    <Group
+      grow={!isCompact}
+      gap={isCompact ? "xs" : "xs"}
+      wrap={isCompact ? "wrap" : "nowrap"}
+      justify="center"
+      style={isCompact ? { width: "100%" } : undefined}
+    >
       <ActionIcon
         variant="default"
-        size="lg"
+        size={actionSize}
         onClick={start}
         disabled={currentTabType === "play" && gameState === "settingUp"}
       >
-        <IconChevronsLeft />
+        <IconChevronsLeft size={iconSize} />
       </ActionIcon>
       <ActionIcon
         variant="default"
-        size="lg"
+        size={actionSize}
         onClick={handlePreviousClick}
         disabled={currentTabType === "play" && gameState === "settingUp"}
       >
-        <IconChevronLeft />
+        <IconChevronLeft size={iconSize} />
       </ActionIcon>
       {currentTabType === "play" && (startGame || endGame) && (
         <ActionIcon
           variant="default"
-          size="lg"
+          size={actionSize}
           onClick={gameState === "playing" ? endGame : startGame}
           disabled={gameState === "playing" ? false : startGameDisabled}
         >
-          {gameState === "playing" ? <IconPlayerStop /> : <IconPlayerPlay />}
+          {gameState === "playing" ? <IconPlayerStop size={iconSize} /> : <IconPlayerPlay size={iconSize} />}
         </ActionIcon>
       )}
       <ActionIcon
         variant="default"
-        size="lg"
+        size={actionSize}
         onClick={handleNextClick}
         disabled={currentTabType === "play" && gameState === "settingUp"}
       >
-        <IconChevronRight />
+        <IconChevronRight size={iconSize} />
       </ActionIcon>
       <ActionIcon
         variant="default"
-        size="lg"
+        size={actionSize}
         onClick={end}
         disabled={currentTabType === "play" && gameState === "settingUp"}
       >
-        <IconChevronsRight />
+        <IconChevronsRight size={iconSize} />
       </ActionIcon>
       {!readOnly && (
         <BoardControlsMenu

@@ -46,6 +46,7 @@ interface ResponsiveBoardProps {
   setSelectedPiece?: (piece: Piece | null) => void;
   // Start Game props
   startGame?: () => void;
+  endGame?: () => void;
   gameState?: "settingUp" | "playing" | "gameOver";
   startGameDisabled?: boolean;
   // Hide clock spaces for compact mode (e.g., PlayVsEngineBoard)
@@ -91,6 +92,7 @@ function ResponsiveBoard({
   setSelectedPiece,
   // Start Game props
   startGame,
+  endGame,
   gameState,
   startGameDisabled,
   hideClockSpaces = false,
@@ -168,7 +170,7 @@ function ResponsiveBoard({
         style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}
       >
         <ResponsiveLoadingWrapper isLoading={false}>
-          <MobileBoardLayout
+              <MobileBoardLayout
             dirty={dirty}
             editingMode={editingMode}
             toggleEditingMode={toggleEditingMode}
@@ -201,14 +203,15 @@ function ResponsiveBoard({
             currentTabSourceType={currentTabSourceType}
             selectedPiece={selectedPiece}
             setSelectedPiece={setSelectedPiece}
-            // Start Game props
-            startGame={startGame}
-            gameState={gameState}
-            startGameDisabled={startGameDisabled}
-            hideClockSpaces={hideClockSpaces}
-            hideEvalBar={hideEvalBar}
-            hideFooterControls={hideFooterControls}
-          />
+                // Start Game props
+                startGame={startGame}
+                endGame={endGame}
+                gameState={gameState}
+                startGameDisabled={startGameDisabled}
+                hideClockSpaces={hideClockSpaces}
+                hideEvalBar={hideEvalBar}
+                hideFooterControls={hideFooterControls}
+              />
         </ResponsiveLoadingWrapper>
       </Box>
     );

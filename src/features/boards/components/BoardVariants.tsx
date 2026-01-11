@@ -75,6 +75,7 @@ function BoardVariants() {
   const clearShapes = useStore(store, (s) => s.clearShapes);
   const setStoreState = useStore(store, (s) => s.setState);
   const setStoreSave = useStore(store, (s) => s.save);
+  const setHeaders = useStore(store, (s) => s.setHeaders);
   const boardOrientation = useStore(store, (s) => s.headers.orientation || "white");
   const is960 = useStore(store, (s) => s.headers.variant === "Chess960");
   const engines = useAtomValue(enginesAtom);
@@ -342,11 +343,21 @@ function BoardVariants() {
     }
   }, [store, t]);
 
+  const flipBoard = useCallback(() => {
+    const currentHeaders = store.getState().headers;
+    const newOrientation = currentHeaders.orientation === "black" ? "white" : "black";
+    setHeaders({
+      ...currentHeaders,
+      orientation: newOrientation,
+    });
+  }, [setHeaders, store]);
+
   const keyMap = useAtomValue(keyMapAtom);
 
   useHotkeys([
     [keyMap.COPY_FEN.keys, copyFen],
     [keyMap.COPY_PGN.keys, copyPgn],
+    [keyMap.FLIP_BOARD.keys, flipBoard],
   ]);
 
   const [currentTabSelected, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
@@ -859,7 +870,7 @@ function BoardVariants() {
       <>
         {/* Disable EvalListener during build variants to avoid engine event loops */}
         {!treeBuilderRunning && <EvalListener />}
-        <ScrollArea h="100%" offsetScrollbars>
+        <ScrollArea h="100%">
           <Stack gap="md">
             <ResponsiveBoard
               practicing={practicing}
@@ -889,6 +900,7 @@ function BoardVariants() {
               changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
               currentTabType="analysis"
               clearShapes={clearShapes}
+              toggleOrientation={flipBoard}
               disableVariations={false}
               currentTabSourceType={currentTab?.source?.type || undefined}
             />
@@ -931,6 +943,42 @@ function BoardVariants() {
             </GameNotationWrapper>
           </Stack>
         </ScrollArea>
+
+        <PuzzleVariantsModal
+          opened={puzzleModalOpened}
+          onClose={() => setPuzzleModalOpened(false)}
+          puzzleDepth={puzzleDepth}
+          maxPuzzleDepth={maxPuzzleDepth}
+          setPuzzleDepth={setPuzzleDepth}
+          onGenerate={(depth) => void generatePuzzles(depth)}
+        />
+
+        <VariantsTreeBuilderModal
+          opened={treeBuilderOpened}
+          onClose={() => setTreeBuilderOpened(false)}
+          dbType={dbType}
+          setDbType={setDbType}
+          localDbLabel={referenceDatabase}
+          treeBuilderMode={treeBuilderMode}
+          setTreeBuilderMode={setTreeBuilderMode}
+          engineOptions={engineOptions}
+          selectedEngineValue={
+            selectedEngine ? (selectedEngine.type === "local" ? selectedEngine.path : selectedEngine.url) : null
+          }
+          setSelectedEngineValue={setSelectedEngineKey}
+          treeBuilderEngineMs={treeBuilderEngineMs}
+          setTreeBuilderEngineMs={setTreeBuilderEngineMs}
+          treeBuilderCoverage={treeBuilderCoverage}
+          setTreeBuilderCoverage={setTreeBuilderCoverage}
+          treeBuilderMinMoves={treeBuilderMinMoves}
+          setTreeBuilderMinMoves={setTreeBuilderMinMoves}
+          treeBuilderDepth={treeBuilderDepth}
+          setTreeBuilderDepth={setTreeBuilderDepth}
+          treeBuilderRunning={treeBuilderRunning}
+          onRun={() => void buildVariantsTree()}
+          onCancel={cancelTreeBuilder}
+          runDisabled={!treeBuilderRunning && treeBuilderMode === "engine" && !selectedEngine}
+        />
       </>
     );
   }
@@ -968,6 +1016,7 @@ function BoardVariants() {
           changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
           currentTabType="analysis"
           clearShapes={clearShapes}
+          toggleOrientation={flipBoard}
           disableVariations={false}
           currentTabSourceType={currentTab?.source?.type || undefined}
         />

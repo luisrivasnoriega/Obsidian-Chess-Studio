@@ -6,7 +6,15 @@ import type { ScoreValue } from "@/bindings";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import { getWinChance } from "@/utils/score";
 
-function EvalBar({ score, orientation }: { score: ScoreValue | null; orientation: Color }) {
+function EvalBar({
+  score,
+  orientation,
+  layout = "vertical",
+}: {
+  score: ScoreValue | null;
+  orientation: Color;
+  layout?: "vertical" | "horizontal";
+}) {
   const theme = useMantineTheme();
   const { t } = useTranslation();
   const currentThemeId = useAtomValue(currentThemeIdAtom);
@@ -18,15 +26,17 @@ function EvalBar({ score, orientation }: { score: ScoreValue | null; orientation
   const blackTextColor = isAcademiaMaya ? theme.white : theme.colors.gray[2];
   const whiteTextColor = isAcademiaMaya ? theme.black : theme.colors.dark[8];
 
+  const isHorizontal = layout === "horizontal";
   let ScoreBars = [
     <Box
       key="black"
       style={{
-        height: "100%",
+        height: isHorizontal ? "100%" : "100%",
+        width: isHorizontal ? "100%" : undefined,
         backgroundColor: blackColor,
-        transition: "height 0.2s ease",
+        transition: isHorizontal ? "width 0.2s ease" : "height 0.2s ease",
         display: "flex",
-        flexDirection: "column",
+        flexDirection: isHorizontal ? "row" : "column",
       }}
     />,
   ];
@@ -38,30 +48,36 @@ function EvalBar({ score, orientation }: { score: ScoreValue | null; orientation
       <Box
         key="black"
         style={{
-          height: `${100 - progress}%`,
+          height: isHorizontal ? "100%" : `${100 - progress}%`,
+          width: isHorizontal ? `${100 - progress}%` : undefined,
           backgroundColor: blackColor,
-          transition: "height 0.2s ease",
+          transition: isHorizontal ? "width 0.2s ease" : "height 0.2s ease",
           display: "flex",
-          flexDirection: "column",
+          flexDirection: isHorizontal ? "row" : "column",
         }}
       >
-        <Text fz="xs" c={blackTextColor} ta="center" py={3} mt={orientation === "black" ? "auto" : undefined}>
-          {score.value <= 0 && t("units.score", { score, precision: 1 }).replace(/\+|-/, "")}
-        </Text>
+        {!isHorizontal && (
+          <Text fz="xs" c={blackTextColor} ta="center" py={3} mt={orientation === "black" ? "auto" : undefined}>
+            {score.value <= 0 && t("units.score", { score, precision: 1 }).replace(/\+|-/, "")}
+          </Text>
+        )}
       </Box>,
       <Box
         key="white"
         style={{
-          height: `${progress}%`,
+          height: isHorizontal ? "100%" : `${progress}%`,
+          width: isHorizontal ? `${progress}%` : undefined,
           backgroundColor: whiteColor,
-          transition: "height 0.2s ease",
+          transition: isHorizontal ? "width 0.2s ease" : "height 0.2s ease",
           display: "flex",
-          flexDirection: "column",
+          flexDirection: isHorizontal ? "row" : "column",
         }}
       >
-        <Text fz="xs" py={3} c={whiteTextColor} ta="center" mt={orientation === "white" ? "auto" : undefined}>
-          {score.value > 0 && t("units.score", { score, precision: 1 }).slice(1)}
-        </Text>
+        {!isHorizontal && (
+          <Text fz="xs" py={3} c={whiteTextColor} ta="center" mt={orientation === "white" ? "auto" : undefined}>
+            {score.value > 0 && t("units.score", { score, precision: 1 }).slice(1)}
+          </Text>
+        )}
       </Box>,
     ];
   }
@@ -72,15 +88,15 @@ function EvalBar({ score, orientation }: { score: ScoreValue | null; orientation
 
   return (
     <Tooltip
-      position="right"
+      position={isHorizontal ? "top" : "right"}
       color={score && score.value < 0 ? "dark" : undefined}
       label={score ? t("units.score", { score }) : undefined}
       disabled={!score}
     >
       <Box
         style={{
-          width: 25,
-          height: "100%",
+          width: isHorizontal ? "100%" : 25,
+          height: isHorizontal ? "0.5rem" : "100%",
           borderRadius: "var(--mantine-radius-xs)",
           overflow: "hidden",
         }}

@@ -8,7 +8,6 @@ import {
   IconEdit,
   IconEditOff,
   IconEraser,
-  IconPlus,
   IconReload,
   IconSwitchVertical,
   IconTarget,
@@ -17,6 +16,7 @@ import {
 import { useAtomValue } from "jotai";
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { keyMapAtom } from "@/state/keybindings";
 
 interface BoardControlsMenuProps {
@@ -69,7 +69,7 @@ function BoardControlsMenu({
   toggleEditingMode,
   saveFile,
   reload,
-  addGame,
+  addGame: _addGame,
   toggleOrientation,
   currentTabSourceType,
   count: _count = 0,
@@ -79,6 +79,10 @@ function BoardControlsMenu({
 }: BoardControlsMenuProps) {
   const keyMap = useAtomValue(keyMapAtom);
   const { t } = useTranslation();
+  const { layout } = useResponsiveLayout();
+  const isCompact = layout.chessBoard.layoutType === "mobile";
+  const actionSize = isCompact ? "md" : "lg";
+  const iconSize = isCompact ? "1.05rem" : "1.3rem";
   // Academia Maya accent (matches the tab highlight line)
   const accentColor = "#f9a825";
 
@@ -87,8 +91,8 @@ function BoardControlsMenu({
     {
       id: "pawnStructure",
       condition: !!setViewPawnStructure,
-      icon: <IconChess size="1.3rem" />,
-      activeIcon: <IconChessFilled size="1.3rem" />,
+      icon: <IconChess size={iconSize} />,
+      activeIcon: <IconChessFilled size={iconSize} />,
       onClick: () => setViewPawnStructure?.(!viewPawnStructure),
       label: t("features.board.actions.togglePawnStructureView"),
       tooltipLabel: t("features.board.actions.togglePawnStructureView"),
@@ -96,7 +100,7 @@ function BoardControlsMenu({
     {
       id: "snapshot",
       condition: !!takeSnapshot,
-      icon: <IconCamera size="1.3rem" />,
+      icon: <IconCamera size={iconSize} />,
       onClick: () => takeSnapshot?.(),
       label: t("features.board.actions.takeSnapshot"),
       tooltipLabel: t("features.board.actions.takeSnapshot"),
@@ -104,7 +108,7 @@ function BoardControlsMenu({
     {
       id: "takeBack",
       condition: !!canTakeBack && !!deleteMove,
-      icon: <IconArrowBack size="1.3rem" />,
+      icon: <IconArrowBack size={iconSize} />,
       onClick: () => deleteMove?.(),
       label: t("features.board.actions.takeBack"),
       tooltipLabel: t("features.board.actions.takeBack"),
@@ -114,9 +118,9 @@ function BoardControlsMenu({
       condition: !!changeTabType,
       icon:
         currentTabType === "analysis" ? (
-          <IconTarget size="1.3rem" />
+          <IconTarget size={iconSize} />
         ) : (
-          <IconZoomCheck size="1.3rem" />
+          <IconZoomCheck size={iconSize} />
         ),
       onClick: () => changeTabType?.(),
       label: t(
@@ -129,7 +133,7 @@ function BoardControlsMenu({
     {
       id: "clearShapes",
       condition: !eraseDrawablesOnClick && !!clearShapes,
-      icon: <IconEraser size="1.3rem" />,
+      icon: <IconEraser size={iconSize} />,
       onClick: () => clearShapes?.(),
       label: t("features.board.actions.clearDrawings"),
       tooltipLabel: t("features.board.actions.clearDrawings"),
@@ -137,8 +141,8 @@ function BoardControlsMenu({
     {
       id: "editingMode",
       condition: !disableVariations && !!toggleEditingMode,
-      icon: <IconEdit size="1.3rem" />,
-      activeIcon: <IconEditOff size="1.3rem" />,
+      icon: <IconEdit size={iconSize} />,
+      activeIcon: <IconEditOff size={iconSize} />,
       onClick: () => toggleEditingMode?.(),
       label: t("features.board.actions.editPosition"),
       tooltipLabel: t("features.board.actions.editPosition"),
@@ -146,7 +150,7 @@ function BoardControlsMenu({
     {
       id: "saveFile",
       condition: !!saveFile,
-      icon: <IconDeviceFloppy size="1.3rem" />,
+      icon: <IconDeviceFloppy size={iconSize} />,
       onClick: () => saveFile?.(),
       label: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
       tooltipLabel: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
@@ -155,23 +159,15 @@ function BoardControlsMenu({
     {
       id: "reload",
       condition: !!reload,
-      icon: <IconReload size="1.3rem" />,
+      icon: <IconReload size={iconSize} />,
       onClick: () => reload?.(),
       label: t("features.menu.reload"),
       tooltipLabel: t("features.menu.reload"),
     },
     {
-      id: "addGame",
-      condition: !!addGame && currentTabSourceType === "file",
-      icon: <IconPlus size="1.3rem" />,
-      onClick: () => addGame?.(),
-      label: t("features.board.actions.addGame"),
-      tooltipLabel: t("features.board.actions.addGame"),
-    },
-    {
       id: "toggleOrientation",
       condition: !!toggleOrientation,
-      icon: <IconSwitchVertical size="1.3rem" />,
+      icon: <IconSwitchVertical size={iconSize} />,
       onClick: () => toggleOrientation?.(),
       label: t("features.board.actions.flipBoard", { key: keyMap.SWAP_ORIENTATION.keys }),
       tooltipLabel: t("features.board.actions.flipBoard", { key: keyMap.SWAP_ORIENTATION.keys }),
@@ -237,7 +233,7 @@ function BoardControlsMenu({
               <Tooltip key={item.id} label={item.tooltipLabel || item.label} position="left">
                 <ActionIcon
                   onClick={item.onClick}
-                  size="lg"
+                  size={actionSize}
                   variant={getActionIconVariant(item)}
                   style={actionIconStyle}
                   styles={actionIconStyles}
@@ -255,31 +251,65 @@ function BoardControlsMenu({
   return (
     <Box
       style={{
-        height: "100%",
+        height: isCompact ? "auto" : "100%",
+        width: isCompact ? "100%" : "auto",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         alignSelf: "center",
-        padding: "0.375rem",
+        padding: isCompact ? "0.2rem 0" : "0.375rem",
         borderRadius: "12px",
         ...highlightStyles,
       }}
     >
-      <ActionIcon.Group>
-        {visibleItems.map((item) => (
-          <Tooltip key={item.id} label={item.tooltipLabel || item.label}>
-            <ActionIcon
-              onClick={item.onClick}
-              size="lg"
-              variant={getActionIconVariant(item)}
-              style={actionIconStyle}
-              styles={actionIconStyles}
-            >
-              {renderIcon(item)}
-            </ActionIcon>
-          </Tooltip>
-        ))}
-      </ActionIcon.Group>
+      {isCompact ? (
+        <ScrollArea
+          type="auto"
+          scrollbars="x"
+          scrollbarSize={6}
+          styles={{
+            viewport: {
+              display: "flex",
+              overflowY: "hidden",
+            },
+          }}
+          style={{ width: "100%" }}
+        >
+          <Box style={{ minWidth: "100%", display: "flex", justifyContent: "center" }}>
+            <Box style={{ display: "flex", gap: "0.35rem", width: "max-content", padding: "0.125rem 0.35rem" }}>
+              {visibleItems.map((item) => (
+                <Tooltip key={item.id} label={item.tooltipLabel || item.label}>
+                  <ActionIcon
+                    onClick={item.onClick}
+                    size={actionSize}
+                    variant={getActionIconVariant(item)}
+                    style={actionIconStyle}
+                    styles={actionIconStyles}
+                  >
+                    {renderIcon(item)}
+                  </ActionIcon>
+                </Tooltip>
+              ))}
+            </Box>
+          </Box>
+        </ScrollArea>
+      ) : (
+        <ActionIcon.Group>
+          {visibleItems.map((item) => (
+            <Tooltip key={item.id} label={item.tooltipLabel || item.label}>
+              <ActionIcon
+                onClick={item.onClick}
+                size={actionSize}
+                variant={getActionIconVariant(item)}
+                style={actionIconStyle}
+                styles={actionIconStyles}
+              >
+                {renderIcon(item)}
+              </ActionIcon>
+            </Tooltip>
+          ))}
+        </ActionIcon.Group>
+      )}
     </Box>
   );
 }

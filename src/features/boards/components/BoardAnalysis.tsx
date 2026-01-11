@@ -367,7 +367,7 @@ function BoardAnalysis() {
     return (
       <>
         <EvalListener />
-        <ScrollArea h="100%" offsetScrollbars>
+        <ScrollArea h="100%">
           <Stack gap="md">
             <ResponsiveBoard
               practicing={practicing}
@@ -398,6 +398,7 @@ function BoardAnalysis() {
               changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
               currentTabType="analysis"
               clearShapes={clearShapes}
+              toggleOrientation={flipBoard}
               disableVariations={false}
               currentTabSourceType={currentTab?.source?.type}
             />
@@ -452,6 +453,7 @@ function BoardAnalysis() {
           changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
           currentTabType="analysis"
           clearShapes={clearShapes}
+          toggleOrientation={flipBoard}
           disableVariations={false}
           currentTabSourceType={currentTab?.source?.type}
         />
