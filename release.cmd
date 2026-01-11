@@ -28,7 +28,7 @@ git tag v%NEW_VERSION%
 if errorlevel 1 exit /b %errorlevel%
 
 git push
-git push --tags
+git push origin v%NEW_VERSION%
 
 echo Released v%NEW_VERSION%
 endlocal
