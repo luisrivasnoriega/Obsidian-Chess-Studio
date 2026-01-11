@@ -133,122 +133,147 @@ jobs:
           args: ${{ matrix.args }}
 
   release_android:
-    needs: release_desktop
-    permissions:
-      contents: write
-    runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/v')
+  needs: test
+  permissions:
+    contents: write
+  runs-on: ubuntu-22.04
+  if: startsWith(github.ref, 'refs/tags/v')
+  env:
+    GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
-        shell: bash
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+    # Cache big Android SDK parts (NDK / build-tools / platforms)
+    - name: Cache Android SDK (platforms/build-tools/ndk)
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT }}/platform-tools
+          ${{ env.ANDROID_SDK_ROOT }}/platforms/android-36
+          ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+          ${{ env.ANDROID_SDK_ROOT }}/ndk/26.3.11579264
+        key: android-sdk-${{ runner.os }}-api36-bt36-ndk26.3.11579264
 
-      - name: Setup Rust toolchain (Android)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
+    - name: Install Android SDK packages (only if missing)
+      shell: bash
+      run: |
+        yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
-      - name: Cache Rust build
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
+        need_install=0
+        [ -d "$ANDROID_SDK_ROOT/platform-tools" ] || need_install=1
+        [ -d "$ANDROID_SDK_ROOT/platforms/android-36" ] || need_install=1
+        [ -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ] || need_install=1
+        [ -d "$ANDROID_SDK_ROOT/ndk/26.3.11579264" ] || need_install=1
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
+        if [ "$need_install" -eq 1 ]; then
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;26.3.11579264"
+        else
+          echo "Android SDK/NDK already present (cache hit)."
+        fi
 
-      - name: Setup Node.js and pnpm cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: pnpm
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+        echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
-      - name: Install app dependencies
-        run: pnpm install --frozen-lockfile
+    - name: Setup Rust toolchain (Android)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-linux-android
 
-      - name: Sync app version to tag
-        run: pnpm update-version ${{ github.ref_name }}
+    - name: Cache Rust build
+      uses: swatinem/rust-cache@v2
+      with:
+        workspaces: "./src-tauri -> target"
+        shared-key: rust-${{ runner.os }}-android-aarch64
 
-      # -----------------------------
-      # Android Signing: decode keystore
-      # -----------------------------
-      - name: Decode Android keystore
-        shell: bash
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/ocs-release.jks
-          ls -la $RUNNER_TEMP/ocs-release.jks
+    - name: Cache Gradle
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.GRADLE_USER_HOME }}/caches
+          ${{ env.GRADLE_USER_HOME }}/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('src-tauri/gen/android/**/gradle-wrapper.properties', 'src-tauri/gen/android/**/build.gradle*', 'src-tauri/gen/android/**/settings.gradle*') }}
+        restore-keys: |
+          gradle-${{ runner.os }}-
 
-      - name: Build the app (Android)
-        env:
-          CI: false
-        run: pnpm android:build
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        run_install: false
 
-      # -----------------------------
-      # Sign the release APK produced by the build
-      # -----------------------------
-      - name: Sign Release APK (zipalign + apksigner)
-        shell: bash
-        env:
-          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          ZIPALIGN="$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
-          APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+    - name: Setup Node.js and pnpm cache
+      uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+        cache: pnpm
 
-          if [ ! -f "$ZIPALIGN" ] || [ ! -f "$APKSIGNER" ]; then
-            echo "ERROR: zipalign/apksigner not found under build-tools;36.0.0"
-            ls -la "$ANDROID_SDK_ROOT/build-tools/36.0.0" || true
-            exit 1
-          fi
+    - name: Install app dependencies
+      run: pnpm install --frozen-lockfile --prefer-offline
 
-          # Find unsigned release APK (common outputs)
-          UNSIGNED_APK=$(find src-tauri/gen/android -type f -name "*release-unsigned*.apk" | head -n 1)
-          if [ -z "$UNSIGNED_APK" ]; then
-            echo "ERROR: Could not find *release-unsigned*.apk. Listing APKs for debugging:"
-            find src-tauri/gen/android -type f -name "*.apk" | sed 's/^/ - /'
-            exit 1
-          fi
+    - name: Sync app version to tag
+      run: pnpm update-version ${{ github.ref_name }}
 
-          echo "Unsigned APK: $UNSIGNED_APK"
+    - name: Decode Android keystore
+      shell: bash
+      run: |
+        echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/ocs-release.jks
+        ls -la $RUNNER_TEMP/ocs-release.jks
 
-          mkdir -p dist
-          "$ZIPALIGN" -v -p 4 "$UNSIGNED_APK" dist/ocs-release-aligned.apk
+    - name: Build the app (Android)
+      env:
+        CI: false
+      run: pnpm android:build
 
-          "$APKSIGNER" sign \
-            --ks "$RUNNER_TEMP/ocs-release.jks" \
-            --ks-pass env:KS_PASS \
-            --ks-key-alias "$KEY_ALIAS" \
-            --key-pass env:KEY_PASS \
-            --out dist/ocs-release-signed.apk \
-            dist/ocs-release-aligned.apk
+    - name: Sign Release APK (zipalign + apksigner)
+      shell: bash
+      env:
+        KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      run: |
+        ZIPALIGN="$ANDROID_SDK_ROOT/build-tools/36.0.0/zipalign"
+        APKSIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
 
-          "$APKSIGNER" verify --verbose --print-certs dist/ocs-release-signed.apk
+        UNSIGNED_APK=$(find src-tauri/gen/android -type f -name "*release-unsigned*.apk" | head -n 1)
+        if [ -z "$UNSIGNED_APK" ]; then
+          echo "ERROR: Could not find *release-unsigned*.apk"
+          find src-tauri/gen/android -type f -name "*.apk" | sed 's/^/ - /'
+          exit 1
+        fi
 
-      - name: Upload Signed APK to GitHub Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          draft: false
-          files: |
-            dist/ocs-release-signed.apk
+        mkdir -p dist
+        "$ZIPALIGN" -v -p 4 "$UNSIGNED_APK" dist/ocs-release-aligned.apk
+
+        "$APKSIGNER" sign \
+          --ks "$RUNNER_TEMP/ocs-release.jks" \
+          --ks-pass env:KS_PASS \
+          --ks-key-alias "$KEY_ALIAS" \
+          --key-pass env:KEY_PASS \
+          --out dist/ocs-release-signed.apk \
+          dist/ocs-release-aligned.apk
+
+        "$APKSIGNER" verify --verbose --print-certs dist/ocs-release-signed.apk
+
+    - name: Upload Signed APK to GitHub Release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        draft: false
+        files: |
+          dist/ocs-release-signed.apk
