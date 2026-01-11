@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+      GRADLE_USER_HOME: ${{ github.workspace }}/.gradle
 
     steps:
       - name: Checkout repository
