@@ -1,3 +1,11 @@
 {
-  "features.dashboard.showing": "Showing"
+  "accounts.processing": "processing",
+  "keybindings.goToDashboard": "Go to Dashboard",
+  "keybindings.goToProfiles": "Go to Profiles",
+  "keybindings.goToDatabases": "Go to Databases",
+  "keybindings.goToEngines": "Go to Engines",
+  "keybindings.goToFiles": "Go to Files",
+  "keybindings.goToTournaments": "Go to Tournaments",
+  "keybindings.goToAccounts": "Go to Accounts",
+  "keybindings.goToLearn": "Go to Learn"
 }

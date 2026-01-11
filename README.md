@@ -527,22 +527,22 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 | Language  | Progress   | Link                        |
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
-| 🇸🇦 **العربية (Arabic)** | ✅ 100% | [View](./src/locales/ar) |
-| 🇧🇾 **Беларуская (Belarusian)** | ✅ 100% | [View](./src/locales/be) |
-| 🇩🇪 **Deutsch (German)** | ✅ 100% | [View](./src/locales/de) |
-| 🇬🇧 **English UK** | ✅ 100% | [View](./src/locales/en-GB) |
-| 🇪🇸 **Español (Spanish)** | ✅ 100% | [View](./src/locales/es) |
-| 🇫🇷 **Français (French)** | ✅ 100% | [View](./src/locales/fr) |
-| 🇦🇲 **Հայերեն (Armenian)** | ✅ 100% | [View](./src/locales/hy) |
-| 🇮🇹 **Italiano (Italian)** | ✅ 100% | [View](./src/locales/it) |
-| 🇯🇵 **日本語 (Japanese)** | ✅ 100% | [View](./src/locales/ja) |
-| 🇳🇴 **Norsk (Norwegian Bokmål)** | ✅ 100% | [View](./src/locales/nb) |
-| 🇵🇱 **Polski (Polish)** | ✅ 100% | [View](./src/locales/pl) |
-| 🇵🇹 **Português (Portuguese)** | ✅ 100% | [View](./src/locales/pt) |
-| 🇷🇺 **Русский (Russian)** | ✅ 100% | [View](./src/locales/ru) |
-| 🇹🇷 **Türkçe (Turkish)** | ✅ 100% | [View](./src/locales/tr) |
-| 🇺🇦 **Українська (Ukrainian)** | ✅ 100% | [View](./src/locales/uk) |
-| 🇨🇳 **中文 (Chinese)** | ✅ 100% | [View](./src/locales/zh) |
+| 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
+| 🇧🇾 **Беларуская (Belarusian)** | 🟡 95% | [View](./src/locales/be) |
+| 🇩🇪 **Deutsch (German)** | 🟡 95% | [View](./src/locales/de) |
+| 🇬🇧 **English UK** | 🟡 95% | [View](./src/locales/en-GB) |
+| 🇫🇷 **Français (French)** | 🟡 95% | [View](./src/locales/fr) |
+| 🇦🇲 **Հայերեն (Armenian)** | 🟡 95% | [View](./src/locales/hy) |
+| 🇮🇹 **Italiano (Italian)** | 🟡 95% | [View](./src/locales/it) |
+| 🇯🇵 **日本語 (Japanese)** | 🟡 95% | [View](./src/locales/ja) |
+| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 95% | [View](./src/locales/nb) |
+| 🇵🇱 **Polski (Polish)** | 🟡 95% | [View](./src/locales/pl) |
+| 🇵🇹 **Português (Portuguese)** | 🟡 95% | [View](./src/locales/pt) |
+| 🇷🇺 **Русский (Russian)** | 🟡 95% | [View](./src/locales/ru) |
+| 🇺🇦 **Українська (Ukrainian)** | 🟡 95% | [View](./src/locales/uk) |
+| 🇨🇳 **中文 (Chinese)** | 🟡 95% | [View](./src/locales/zh) |
+| 🇸🇦 **العربية (Arabic)** | 🟡 91% | [View](./src/locales/ar) |
+| 🇹🇷 **Türkçe (Turkish)** | 🟡 73% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
 
 Want to help translate? See [CONTRIBUTING.md](./CONTRIBUTING.md).

@@ -2,11 +2,56 @@ name: OCS Release
 
 on:
   push:
+    branches:
+      - "**"
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - "**"
   workflow_dispatch:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Setup Node.js and pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Update README
+        run: pnpm update-readme
+
+      - name: Ensure README is committed
+        run: git diff --exit-code README.md
+
+      - name: Run frontend unit tests
+        run: pnpm test
+
+      - name: Run backend unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   release_desktop:
     permissions:
       contents: write
@@ -23,6 +68,8 @@ jobs:
           - platform: windows-latest
             args: --bundles nsis
     runs-on: ${{ matrix.platform }}
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - name: Checkout repository
@@ -81,6 +128,7 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - name: Checkout repository

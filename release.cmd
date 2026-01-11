@@ -20,6 +20,9 @@ set NEW_VERSION=%MAJOR%.%MINOR%.%PATCH%
 call pnpm update-version v%NEW_VERSION%
 if errorlevel 1 exit /b %errorlevel%
 
+call pnpm update-readme
+if errorlevel 1 exit /b %errorlevel%
+
 git add .
 git commit -m "release"
 if errorlevel 1 exit /b %errorlevel%
