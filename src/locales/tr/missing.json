@@ -315,6 +315,8 @@
   "features.engines.add.eloDesc": "Engine's Elo",
   "features.engines.add.imageFile": "Image file",
   "features.engines.add.imageFileDesc": "Click to select the image file (recommended size: 60x60)",
+  "features.engines.add.androidUnsupportedArch": "Unsupported Android architecture for this engine build: {{arch}}",
+  "features.engines.add.androidBinaryNotFound": "Could not find the extracted engine binary after download.",
   "features.engines.remove.title": "Remove Engine",
   "features.engines.remove.message": "Are you sure you want to remove this engine from Obsidian Chess Studio?",
   "features.databases.title": "Databases",

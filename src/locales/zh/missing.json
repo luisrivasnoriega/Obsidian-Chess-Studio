@@ -62,6 +62,8 @@
   "features.board.variants.namePlaceholder": "Enter variant name...",
   "features.board.variants.createError": "Failed to create variant",
   "features.board.variants.saveComments": "Save Comments",
+  "features.engines.add.androidUnsupportedArch": "Unsupported Android architecture for this engine build: {{arch}}",
+  "features.engines.add.androidBinaryNotFound": "Could not find the extracted engine binary after download.",
   "features.puzzle.selectPuzzle": "Select puzzle",
   "features.puzzle.analysisTabName": "Puzzle Analysis",
   "features.puzzle.add.title": "Add Puzzle",

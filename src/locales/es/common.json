@@ -1126,7 +1126,9 @@
         "autodetect": "Autodetectar",
         "eloDesc": "Elo del motor",
         "imageFile": "Archivo de imagen",
-        "imageFileDesc": "Haga clic para seleccionar el archivo de imagen (tamaño recomendado: 60x60)"
+        "imageFileDesc": "Haga clic para seleccionar el archivo de imagen (tamaño recomendado: 60x60)",
+        "androidUnsupportedArch": "Arquitectura Android no compatible para esta versión del motor: {{arch}}",
+        "androidBinaryNotFound": "No se pudo encontrar el binario del motor después de la descarga."
       },
       "remove": {
         "title": "Eliminar motor",

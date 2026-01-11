@@ -17,6 +17,8 @@ import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconDatabase, IconTrophy, IconX } from "@tabler/icons-react";
 import { appDataDir, join, resolve } from "@tauri-apps/api/path";
+import { arch } from "@tauri-apps/plugin-os";
+import { exists, readDir, remove, rename } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -176,6 +178,50 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
   const [allEngines, setEngines] = useAtom(enginesAtom);
   const engines = allEngines.filter((e): e is LocalEngine => e.type === "local");
   const isInstalled = engines.some((e) => e.name === engine.name);
+  const { os } = usePlatform();
+
+  const resolveAndroidEnginePath = useCallback(
+    async (engineDir: string): Promise<string> => {
+      const cpuArch = await arch();
+      if (cpuArch !== "aarch64") {
+        throw new Error(t("features.engines.add.androidUnsupportedArch", { arch: cpuArch }));
+      }
+
+      async function findCandidate(dir: string): Promise<string | null> {
+        const entries = await readDir(dir);
+        for (const entry of entries) {
+          if (entry.isFile) {
+            const name = entry.name ?? "";
+            if (name === "stockfish") return await join(dir, name);
+            if (name.startsWith("stockfish-android-")) return await join(dir, name);
+          }
+        }
+        for (const entry of entries) {
+          if (!entry.isDirectory) continue;
+          const child = await join(dir, entry.name ?? "");
+          const found = await findCandidate(child);
+          if (found) return found;
+        }
+        return null;
+      }
+
+      const extracted = await findCandidate(engineDir);
+      if (!extracted) {
+        throw new Error(t("features.engines.add.androidBinaryNotFound"));
+      }
+
+      const finalPath = await join(engineDir, "stockfish");
+      if (extracted !== finalPath) {
+        if (await exists(finalPath)) {
+          await remove(finalPath);
+        }
+        await rename(extracted, finalPath);
+      }
+
+      return finalPath;
+    },
+    [t],
+  );
 
   const installEngine = useCallback(
     async (id: number) => {
@@ -197,7 +243,13 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
           if (appDataDirPath.endsWith("/") || appDataDirPath.endsWith("\\")) {
             appDataDirPath = appDataDirPath.slice(0, -1);
           }
-          enginePath = await join(appDataDirPath, "engines", ...engine.path.split("/"));
+          const enginesDir = await join(appDataDirPath, "engines");
+          const isAndroid = os === "android" || (engine as unknown as { os?: string }).os === "android";
+          if (isAndroid) {
+            enginePath = await resolveAndroidEnginePath(enginesDir);
+          } else {
+            enginePath = await join(appDataDirPath, "engines", ...engine.path.split("/"));
+          }
           await commands.setFileAsExecutable(enginePath);
         } else if (engine.installMethod === "brew") {
           const brewPackage = engine.brewPackage;

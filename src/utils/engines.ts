@@ -29,7 +29,7 @@ const ENGINES = [
     installMethod: "download" as const,
     downloadLink:
       "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8-dotprod.tar",
-    path: "stockfish/stockfish-android-armv8-dotprod",
+    path: "stockfish",
     elo: 3635,
   },
   {
@@ -41,7 +41,7 @@ const ENGINES = [
     installMethod: "download" as const,
     downloadLink:
       "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8.tar",
-    path: "stockfish/stockfish-android-armv8",
+    path: "stockfish",
     elo: 3635,
   },
   {

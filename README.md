@@ -584,7 +584,7 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 | 🇺🇦 **Українська (Ukrainian)** | 🟡 95% | [View](./src/locales/uk) |
 | 🇨🇳 **中文 (Chinese)** | 🟡 95% | [View](./src/locales/zh) |
 | 🇸🇦 **العربية (Arabic)** | 🟡 91% | [View](./src/locales/ar) |
-| 🇹🇷 **Türkçe (Turkish)** | 🟡 73% | [View](./src/locales/tr) |
+| 🇹🇷 **Türkçe (Turkish)** | 🟡 72% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
 
 Want to help translate? See [CONTRIBUTING.md](./CONTRIBUTING.md).

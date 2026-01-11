@@ -1269,7 +1269,9 @@
                                                  "autodetect":  "Autodetect",
                                                  "eloDesc":  "Engine\u0027s Elo",
                                                  "imageFile":  "Image file",
-                                                 "imageFileDesc":  "Click to select the image file (recommended size: 60x60)"
+                                                 "imageFileDesc":  "Click to select the image file (recommended size: 60x60)",
+                                                 "androidUnsupportedArch":  "Unsupported Android architecture for this engine build: {{arch}}",
+                                                 "androidBinaryNotFound":  "Could not find the extracted engine binary after download."
                                              },
                                      "remove":  {
                                                     "title":  "Remove Engine",
