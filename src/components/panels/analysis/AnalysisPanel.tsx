@@ -16,11 +16,12 @@ import {
 import { IconChevronsRight, IconPlayerPause, IconSelector, IconSettings } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
-import { memo, useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { memo, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { TreeStateContext } from "@/components/TreeStateContext";
+import type { TreeNode } from "@/utils/treeReducer";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
@@ -48,6 +49,7 @@ function AnalysisPanel() {
 
   const store = useContext(TreeStateContext)!;
   const rootFen = useStore(store, (s) => s.root.fen);
+  const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
   const currentNodeFen = useStore(
     store,
@@ -99,9 +101,30 @@ function AnalysisPanel() {
 
   const [tab, setTab] = useAtom(currentAnalysisTabAtom);
   const [expanded, setExpanded] = useAtom(currentExpandedEnginesAtom);
+  const defaultAppliedRef = useRef(false);
 
   // Use the configured tab value if available, otherwise use the atom value
   const effectiveTab = configTabOverride || tab;
+
+  const hasPreexistingAnalysis = useMemo(() => {
+    const stack: TreeNode[] = [root];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (node.score) {
+        return true;
+      }
+      if (node.annotations.length > 0) {
+        return true;
+      }
+      if (node.comment.trim().length > 0) {
+        return true;
+      }
+      stack.push(...node.children);
+    }
+    return false;
+  }, [root]);
+
+  const desiredDefaultTab: "engines" | "report" = hasPreexistingAnalysis ? "report" : "engines";
 
   // Read initial configuration (per board tab) and apply it once.
   useEffect(() => {
@@ -121,6 +144,10 @@ function AnalysisPanel() {
       const config = JSON.parse(configJson);
       const next = config.analysisSubTab;
       if (next && ["engines", "report", "logs"].includes(next)) {
+        if ((next === "report" && !hasPreexistingAnalysis) || (next === "engines" && hasPreexistingAnalysis)) {
+          setConfigTabOverride(null);
+          return;
+        }
         setConfigTabOverride(next);
         return;
       }
@@ -129,7 +156,7 @@ function AnalysisPanel() {
     }
 
     setConfigTabOverride(null);
-  }, [activeTab]);
+  }, [activeTab, hasPreexistingAnalysis]);
 
   useEffect(() => {
     if (!activeTab || typeof window === "undefined") return;
@@ -159,6 +186,15 @@ function AnalysisPanel() {
     // Allow the user to change tabs after applying the config once.
     setConfigTabOverride(null);
   }, [activeTab, configTabOverride, setTab, tab]);
+
+  useEffect(() => {
+    if (defaultAppliedRef.current) return;
+    if (configTabOverride !== null) return;
+    if (tab !== desiredDefaultTab) {
+      setTab(desiredDefaultTab);
+    }
+    defaultAppliedRef.current = true;
+  }, [configTabOverride, desiredDefaultTab, setTab, tab]);
 
   const [pos] = positionFromFen(currentNodeFen);
   const navigate = useNavigate();

@@ -385,7 +385,9 @@ function BoardVariants() {
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
   const topBar = true;
 
-  const isRepertoire = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "repertoire";
+  const showRepertoirePanels =
+    currentTab?.source?.type === "file" &&
+    (currentTab.source.metadata?.type === "repertoire" || currentTab.source.metadata?.type === "variants");
   const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
   const [treeBuilderOpened, setTreeBuilderOpened] = useState(false);
@@ -1050,12 +1052,12 @@ function BoardVariants() {
       </Portal>
 
       <Portal target="#topRight" style={{ height: "100%" }}>
-        <ResponsiveAnalysisPanels
-          currentTab={currentTabSelected}
-          onTabChange={(v) => setCurrentTabSelected(v || "info")}
-          isRepertoire={isRepertoire}
-          isPuzzle={isPuzzle}
-        />
+          <ResponsiveAnalysisPanels
+            currentTab={currentTabSelected}
+            onTabChange={(v) => setCurrentTabSelected(v || "info")}
+            isRepertoire={showRepertoirePanels}
+            isPuzzle={isPuzzle}
+          />
       </Portal>
 
       <GameNotationWrapper

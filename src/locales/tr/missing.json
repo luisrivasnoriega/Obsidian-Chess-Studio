@@ -1,5 +1,6 @@
 {
   "common.warning": "Warning",
+  "common.options": "Options",
   "accounts.loadingGames": "Loading games...",
   "accounts.processing": "processing",
   "accounts.accountCard.lastActivity": "Last Activity",

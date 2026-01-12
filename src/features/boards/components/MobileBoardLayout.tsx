@@ -1,20 +1,18 @@
 import type { Color, Piece } from "@lichess-org/chessground/types";
-import { ActionIcon, Box, Collapse, Group, Paper, Stack, Text } from "@mantine/core";
-import { useToggle } from "@mantine/hooks";
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
-import { useAtom } from "jotai";
-import { memo, Suspense, useCallback, useContext } from "react";
+import { Box, Stack } from "@mantine/core";
+import { useAtom, useAtomValue } from "jotai";
+import { memo, Suspense, useCallback, useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import MoveControls from "@/components/MoveControls";
-import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { currentEvalOpenAtom } from "@/state/atoms";
+import { currentEvalOpenAtom, currentTabAtom, currentTabSelectedAtom } from "@/state/atoms";
 import Board from "./Board";
 import EvalBar from "./EvalBar";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
+import ResponsiveAnalysisPanels from "./ResponsiveAnalysisPanels";
 
 interface MobileBoardLayoutProps {
   // Board props
@@ -113,7 +111,6 @@ function MobileBoardLayout({
   hideFooterControls = false,
 }: MobileBoardLayoutProps) {
   const { t } = useTranslation();
-  const [isCollapsed, toggleCollapsed] = useToggle([true, false]);
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
   const showAnalysisPanel = currentTabType !== "play";
   const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
@@ -121,6 +118,26 @@ function MobileBoardLayout({
   const score = useStore(store, (s) => s.currentNode().score?.value ?? null);
   const orientation = useStore(store, (s) => (s.headers.orientation ?? "white") as Color);
   const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
+  const currentTab = useAtomValue(currentTabAtom);
+  const [, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
+  const [mobilePanelsTab, setMobilePanelsTab] = useState<string | null>(null);
+  const showRepertoirePanels =
+    currentTab?.source?.type === "file" &&
+    (currentTab.source.metadata?.type === "repertoire" || currentTab.source.metadata?.type === "variants");
+  const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "puzzle";
+
+  useEffect(() => {
+    setMobilePanelsTab(null);
+  }, [
+    currentTab?.value,
+    currentTab?.gameNumber,
+    currentTab?.source?.type,
+    currentTab?.source?.type === "file" ? currentTab.source.path : null,
+    currentTab?.source?.type === "file" ? currentTab.source.lastModified : null,
+    currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : null,
+    currentTab?.source?.type === "db" ? currentTab.source.db : null,
+    currentTab?.source?.type === "db" ? currentTab.source.id : null,
+  ]);
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
 
@@ -153,23 +170,25 @@ function MobileBoardLayout({
   return (
     <Stack gap="xs" align="stretch">
       {showAnalysisPanel && (
-        <Paper withBorder p="xs">
-          <Group justify="space-between" align="center">
-            <Text fw={700} size="sm">
-              {t("features.board.tabs.analysis")}
-            </Text>
-            <ActionIcon variant="subtle" onClick={() => toggleCollapsed()}>
-              {isCollapsed ? <IconChevronDown size="1rem" /> : <IconChevronUp size="1rem" />}
-            </ActionIcon>
-          </Group>
-          <Collapse in={!isCollapsed} transitionDuration={200} transitionTimingFunction="linear">
-            <Box mt="xs">
-              <Suspense fallback={<ResponsiveSkeleton type="default" />}>
-                <AnalysisPanel />
-              </Suspense>
-            </Box>
-          </Collapse>
-        </Paper>
+        <Box>
+            <Suspense fallback={<ResponsiveSkeleton type="default" />}>
+              <ResponsiveAnalysisPanels
+                currentTab={mobilePanelsTab}
+                onTabChange={(value) => {
+                  setMobilePanelsTab(value);
+                  if (value) {
+                    setCurrentTabSelected(value);
+                  }
+                }}
+                isRepertoire={showRepertoirePanels}
+                isPuzzle={isPuzzle}
+                disableCollapse
+                renderAsSelect
+                unstyledContainer
+                selectStartsEmpty
+              />
+            </Suspense>
+          </Box>
       )}
 
       <Box

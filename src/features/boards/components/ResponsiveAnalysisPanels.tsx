@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Collapse, Group, Paper, Stack, Tabs, Text } from "@mantine/core";
+import { ActionIcon, Box, Collapse, Group, Paper, Select, Stack, Tabs, Text } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
 import {
   IconChevronDown,
@@ -10,7 +10,7 @@ import {
   IconTargetArrow,
   IconZoomCheck,
 } from "@tabler/icons-react";
-import { memo, Suspense, useCallback, useEffect } from "react";
+import { memo, Suspense, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import AnnotationPanel from "@/components/panels/annotation/AnnotationPanel";
@@ -24,13 +24,17 @@ import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
 
 interface ResponsiveAnalysisPanelsProps {
-  currentTab?: string;
+  currentTab?: string | null;
   onTabChange?: (value: string | null) => void;
   isRepertoire?: boolean;
   isPuzzle?: boolean;
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
+  disableCollapse?: boolean;
+  renderAsSelect?: boolean;
+  unstyledContainer?: boolean;
+  selectStartsEmpty?: boolean;
 }
 
 function ResponsiveAnalysisPanels({
@@ -41,11 +45,39 @@ function ResponsiveAnalysisPanels({
   isLoading = false,
   error = null,
   onRetry,
+  disableCollapse = false,
+  renderAsSelect = false,
+  unstyledContainer = false,
+  selectStartsEmpty = false,
 }: ResponsiveAnalysisPanelsProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
   const [isCollapsed, toggleCollapsed] = useToggle([false, true]);
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
+
+  const tabOptions = useMemo(() => {
+    const options: Array<{ value: string; label: string }> = [];
+    if (isRepertoire) {
+      options.push({ value: "practice", label: t("features.board.tabs.practice") });
+      options.push({ value: "graph", label: t("features.board.tabs.graph") });
+    }
+    if (!isPuzzle) {
+      options.push({ value: "analysis", label: t("features.board.tabs.analysis") });
+      options.push({ value: "database", label: t("features.board.tabs.database") });
+      options.push({ value: "annotate", label: t("features.board.tabs.annotate") });
+    }
+    options.push({ value: "info", label: t("features.board.tabs.info") });
+    return options;
+  }, [isPuzzle, isRepertoire, t]);
+
+  useEffect(() => {
+    if (!renderAsSelect) return;
+    if (selectStartsEmpty) return;
+    if (!tabOptions.length) return;
+    if (!tabOptions.some((option) => option.value === currentTab)) {
+      onTabChange?.(tabOptions[0].value);
+    }
+  }, [currentTab, onTabChange, renderAsSelect, selectStartsEmpty, tabOptions]);
 
   // Error handling for analysis panels initialization
   const handleRetry = useCallback(() => {
@@ -53,7 +85,8 @@ function ResponsiveAnalysisPanels({
   }, [retry]);
 
   // Determine if panels should be collapsible
-  const shouldCollapse = layout.chessBoard.touchOptimized;
+  const shouldCollapse = !disableCollapse && layout.chessBoard.touchOptimized;
+  const showControlsRail = !shouldCollapse && !renderAsSelect && layout.chessBoard.layoutType !== "mobile";
 
   // Set default collapsed state based on layout
   useEffect(() => {
@@ -86,21 +119,28 @@ function ResponsiveAnalysisPanels({
   }
 
   // Render the analysis panels
+  const containerStyle = {
+    height: "100%",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "row",
+  } as const;
+
+  const Container = unstyledContainer ? Box : Paper;
+  const containerProps = unstyledContainer
+    ? { style: containerStyle }
+    : {
+        withBorder: true,
+        p: "xs" as const,
+        style: containerStyle,
+        pos: "relative" as const,
+      };
+
   const analysisContent = (
-    <Paper
-      withBorder
-      p="xs"
-      style={{
-        height: "100%",
-        minHeight: 0,
-        minWidth: 0,
-        overflow: "hidden",
-        display: "flex",
-        flexDirection: "row",
-      }}
-      pos="relative"
-    >
-      {!shouldCollapse && (
+    <Container {...(containerProps as any)}>
+      {showControlsRail && (
         <Box
           id="board-controls-rail"
           style={{
@@ -116,8 +156,8 @@ function ResponsiveAnalysisPanels({
             marginRight: "0.5rem",
             overflow: "hidden",
           }}
-        />
-      )}
+          />
+        )}
 
       <Tabs
         w="100%"
@@ -136,36 +176,59 @@ function ResponsiveAnalysisPanels({
           overflow: "hidden",
         }}
       >
-        <Tabs.List grow mb="1rem">
-          {isRepertoire && (
-            <Tabs.Tab value="practice" leftSection={<IconTargetArrow size="1rem" />}>
-              {t("features.board.tabs.practice")}
+        {renderAsSelect ? (
+          <Select
+            data={tabOptions}
+            placeholder={t("common.options")}
+            value={tabOptions.some((option) => option.value === currentTab) ? currentTab : null}
+            onChange={(value) => onTabChange?.(value)}
+            allowDeselect={false}
+            mb="1rem"
+            w="100%"
+            variant="unstyled"
+            styles={{
+              input: {
+                border: "none",
+                background: "transparent",
+              },
+              section: {
+                border: "none",
+                background: "transparent",
+              },
+            }}
+          />
+        ) : (
+          <Tabs.List grow mb="1rem">
+            {isRepertoire && (
+              <Tabs.Tab value="practice" leftSection={<IconTargetArrow size="1rem" />}>
+                {t("features.board.tabs.practice")}
+              </Tabs.Tab>
+            )}
+            {isRepertoire && (
+              <Tabs.Tab value="graph" leftSection={<IconGraphFilled size="1rem" />}>
+                {t("features.board.tabs.graph")}
+              </Tabs.Tab>
+            )}
+            {!isPuzzle && (
+              <Tabs.Tab value="analysis" leftSection={<IconZoomCheck size="1rem" />}>
+                {t("features.board.tabs.analysis")}
+              </Tabs.Tab>
+            )}
+            {!isPuzzle && (
+              <Tabs.Tab value="database" leftSection={<IconDatabase size="1rem" />}>
+                {t("features.board.tabs.database")}
+              </Tabs.Tab>
+            )}
+            {!isPuzzle && (
+              <Tabs.Tab value="annotate" leftSection={<IconNotes size="1rem" />}>
+                {t("features.board.tabs.annotate")}
+              </Tabs.Tab>
+            )}
+            <Tabs.Tab value="info" leftSection={<IconInfoCircle size="1rem" />}>
+              {t("features.board.tabs.info")}
             </Tabs.Tab>
-          )}
-          {isRepertoire && (
-            <Tabs.Tab value="graph" leftSection={<IconGraphFilled size="1rem" />}>
-              {t("features.board.tabs.graph")}
-            </Tabs.Tab>
-          )}
-          {!isPuzzle && (
-            <Tabs.Tab value="analysis" leftSection={<IconZoomCheck size="1rem" />}>
-              {t("features.board.tabs.analysis")}
-            </Tabs.Tab>
-          )}
-          {!isPuzzle && (
-            <Tabs.Tab value="database" leftSection={<IconDatabase size="1rem" />}>
-              {t("features.board.tabs.database")}
-            </Tabs.Tab>
-          )}
-          {!isPuzzle && (
-            <Tabs.Tab value="annotate" leftSection={<IconNotes size="1rem" />}>
-              {t("features.board.tabs.annotate")}
-            </Tabs.Tab>
-          )}
-          <Tabs.Tab value="info" leftSection={<IconInfoCircle size="1rem" />}>
-            {t("features.board.tabs.info")}
-          </Tabs.Tab>
-        </Tabs.List>
+          </Tabs.List>
+        )}
         {isRepertoire && (
           <Tabs.Panel
             value="practice"
@@ -219,7 +282,7 @@ function ResponsiveAnalysisPanels({
           </Suspense>
         </Tabs.Panel>
       </Tabs>
-    </Paper>
+    </Container>
   );
 
   // If panels should be collapsible, wrap in collapsible container
