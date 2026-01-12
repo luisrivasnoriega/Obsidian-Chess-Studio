@@ -24,7 +24,10 @@ export default defineConfig({
     // For `tauri android dev`, the CLI often sets `TAURI_DEV_HOST` to a LAN IP.
     // Binding to `0.0.0.0` keeps the server reachable via both LAN and localhost
     // (adb reverse friendly when the device can't reach the LAN).
-    host: devHost ? "0.0.0.0" : false,
+    // For desktop `tauri dev`, bind to 127.0.0.1 so it matches `tauri.conf.json`'s devUrl
+    // and avoids "Waiting for your frontend dev server to start on http://127.0.0.1:1420/..."
+    // when Vite would otherwise bind to IPv6 localhost only.
+    host: devHost ? "0.0.0.0" : "127.0.0.1",
     // Keep HMR on localhost so it works with `adb reverse tcp:1421 tcp:1421`.
     hmr: devHost
       ? {
