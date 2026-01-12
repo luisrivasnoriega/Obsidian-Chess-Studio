@@ -21,6 +21,7 @@
                    "downloading":  "Downloading",
                    "extracting":  "Extracting",
                    "error":  "Error",
+                   "warning":  "Warning",
                    "initializationErrorTitle":  "Initialization Error",
                    "initializationErrorDescription":  "The application encountered an error during startup:",
                    "reloadApplication":  "Reload Application",
@@ -1271,7 +1272,11 @@
                                                  "imageFile":  "Image file",
                                                  "imageFileDesc":  "Click to select the image file (recommended size: 60x60)",
                                                  "androidUnsupportedArch":  "Unsupported Android architecture for this engine build: {{arch}}",
-                                                 "androidBinaryNotFound":  "Could not find the extracted engine binary after download."
+                                                 "androidBinaryNotFound":  "Could not find the extracted engine binary after download.",
+                                                 "engineConfigTimeoutInstalled":  "Engine installed, but option detection timed out. Default settings were applied.",
+                                                 "enginePathIsDirectory":  "Engine path points to a directory instead of a binary: {{path}}",
+                                                 "bundled":  "Bundled (included in app)",
+                                                 "bundledEngineNotFound":  "Bundled engine not found in app assets. Please reinstall the app."
                                              },
                                      "remove":  {
                                                     "title":  "Remove Engine",

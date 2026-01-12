@@ -15,6 +15,8 @@ type Props<T> = {
   progressEvent: { listen: (handler: EventCallback<T>) => Promise<UnlistenFn> };
   onClick: (id: string) => void;
   leftIcon?: React.ReactNode;
+  completeOnFinished?: boolean;
+  stopInProgressOnFinished?: boolean;
   labels: {
     completed: string;
     action: string;
@@ -33,6 +35,8 @@ function ProgressButton<T extends Payload>({
   progressEvent,
   onClick,
   leftIcon,
+  completeOnFinished = true,
+  stopInProgressOnFinished = true,
   labels,
   disabled,
   redoable,
@@ -50,8 +54,8 @@ function ProgressButton<T extends Payload>({
     const unlisten = progressEvent.listen(async ({ payload }) => {
       if (payload.id !== id) return;
       if (payload.finished) {
-        setInProgress(false);
-        setCompleted(true);
+        if (stopInProgressOnFinished) setInProgress(false);
+        if (completeOnFinished) setCompleted(true);
         setProgress(0);
       } else {
         setProgress(payload.progress);
@@ -60,7 +64,7 @@ function ProgressButton<T extends Payload>({
     return () => {
       unlisten.then((f) => f());
     };
-  }, [id, progressEvent, setInProgress]);
+  }, [completeOnFinished, id, progressEvent, setInProgress, stopInProgressOnFinished]);
 
   return (
     <ProgressButtonWithOutState

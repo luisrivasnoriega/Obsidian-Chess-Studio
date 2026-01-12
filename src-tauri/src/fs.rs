@@ -226,9 +226,11 @@ async fn download_and_extract(
 
         tmp_file.write_all(&chunk).await?;
 
-        // Progress for download phase (0-50%)
+        // UI behavior:
+        // - Use 0..99 for download
+        // - Switch to 100 (finished=false) for extraction so the UI can show `finalizing` label
         let progress = content_length
-            .map(|total| ((downloaded as f64 / total as f64) * 50.0).min(50.0) as f32)
+            .map(|total| ((downloaded as f64 / total as f64) * 99.0).min(99.0) as f32)
             .unwrap_or(-1.0);
 
         emit_progress(app, id, progress, false)?;
@@ -240,7 +242,8 @@ async fn download_and_extract(
         path.display()
     );
 
-    emit_progress(app, id, 50.0, false)?;
+    // Extraction phase: keep progress at 100 but `finished=false` so the UI shows the `finalizing` label.
+    emit_progress(app, id, 100.0, false)?;
 
     tmp_file.sync_all().await?;
     drop(tmp_file);
@@ -395,26 +398,120 @@ fn unzip_file_from_path(dest_dir: &Path, archive_path: &Path) -> Result<(), Erro
 
 fn extract_tar_file_from_path(dest_dir: &Path, archive_path: &Path, is_gz: bool) -> Result<(), Error> {
     use flate2::read::GzDecoder;
-    use std::io::Read;
+    use std::io::{BufRead, BufReader, Read};
+
+    fn ensure_dir_path(path: &Path) -> Result<(), Error> {
+        // `create_dir_all` fails with EEXIST if any component is a file.
+        // Remove conflicting files component-by-component, then create the directory.
+        let mut cur = PathBuf::new();
+        for comp in path.components() {
+            cur.push(comp);
+            if cur.exists() && cur.is_file() {
+                let _ = std::fs::remove_file(&cur);
+            }
+        }
+        std::fs::create_dir_all(path)?;
+        Ok(())
+    }
 
     std::fs::create_dir_all(dest_dir)?;
     let base_path = dest_dir.canonicalize()?;
 
     let file = std::fs::File::open(archive_path)?;
-    let reader: Box<dyn Read> = if is_gz {
-        Box::new(GzDecoder::new(file))
+    let mut buf_reader = BufReader::new(file);
+    let magic = buf_reader.fill_buf().unwrap_or(&[]);
+    let looks_like_gz = magic.len() >= 2 && magic[0] == 0x1f && magic[1] == 0x8b;
+    let reader: Box<dyn Read> = if is_gz || looks_like_gz {
+        Box::new(GzDecoder::new(buf_reader))
     } else {
-        Box::new(file)
+        Box::new(buf_reader)
     };
 
     let mut archive = tar::Archive::new(reader);
     archive.set_overwrite(true);
     archive.set_preserve_permissions(true);
 
-    // Extract safely: `Entry::unpack_in` prevents path traversal.
-    for entry in archive.entries()? {
+    // Extract safely, handling Android edge cases where a previous install left
+    // conflicting file/dir types (e.g. a file at `engines/stockfish` but the tar wants `stockfish/`).
+    for (i, entry) in archive.entries()?.enumerate() {
         let mut entry = entry?;
-        entry.unpack_in(&base_path)?;
+        let entry_type = entry.header().entry_type();
+        // Some archives can contain symlinks/hardlinks; these can fail on certain Android setups.
+        // Skip them and rely on the real binary entry.
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            warn!("Skipping tar link entry at index {} during extraction", i);
+            continue;
+        }
+
+        let rel = entry.path().map_err(|e| {
+            Error::PackageManager(format!(
+                "Failed to read tar entry path at index {}: {}",
+                i, e
+            ))
+        })?;
+
+        // Reject traversal / absolute paths.
+        if rel.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        }) {
+            warn!(
+                "Skipping potentially malicious tar entry path at index {}: {:?}",
+                i, rel
+            );
+            continue;
+        }
+
+        let outpath = base_path.join(&rel);
+
+        // Handle file/dir conflicts before unpacking.
+        if entry_type.is_dir() {
+            if outpath.exists() && outpath.is_file() {
+                let _ = std::fs::remove_file(&outpath);
+            }
+            ensure_dir_path(&outpath).map_err(|e| {
+                Error::PackageManager(format!(
+                    "Failed to create directory for tar entry {:?} at index {} into {}: {}",
+                    rel,
+                    i,
+                    base_path.display(),
+                    e
+                ))
+            })?;
+            continue;
+        } else {
+            if outpath.exists() && outpath.is_dir() {
+                let _ = std::fs::remove_dir_all(&outpath);
+            }
+            if outpath.exists() && outpath.is_file() {
+                let _ = std::fs::remove_file(&outpath);
+            }
+            if let Some(parent) = outpath.parent() {
+                if parent.exists() && parent.is_file() {
+                    let _ = std::fs::remove_file(parent);
+                }
+                ensure_dir_path(parent)?;
+            }
+        }
+
+        entry.unpack(&outpath).map_err(|e| {
+            let entry_path = entry
+                .path()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            Error::PackageManager(format!(
+                "Failed to unpack tar entry {} at index {} into {}: {}",
+                entry_path,
+                i,
+                base_path.display(),
+                e
+            ))
+        })?;
     }
     Ok(())
 }
@@ -440,6 +537,44 @@ pub async fn set_file_as_executable(path: String) -> Result<(), Error> {
 
     #[cfg(unix)]
     {
+        // Ensure the engine directory chain is traversable/executable.
+        //
+        // On Android/Linux, execution can fail with `Permission denied` even if the binary is +x,
+        // when *any* parent directory lacks the execute bit.
+        //
+        // We chmod the binary's parent chain up to a safe boundary:
+        // - On Android: stop once we hit the `.../files` directory (app-owned boundary)
+        // - Elsewhere: chmod only the immediate parent (conservative)
+        fn chmod_dir_755(dir: &Path) -> Result<(), Error> {
+            if !dir.exists() || !dir.is_dir() {
+                return Ok(());
+            }
+            let meta = std::fs::metadata(dir)?;
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(dir, perms)?;
+            Ok(())
+        }
+
+        #[cfg(target_os = "android")]
+        {
+            let mut cur = path.parent();
+            while let Some(dir) = cur {
+                chmod_dir_755(dir)?;
+                if dir.file_name().and_then(|n| n.to_str()) == Some("files") {
+                    break;
+                }
+                cur = dir.parent();
+            }
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            if let Some(parent) = path.parent() {
+                chmod_dir_755(parent)?;
+            }
+        }
+
         let metadata = std::fs::metadata(path)?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o755);

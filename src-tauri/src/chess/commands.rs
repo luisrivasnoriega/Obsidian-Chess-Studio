@@ -4,6 +4,7 @@
 //! It acts as the bridge between the frontend and backend chess logic.
 
 use std::path::PathBuf;
+use std::io::ErrorKind;
 
 use vampirc_uci::parse_one;
 
@@ -127,9 +128,24 @@ pub async fn analyze_game(
 /// FIXED: Proper process cleanup with timeout to prevent zombie processes
 #[tauri::command]
 #[specta::specta]
-pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
+pub async fn get_engine_config(path: PathBuf, app: tauri::AppHandle) -> Result<EngineConfig, Error> {
     use tokio::io::AsyncBufReadExt;
     use tokio::time::{timeout, Duration};
+
+    let path = super::engine_path::resolve_engine_path(path.to_string_lossy().as_ref(), &app);
+
+    if path.is_dir() {
+        return Err(Error::PackageManager(format!(
+            "Engine path points to a directory, not a binary: {}",
+            path.display()
+        )));
+    }
+
+    #[cfg(unix)]
+    super::uci::ensure_executable(path.as_path())?;
+
+    #[cfg(target_os = "android")]
+    super::uci::validate_android_elf(path.as_path())?;
 
     let mut command = tokio::process::Command::new(&path);
     // FIXED: Safe parent path handling
@@ -143,7 +159,40 @@ pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
     #[cfg(target_os = "windows")]
     command.creation_flags(super::process::CREATE_NO_WINDOW);
 
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(|e| {
+        if e.kind() == ErrorKind::PermissionDenied {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let file_mode = std::fs::metadata(&path)
+                    .map(|m| m.permissions().mode() & 0o777)
+                    .unwrap_or(0);
+                let parent_mode = path
+                    .parent()
+                    .and_then(|p| std::fs::metadata(p).ok().map(|m| m.permissions().mode() & 0o777));
+
+                return Error::PackageManager(format!(
+                    "Failed to start engine (permission denied): {} (file_mode={:o}, parent_mode={}). If file/parent are executable but this persists, the device may block execution from this filesystem (noexec/policy). error={}",
+                    path.display(),
+                    file_mode,
+                    parent_mode
+                        .map(|m| format!("{:o}", m))
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    e
+                ));
+            }
+
+            #[cfg(not(unix))]
+            {
+                return Error::PackageManager(format!(
+                    "Failed to start engine (permission denied): {}. error={}",
+                    path.display(),
+                    e
+                ));
+            }
+        }
+        Error::Io(e)
+    })?;
     let mut stdin = child.stdin.take().ok_or(Error::NoStdin)?;
     let stdout = child.stdout.take().ok_or(Error::NoStdout)?;
     let mut stdout = tokio::io::BufReader::new(stdout).lines();
@@ -156,27 +205,36 @@ pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
     // FIXED: Add timeout to prevent hanging on unresponsive engines
     let config_future = async {
         loop {
-            if let Some(line) = stdout.next_line().await? {
-                if let vampirc_uci::UciMessage::Id {
-                    name: Some(name),
-                    author: _,
-                } = parse_one(&line)
-                {
-                    config.name = name;
+            match stdout.next_line().await? {
+                Some(line) => {
+                    if let vampirc_uci::UciMessage::Id {
+                        name: Some(name),
+                        author: _,
+                    } = parse_one(&line)
+                    {
+                        config.name = name;
+                    }
+                    if let vampirc_uci::UciMessage::Option(opt) = parse_one(&line) {
+                        config.options.push(UciOptionConfig::from(opt));
+                    }
+                    if let vampirc_uci::UciMessage::UciOk = parse_one(&line) {
+                        break;
+                    }
                 }
-                if let vampirc_uci::UciMessage::Option(opt) = parse_one(&line) {
-                    config.options.push(UciOptionConfig::from(opt));
-                }
-                if let vampirc_uci::UciMessage::UciOk = parse_one(&line) {
-                    break;
+                None => {
+                    return Err(Error::PackageManager(format!(
+                        "Engine exited before responding to UCI: {}",
+                        path.display()
+                    )));
                 }
             }
         }
         Ok::<_, Error>(config)
     };
 
-    // FIXED: 5 second timeout and ensure process cleanup
-    let result = timeout(Duration::from_secs(5), config_future).await;
+    // Engines can be slow to start on some Android devices. Give them more time there.
+    let timeout_secs: u64 = if cfg!(target_os = "android") { 20 } else { 5 };
+    let result = timeout(Duration::from_secs(timeout_secs), config_future).await;
 
     // FIXED: Always kill the child process to prevent zombies
     let _ = child.kill().await;

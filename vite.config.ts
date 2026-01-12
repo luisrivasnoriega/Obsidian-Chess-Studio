@@ -8,7 +8,7 @@ import { defineConfig } from "vitest/config";
 const isDebug = !!process.env.TAURI_ENV_DEBUG;
 const isProdBuild = !isDebug;
 
-const host = process.env.TAURI_DEV_HOST;
+const devHost = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -21,11 +21,15 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
-    hmr: host
+    // For `tauri android dev`, the CLI often sets `TAURI_DEV_HOST` to a LAN IP.
+    // Binding to `0.0.0.0` keeps the server reachable via both LAN and localhost
+    // (adb reverse friendly when the device can't reach the LAN).
+    host: devHost ? "0.0.0.0" : false,
+    // Keep HMR on localhost so it works with `adb reverse tcp:1421 tcp:1421`.
+    hmr: devHost
       ? {
           protocol: "ws",
-          host,
+          host: "127.0.0.1",
           port: 1421,
         }
       : undefined,

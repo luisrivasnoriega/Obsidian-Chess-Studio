@@ -1,5 +1,6 @@
 import { DragDropContext, Draggable, Droppable, type DropResult } from "@hello-pangea/dnd";
 import { ActionIcon, Box, Group, Menu, ScrollArea, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconMenu2 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -33,6 +34,9 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const { layout } = useResponsiveLayout();
   const gameState = useAtomValue(currentGameStateAtom);
   const isCompactHeader = layout.chessBoard.layoutType === "mobile";
+  const hasCoarsePointer = useMediaQuery("(pointer: coarse)");
+  const safeTop = "max(env(safe-area-inset-top, 0px), 24px)";
+  const headerPaddingTop = isCompactHeader && hasCoarsePointer ? safeTop : undefined;
 
   const {
     tabs,
@@ -196,7 +200,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const trailingSpacerWidth = layout.menuBar.displayWindowControls ? "3rem" : isCompactHeader ? "0.5rem" : "1.5rem";
 
   return (
-    <Box h="100%" style={{ display: "flex", alignItems: "center" }} data-tauri-drag-region>
+    <Box h="100%" style={{ display: "flex", alignItems: "center", paddingTop: headerPaddingTop }} data-tauri-drag-region>
       <DragDropContext onDragEnd={onDragEnd}>
         <Group h="100%" px={headerPadding} gap={headerGap} wrap="nowrap" style={{ flex: 1, minWidth: 0 }} data-tauri-drag-region>
           <Menu shadow="md" position="bottom-start" transitionProps={{ duration: 0 }}>

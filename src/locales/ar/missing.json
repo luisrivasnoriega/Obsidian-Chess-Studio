@@ -1,6 +1,7 @@
 {
   "common.on": "ON",
   "common.off": "OFF",
+  "common.warning": "Warning",
   "accounts.loadingGames": "Loading games...",
   "accounts.processing": "processing",
   "accounts.accountCard.lastActivity": "Last Activity",
@@ -96,6 +97,10 @@
   "features.board.variants.saveComments": "Save Comments",
   "features.engines.add.androidUnsupportedArch": "Unsupported Android architecture for this engine build: {{arch}}",
   "features.engines.add.androidBinaryNotFound": "Could not find the extracted engine binary after download.",
+  "features.engines.add.engineConfigTimeoutInstalled": "Engine installed, but option detection timed out. Default settings were applied.",
+  "features.engines.add.enginePathIsDirectory": "Engine path points to a directory instead of a binary: {{path}}",
+  "features.engines.add.bundled": "Bundled (included in app)",
+  "features.engines.add.bundledEngineNotFound": "Bundled engine not found in app assets. Please reinstall the app.",
   "features.puzzle.selectPuzzle": "Select puzzle",
   "features.puzzle.analysisTabName": "Puzzle Analysis",
   "features.puzzle.add.title": "Add Puzzle",

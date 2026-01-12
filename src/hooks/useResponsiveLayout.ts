@@ -97,6 +97,7 @@ export const useResponsiveLayout: () => {
   const mediumScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const largeScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.lg})`);
   const extraLargeScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.xl})`);
+  const hasCoarsePointer = useMediaQuery("(pointer: coarse)");
 
   return useMemo(() => {
     const startTime = performance.now();
@@ -131,13 +132,17 @@ export const useResponsiveLayout: () => {
     const isNavbarCollapsed = sideBarPosition !== "navbar";
 
     // Layout dimensions
-    const headerHeight = isHeaderCollapsed
+    const baseHeaderHeight = isHeaderCollapsed
       ? "0rem"
       : isPhoneLayout
         ? "3.25rem"
         : isTabletLayout
           ? "3rem"
           : "2.6rem";
+
+    const safeTop = "max(env(safe-area-inset-top, 0px), 24px)";
+    const headerHeight =
+      !isHeaderCollapsed && isTabletLayout && hasCoarsePointer ? `calc(${baseHeaderHeight} + ${safeTop})` : baseHeaderHeight;
     const navbarWidth = isNavbarCollapsed ? "0rem" : "3rem";
     const footerHeight = isFooterCollapsed ? "0rem" : isPhoneLayout ? "3.75rem" : "3.25rem";
     const marginTop = isHeaderCollapsed && isPhoneLayout ? "3rem" : "0rem";

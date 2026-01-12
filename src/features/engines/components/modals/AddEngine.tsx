@@ -187,6 +187,18 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         throw new Error(t("features.engines.add.androidUnsupportedArch", { arch: cpuArch }));
       }
 
+      const normalizePathForPrefixCheck = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/g, "");
+      const isPathInside = (parent: string, child: string) => {
+        const parentNorm = normalizePathForPrefixCheck(parent);
+        const childNorm = normalizePathForPrefixCheck(child);
+        return childNorm === parentNorm || childNorm.startsWith(`${parentNorm}/`);
+      };
+
+      const removeForce = async (p: string) => {
+        if (!(await exists(p))) return;
+        await remove(p, { recursive: true });
+      };
+
       async function findCandidate(dir: string): Promise<string | null> {
         const entries = await readDir(dir);
         for (const entry of entries) {
@@ -213,9 +225,19 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
       const finalPath = await join(engineDir, "stockfish");
       if (extracted !== finalPath) {
         if (await exists(finalPath)) {
-          await remove(finalPath);
+          if (isPathInside(finalPath, extracted)) {
+            const tempPath = await join(engineDir, "stockfish.tmp");
+            await removeForce(tempPath);
+            await rename(extracted, tempPath);
+            await removeForce(finalPath);
+            await rename(tempPath, finalPath);
+          } else {
+            await removeForce(finalPath);
+            await rename(extracted, finalPath);
+          }
+        } else {
+          await rename(extracted, finalPath);
         }
-        await rename(extracted, finalPath);
       }
 
       return finalPath;
@@ -229,28 +251,58 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
 
       try {
         let enginePath: string;
+        const isAndroid = os === "android" || (engine as unknown as { os?: string }).os === "android";
 
-        if (engine.installMethod === "download") {
+        if (engine.installMethod === "bundled") {
+          // Use bundled engine from app assets (resource_dir)
+          const { resourceDir } = await import("@tauri-apps/api/path");
+          const resourceDirPath = await resourceDir();
+          enginePath = await join(resourceDirPath, engine.path);
+
+          // Verify it exists
+          if (!(await exists(enginePath))) {
+            throw new Error(t("features.engines.add.bundledEngineNotFound"));
+          }
+
+          // Verify it's a file, not a directory
+          const meta = unwrap(await commands.getFileMetadata(enginePath));
+          if (meta.is_dir) {
+            throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
+          }
+
+          // Set executable (though it should already be from assets, this ensures it)
+          unwrap(await commands.setFileAsExecutable(enginePath));
+        } else if (engine.installMethod === "download") {
+          let engineBaseDir = await appDataDir();
+          if (isAndroid) {
+            const normalized = engineBaseDir.replace(/\\/g, "/").replace(/\/+$/g, "");
+            if (!normalized.endsWith("/files")) {
+              engineBaseDir = await join(engineBaseDir, "files");
+            }
+          }
           const url = engine.downloadLink;
           if (!url) throw new Error("Download link not found");
 
-          let path = await resolve(await appDataDir(), "engines", `${url.slice(url.lastIndexOf("/") + 1)}`);
-          if (url.endsWith(".zip") || url.endsWith(".tar")) {
-            path = await resolve(await appDataDir(), "engines");
+          let path = await resolve(engineBaseDir, "engines", `${url.slice(url.lastIndexOf("/") + 1)}`);
+          if (url.endsWith(".zip") || url.endsWith(".tar") || url.endsWith(".tar.gz")) {
+            path = await resolve(engineBaseDir, "engines");
           }
-          await commands.downloadFile(`engine_${id}`, url, path, null, null, null);
-          let appDataDirPath = await appDataDir();
-          if (appDataDirPath.endsWith("/") || appDataDirPath.endsWith("\\")) {
-            appDataDirPath = appDataDirPath.slice(0, -1);
+          unwrap(await commands.downloadFile(`engine_${id}`, url, path, null, null, null));
+          let engineBaseDirPath = engineBaseDir;
+          if (engineBaseDirPath.endsWith("/") || engineBaseDirPath.endsWith("\\")) {
+            engineBaseDirPath = engineBaseDirPath.slice(0, -1);
           }
-          const enginesDir = await join(appDataDirPath, "engines");
-          const isAndroid = os === "android" || (engine as unknown as { os?: string }).os === "android";
+          const enginesDir = await join(engineBaseDirPath, "engines");
           if (isAndroid) {
             enginePath = await resolveAndroidEnginePath(enginesDir);
           } else {
-            enginePath = await join(appDataDirPath, "engines", ...engine.path.split("/"));
+            enginePath = await join(engineBaseDirPath, "engines", ...engine.path.split("/"));
           }
-          await commands.setFileAsExecutable(enginePath);
+          const meta = unwrap(await commands.getFileMetadata(enginePath));
+          if (meta.is_dir) {
+            throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
+          }
+          unwrap(await commands.setFileAsExecutable(enginePath));
         } else if (engine.installMethod === "brew") {
           const brewPackage = engine.brewPackage;
           if (!brewPackage) throw new Error("Brew package name not found");
@@ -276,8 +328,23 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
           throw new Error(`Unsupported installation method: ${engine.installMethod}`);
         }
 
-        const configResult = await commands.getEngineConfig(enginePath);
-        const config = configResult.status === "ok" ? configResult.data : { name: engine.name, options: [] };
+        let config: { name: string; options: { type: string; value: { name: string; default?: string | number | boolean | null } }[] } | null =
+          null;
+        try {
+          config = unwrap(await commands.getEngineConfig(enginePath)) as unknown as typeof config;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("Engine timeout")) {
+            notifications.show({
+              title: t("common.warning"),
+              message: t("features.engines.add.engineConfigTimeoutInstalled"),
+              color: "yellow",
+            });
+            config = { name: engine.name, options: [] };
+          } else {
+            throw e;
+          }
+        }
 
         setEngines(async (prev) => [
           ...(await prev),
@@ -286,29 +353,36 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
             type: "local" as const,
             path: enginePath,
             loaded: true,
-            settings: config.options
-              .filter((o) => requiredEngineSettings.includes(o.value.name))
-              .map((o) => {
-                let defaultValue: string | number | boolean = "";
-                switch (o.type) {
-                  case "check":
-                    defaultValue = o.value.default ?? false;
-                    break;
-                  case "spin":
-                    defaultValue = Number(o.value.default ?? 0);
-                    break;
-                  case "combo":
-                  case "string":
-                    defaultValue = o.value.default ?? "";
-                    break;
-                  default:
-                    defaultValue = "";
-                }
-                return {
-                  name: o.value.name,
-                  value: defaultValue,
-                };
-              }),
+            settings:
+              config && config.options.length > 0
+                ? config.options
+                    .filter((o) => requiredEngineSettings.includes(o.value.name))
+                    .map((o) => {
+                      let defaultValue: string | number | boolean = "";
+                      switch (o.type) {
+                        case "check":
+                          defaultValue = o.value.default ?? false;
+                          break;
+                        case "spin":
+                          defaultValue = Number(o.value.default ?? 0);
+                          break;
+                        case "combo":
+                        case "string":
+                          defaultValue = o.value.default ?? "";
+                          break;
+                        default:
+                          defaultValue = "";
+                      }
+                      return {
+                        name: o.value.name,
+                        value: defaultValue,
+                      };
+                    })
+                : [
+                    { name: "MultiPV", value: "1" },
+                    { name: "Threads", value: 1 },
+                    { name: "Hash", value: 64 },
+                  ],
           },
         ]);
       } catch (error) {
@@ -331,6 +405,8 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         return `brew install ${engine.brewPackage}`;
       case "package":
         return engine.packageCommand || "Install via package manager";
+      case "bundled":
+        return t("features.engines.add.bundled");
       default:
         return t("units.bytes", { bytes: engine.downloadSize ?? 0 });
     }
@@ -342,6 +418,8 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         return `${t("common.install")} (Brew)`;
       case "package":
         return `${t("common.install")} (Package)`;
+      case "bundled":
+        return t("common.install");
       default:
         return t("common.install");
     }
@@ -351,6 +429,8 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
     switch (engine.installMethod) {
       case "brew":
       case "package":
+        return "Installing...";
+      case "bundled":
         return "Installing...";
       default:
         return t("common.downloading");
@@ -384,6 +464,8 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
             id={`engine_${engineId}`}
             progressEvent={events.downloadProgress}
             initInstalled={isInstalled}
+            stopInProgressOnFinished={false}
+            completeOnFinished={false}
             labels={{
               completed: t("common.installed"),
               action: getInstallActionLabel(),

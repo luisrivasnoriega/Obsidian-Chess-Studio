@@ -24,24 +24,21 @@ const ENGINES = [
     name: "Stockfish",
     version: "17.1",
     os: "android",
-    bmi2: true,
+    // Safer default for broad device compatibility (dotprod is not universally available).
+    bmi2: false,
     image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8-dotprod.tar",
-    path: "stockfish",
+    installMethod: "bundled" as const,
+    path: "engines/stockfish",
     elo: 3635,
   },
   {
     name: "Stockfish",
     version: "17.1",
     os: "android",
-    bmi2: false,
+    bmi2: true,
     image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-android-armv8.tar",
-    path: "stockfish",
+    installMethod: "bundled" as const,
+    path: "engines/stockfish",
     elo: 3635,
   },
   {
@@ -549,7 +546,7 @@ const localEngineSchema = z.object({
   image: z.string().nullish(),
   elo: z.number().nullish(),
 
-  installMethod: z.enum(["download", "brew", "package"]).nullish(),
+  installMethod: z.enum(["download", "brew", "package", "bundled"]).nullish(),
   downloadSize: z.number().nullish(),
   downloadLink: z.string().nullish(),
   brewPackage: z.string().nullish(),

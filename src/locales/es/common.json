@@ -21,6 +21,7 @@
     "downloading": "Descargando",
     "extracting": "Extrayendo",
     "error": "Error",
+    "warning": "Advertencia",
     "initializationErrorTitle": "Error de inicialización",
     "initializationErrorDescription": "La aplicación encontró un error durante el inicio:",
     "reloadApplication": "Recargar aplicación",
@@ -1128,7 +1129,11 @@
         "imageFile": "Archivo de imagen",
         "imageFileDesc": "Haga clic para seleccionar el archivo de imagen (tamaño recomendado: 60x60)",
         "androidUnsupportedArch": "Arquitectura Android no compatible para esta versión del motor: {{arch}}",
-        "androidBinaryNotFound": "No se pudo encontrar el binario del motor después de la descarga."
+        "androidBinaryNotFound": "No se pudo encontrar el binario del motor después de la descarga.",
+        "engineConfigTimeoutInstalled": "El motor se instaló, pero el análisis de opciones agotó el tiempo. Se aplicaron ajustes predeterminados.",
+        "enginePathIsDirectory": "La ruta del motor apunta a una carpeta en lugar de un binario: {{path}}",
+        "bundled": "Incluido (viene con la app)",
+        "bundledEngineNotFound": "Motor incluido no encontrado en los assets de la app. Por favor reinstala la app."
       },
       "remove": {
         "title": "Eliminar motor",

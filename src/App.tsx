@@ -40,6 +40,7 @@ import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
 import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
 import { ensureProfilesInitialized } from "./utils/profiles";
+import { autoRegisterBundledEngines } from "./utils/bundledEngines";
 
 type InitializationState = "loading" | "initialized" | "error";
 
@@ -421,6 +422,15 @@ export default function App() {
     if (sessionsChanged) setSessions(res.sessions);
     if (res.activeProfileId !== activeProfileId) setActiveProfileId(res.activeProfileId);
   }, [activeProfileId, profiles, sessions, setActiveProfileId, setProfiles, setSessions]);
+
+  // Auto-register bundled engines (e.g., Stockfish on Android) on app startup
+  useEffect(() => {
+    if (initState === "initialized") {
+      autoRegisterBundledEngines().catch((error) => {
+        error(`Failed to auto-register bundled engines: ${error}`);
+      });
+    }
+  }, [initState]);
 
   useEffect(() => {
     if (activeProfileId) {

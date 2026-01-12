@@ -45,12 +45,9 @@ android {
             )
         }
     }
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("src/main/jniLibs")
-        }
-    }
     packaging {
+        // Ensure native libraries are extracted to the filesystem. We need a real on-disk file
+        // to execute bundled engines like Stockfish (some devices block exec from app data).
         jniLibs {
             useLegacyPackaging = true
         }

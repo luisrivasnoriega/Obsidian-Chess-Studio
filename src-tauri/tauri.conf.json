@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Obsidian Chess Studio",
-  "version": "1.13.15",
+  "version": "1.13.16",
   "mainBinaryName": "obsidian-chess-studio",
   "identifier": "com.ocs",
   "bundle": {
@@ -40,7 +40,7 @@
     "beforeDevCommand": "pnpm start-vite",
     "beforeBuildCommand": "pnpm build-vite",
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420"
+    "devUrl": "http://127.0.0.1:1420"
   },
   "plugins": {
     "cli": {

@@ -1,7 +1,7 @@
 import { commands } from "@/bindings";
 import { unwrap } from "./unwrap";
 
-export type InstallMethod = "download" | "brew" | "package";
+export type InstallMethod = "download" | "brew" | "package" | "bundled";
 
 export interface PackageManagerStatus {
   brew: boolean;
@@ -44,6 +44,8 @@ export async function isInstallMethodSupported(method: InstallMethod): Promise<b
   switch (method) {
     case "download":
       return true;
+    case "bundled":
+      return true; // Bundled engines are always available if included in the app
     case "brew": {
       const status = await getPackageManagerStatus();
       return status.brew;
