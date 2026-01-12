@@ -1,4 +1,4 @@
-import { Divider, Grid, Paper, ScrollArea, Text } from "@mantine/core";
+import { Divider, Grid, Paper, ScrollArea, Stack, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { useAtom } from "jotai";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +9,8 @@ import GameNotation from "@/components/GameNotation";
 import MoveControls from "@/components/MoveControls";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { usePuzzleDatabase, usePuzzleSession } from "@/features/boards/hooks";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import type { Platform } from "@tauri-apps/plugin-os";
 import {
   hidePuzzleRatingAtom,
   inOrderPuzzlesAtom,
@@ -32,6 +34,13 @@ function Puzzles({ id }: { id: string }) {
   const store = useContext(TreeStateContext);
   if (!store) throw new Error("TreeStateContext not found");
   const reset = useStore(store, (s) => s.reset);
+  const { layout } = useResponsiveLayout();
+  const isMobileLayout = layout.chessBoard.layoutType === "mobile";
+  const [platform, setPlatform] = useState<Platform | null>(() => {
+    if (typeof navigator === "undefined") return null;
+    return /Android/i.test(navigator.userAgent) ? "android" : null;
+  });
+  const isAndroid = platform === "android";
 
   // Custom hooks for state management
   const {
@@ -301,6 +310,118 @@ function Puzzles({ id }: { id: string }) {
       cancelled = true;
     };
   }, [selectedDb]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void import("@tauri-apps/plugin-os")
+      .then((m) => m.platform())
+      .then((p) => {
+        if (!cancelled) setPlatform(p);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Android-only responsive fix:
+  // The 3-column Grid stacks into multiple full-height sections on small screens, making the lower panels unreachable.
+  if (isMobileLayout && isAndroid) {
+    return (
+      <>
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack
+            gap="md"
+            p="md"
+            style={{ paddingBottom: "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px))" }}
+          >
+            <PuzzleBoard
+              key={currentPuzzle}
+              puzzles={puzzles}
+              currentPuzzle={currentPuzzle}
+              changeCompletion={changeCompletion}
+              generatePuzzle={handleGeneratePuzzle}
+              db={selectedDb}
+              jumpToNext={jumpToNext}
+            />
+
+            <Paper withBorder p="md">
+              <PuzzleSettings
+                puzzleDbs={puzzleDbs}
+                selectedDb={selectedDb}
+                onDatabaseChange={handleDatabaseChange}
+                onAddNew={handleAddNew}
+                onDelete={handleDeletePuzzle}
+                ratingRange={ratingRange}
+                onRatingRangeChange={setRatingRange}
+                minRating={minRating}
+                maxRating={maxRating}
+                dbRatingRange={dbRatingRange}
+                progressive={progressive}
+                onProgressiveChange={setProgressive}
+                hideRating={hideRating}
+                onHideRatingChange={setHideRating}
+                inOrder={inOrder}
+                onInOrderChange={setInOrder}
+                hasThemes={hasThemes}
+                themes={themes}
+                themesOptions={themesOptions}
+                onThemesChange={setThemes}
+                hasOpeningTags={hasOpeningTags}
+                openingTags={openingTags}
+                openingTagsOptions={openingTagsOptions}
+                onOpeningTagsChange={setOpeningTags}
+              />
+              <Divider my="sm" />
+
+              <PuzzleControls
+                selectedDb={selectedDb}
+                onGeneratePuzzle={handleGeneratePuzzle}
+                onClearSession={handleClearSession}
+                changeCompletion={changeCompletion}
+                currentPuzzle={currentPuzzleData}
+                puzzles={puzzles}
+                jumpToNext={jumpToNext}
+                onJumpToNextChange={setJumpToNext}
+                turnToMove={turnToMove}
+                showingSolution={showingSolution}
+                updateShowingSolution={updateShowingSolution}
+                isShowingSolutionRef={isShowingSolutionRef}
+              />
+              <Divider my="sm" />
+
+              <PuzzleStatistics currentPuzzle={currentPuzzleData} />
+            </Paper>
+
+            <Paper withBorder p="md">
+              <PuzzleVariantsPanel selectedDb={selectedDb} />
+              <Divider my="sm" />
+
+              <ChallengeHistory
+                challenges={puzzles.map((p) => ({
+                  ...p,
+                  label: p.rating.toString(),
+                }))}
+                current={currentPuzzle}
+                select={handleSelectPuzzle}
+              />
+              <Divider my="sm" />
+
+              <GameNotation initialVariationState="variations" />
+              <MoveControls readOnly />
+            </Paper>
+          </Stack>
+        </ScrollArea>
+
+        <AddPuzzle
+          puzzleDbs={puzzleDbs}
+          opened={addPuzzleModalOpened}
+          setOpened={setAddPuzzleModalOpened}
+          setPuzzleDbs={setPuzzleDbs}
+        />
+      </>
+    );
+  }
 
   return (
     <>
