@@ -19,6 +19,7 @@ interface ResponsiveBoardProps {
   movable?: "both" | "white" | "black" | "turn" | "none";
   boardRef: React.MutableRefObject<HTMLDivElement | null>;
   saveFile?: () => void;
+  copyPgn?: () => void;
   reload?: () => void;
   addGame?: () => void;
   canTakeBack?: boolean;
@@ -66,6 +67,7 @@ function ResponsiveBoard({
   movable = "turn",
   boardRef,
   saveFile,
+  copyPgn,
   reload,
   addGame,
   canTakeBack,
@@ -181,6 +183,7 @@ function ResponsiveBoard({
             movable={movable}
             boardRef={boardRef}
             saveFile={saveFile}
+            copyPgn={copyPgn}
             reload={reload}
             addGame={addGame}
             canTakeBack={canTakeBack}
@@ -256,6 +259,7 @@ function ResponsiveBoard({
             movable={movable}
             boardRef={boardRef}
             saveFile={saveFile}
+            copyPgn={copyPgn}
             reload={reload}
             addGame={addGame}
             canTakeBack={canTakeBack}

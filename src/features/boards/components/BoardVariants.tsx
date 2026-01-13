@@ -919,15 +919,16 @@ function BoardVariants() {
               </Box>
 
               <Box style={{ position: "relative", zIndex: 2, minHeight: 0 }}>
-                <ResponsiveBoard
-                  practicing={practicing}
-                  dirty={dirty}
-                  editingMode={editingMode}
-                  toggleEditingMode={toggleEditingMode}
-                  boardRef={boardRef}
-                  saveFile={saveFile}
-                  reload={reloadBoard}
-                  addGame={addGame}
+              <ResponsiveBoard
+                practicing={practicing}
+                dirty={dirty}
+                editingMode={editingMode}
+                toggleEditingMode={toggleEditingMode}
+                boardRef={boardRef}
+                saveFile={saveFile}
+                copyPgn={copyPgn}
+                reload={reloadBoard}
+                addGame={addGame}
                   topBar={topBar}
                   editingCard={
                     editingMode ? (
@@ -1047,6 +1048,7 @@ function BoardVariants() {
           toggleEditingMode={toggleEditingMode}
           boardRef={boardRef}
           saveFile={saveFile}
+          copyPgn={copyPgn}
           reload={reloadBoard}
           addGame={addGame}
           topBar={false}

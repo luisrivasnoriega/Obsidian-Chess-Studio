@@ -369,15 +369,16 @@ function BoardAnalysis() {
         <EvalListener />
         <ScrollArea h="100%">
           <Stack gap="md">
-            <ResponsiveBoard
-              practicing={practicing}
-              dirty={dirty}
-              editingMode={editingMode}
-              toggleEditingMode={toggleEditingMode}
-              boardRef={boardRef}
-              saveFile={saveFile}
-              reload={reloadBoard}
-              addGame={addGame}
+          <ResponsiveBoard
+            practicing={practicing}
+            dirty={dirty}
+            editingMode={editingMode}
+            toggleEditingMode={toggleEditingMode}
+            boardRef={boardRef}
+            saveFile={saveFile}
+            copyPgn={copyPgn}
+            reload={reloadBoard}
+            addGame={addGame}
               topBar={false}
               editingCard={
                 editingMode ? (
@@ -431,6 +432,7 @@ function BoardAnalysis() {
           toggleEditingMode={toggleEditingMode}
           boardRef={boardRef}
           saveFile={saveFile}
+          copyPgn={copyPgn}
           reload={reloadBoard}
           addGame={addGame}
           topBar={false}

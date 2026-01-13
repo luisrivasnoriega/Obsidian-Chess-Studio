@@ -9,6 +9,7 @@ import {
   IconEditOff,
   IconEraser,
   IconReload,
+  IconShare,
   IconSwitchVertical,
   IconTarget,
   IconZoomCheck,
@@ -33,6 +34,7 @@ interface BoardControlsMenuProps {
   editingMode?: boolean;
   toggleEditingMode?: () => void;
   saveFile?: () => void;
+  copyPgn?: () => void;
   reload?: () => void;
   addGame?: () => void;
   toggleOrientation?: () => void;
@@ -68,6 +70,7 @@ function BoardControlsMenu({
   editingMode,
   toggleEditingMode,
   saveFile,
+  copyPgn,
   reload,
   addGame: _addGame,
   toggleOrientation,
@@ -155,6 +158,14 @@ function BoardControlsMenu({
       label: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
       tooltipLabel: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
       variant: (dirty && !autoSave ? "outline" : "default") as "default" | "outline",
+    },
+    {
+      id: "copyPgn",
+      condition: !!copyPgn,
+      icon: <IconShare size={iconSize} />,
+      onClick: () => copyPgn?.(),
+      label: t("keybindings.copyPgn"),
+      tooltipLabel: t("keybindings.copyPgn"),
     },
     {
       id: "reload",

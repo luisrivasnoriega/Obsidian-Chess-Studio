@@ -32,6 +32,7 @@ interface MoveControlsProps {
   editingMode?: boolean;
   toggleEditingMode?: () => void;
   saveFile?: () => void;
+  copyPgn?: () => void;
   dirty?: boolean;
   autoSave?: boolean;
   reload?: () => void;
@@ -60,6 +61,7 @@ function MoveControls({
   editingMode,
   toggleEditingMode,
   saveFile,
+  copyPgn,
   reload,
   addGame,
   toggleOrientation,
@@ -376,6 +378,7 @@ function MoveControls({
           editingMode={editingMode}
           toggleEditingMode={toggleEditingMode}
           saveFile={saveFile}
+          copyPgn={copyPgn}
           reload={reload}
           addGame={addGame}
           toggleOrientation={toggleOrientation}
