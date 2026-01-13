@@ -247,16 +247,16 @@ function EngineListener({
             fen: searchingFen,
             extraOptions: options,
           }).then((moves) => {
-            if (moves) {
-              const [progress, bestMoves] = moves;
-              setEngineVariation((prev) => {
-                const newMap = new Map(prev);
-                newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
-                return newMap;
-              });
-              setProgress(progress);
-            }
-          });
+              if (moves) {
+                const [progress, bestMoves] = moves;
+                setEngineVariation((prev) => {
+                  const newMap = new Map(prev);
+                  newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
+                  return newMap;
+                });
+                setProgress(progress);
+              }
+            });
         }
       } else {
         if (engine.type === "local") {

@@ -494,7 +494,9 @@ function Board({
 
       const from = parseSquare(orig);
       const to = parseSquare(dest);
-      if (!from || !to) return;
+      // IMPORTANT: `parseSquare("a1")` returns 0, which is falsy.
+      // Use null/undefined checks instead of truthiness.
+      if (from == null || to == null) return;
 
       if (!pos) return;
       if (
@@ -637,7 +639,7 @@ function Board({
               }}
               onClick={() => setEvalOpen((prevState) => !prevState)}
             >
-              <EvalBar score={currentNode.score?.value || null} orientation={orientation} />
+              <EvalBar score={currentNode.score?.value || null} orientation={orientation} turn={turn} />
             </Box>
           )}
           <Box

@@ -1,7 +1,8 @@
-import { ActionIcon, AppShellSection, Group, Menu, Stack, Tooltip } from "@mantine/core";
+import { AppShellSection, Group, Stack, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
+import type { ComponentType } from "react";
+import type { IconProps } from "@tabler/icons-react";
 import {
-  type Icon,
   IconChartLine,
   IconCpu,
   IconDatabase,
@@ -9,11 +10,9 @@ import {
   IconGitBranch,
   IconKeyboard,
   IconLayoutDashboard,
-  IconMenu2,
   IconPlayerPlay,
   IconPuzzle,
   IconSettings,
-  IconTrophy,
   IconUpload,
   IconUserCircle,
 } from "@tabler/icons-react";
@@ -22,12 +21,15 @@ import cx from "clsx";
 import { useAtom } from "jotai";
 import { useTranslation } from "react-i18next";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import LichessLogo from "@/features/profiles/components/LichessLogo";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { createTab, type Tab } from "@/utils/tabs";
 import * as classes from "./Sidebar.css";
 
+type SidebarIcon = ComponentType<IconProps>;
+
 interface NavbarLinkProps {
-  icon: Icon;
+  icon: SidebarIcon;
   label: string;
   url: string;
   active?: boolean;
@@ -52,6 +54,33 @@ function NavbarLink({ url, icon: Icon, label }: NavbarLinkProps) {
     </Tooltip>
   );
 }
+
+const LichessSideIcon: SidebarIcon = ({ size }) => {
+  const resolvedSize = typeof size === "number" ? `${size}px` : size ?? "1.5rem";
+  return (
+    <div
+      style={{
+        width: resolvedSize,
+        height: resolvedSize,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <LichessLogo
+        style={{
+          width: resolvedSize,
+          height: resolvedSize,
+          fill: "currentColor",
+          stroke: "none",
+          transform: "scale(0.92)",
+          transformOrigin: "center",
+          display: "block",
+        }}
+      />
+    </div>
+  );
+};
 
 function MayaActionLink({
   icon: Icon,
@@ -98,7 +127,17 @@ const secondaryLinksData = [
 
 // Sección terciaria (configuración/avanzado)
 const tertiaryLinksData = [
-  { icon: IconTrophy, label: "tournaments", url: "/tournaments" },
+  { icon: LichessSideIcon, label: "tournaments", url: "/tournaments" },
+];
+
+const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: string }> = [
+  { icon: IconLayoutDashboard, labelKey: "features.sidebar.dashboard", url: "/" },
+  { icon: IconUserCircle, labelKey: "features.sidebar.profiles", url: "/profiles" },
+  { icon: IconChartLine, labelKey: "maya.nav.analysis", url: "/analysis" },
+  { icon: IconGitBranch, labelKey: "features.sidebar.variants", url: "/variants" },
+  { icon: IconPuzzle, labelKey: "features.sidebar.puzzles", url: "/puzzles" },
+  { icon: LichessSideIcon, labelKey: "features.sidebar.tournaments", url: "/tournaments" },
+  { icon: IconSettings, labelKey: "features.sidebar.settings", url: "/settings" },
 ];
 
 // Mantener linksdata para compatibilidad
@@ -115,6 +154,7 @@ export function SideBar() {
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const { layout } = useResponsiveLayout();
+  const isFooterNav = layout.sidebar.position === "footer";
   const openTabAndNavigate = async ({
     tab,
     route,
@@ -217,6 +257,26 @@ export function SideBar() {
     <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
   ));
 
+  if (isFooterNav) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "center",
+          paddingLeft: "calc(0.5rem + env(safe-area-inset-left, 0px))",
+          paddingRight: "calc(0.5rem + env(safe-area-inset-right, 0px))",
+        }}
+      >
+        <Group justify="center" gap="sm" wrap="nowrap">
+          {mobileFooterLinks.map((link) => (
+            <NavbarLink url={link.url} icon={link.icon} label={t(link.labelKey)} key={link.url} />
+          ))}
+        </Group>
+      </div>
+    );
+  }
+
   // Acción terciaria: Import
   const tertiaryActionLink = (
     <MayaActionLink
@@ -231,88 +291,6 @@ export function SideBar() {
   );
 
   // Para compatibilidad con código existente (footer/mobile)
-  const dashboardLink = primaryNavLinks[0];
-  const profilesLink = primaryNavLinks[1];
-  const secondaryLinks = [...secondaryNavLinks, ...tertiaryNavLinks];
-  const actionLinks = [...primaryActionLinks, tertiaryActionLink];
-
-  if (layout.sidebar.position === "footer") {
-    // Show only first 4 links on mobile
-    const footerLinks = [dashboardLink, ...actionLinks, ...(profilesLink ? [profilesLink] : []), ...secondaryLinks];
-    const visibleLinks = footerLinks.slice(0, 4);
-
-    // For burger menu, we need to render Menu.Items directly
-    const renderBurgerMenuItem = (link: React.ReactNode, index: number) => {
-      if (!link || typeof link !== "object" || !("props" in link)) {
-        return null;
-      }
-
-      const linkProps = link.props as {
-        icon: Icon;
-        label: string;
-        url?: string;
-        onClick?: (e: React.MouseEvent) => void;
-      };
-      const IconComponent = linkProps.icon;
-      const linkKey = (link as { key?: string }).key || `menu-item-${index}`;
-
-      // If there's no URL, it's a quick action - use onClick
-      if (!linkProps.url) {
-        return (
-          <Menu.Item
-            key={linkKey}
-            onClick={(e) => {
-              if (linkProps.onClick) {
-                linkProps.onClick(e);
-              }
-            }}
-            leftSection={<IconComponent size="1.2rem" stroke={1.5} />}
-          >
-            {linkProps.label}
-          </Menu.Item>
-        );
-      }
-
-      // Regular navigation link (use navigate() for reliability with Mantine Menu)
-      return (
-        <Menu.Item
-          key={linkKey}
-          onClick={() => navigate({ to: linkProps.url! })}
-          leftSection={<IconComponent size="1.2rem" stroke={1.5} />}
-        >
-          {linkProps.label}
-        </Menu.Item>
-      );
-    };
-
-    return (
-      <AppShellSection grow>
-        <Group justify="center" gap="xs" wrap="nowrap">
-          {visibleLinks}
-          <Menu shadow="md" position="top">
-            <Menu.Target>
-              <Tooltip label={t("sidebar.more")} position="top">
-                <ActionIcon variant="subtle" size="lg" className={classes.link} data-position="footer">
-                  <IconMenu2 size="1.8rem" stroke={1.5} />
-                </ActionIcon>
-              </Tooltip>
-            </Menu.Target>
-            <Menu.Dropdown>
-              {footerLinks.slice(4).map((link, index) => renderBurgerMenuItem(link, index))}
-              <Menu.Item
-                key="settings"
-                onClick={() => navigate({ to: "/settings" })}
-                leftSection={<IconSettings size="1.2rem" stroke={1.5} />}
-              >
-                {t("features.sidebar.settings")}
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
-      </AppShellSection>
-    );
-  }
-
   // Desktop layout
   return (
     <AppShellSection grow>

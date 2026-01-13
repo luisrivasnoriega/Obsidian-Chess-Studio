@@ -1,8 +1,20 @@
+import type { CSSProperties } from "react";
 import { logo } from "./LichessLogo.css";
 
-function LichessLogo() {
+interface LichessLogoProps {
+  className?: string;
+  style?: CSSProperties;
+}
+
+function LichessLogo({ className, style }: LichessLogoProps) {
   return (
-    <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg" className={logo}>
+    <svg
+      viewBox="0 0 50 50"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className ? `${logo} ${className}` : logo}
+      style={style}
+      data-testid="lichess-logo"
+    >
       <title>Lichess</title>
       <path
         strokeLinejoin="round"

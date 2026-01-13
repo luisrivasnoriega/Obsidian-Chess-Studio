@@ -623,7 +623,7 @@
       "databases": "Bases de datos",
       "engines": "Motores",
       "puzzles": "Puzzles",
-      "tournaments": "Torneos",
+      "tournaments": "Lichess",
       "variants": "Variantes",
       "learn": "Aprender",
       "settings": "Configuración",
@@ -1335,13 +1335,13 @@
       "importTab": {
         "title": "Importar Torneo de Lichess",
         "description": "Importa partidas de torneo de Lichess usando un ID de torneo o URL",
-        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración de cuenta principal.",
+        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración del perfil activo.",
         "button": "Importar Torneo"
       },
       "browse": {
         "title": "Explorar Torneos de Lichess",
         "description": "Busca y explora torneos en Lichess",
-        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración de cuenta principal.",
+        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración del perfil activo.",
         "button": "Explorar Torneos",
         "schedule": "Programar",
         "noTemplates": "No se encontraron plantillas de torneo",
@@ -1370,8 +1370,8 @@
       "createTab": {
         "title": "Crear Plantilla de Torneo",
         "description": "Crea una nueva plantilla de torneo (programarla más tarde desde la pestaña Buscar)",
-        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración de cuenta principal.",
-        "noAccount": "No hay cuenta seleccionada. Por favor selecciona una cuenta principal primero.",
+        "noToken": "Token de Lichess no encontrado. Por favor agrega tu token de Lichess en la configuración del perfil activo.",
+        "noAccount": "No hay cuenta seleccionada. Por favor selecciona un perfil activo primero.",
         "button": "Guardar Plantilla",
         "templateSaved": "¡Plantilla de torneo guardada exitosamente!",
         "nameRequired": "El nombre del torneo es obligatorio",
@@ -1955,7 +1955,7 @@
       "databases": "Bases de datos",
       "files": "Archivos",
       "accounts": "Cuentas",
-      "tournaments": "Torneos",
+      "tournaments": "Lichess",
       "learn": "Aprender"
     }
   },

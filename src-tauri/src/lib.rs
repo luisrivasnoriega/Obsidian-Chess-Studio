@@ -71,7 +71,7 @@ use crate::variant_positions::{get_variant_position, upsert_variant_position};
 use crate::{
     db::{
         delete_duplicated_games, edit_db_info, get_db_info, get_game, get_games, get_players,
-        merge_players, update_game,
+        merge_players, set_profile_metadata, update_game,
     },
     fs::{download_file, file_exists, get_file_metadata},
     opening::{
@@ -158,6 +158,7 @@ pub async fn run() {
             delete_indexes,
             create_indexes,
             edit_db_info,
+            set_profile_metadata,
             delete_db_game,
             delete_database,
             export_to_pgn,

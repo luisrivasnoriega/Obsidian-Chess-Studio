@@ -666,7 +666,7 @@
                                      "databases":  "Databases",
                                      "engines":  "Engines",
                                      "puzzles":  "Puzzles",
-                                     "tournaments":  "Tournaments",
+                                     "tournaments":  "Lichess",
                                      "variants":  "Variants",
                                      "learn":  "Learn",
                                      "settings":  "Settings",
@@ -682,13 +682,13 @@
                                          "importTab":  {
                                                            "title":  "Import Tournament from Lichess",
                                                            "description":  "Import tournament games from Lichess using a tournament ID or URL",
-                                                           "noToken":  "Lichess token not found. Please add your Lichess token in the main account settings.",
+                                                           "noToken":  "Lichess token not found. Please add your Lichess token in the active profile settings.",
                                                            "button":  "Import Tournament"
                                                        },
                                          "browse":  {
                                                         "title":  "Browse Lichess Tournaments",
                                                         "description":  "Search and browse tournaments on Lichess",
-                                                        "noToken":  "Lichess token not found. Please add your Lichess token in the main account settings.",
+                                                        "noToken":  "Lichess token not found. Please add your Lichess token in the active profile settings.",
                                                         "button":  "Browse Tournaments",
                                                         "schedule":  "Schedule",
                                                         "noTemplates":  "No tournament templates found",
@@ -717,8 +717,8 @@
                                          "createTab":  {
                                                            "title":  "Create Tournament Template",
                                                            "description":  "Create a new tournament template (schedule it later from the Search tab)",
-                                                           "noToken":  "Lichess token not found. Please add your Lichess token in the main account settings.",
-                                                           "noAccount":  "No account selected. Please select a main account first.",
+                                                           "noToken":  "Lichess token not found. Please add your Lichess token in the active profile settings.",
+                                                           "noAccount":  "No account selected. Please select an active profile first.",
                                                            "button":  "Save Template",
                                                            "templateSaved":  "Tournament template saved successfully!",
                                                            "nameRequired":  "Tournament name is required",
@@ -1289,7 +1289,7 @@
                                        "card":  {
                                                     "games":  "Games",
                                                     "players":  "Players",
-                                                    "tournaments":  "Tournaments",
+                                                    "tournaments":  "Lichess",
                                                     "storage":  "Storage"
                                                 },
                                        "add":  {
@@ -1962,7 +1962,7 @@
                              "databases":  "Databases",
                              "files":  "Files",
                              "accounts":  "Accounts",
-                             "tournaments":  "Tournaments",
+                             "tournaments":  "Lichess",
                              "learn":  "Learn"
                          }
              },

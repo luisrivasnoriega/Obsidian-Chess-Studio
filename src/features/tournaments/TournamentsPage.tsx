@@ -1,41 +1,26 @@
 import { Box, Tabs } from "@mantine/core";
 import { IconPlus, IconSearch } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
-import { loadMainAccount } from "@/utils/mainAccount";
+import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
+import { useAtomValue } from "jotai";
 import { CreateTournamentForm } from "./components/CreateTournamentForm";
 import { TournamentList } from "./components/TournamentList";
 
 export default function TournamentsPage() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<string>("search");
-  const [accountName, setAccountName] = useState<string | null>(null);
-  const [lichessToken, setLichessToken] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    loadMainAccount().then((account) => {
-      if (account) {
-        setAccountName(account.name);
-        setLichessToken(account.lichessToken || null);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    const handleAccountChange = (event: CustomEvent) => {
-      const account = event.detail;
-      setAccountName(account.name);
-      setLichessToken(account.lichessToken || null);
-      setRefreshKey((prev) => prev + 1);
-    };
-
-    window.addEventListener("mainAccountChanged", handleAccountChange as EventListener);
-    return () => {
-      window.removeEventListener("mainAccountChanged", handleAccountChange as EventListener);
-    };
-  }, []);
+  const profiles = useAtomValue(profilesAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
+    [activeProfileId, profiles],
+  );
+  const accountName = activeProfile?.name ?? null;
+  const lichessToken = activeProfile?.lichessToken ?? null;
 
   useEffect(() => {
     const handleTemplateSaved = () => {
@@ -47,6 +32,10 @@ export default function TournamentsPage() {
       window.removeEventListener("tournament-template-saved", handleTemplateSaved);
     };
   }, []);
+
+  useEffect(() => {
+    setRefreshKey((prev) => prev + 1);
+  }, [activeProfileId]);
 
   return (
     <>

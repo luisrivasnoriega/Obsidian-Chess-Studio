@@ -131,6 +131,14 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
     chessgroundConfig.movable,
     chessgroundConfig.premovable,
     chessgroundConfig.predroppable,
+    // Important: engine-driven arrows / shapes update asynchronously without changing the FEN.
+    // If we don't include drawable/visual config here, users will only see updates after another prop
+    // changes (e.g. flipping the board).
+    chessgroundConfig.drawable,
+    chessgroundConfig.lastMove,
+    chessgroundConfig.check,
+    chessgroundConfig.coordinates,
+    chessgroundConfig.coordinatesOnSquares,
     chessgroundConfig.draggable?.showGhost,
     chessgroundConfig.selectable?.enabled,
     chessgroundConfig.highlight,

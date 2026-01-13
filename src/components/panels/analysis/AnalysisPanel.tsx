@@ -124,7 +124,9 @@ function AnalysisPanel() {
     return false;
   }, [root]);
 
-  const desiredDefaultTab: "engines" | "report" = hasPreexistingAnalysis ? "report" : "engines";
+  const hadPreexistingAnalysisRef = useRef(hasPreexistingAnalysis);
+
+  const desiredDefaultTab: "engines" | "report" = hadPreexistingAnalysisRef.current ? "report" : "engines";
 
   // Read initial configuration (per board tab) and apply it once.
   useEffect(() => {
@@ -144,7 +146,21 @@ function AnalysisPanel() {
       const config = JSON.parse(configJson);
       const next = config.analysisSubTab;
       if (next && ["engines", "report", "logs"].includes(next)) {
-        if ((next === "report" && !hasPreexistingAnalysis) || (next === "engines" && hasPreexistingAnalysis)) {
+        // IMPORTANT: decide based on analysis state at open time, not after engines start streaming scores.
+        const hadPreexistingAnalysis = hadPreexistingAnalysisRef.current;
+        if ((next === "report" && !hadPreexistingAnalysis) || (next === "engines" && hadPreexistingAnalysis)) {
+          // Clear the one-shot config so it doesn't re-apply later (e.g. when analysis scores appear).
+          try {
+            const updatedConfig = { ...config };
+            delete updatedConfig.analysisSubTab;
+            if (Object.keys(updatedConfig).length === 0) {
+              sessionStorage.removeItem(configKey);
+            } else {
+              sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
+            }
+          } catch {
+            // Ignore
+          }
           setConfigTabOverride(null);
           return;
         }
@@ -156,7 +172,7 @@ function AnalysisPanel() {
     }
 
     setConfigTabOverride(null);
-  }, [activeTab, hasPreexistingAnalysis]);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!activeTab || typeof window === "undefined") return;

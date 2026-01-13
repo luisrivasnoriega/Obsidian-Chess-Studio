@@ -451,7 +451,7 @@ function BoardAnalysis() {
           setViewPawnStructure={setViewPawnStructure}
           selectedPiece={selectedPiece}
           setSelectedPiece={setSelectedPiece}
-          canTakeBack={false} // Analysis mode doesn't support take back
+          canTakeBack={false}
           changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
           currentTabType="analysis"
           clearShapes={clearShapes}

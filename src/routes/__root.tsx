@@ -866,6 +866,11 @@ function RootLayout() {
             height: "100%",
             flex: 1,
           },
+          footer: {
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          },
         }}
       >
         <AppShell.Header>
@@ -877,7 +882,9 @@ function RootLayout() {
             <Outlet />
           </div>
         </AppShell.Main>
-        <AppShell.Footer>{layout.sidebar.position === "footer" && <SideBar />}</AppShell.Footer>
+        <AppShell.Footer style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+          {layout.sidebar.position === "footer" && <SideBar />}
+        </AppShell.Footer>
 
         <Spotlight
           actions={getSpotlightActions(navigate, t)}

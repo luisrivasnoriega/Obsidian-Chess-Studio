@@ -199,6 +199,19 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const headerGap = isCompactHeader ? "xs" : "sm";
   const trailingSpacerWidth = layout.menuBar.displayWindowControls ? "3rem" : isCompactHeader ? "0.5rem" : "1.5rem";
 
+  const mobileMenuOptions = useMemo(() => {
+    if (!isCompactHeader) return null;
+    const byId = new Map<string, MenuAction>();
+    for (const group of menuActions) {
+      for (const option of group.options) {
+        if (option.id) byId.set(option.id, option);
+      }
+    }
+
+    const orderedIds = ["about", "check_for_updates", "settings", "quit", "force_reload"];
+    return orderedIds.map((id) => byId.get(id) ?? null);
+  }, [isCompactHeader, menuActions]);
+
   return (
     <Box h="100%" style={{ display: "flex", alignItems: "center", paddingTop: headerPaddingTop }} data-tauri-drag-region>
       <DragDropContext onDragEnd={onDragEnd}>
@@ -210,30 +223,51 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              {menuActions.map((group) => (
-                <React.Fragment key={group.label}>
-                  <Menu.Label>{group.label}</Menu.Label>
-                  {group.options.map((option, i) =>
-                    option.label === "divider" ? (
-                      <Menu.Divider key={`${group.label}-divider-${i}`} />
-                    ) : (
-                      <Menu.Item
-                        key={option.id ?? `${group.label}-${option.label}`}
-                        onClick={option.action}
-                        rightSection={
-                          option.shortcut ? (
-                            <Text size="xs" c="dimmed">
-                              {option.shortcut}
-                            </Text>
-                          ) : null
-                        }
-                      >
-                        {option.label}
-                      </Menu.Item>
-                    ),
-                  )}
-                </React.Fragment>
-              ))}
+              {mobileMenuOptions
+                ? mobileMenuOptions.map((option, index) => {
+                    if (!option) return null;
+                    return (
+                      <React.Fragment key={option.id ?? `${option.label}-${index}`}>
+                        {index > 0 ? <Menu.Divider /> : null}
+                        <Menu.Item
+                          onClick={option.action}
+                          rightSection={
+                            option.shortcut ? (
+                              <Text size="xs" c="dimmed">
+                                {option.shortcut}
+                              </Text>
+                            ) : null
+                          }
+                        >
+                          {option.label}
+                        </Menu.Item>
+                      </React.Fragment>
+                    );
+                  })
+                : menuActions.map((group) => (
+                    <React.Fragment key={group.label}>
+                      <Menu.Label>{group.label}</Menu.Label>
+                      {group.options.map((option, i) =>
+                        option.label === "divider" ? (
+                          <Menu.Divider key={`${group.label}-divider-${i}`} />
+                        ) : (
+                          <Menu.Item
+                            key={option.id ?? `${group.label}-${option.label}`}
+                            onClick={option.action}
+                            rightSection={
+                              option.shortcut ? (
+                                <Text size="xs" c="dimmed">
+                                  {option.shortcut}
+                                </Text>
+                              ) : null
+                            }
+                          >
+                            {option.label}
+                          </Menu.Item>
+                        ),
+                      )}
+                    </React.Fragment>
+                  ))}
             </Menu.Dropdown>
           </Menu>
 

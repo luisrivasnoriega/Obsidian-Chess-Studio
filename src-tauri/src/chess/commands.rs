@@ -3,6 +3,8 @@
 //! This module exposes async functions as Tauri commands for engine process control, game analysis, and engine configuration.
 //! It acts as the bridge between the frontend and backend chess logic.
 
+#![allow(unused_mut)]
+
 use std::path::PathBuf;
 use std::io::ErrorKind;
 
@@ -29,6 +31,7 @@ pub async fn kill_engines(tab: String, state: tauri::State<'_, AppState>) -> Res
         if key.0.starts_with(&tab) {
             // FIXED: Safe cleanup even if kill fails
             if let Some(process_arc) = state.engine_processes.get(&key) {
+                #[allow(unused_mut)]
                 let mut process = process_arc.lock().await;
                 // Attempt to kill, but always remove from map
                 let _ = process.kill().await; // Ignore errors, ensure cleanup
@@ -50,6 +53,7 @@ pub async fn kill_engine(
 ) -> Result<(), Error> {
     let key = (tab, engine);
     if let Some(process_arc) = state.engine_processes.get(&key) {
+        #[allow(unused_mut)]
         let mut process = process_arc.lock().await;
         // Attempt to kill, but always remove from map
         let _ = process.kill().await; // Ignore errors, ensure cleanup
@@ -69,6 +73,7 @@ pub async fn stop_engine(
 ) -> Result<(), Error> {
     let key = (tab, engine);
     if let Some(process) = state.engine_processes.get(&key) {
+        #[allow(unused_mut)]
         let mut process = process.lock().await;
         process.stop().await?;
     }
@@ -159,6 +164,7 @@ pub async fn get_engine_config(path: PathBuf, app: tauri::AppHandle) -> Result<E
     #[cfg(target_os = "windows")]
     command.creation_flags(super::process::CREATE_NO_WINDOW);
 
+    #[allow(unused_mut)]
     let mut child = command.spawn().map_err(|e| {
         if e.kind() == ErrorKind::PermissionDenied {
             #[cfg(unix)]
@@ -193,13 +199,16 @@ pub async fn get_engine_config(path: PathBuf, app: tauri::AppHandle) -> Result<E
         }
         Error::Io(e)
     })?;
+    #[allow(unused_mut)]
     let mut stdin = child.stdin.take().ok_or(Error::NoStdin)?;
     let stdout = child.stdout.take().ok_or(Error::NoStdout)?;
+    #[allow(unused_mut)]
     let mut stdout = tokio::io::BufReader::new(stdout).lines();
 
     use tokio::io::AsyncWriteExt;
     stdin.write_all(b"uci\n").await?;
 
+    #[allow(unused_mut)]
     let mut config = EngineConfig::default();
 
     // FIXED: Add timeout to prevent hanging on unresponsive engines

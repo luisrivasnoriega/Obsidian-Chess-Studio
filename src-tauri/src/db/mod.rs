@@ -577,6 +577,33 @@ pub async fn edit_db_info(
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn set_profile_metadata(
+    file: PathBuf,
+    key: String,
+    value: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+
+    match value {
+        Some(value) => {
+            diesel::insert_into(info::table)
+                .values((info::name.eq(key.clone()), info::value.eq(value.clone())))
+                .on_conflict(info::name)
+                .do_update()
+                .set(info::value.eq(value))
+                .execute(db)?;
+        }
+        None => {
+            diesel::delete(info::table.filter(info::name.eq(key))).execute(db)?;
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Type)]
 pub enum Sides {
     BlackWhite,

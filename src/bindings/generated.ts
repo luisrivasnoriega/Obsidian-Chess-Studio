@@ -335,6 +335,14 @@ async editDbInfo(file: string, title: string | null, description: string | null)
     else return { status: "error", error: e  as any };
 }
 },
+async setProfileMetadata(file: string, key: string, value: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_profile_metadata", { file, key, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async deleteDbGame(file: string, gameId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_db_game", { file, gameId }) };

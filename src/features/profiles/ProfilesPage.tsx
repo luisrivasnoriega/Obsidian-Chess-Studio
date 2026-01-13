@@ -39,7 +39,7 @@ import { type DatabaseInfo, getDatabases } from "@/utils/db";
 import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
 import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
 import { unwrap } from "@/utils/unwrap";
-import { getProfileDbPath, profileDbFilename } from "@/utils/profileDb";
+import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
@@ -81,6 +81,7 @@ export default function ProfilesPage() {
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftFideId, setDraftFideId] = useState("");
+  const [draftLichessToken, setDraftLichessToken] = useState("");
   const [profilesPage, setProfilesPage] = useState(1);
   const profilesPerPage = 5;
   const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
@@ -419,6 +420,7 @@ export default function ProfilesPage() {
     setEditingProfileId(null);
     setDraftName("");
     setDraftFideId("");
+    setDraftLichessToken("");
     modal.open();
   }, [modal]);
 
@@ -440,15 +442,26 @@ export default function ProfilesPage() {
       setEditingProfileId(profile.id);
       setDraftName(profile.name);
       setDraftFideId(profile.fideId ?? "");
+      setDraftLichessToken(profile.lichessToken ?? "");
       modal.open();
     },
     [modal],
   );
 
+  const persistProfileToken = useCallback(async (profileId: string, tokenValue: string | undefined) => {
+    try {
+      await setProfileLichessToken(profileId, tokenValue ?? null);
+    } catch {
+      // best-effort; ignore errors
+    }
+  }, []);
+
   const saveProfile = useCallback(async () => {
     const now = Date.now();
     const name = normalizeProfileName(draftName);
     const fideId = cleanFideId(draftFideId);
+    const trimmedLichessToken = draftLichessToken.trim();
+    const lichessTokenValue = trimmedLichessToken ? trimmedLichessToken : undefined;
 
     if (!name) {
       notifications.show({
@@ -471,7 +484,17 @@ export default function ProfilesPage() {
 
     if (editingProfileId) {
       setProfiles((prev) =>
-        prev.map((p) => (p.id === editingProfileId ? { ...p, name, fideId: fideId || undefined, updatedAt: now } : p)),
+        prev.map((p) =>
+          p.id === editingProfileId
+            ? {
+                ...p,
+                name,
+                fideId: fideId || undefined,
+                lichessToken: lichessTokenValue,
+                updatedAt: now,
+              }
+            : p,
+        ),
       );
 
       setSessions((prev) =>
@@ -483,11 +506,19 @@ export default function ProfilesPage() {
         message: t("profiles.updated", { defaultValue: "Profile updated." }),
         color: "green",
       });
+      void persistProfileToken(editingProfileId, lichessTokenValue);
       modal.close();
       return;
     }
 
-    const next: Profile = { id: genID(), name, fideId: fideId || undefined, createdAt: now, updatedAt: now };
+    const next: Profile = {
+      id: genID(),
+      name,
+      fideId: fideId || undefined,
+      lichessToken: lichessTokenValue,
+      createdAt: now,
+      updatedAt: now,
+    };
     setProfiles((prev) => [...prev, next]);
     setActiveProfileId(next.id);
 
@@ -497,6 +528,9 @@ export default function ProfilesPage() {
       if (result.status === "error") {
       }
     } catch (error) {
+      // Ignore initialization errors (best-effort)
+    } finally {
+      void persistProfileToken(next.id, lichessTokenValue);
     }
 
     notifications.show({
@@ -506,7 +540,19 @@ export default function ProfilesPage() {
     });
 
     modal.close();
-  }, [draftFideId, draftName, editingProfileId, modal, profiles, setActiveProfileId, setProfiles, setSessions, t]);
+  }, [
+    draftFideId,
+    draftLichessToken,
+    draftName,
+    editingProfileId,
+    modal,
+    persistProfileToken,
+    profiles,
+    setActiveProfileId,
+    setProfiles,
+    setSessions,
+    t,
+  ]);
 
   const deleteProfile = useCallback(
     (profile: Profile) => {
@@ -824,8 +870,8 @@ export default function ProfilesPage() {
 
               <Divider my="sm" />
 
-              <Box>
-                <Table withTableBorder highlightOnHover striped>
+              <Box style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", maxWidth: "100%" }}>
+                <Table withTableBorder highlightOnHover striped style={{ minWidth: 860 }}>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th style={{ width: 240 }}>
@@ -1151,6 +1197,17 @@ export default function ProfilesPage() {
             placeholder={t("profiles.fideIdPlaceholder", { defaultValue: "Optional" })}
             value={draftFideId}
             onChange={(e) => setDraftFideId(cleanFideId(e.currentTarget.value))}
+          />
+          <TextInput
+            label={t("features.dashboard.editProfile.lichessToken", { defaultValue: "Lichess Token" })}
+            placeholder={t("features.dashboard.editProfile.lichessTokenPlaceholder", {
+              defaultValue: "Enter your Lichess API token",
+            })}
+            description={t("features.dashboard.editProfile.lichessTokenDescription", {
+              defaultValue: "Required for tournament scheduling. Get one at https://lichess.org/account/oauth/token/create",
+            })}
+            value={draftLichessToken}
+            onChange={(e) => setDraftLichessToken(e.currentTarget.value)}
           />
 
           <Group justify="flex-end">

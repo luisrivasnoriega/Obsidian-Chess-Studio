@@ -243,7 +243,8 @@ function PuzzleBoard({
 
                 const from = parseSquare(orig);
                 const to = parseSquare(dest);
-                if (!from || !to) return;
+                // IMPORTANT: `parseSquare("a1")` returns 0, which is falsy.
+                if (from == null || to == null) return;
                 const move: NormalMove = { from, to };
                 if (
                   pos &&

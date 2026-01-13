@@ -569,11 +569,7 @@ function makeMove({
   const i = moveNode.children.findIndex((n) => n.san === san);
   if (i !== -1) {
     if (changePosition) {
-      if (state.position === position) {
-        state.position.push(i);
-      } else {
-        state.position = [...position, i];
-      }
+      state.position = [...position, i];
     }
   } else {
     state.dirty = true;
@@ -591,15 +587,8 @@ function makeMove({
       moveNode.children.push(newMoveNode);
     }
     if (changePosition) {
-      if (state.position === position) {
-        if (mainline) {
-          state.position.push(0);
-        } else {
-          state.position.push(moveNode.children.length - 1);
-        }
-      } else {
-        state.position = [...position, moveNode.children.length - 1];
-      }
+      const nextIndex = mainline ? 0 : moveNode.children.length - 1;
+      state.position = [...position, nextIndex];
     }
   }
 }

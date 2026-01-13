@@ -39,7 +39,7 @@ export const cleanupDuplicateThemesAtom = atom(null, (get, set) => {
 export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", "default");
 
 // Color scheme is separate from themes (light/dark/auto)
-export const colorSchemeAtom = atomWithStorage<"light" | "dark" | "auto">("color-scheme", "auto");
+export const colorSchemeAtom = atomWithStorage<"light" | "dark" | "auto">("color-scheme", "dark");
 
 // Computed atom for all themes (built-in + custom)
 export const allThemesAtom = atom<Theme[]>((get) => {

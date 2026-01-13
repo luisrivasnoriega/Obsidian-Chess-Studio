@@ -120,6 +120,11 @@ function MobileBoardLayout({
   const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
   const store = useContext(TreeStateContext)!;
   const score = useStore(store, (s) => s.currentNode().score?.value ?? null);
+  const turn = useStore(store, (s) => {
+    const fen = s.currentNode().fen;
+    const field = typeof fen === "string" ? fen.split(" ")[1] : null;
+    return (field === "b" ? "black" : "white") as Color;
+  });
   const orientation = useStore(store, (s) => (s.headers.orientation ?? "white") as Color);
   const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
   const currentTab = useAtomValue(currentTabAtom);
@@ -255,7 +260,7 @@ function MobileBoardLayout({
           }}
           onClick={() => setEvalOpen((v) => !v)}
         >
-          <EvalBar score={score} orientation={orientation} layout="horizontal" />
+          <EvalBar score={score} orientation={orientation} turn={turn} layout="horizontal" />
         </Box>
       )}
 
