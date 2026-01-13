@@ -76,6 +76,29 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
     };
   }, []);
 
+  // Android WebView can treat drag gestures as scroll even if the board uses `touch-action: none`,
+  // especially when the board is adjacent to or nested near scroll containers.
+  // Forcefully prevent scrolling while interacting with the board (non-passive listener).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof window === "undefined" || typeof navigator === "undefined") return;
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    if (!isAndroid) return;
+
+    const preventIfCancelable = (event: TouchEvent) => {
+      // Only prevent scroll; allow other logic to run.
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    };
+
+    el.addEventListener("touchmove", preventIfCancelable, { passive: false });
+    return () => {
+      el.removeEventListener("touchmove", preventIfCancelable);
+    };
+  }, []);
+
   useEffect(() => {
     if (!api) return;
 
@@ -126,6 +149,7 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
       style={{
         aspectRatio: 1,
         width: "100%",
+        touchAction: "none",
         "--board-image": `url('/board/${boardImage}')`,
       }}
     />

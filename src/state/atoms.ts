@@ -86,7 +86,7 @@ export const fontSizeAtom = atomWithStorage(
 );
 
 export const moveNotationTypeAtom = atomWithStorage<"letters" | "symbols" | "letters-translated">("letters", "symbols");
-export const moveMethodAtom = atomWithStorage<"drag" | "select" | "both">("move-method", "drag");
+export const moveMethodAtom = atomWithStorage<"drag" | "select" | "both">("move-method", "both");
 export const spellCheckAtom = atomWithStorage<boolean>("spell-check", false);
 export const moveInputAtom = atomWithStorage<boolean>("move-input", false);
 export const showDestsAtom = atomWithStorage<boolean>("show-dests", true);

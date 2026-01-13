@@ -266,6 +266,12 @@ export async function saveToFile({
       return true;
     }
   }
+  try {
+    await commands.countPgnGames(filePath);
+  } catch {
+    // Ignore offset warm-up errors; writeGame will still attempt the write.
+  }
+
   await commands.writeGame(
     filePath,
     tab?.gameNumber || 0,
@@ -307,6 +313,12 @@ export async function saveTab(
       glyphs: true,
       variations: true,
     })}\n\n`;
+
+    try {
+      await commands.countPgnGames(tab.source.path);
+    } catch {
+      // Ignore offset warm-up errors; writeGame will still attempt the write.
+    }
 
     await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn);
 

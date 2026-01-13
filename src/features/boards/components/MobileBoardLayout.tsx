@@ -51,6 +51,7 @@ interface MobileBoardLayoutProps {
   currentTabSourceType?: string;
   selectedPiece?: Piece | null;
   setSelectedPiece?: (piece: Piece | null) => void;
+  hideAnalysisPanel?: boolean;
 
   // Start Game props
   startGame?: () => void;
@@ -100,6 +101,7 @@ function MobileBoardLayout({
   currentTabSourceType,
   selectedPiece,
   setSelectedPiece,
+  hideAnalysisPanel = false,
 
   // Start Game props
   startGame,
@@ -112,7 +114,7 @@ function MobileBoardLayout({
 }: MobileBoardLayoutProps) {
   const { t } = useTranslation();
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
-  const showAnalysisPanel = currentTabType !== "play";
+  const showAnalysisPanel = !hideAnalysisPanel && currentTabType !== "play";
   const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
   const store = useContext(TreeStateContext)!;
   const score = useStore(store, (s) => s.currentNode().score?.value ?? null);
@@ -120,14 +122,16 @@ function MobileBoardLayout({
   const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
   const currentTab = useAtomValue(currentTabAtom);
   const [, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
-  const [mobilePanelsTab, setMobilePanelsTab] = useState<string | null>(null);
+  const [mobilePanelsTab, setMobilePanelsTab] = useState<string | null>("analysis");
   const showRepertoirePanels =
     currentTab?.source?.type === "file" &&
     (currentTab.source.metadata?.type === "repertoire" || currentTab.source.metadata?.type === "variants");
   const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "puzzle";
 
   useEffect(() => {
-    setMobilePanelsTab(null);
+    const next = isPuzzle ? "info" : "analysis";
+    setMobilePanelsTab(next);
+    setCurrentTabSelected(next);
   }, [
     currentTab?.value,
     currentTab?.gameNumber,
@@ -137,6 +141,8 @@ function MobileBoardLayout({
     currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : null,
     currentTab?.source?.type === "db" ? currentTab.source.db : null,
     currentTab?.source?.type === "db" ? currentTab.source.id : null,
+    isPuzzle,
+    setCurrentTabSelected,
   ]);
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
@@ -185,7 +191,6 @@ function MobileBoardLayout({
                 disableCollapse
                 renderAsSelect
                 unstyledContainer
-                selectStartsEmpty
               />
             </Suspense>
           </Box>

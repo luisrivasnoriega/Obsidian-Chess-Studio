@@ -105,10 +105,19 @@ pub async fn find_executable_path(executable_name: String) -> Result<Option<Stri
         c
     };
 
-    let output = timeout(Duration::from_secs(3), cmd.output())
-        .await
-        .map_err(|_| Error::PackageManager("Executable lookup timed out".to_string()))?
-        .map_err(|e| Error::PackageManager(format!("Executable lookup failed: {}", e)))?;
+    // NOTE: This is a best-effort helper used by the frontend to discover executables for
+    // package-manager installs. On some platforms (notably Android), `which` may not exist.
+    // In that case, treat it as "not found" instead of surfacing a hard error to the user.
+    let output = match timeout(Duration::from_secs(3), cmd.output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return Ok(None);
+            }
+            return Err(Error::PackageManager(format!("Executable lookup failed: {}", e)));
+        }
+        Err(_) => return Err(Error::PackageManager("Executable lookup timed out".to_string())),
+    };
 
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout)

@@ -8,7 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { loadDirectories } from "@/App";
@@ -47,6 +47,7 @@ import EvalListener from "./EvalListener";
 import GameNotationWrapper from "./GameNotationWrapper";
 import ResponsiveAnalysisPanels from "./ResponsiveAnalysisPanels";
 import ResponsiveBoard from "./ResponsiveBoard";
+import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { PuzzleVariantsModal } from "./PuzzleVariantsModal";
 import { VariantsActions } from "./VariantsActions";
 import { VariantsTreeBuilderModal } from "./VariantsTreeBuilderModal";
@@ -891,87 +892,109 @@ function BoardVariants() {
       <>
         {/* Disable EvalListener during build variants to avoid engine event loops */}
         {!treeBuilderRunning && <EvalListener />}
-        <ScrollArea h="100%">
-          <Box
-            style={{
-              paddingBottom: isAndroid
-                ? "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px))"
-                : undefined,
-            }}
-          >
-            <Stack gap="md">
-              <ResponsiveBoard
-                practicing={practicing}
-                dirty={dirty}
-                editingMode={editingMode}
-                toggleEditingMode={toggleEditingMode}
-                boardRef={boardRef}
-                saveFile={saveFile}
-                reload={reloadBoard}
-                addGame={addGame}
-                topBar={topBar}
-                editingCard={
-                  editingMode ? (
+        <Box
+          style={{
+            paddingBottom: isAndroid
+              ? "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px))"
+              : undefined,
+            minHeight: "100%",
+            maxHeight: "100%",
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+          }}
+        >
+            <Stack gap="md" style={{ minHeight: 0 }}>
+              <Box style={{ zIndex: 3 }}>
+                <Suspense fallback={<ResponsiveSkeleton type="default" />}>
+                  <ResponsiveAnalysisPanels
+                    currentTab={currentTabSelected}
+                    onTabChange={(v) => setCurrentTabSelected(v || "info")}
+                    isRepertoire={showRepertoirePanels}
+                    isPuzzle={isPuzzle}
+                    disableCollapse
+                    renderAsSelect
+                    unstyledContainer
+                  />
+                </Suspense>
+              </Box>
+
+              <Box style={{ position: "relative", zIndex: 2, minHeight: 0 }}>
+                <ResponsiveBoard
+                  practicing={practicing}
+                  dirty={dirty}
+                  editingMode={editingMode}
+                  toggleEditingMode={toggleEditingMode}
+                  boardRef={boardRef}
+                  saveFile={saveFile}
+                  reload={reloadBoard}
+                  addGame={addGame}
+                  topBar={topBar}
+                  editingCard={
+                    editingMode ? (
+                      <EditingCard
+                        boardRef={boardRef}
+                        setEditingMode={toggleEditingMode}
+                        selectedPiece={selectedPiece}
+                        setSelectedPiece={setSelectedPiece}
+                      />
+                    ) : undefined
+                  }
+                  viewPawnStructure={viewPawnStructure}
+                  setViewPawnStructure={setViewPawnStructure}
+                  selectedPiece={selectedPiece}
+                  setSelectedPiece={setSelectedPiece}
+                  canTakeBack={false}
+                  changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
+                  currentTabType="analysis"
+                  clearShapes={clearShapes}
+                  toggleOrientation={flipBoard}
+                  disableVariations={false}
+                  currentTabSourceType={currentTab?.source?.type || undefined}
+                  hideMobileAnalysisPanel
+                />
+              </Box>
+
+              <ScrollArea style={{ flex: 1 }} h="100%" offsetScrollbars>
+                <GameNotationWrapper
+                  topBar
+                  editingMode={editingMode}
+                  editingCard={
                     <EditingCard
                       boardRef={boardRef}
                       setEditingMode={toggleEditingMode}
                       selectedPiece={selectedPiece}
                       setSelectedPiece={setSelectedPiece}
                     />
-                  ) : undefined
-                }
-                viewPawnStructure={viewPawnStructure}
-                setViewPawnStructure={setViewPawnStructure}
-                selectedPiece={selectedPiece}
-                setSelectedPiece={setSelectedPiece}
-                canTakeBack={false}
-                changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
-                currentTabType="analysis"
-                clearShapes={clearShapes}
-                toggleOrientation={flipBoard}
-                disableVariations={false}
-                currentTabSourceType={currentTab?.source?.type || undefined}
-              />
-              <GameNotationWrapper
-                topBar
-                editingMode={editingMode}
-                editingCard={
-                  <EditingCard
-                    boardRef={boardRef}
-                    setEditingMode={toggleEditingMode}
-                    selectedPiece={selectedPiece}
-                    setSelectedPiece={setSelectedPiece}
-                  />
-                }
-              >
-                <>
-                  <VariantsNotation topBar={topBar} editingMode={editingMode} />
-                  <VariantsActions
-                    treeBuilderRunning={treeBuilderRunning}
-                    onOpenPuzzle={() => {
-                      // Use treeBuilderDepth as the maximum depth for puzzles
-                      // This ensures the puzzle depth matches the depth configured in build variants
-                      const maxDepth = treeBuilderDepth;
-                      if (maxDepth < 1) {
-                        notifications.show({
-                          title: t("common.error"),
-                          message: t("errors.puzzleVariantsNeedSystemMove"),
-                          color: "red",
-                        });
-                        return;
-                      }
-                      setMaxPuzzleDepth(maxDepth);
-                      setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
-                      setPuzzleModalOpened(true);
-                    }}
-                    onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
-                    onCancelTreeBuilder={cancelTreeBuilder}
-                  />
-                </>
-              </GameNotationWrapper>
+                  }
+                >
+                  <>
+                    <VariantsNotation topBar={topBar} editingMode={editingMode} />
+                    <VariantsActions
+                      treeBuilderRunning={treeBuilderRunning}
+                      onOpenPuzzle={() => {
+                        // Use treeBuilderDepth as the maximum depth for puzzles
+                        // This ensures the puzzle depth matches the depth configured in build variants
+                        const maxDepth = treeBuilderDepth;
+                        if (maxDepth < 1) {
+                          notifications.show({
+                            title: t("common.error"),
+                            message: t("errors.puzzleVariantsNeedSystemMove"),
+                            color: "red",
+                          });
+                          return;
+                        }
+                        setMaxPuzzleDepth(maxDepth);
+                        setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
+                        setPuzzleModalOpened(true);
+                      }}
+                      onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
+                      onCancelTreeBuilder={cancelTreeBuilder}
+                    />
+                  </>
+                </GameNotationWrapper>
+              </ScrollArea>
             </Stack>
-          </Box>
-        </ScrollArea>
+        </Box>
 
         <PuzzleVariantsModal
           opened={puzzleModalOpened}

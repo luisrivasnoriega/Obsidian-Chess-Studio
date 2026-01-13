@@ -54,6 +54,7 @@ interface ResponsiveBoardProps {
   // Hide eval bar and footer controls for game mode (e.g., PlayVsEngineBoard)
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
+  hideMobileAnalysisPanel?: boolean;
 }
 
 function ResponsiveBoard({
@@ -98,6 +99,7 @@ function ResponsiveBoard({
   hideClockSpaces = false,
   hideEvalBar = false,
   hideFooterControls = false,
+  hideMobileAnalysisPanel = false,
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
@@ -170,7 +172,7 @@ function ResponsiveBoard({
         style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}
       >
         <ResponsiveLoadingWrapper isLoading={false}>
-              <MobileBoardLayout
+          <MobileBoardLayout
             dirty={dirty}
             editingMode={editingMode}
             toggleEditingMode={toggleEditingMode}
@@ -203,15 +205,16 @@ function ResponsiveBoard({
             currentTabSourceType={currentTabSourceType}
             selectedPiece={selectedPiece}
             setSelectedPiece={setSelectedPiece}
-                // Start Game props
-                startGame={startGame}
-                endGame={endGame}
-                gameState={gameState}
-                startGameDisabled={startGameDisabled}
-                hideClockSpaces={hideClockSpaces}
-                hideEvalBar={hideEvalBar}
-                hideFooterControls={hideFooterControls}
-              />
+            hideAnalysisPanel={hideMobileAnalysisPanel}
+            // Start Game props
+            startGame={startGame}
+            endGame={endGame}
+            gameState={gameState}
+            startGameDisabled={startGameDisabled}
+            hideClockSpaces={hideClockSpaces}
+            hideEvalBar={hideEvalBar}
+            hideFooterControls={hideFooterControls}
+          />
         </ResponsiveLoadingWrapper>
       </Box>
     );

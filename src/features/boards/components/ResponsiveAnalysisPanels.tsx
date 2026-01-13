@@ -56,18 +56,26 @@ function ResponsiveAnalysisPanels({
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
 
   const tabOptions = useMemo(() => {
-    const options: Array<{ value: string; label: string }> = [];
+    const baseOptions: Record<string, { value: string; label: string }> = {};
+    const orderedKeys = ["analysis", "database", "graph", "practice", "annotate", "info"];
+
     if (isRepertoire) {
-      options.push({ value: "practice", label: t("features.board.tabs.practice") });
-      options.push({ value: "graph", label: t("features.board.tabs.graph") });
+      baseOptions.graph = { value: "graph", label: t("features.board.tabs.graph") };
+      baseOptions.practice = { value: "practice", label: t("features.board.tabs.practice") };
     }
     if (!isPuzzle) {
-      options.push({ value: "analysis", label: t("features.board.tabs.analysis") });
-      options.push({ value: "database", label: t("features.board.tabs.database") });
-      options.push({ value: "annotate", label: t("features.board.tabs.annotate") });
+      baseOptions.analysis = { value: "analysis", label: t("features.board.tabs.analysis") };
+      baseOptions.database = { value: "database", label: t("features.board.tabs.database") };
+      baseOptions.annotate = { value: "annotate", label: t("features.board.tabs.annotate") };
     }
-    options.push({ value: "info", label: t("features.board.tabs.info") });
-    return options;
+    baseOptions.info = { value: "info", label: t("features.board.tabs.info") };
+
+    return orderedKeys.reduce<Array<{ value: string; label: string }>>((acc, key) => {
+      if (baseOptions[key]) {
+        acc.push(baseOptions[key]);
+      }
+      return acc;
+    }, []);
   }, [isPuzzle, isRepertoire, t]);
 
   useEffect(() => {
@@ -199,16 +207,6 @@ function ResponsiveAnalysisPanels({
           />
         ) : (
           <Tabs.List grow mb="1rem">
-            {isRepertoire && (
-              <Tabs.Tab value="practice" leftSection={<IconTargetArrow size="1rem" />}>
-                {t("features.board.tabs.practice")}
-              </Tabs.Tab>
-            )}
-            {isRepertoire && (
-              <Tabs.Tab value="graph" leftSection={<IconGraphFilled size="1rem" />}>
-                {t("features.board.tabs.graph")}
-              </Tabs.Tab>
-            )}
             {!isPuzzle && (
               <Tabs.Tab value="analysis" leftSection={<IconZoomCheck size="1rem" />}>
                 {t("features.board.tabs.analysis")}
@@ -217,6 +215,16 @@ function ResponsiveAnalysisPanels({
             {!isPuzzle && (
               <Tabs.Tab value="database" leftSection={<IconDatabase size="1rem" />}>
                 {t("features.board.tabs.database")}
+              </Tabs.Tab>
+            )}
+            {isRepertoire && (
+              <Tabs.Tab value="graph" leftSection={<IconGraphFilled size="1rem" />}>
+                {t("features.board.tabs.graph")}
+              </Tabs.Tab>
+            )}
+            {isRepertoire && (
+              <Tabs.Tab value="practice" leftSection={<IconTargetArrow size="1rem" />}>
+                {t("features.board.tabs.practice")}
               </Tabs.Tab>
             )}
             {!isPuzzle && (
