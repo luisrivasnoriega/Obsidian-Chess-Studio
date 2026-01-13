@@ -32,13 +32,12 @@ import { commands } from "@/bindings";
 import GenericHeader from "@/components/GenericHeader";
 import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
 import { DatabaseDetails } from "@/features/databases/DatabasesPage";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessionsAtom } from "@/state/atoms";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
-import { downloadChessCom, getChessComAccount } from "@/utils/chess.com/api";
+import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
-import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
-import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
-import { unwrap } from "@/utils/unwrap";
+import { getLichessAccount } from "@/utils/lichess/api";
 import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { normalizeProfileName } from "@/utils/profiles";
@@ -49,7 +48,9 @@ import { parseDate } from "@/utils/format";
 import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
-import { isFailedToFetchError, isInNetworkCooldown, startNetworkCooldown } from "@/utils/networkCooldown";
+import {
+  isFailedToFetchError,
+} from "@/utils/networkCooldown";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {
   if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
@@ -63,7 +64,12 @@ function cleanFideId(value: string): string {
 
 export default function ProfilesPage() {
   const { t } = useTranslation();
+  const { layout } = useResponsiveLayout();
   const [profileQuery, setProfileQuery] = useState("");
+  const [detailsTab, setDetailsTab] = useState<
+    "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
+  >("database");
+  const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
 
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
@@ -87,6 +93,24 @@ export default function ProfilesPage() {
   const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
   const didAutoUpdateAccountsRef = useRef(false);
+  const autoUpdateRetryTimerRef = useRef<number | null>(null);
+  const [autoUpdateRetryNonce, setAutoUpdateRetryNonce] = useState(0);
+  const autoUpdateRetryAttemptRef = useRef(0);
+  const backgroundSyncRetryTimersRef = useRef<Map<string, number>>(new Map());
+  const backgroundSyncRetryAttemptsRef = useRef<Map<string, number>>(new Map());
+  const useTabDropdown = layout.accounts.layoutType === "mobile";
+  const isAccountSyncRunning = syncingAccountIds.size > 0;
+  const detailsTabOptions = useMemo(
+    () => [
+      { value: "database", label: t("profiles.tabs.database", { defaultValue: "Database" }) },
+      { value: "overview", label: t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" }) },
+      { value: "ratings", label: t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" }) },
+      { value: "openings", label: t("profiles.tabs.openings", { defaultValue: "Openings" }) },
+      { value: "stats", label: t("profiles.tabs.stats", { defaultValue: "Stats" }) },
+      { value: "pawnStructures", label: t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" }) },
+    ],
+    [t],
+  );
 
   const sessionsByProfileId = useMemo(() => {
     const map = new Map<string, Session[]>();
@@ -189,7 +213,7 @@ export default function ProfilesPage() {
     // We run it once when the page is loaded and sessions are available.
     if (didAutoUpdateAccountsRef.current) return;
     if (sessions.length === 0) return;
-    if (isInNetworkCooldown()) return;
+    if (isAccountSyncRunning) return;
     didAutoUpdateAccountsRef.current = true;
 
     const run = async () => {
@@ -200,149 +224,147 @@ export default function ProfilesPage() {
         // Best-effort; downloads/conversion will surface errors if this fails.
       }
 
-      const profileNameById = new Map(profiles.map((p) => [p.id, p.name] as const));
+      const profileById = new Map(profiles.map((p) => [p.id, p] as const));
 
-      const getDbSyncState = async (
-        dbFile: string,
-        platform: "lichess" | "chesscom",
-        username: string,
-      ): Promise<{ lastGameDate: number | null; count: number }> => {
+      const sessionsToSync: Session[] = [];
+      for (const profile of profiles) {
+        const linked = sessionsByProfileId.get(profile.id) ?? [];
+        for (const session of linked) sessionsToSync.push(session);
+      }
+
+      const lichessSessions = sessionsToSync.filter((s) => !!s.lichess);
+      const chessComSessions = sessionsToSync.filter((s) => !!s.chessCom);
+
+      const syncOne = async (session: Session): Promise<"continue" | "stop"> => {
+        const profileId = session.profileId ?? null;
+        if (!profileId) return "continue"; // Only linked sessions are auto-synced.
+        const profile = profileById.get(profileId) ?? null;
+        if (!profile) return "continue";
+
+        const { platform, username } = sessionMeta(session);
+        const id = `sync:${profile.id}:${platform}:${username}`;
+
+        setSyncingAccountIds((prev) => {
+          const next = new Set(prev);
+          next.add(id);
+          return next;
+        });
+
+        notifications.show({
+          id,
+          title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
+          message: `${profile.name} - ${username} (${platform})`,
+          loading: true,
+          autoClose: false,
+        });
+
         try {
-          const accountKey = getAccountKey(platform, username);
-          return await getAccountSyncStateFromProfileDb(dbFile, accountKey);
-        } catch {
-          return { lastGameDate: null, count: 0 };
+          const res = await syncSessionGamesToProfileDb({
+            profile,
+            session,
+            onBatchUpdate: (u) => {
+              notifications.update({
+                id,
+                message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
+                  defaultValue: "Batch {{current}} of {{total}}",
+                  current: u.currentBatch,
+                  total: u.totalBatches,
+                })}`,
+                loading: true,
+                autoClose: false,
+              });
+            },
+          });
+
+          if (res.updatedSession) {
+            setSessions((prev) => {
+              const updated = res.updatedSession as Session;
+              const updatedMeta = sessionMeta(updated);
+              const key = `${updated.profileId ?? ""}:${updatedMeta.platform}:${updatedMeta.username}`;
+              const next = prev.filter((s) => {
+                const otherMeta = sessionMeta(s);
+                const otherKey = `${s.profileId ?? ""}:${otherMeta.platform}:${otherMeta.username}`;
+                return otherKey !== key;
+              });
+              return [...next, { ...updated, updatedAt: updated.updatedAt ?? Date.now() }];
+            });
+          }
+
+          notifications.update({
+            id,
+            title: t("common.success", { defaultValue: "Success" }),
+            message: `${profile.name} - ${username} (${platform})`,
+            color: "green",
+            loading: false,
+            autoClose: 2500,
+          });
+        } catch (e) {
+          notifications.update({
+            id,
+            title: t("common.error", { defaultValue: "Error" }),
+            message: t("accounts.databaseLoadError", { defaultValue: "Error loading database" }),
+            color: "red",
+            loading: false,
+            autoClose: 4000,
+          });
+
+          if (isFailedToFetchError(e)) {
+            didAutoUpdateAccountsRef.current = false;
+            autoUpdateRetryAttemptRef.current += 1;
+            const delay = Math.min(60_000, 3_000 * 2 ** Math.min(6, autoUpdateRetryAttemptRef.current - 1));
+            if (autoUpdateRetryTimerRef.current != null) {
+              window.clearTimeout(autoUpdateRetryTimerRef.current);
+            }
+            autoUpdateRetryTimerRef.current = window.setTimeout(() => {
+              autoUpdateRetryTimerRef.current = null;
+              setAutoUpdateRetryNonce((n) => n + 1);
+            }, delay);
+            return "stop";
+          }
+        } finally {
+          setSyncingAccountIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
         }
+
+        return "continue";
       };
 
-      // Separate sessions by platform for rate limiting
-      const lichessSessions: Array<{ session: Session; profileId: string }> = [];
-      const chessComSessions: Array<{ session: Session; profileId: string }> = [];
-
-      for (const session of sessions) {
-        const profileId = session.profileId ?? activeProfileId;
-        if (!profileId) continue;
-
-        if (session.lichess) {
-          lichessSessions.push({ session, profileId });
-        }
-        if (session.chessCom) {
-          chessComSessions.push({ session, profileId });
-        }
+      for (const session of lichessSessions) {
+        const status = await syncOne(session);
+        if (status === "stop") break;
       }
 
-      // Process Lichess accounts (no rate limiting needed)
-      for (const { session, profileId } of lichessSessions) {
-        try {
-          const username = session.lichess!.username;
-          const token = session.lichess!.accessToken;
-
-          const dbPath = await getProfileDbPath(profileId);
-          const dbTitle = profileNameById.get(profileId) ?? `Profile ${profileId}`;
-
-          const updatedAccount = await getLichessAccount({ token, username });
-          if (updatedAccount) {
-            setSessions((prev) =>
-              prev.map((s) =>
-                (s.profileId ?? activeProfileId) === profileId && s.lichess?.username === username
-                  ? { ...s, updatedAt: Date.now(), lichess: { ...s.lichess, account: updatedAccount } }
-                  : s,
-              ),
-            );
-          }
-
-          const { lastGameDate, count } = await getDbSyncState(dbPath, "lichess", username);
-          const totalGames = updatedAccount?.count?.all ?? session.lichess!.account.count?.all ?? 0;
-          const gamesToDownload = Math.max(0, totalGames - count);
-
-          const appDir = await appDataDir();
-          const pgnPath = await getAccountPgnPath({
-            appDataDir: appDir,
-            profileId,
-            platform: "lichess",
-            username,
-          });
-          await downloadLichess(
-            username,
-            lastGameDate,
-            gamesToDownload,
-            () => {},
-            token,
-            pgnPath,
-            `lichess_${profileId}_${username}`,
-          );
-          await rewritePgnAccountTags(pgnPath, "lichess", username);
-          unwrap(
-            await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
-          );
-        } catch (e) {
-          // If we hit a transient network error, start cooldown and stop processing to avoid spam.
-          // Best-effort: keep processing other accounts for non-network errors.
-          if (isFailedToFetchError(e)) {
-            startNetworkCooldown();
-            break;
-          }
-          // Best-effort: keep processing other accounts.
-        }
-      }
-
-      // Process Chess.com accounts with rate limiting (1 request per second minimum)
-      const CHESS_COM_DELAY_MS = 1200; // 1.2 seconds between requests to be safe
+      const CHESS_COM_DELAY_MS = 1200;
       for (let i = 0; i < chessComSessions.length; i++) {
-        const { session, profileId } = chessComSessions[i]!;
-        
-        // Add delay before each request (except the first one)
-        if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, CHESS_COM_DELAY_MS));
-        }
-
-        try {
-          const username = session.chessCom!.username;
-
-          const dbPath = await getProfileDbPath(profileId);
-          const dbTitle = profileNameById.get(profileId) ?? `Profile ${profileId}`;
-
-          const updatedStats = await getChessComAccount(username);
-          if (updatedStats) {
-            setSessions((prev) =>
-              prev.map((s) =>
-                (s.profileId ?? activeProfileId) === profileId && s.chessCom?.username === username
-                  ? { ...s, updatedAt: Date.now(), chessCom: { ...s.chessCom, stats: updatedStats } }
-                  : s,
-              ),
-            );
-          }
-
-          // Add delay before download
-          await new Promise((resolve) => setTimeout(resolve, CHESS_COM_DELAY_MS));
-
-          const { lastGameDate } = await getDbSyncState(dbPath, "chesscom", username);
-
-          const appDir = await appDataDir();
-          const pgnPath = await getAccountPgnPath({
-            appDataDir: appDir,
-            profileId,
-            platform: "chesscom",
-            username,
-          });
-          await downloadChessCom(username, lastGameDate, pgnPath, `chesscom_${profileId}_${username}`);
-          await rewritePgnAccountTags(pgnPath, "chesscom", username);
-          unwrap(
-            await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
-          );
-        } catch (e) {
-          // If we hit a transient network error, start cooldown and stop processing to avoid spam.
-          if (isFailedToFetchError(e)) {
-            startNetworkCooldown();
-            break;
-          }
-          // Best-effort: keep processing other accounts.
-        }
+        const session = chessComSessions[i]!;
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, CHESS_COM_DELAY_MS));
+        const status = await syncOne(session);
+        if (status === "stop") break;
       }
+
+      autoUpdateRetryAttemptRef.current = 0;
     };
 
     void run();
-  }, [activeProfileId, profiles, sessions.length, setSessions]);
+
+    return () => {
+      if (autoUpdateRetryTimerRef.current != null) {
+        window.clearTimeout(autoUpdateRetryTimerRef.current);
+        autoUpdateRetryTimerRef.current = null;
+      }
+    };
+  }, [
+    profiles,
+    sessions.length,
+    sessionsByProfileId,
+    setSessions,
+    t,
+    isAccountSyncRunning,
+    autoUpdateRetryNonce,
+  ]);
 
   const sortedProfiles = useMemo(() => {
     const list = [...filteredProfiles];
@@ -425,16 +447,18 @@ export default function ProfilesPage() {
   }, [modal]);
 
   const openAddAccountModal = useCallback(() => {
+    if (isAccountSyncRunning) return;
     setAddAccountDefaultProfileId(activeProfileId ?? profiles[0]?.id ?? null);
     accountModal.open();
-  }, [accountModal, activeProfileId, profiles]);
+  }, [accountModal, activeProfileId, profiles, isAccountSyncRunning]);
 
   const openAddAccountModalForProfile = useCallback(
     (profileId: string) => {
+      if (isAccountSyncRunning) return;
       setAddAccountDefaultProfileId(profileId);
       accountModal.open();
     },
-    [accountModal],
+    [accountModal, isAccountSyncRunning],
   );
 
   const openEditModal = useCallback(
@@ -681,46 +705,117 @@ export default function ProfilesPage() {
       const username = session.lichess?.username ?? session.chessCom?.username ?? "account";
       const meta = sessionMeta(session);
       const id = `sync:${profile.id}:${username}`;
+      setSyncingAccountIds((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
       notifications.show({
         id,
         title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-        message: `${profile.name} - ${username} (${meta.platform}) ${t("accounts.processing", { defaultValue: "processing" })}`,
+        message: `${profile.name} - ${username} (${meta.platform})`,
         loading: true,
         autoClose: false,
       });
 
-      void syncSessionGamesToProfileDb({ profile, session })
-        .then((res) => {
-          if (res.updatedSession) {
-            upsertSession(res.updatedSession);
-          }
-          notifications.update({
-            id,
-            title: t("common.success", { defaultValue: "Success" }),
-            message: `${profile.name} - ${username} (${meta.platform}) ${t("accounts.processing", { defaultValue: "processing" })}`,
-            color: "green",
-            loading: false,
-            autoClose: 2500,
-          });
-          notifications.show({
-            title: t("common.success", { defaultValue: "Success" }),
-            message: `Termino de procesar la cuenta ${meta.platform} de ${username}`,
-            color: "green",
-          });
-        })
-        .catch(() => {
-          notifications.update({
-            id,
-            title: t("common.error", { defaultValue: "Error" }),
-            message: t("accounts.databaseLoadError", { defaultValue: "Error loading database" }),
-            color: "red",
-            loading: false,
-            autoClose: 4000,
-          });
+      const clearRetryTimer = () => {
+        const existing = backgroundSyncRetryTimersRef.current.get(id) ?? null;
+        if (existing != null) {
+          window.clearTimeout(existing);
+          backgroundSyncRetryTimersRef.current.delete(id);
+        }
+      };
+
+      const cleanup = () => {
+        clearRetryTimer();
+        backgroundSyncRetryAttemptsRef.current.delete(id);
+        setSyncingAccountIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
         });
+      };
+
+      const runOnce = () => {
+        void syncSessionGamesToProfileDb({
+          profile,
+          session,
+          onBatchUpdate: (u) => {
+            notifications.update({
+              id,
+              message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
+                defaultValue: "Batch {{current}} of {{total}}",
+                current: u.currentBatch,
+                total: u.totalBatches,
+              })}`,
+              loading: true,
+              autoClose: false,
+            });
+          },
+        })
+          .then((res) => {
+            if (res.updatedSession) {
+              upsertSession(res.updatedSession);
+            }
+            notifications.update({
+              id,
+              title: t("common.success", { defaultValue: "Success" }),
+              message: `${profile.name} - ${username} (${meta.platform})`,
+              color: "green",
+              loading: false,
+              autoClose: 2500,
+            });
+            cleanup();
+          })
+          .catch((e) => {
+            if (isFailedToFetchError(e)) {
+              const prevAttempts = backgroundSyncRetryAttemptsRef.current.get(id) ?? 0;
+              const nextAttempts = prevAttempts + 1;
+              backgroundSyncRetryAttemptsRef.current.set(id, nextAttempts);
+              const delay = Math.min(60_000, 3_000 * 2 ** Math.min(6, nextAttempts - 1));
+
+              notifications.update({
+                id,
+                title: t("common.warning", { defaultValue: "Warning" }),
+                message: t("accounts.sync.networkRetry", { defaultValue: "Network issue detected. Retrying soon..." }),
+                color: "yellow",
+                loading: true,
+                autoClose: false,
+              });
+
+              clearRetryTimer();
+              const timer = window.setTimeout(runOnce, delay);
+              backgroundSyncRetryTimersRef.current.set(id, timer);
+              return;
+            }
+
+            notifications.update({
+              id,
+              title: t("common.error", { defaultValue: "Error" }),
+              message: t("accounts.databaseLoadError", { defaultValue: "Error loading database" }),
+              color: "red",
+              loading: false,
+              autoClose: 4000,
+            });
+            cleanup();
+          });
+      };
+
+      runOnce();
     },
     [t, upsertSession],
   );
+
+  useEffect(() => {
+    return () => {
+      for (const timer of backgroundSyncRetryTimersRef.current.values()) {
+        try {
+          window.clearTimeout(timer);
+        } catch {}
+      }
+      backgroundSyncRetryTimersRef.current.clear();
+    };
+  }, []);
 
   const addAccountToProfile = useCallback(
     async (payload: AddProfileAccountPayload) => {
@@ -847,6 +942,7 @@ export default function ProfilesPage() {
                     variant="default"
                     leftSection={<IconPlus size="1rem" />}
                     onClick={openAddAccountModal}
+                    disabled={isAccountSyncRunning}
                   >
                     {t("accounts.addAccount", { defaultValue: "Add Account" })}
                   </Button>
@@ -1042,6 +1138,7 @@ export default function ProfilesPage() {
                               <ActionIcon
                                 variant="subtle"
                                 onClick={() => openAddAccountModalForProfile(profile.id)}
+                                disabled={isAccountSyncRunning}
                                 title={t("accounts.addAccount", { defaultValue: "Add Account" })}
                               >
                                 <IconPlus size={16} />
@@ -1077,21 +1174,33 @@ export default function ProfilesPage() {
             </Card>
 
             <Card withBorder radius="md" p="md">
-              <Tabs defaultValue="database" keepMounted={false}>
-                <Tabs.List>
-                  <Tabs.Tab value="database">{t("profiles.tabs.database", { defaultValue: "Database" })}</Tabs.Tab>
-                  <Tabs.Tab value="overview">
-                    {t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" })}
-                  </Tabs.Tab>
-                  <Tabs.Tab value="ratings">
-                    {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
-                  </Tabs.Tab>
-                  <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
-                  <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
-                  <Tabs.Tab value="pawnStructures">
-                    {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
-                  </Tabs.Tab>
-                </Tabs.List>
+              {useTabDropdown && (
+                <Select
+                  label={t("profiles.tabs.selectSection", { defaultValue: "Section" })}
+                  value={detailsTab}
+                  onChange={(v) => setDetailsTab((v as typeof detailsTab) ?? "database")}
+                  data={detailsTabOptions}
+                  allowDeselect={false}
+                  mb="sm"
+                />
+              )}
+              <Tabs value={detailsTab} onChange={(v) => setDetailsTab((v as typeof detailsTab) ?? "database")} keepMounted={false}>
+                {!useTabDropdown && (
+                  <Tabs.List>
+                    <Tabs.Tab value="database">{t("profiles.tabs.database", { defaultValue: "Database" })}</Tabs.Tab>
+                    <Tabs.Tab value="overview">
+                      {t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" })}
+                    </Tabs.Tab>
+                    <Tabs.Tab value="ratings">
+                      {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
+                    </Tabs.Tab>
+                    <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
+                    <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
+                    <Tabs.Tab value="pawnStructures">
+                      {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
+                    </Tabs.Tab>
+                  </Tabs.List>
+                )}
 
                 <Tabs.Panel value="database" pt="sm">
                   {!activeProfileId ? (
@@ -1138,7 +1247,13 @@ export default function ProfilesPage() {
                   />
                 </Tabs.Panel>
                 <Tabs.Panel value="openings" pt="sm" style={{ minHeight: 320 }}>
-                  <div style={{ height: "65vh", minHeight: 320, overflow: "hidden" }}>
+                  <div
+                    style={{
+                      height: useTabDropdown ? undefined : "65vh",
+                      minHeight: 320,
+                      overflow: useTabDropdown ? "visible" : "hidden",
+                    }}
+                  >
                     <Databases
                       profileId={activeProfile?.id}
                       initialPlayer={activeProfile?.name}
@@ -1158,7 +1273,11 @@ export default function ProfilesPage() {
                     shadow="sm"
                     p="md"
                     withBorder
-                    style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
+                    style={{
+                      overflow: useTabDropdown ? "visible" : "hidden",
+                      display: "flex",
+                      flexDirection: "column",
+                    }}
                   >
                     <PawnStructuresPanel
                       playerName={activeProfile?.name ?? ""}
@@ -1224,6 +1343,7 @@ export default function ProfilesPage() {
         onClose={accountModal.close}
         profiles={profiles}
         defaultProfileId={addAccountDefaultProfileId ?? activeProfileId ?? profiles[0]?.id ?? null}
+        disabled={isAccountSyncRunning}
         onAdd={(payload) => {
           void addAccountToProfile(payload);
         }}

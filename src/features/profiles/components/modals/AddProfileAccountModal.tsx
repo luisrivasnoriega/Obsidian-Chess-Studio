@@ -18,12 +18,14 @@ export function AddProfileAccountModal({
   onClose,
   profiles,
   defaultProfileId,
+  disabled = false,
   onAdd,
 }: {
   opened: boolean;
   onClose: () => void;
   profiles: Profile[];
   defaultProfileId: string | null;
+  disabled?: boolean;
   onAdd: (payload: AddProfileAccountPayload) => void;
 }) {
   const { t } = useTranslation();
@@ -63,10 +65,17 @@ export function AddProfileAccountModal({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSubmit) submit();
+          if (!disabled && canSubmit) submit();
         }}
       >
         <Stack>
+          {disabled && (
+            <Alert color="yellow">
+              {t("accounts.sync.addAccountDisabled", {
+                defaultValue: "Adding accounts is disabled while a sync is running.",
+              })}
+            </Alert>
+          )}
           <Select
             label={t("profiles.profile", { defaultValue: "Profile" })}
             data={profileOptions}
@@ -75,32 +84,37 @@ export function AddProfileAccountModal({
             placeholder={t("profiles.selectProfile", { defaultValue: "Select profile" })}
             searchable
             required
+            disabled={disabled}
           />
 
           <InputWrapper label={t("accounts.website", { defaultValue: "Website" })} required>
             <Group grow>
-              <GenericCard
-                id={"lichess"}
-                isSelected={website === "lichess"}
-                setSelected={() => setWebsite("lichess")}
-                content={
-                  <Group>
-                    <LichessLogo />
-                    Lichess
-                  </Group>
-                }
-              />
-              <GenericCard
-                id={"chesscom"}
-                isSelected={website === "chesscom"}
-                setSelected={() => setWebsite("chesscom")}
-                content={
-                  <Group>
-                    <img width={30} height={30} src="/chesscom.png" alt="chess.com" />
-                    Chess.com
-                  </Group>
-                }
-              />
+              <div style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>
+                <GenericCard
+                  id={"lichess"}
+                  isSelected={website === "lichess"}
+                  setSelected={() => setWebsite("lichess")}
+                  content={
+                    <Group>
+                      <LichessLogo />
+                      Lichess
+                    </Group>
+                  }
+                />
+              </div>
+              <div style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}>
+                <GenericCard
+                  id={"chesscom"}
+                  isSelected={website === "chesscom"}
+                  setSelected={() => setWebsite("chesscom")}
+                  content={
+                    <Group>
+                      <img width={30} height={30} src="/chesscom.png" alt="chess.com" />
+                      Chess.com
+                    </Group>
+                  }
+                />
+              </div>
             </Group>
             {website === "chesscom" && (
               <Alert mt="xs" color="yellow" icon={<IconInfoCircle size={16} />}>
@@ -117,6 +131,7 @@ export function AddProfileAccountModal({
             required
             value={username}
             onChange={(e) => setUsername(e.currentTarget.value)}
+            disabled={disabled}
           />
 
           {website === "lichess" && (
@@ -125,10 +140,11 @@ export function AddProfileAccountModal({
               description={t("accounts.loginWithBrowserDesc", { defaultValue: "Allows faster game downloads" })}
               checked={withLogin}
               onChange={(e) => setWithLogin(e.currentTarget.checked)}
+              disabled={disabled}
             />
           )}
 
-          <Button mt="1rem" type="submit" disabled={!canSubmit}>
+          <Button mt="1rem" type="submit" disabled={disabled || !canSubmit}>
             {t("common.add", { defaultValue: "Add" })}
           </Button>
         </Stack>
@@ -136,4 +152,3 @@ export function AddProfileAccountModal({
     </Modal>
   );
 }
-

@@ -26,7 +26,14 @@ export function isFailedToFetchError(err: unknown): boolean {
         : JSON.stringify(err, null, 2) ?? String(err);
 
   // Covers browser fetch + Tauri plugin-http failures.
-  return /failed to fetch|fetch failed|networkerror|load failed/i.test(msg);
+  return (
+    /failed to fetch|fetch failed|networkerror|load failed/i.test(msg) ||
+    /timeout|timed out|deadline exceeded/i.test(msg) ||
+    /network is unreachable|connection (refused|reset|aborted)|broken pipe/i.test(msg) ||
+    /dns|enotfound|econnrefused|econnreset|econnaborted/i.test(msg) ||
+    /error sending request|request failed|channel closed|os error/i.test(msg) ||
+    /\b(429|5\d\d)\b/.test(msg)
+  );
 }
 
 export function getNetworkCooldownUntil(): number {

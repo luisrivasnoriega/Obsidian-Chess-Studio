@@ -254,24 +254,30 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         const isAndroid = os === "android" || (engine as unknown as { os?: string }).os === "android";
 
         if (engine.installMethod === "bundled") {
-          // Use bundled engine from app assets (resource_dir)
-          const { resourceDir } = await import("@tauri-apps/api/path");
-          const resourceDirPath = await resourceDir();
-          enginePath = await join(resourceDirPath, engine.path);
+          // On Android, bundled engines are resolved by the backend (prefer nativeLibraryDir `lib*.so`).
+          // Treat the engine path as a logical identifier instead of a filesystem path.
+          if (isAndroid) {
+            enginePath = engine.path;
+          } else {
+            // Use bundled engine from app resources (resource_dir) on desktop targets.
+            const { resourceDir } = await import("@tauri-apps/api/path");
+            const resourceDirPath = await resourceDir();
+            enginePath = await join(resourceDirPath, engine.path);
 
-          // Verify it exists
-          if (!(await exists(enginePath))) {
-            throw new Error(t("features.engines.add.bundledEngineNotFound"));
+            // Verify it exists
+            if (!(await exists(enginePath))) {
+              throw new Error(t("features.engines.add.bundledEngineNotFound"));
+            }
+
+            // Verify it's a file, not a directory
+            const meta = unwrap(await commands.getFileMetadata(enginePath));
+            if (meta.is_dir) {
+              throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
+            }
+
+            // Set executable (though it should already be from resources, this ensures it)
+            unwrap(await commands.setFileAsExecutable(enginePath));
           }
-
-          // Verify it's a file, not a directory
-          const meta = unwrap(await commands.getFileMetadata(enginePath));
-          if (meta.is_dir) {
-            throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
-          }
-
-          // Set executable (though it should already be from assets, this ensures it)
-          unwrap(await commands.setFileAsExecutable(enginePath));
         } else if (engine.installMethod === "download") {
           let engineBaseDir = await appDataDir();
           if (isAndroid) {

@@ -50,15 +50,10 @@ export async function autoRegisterBundledEngines(): Promise<void> {
         const stockfishExists = stockfishIndex !== -1;
 
         if (!stockfishExists) {
-
-          // Set executable permissions
-          try {
-            unwrap(await commands.setFileAsExecutable(bundledStockfishPath));
-            info("Set bundled Stockfish as executable");
-          } catch (e) {
-            warn(`Failed to set bundled Stockfish as executable: ${e}`);
-          }
-
+          // Validate bundled engine availability via backend resolver.
+          // Do NOT call `setFileAsExecutable` on Android with a logical path like `engines/stockfish`.
+          // The backend will resolve this to a real executable path (native libs / filesDir) when spawning.
+          //
           // Try to get engine config (with timeout fallback)
           let config: { name: string; options: { type: string; value: { name: string; default?: string | number | boolean | null } }[] } | null = null;
           try {
@@ -69,8 +64,9 @@ export async function autoRegisterBundledEngines(): Promise<void> {
               warn("Bundled Stockfish config detection timed out, using defaults");
               config = { name: "Stockfish", options: [] };
             } else {
-              warn(`Failed to get bundled Stockfish config: ${e}`);
-              config = { name: "Stockfish", options: [] };
+              // If the bundled engine isn't actually available on this device/build, don't register a broken entry.
+              warn(`Bundled Stockfish not available, skipping auto-registration: ${e}`);
+              return;
             }
           }
 

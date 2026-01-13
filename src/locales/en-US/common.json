@@ -307,6 +307,11 @@
                      "loadingGames":  "Loading games...",
                      "processing":  "processing",
                      "databaseLoadError":  "Error loading database",
+                     "sync":  {
+                                  "batchProgress":  "Batch {{current}} of {{total}}",
+                                  "addAccountDisabled":  "Adding accounts is disabled while a sync is running.",
+                                  "networkRetry":  "Network issue detected. Retrying soon..."
+                              },
                      "searchPlaceholder":  "Search accounts...",
                      "addAccount":  "Add Account",
                      "name":  "Name",
@@ -374,6 +379,9 @@
                      "updated":  "Profile updated.",
                      "deleted":  "Profile deleted.",
                      "activeSet":  "Active profile updated.",
+                     "tabs":  {
+                                  "selectSection":  "Section"
+                              },
                      "errors":  {
                                     "missingName":  "Profile name is required.",
                                     "duplicateName":  "A profile with this name already exists.",
@@ -1059,6 +1067,7 @@
                                                    "clearDrawings":  "Clear Drawings",
                                                    "editPosition":  "Edit Position",
                                                    "savePGN":  "Save PGN ({{key}})",
+                                                   "sharePGN":  "Share PGN ({{key}})",
                                                    "addGame":  "Add Game",
                                                    "flipBoard":  "Flip Board ({{key}})",
                                                    "takeBack":  "Take Back"

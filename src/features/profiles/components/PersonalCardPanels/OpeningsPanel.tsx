@@ -1,4 +1,5 @@
-import { Box, Divider, Group, Select, Stack, Text } from "@mantine/core";
+import { Box, DEFAULT_THEME, Divider, Flex, Group, Select, Stack, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import type { Color } from "chessops";
 import { useAtom } from "jotai";
 import { useQuery } from "@tanstack/react-query";
@@ -24,6 +25,7 @@ type OpeningSort = "games_desc" | "score_desc" | "score_asc";
 
 function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName: string; info: PlayerGameInfo; profileId?: string; isLoading?: boolean }) {
   const { t } = useTranslation();
+  const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
 
   // IMPORTANT: Never put `info.site_stats_data` directly into a react-query key.
   // It's a large nested structure and hashing it is extremely expensive.
@@ -62,6 +64,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
+  const [activeColor, setActiveColor] = useState<"white" | "black">("white");
 
   // Create filters for backend
   const filters = useMemo(
@@ -163,16 +166,31 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const whiteGames = whiteOpeningsData.reduce((sum, o) => sum + o.games, 0);
   const blackGames = blackOpeningsData.reduce((sum, o) => sum + o.games, 0);
   const rowCount = Math.max(sortedWhiteOpenings.length, sortedBlackOpenings.length);
+  const activeOpenings = activeColor === "white" ? sortedWhiteOpenings : sortedBlackOpenings;
+  const activeTotalGames = activeColor === "white" ? whiteGames : blackGames;
 
   // Calculate loading state: prop from parent OR internal queries loading/fetching
   const isAnyLoading = isLoading || isLoadingWhiteOpenings || isFetchingWhiteOpenings || isLoadingBlackOpenings || isFetchingBlackOpenings;
-  const hasPanelData = rowCount > 0;
+  const hasPanelData = (isStackedLayout ? activeOpenings.length : rowCount) > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0, width: "100%" }}>
-      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
+    <Flex
+      h="100%"
+      align="stretch"
+      direction={isStackedLayout ? "column" : "row"}
+      gap="md"
+      style={{ minHeight: 0, minWidth: 0, width: "100%" }}
+    >
+      <Box
+        style={{
+          flex: isStackedLayout ? "0 0 auto" : "0 0 25%",
+          width: isStackedLayout ? "100%" : undefined,
+          minWidth: isStackedLayout ? 0 : 280,
+          minHeight: 0,
+        }}
+      >
         <PlayerSidebarCard
           playerName={playerName}
           info={info}
@@ -191,27 +209,64 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
       </Box>
 
       {/* RIGHT */}
-      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", width: "100%" }}>
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", width: "100%" }}>
+      <Box
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: "hidden",
+          display: "flex",
+          width: "100%",
+        }}
+      >
+        <Box
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+            width: "100%",
+          }}
+        >
           <Group justify="flex-end" p="md" pb={0}>
-            <Select
-              label={t("common.sort", { defaultValue: "Sort" })}
-              size="xs"
-              value={sortBy}
-              data={[
-                { value: "games_desc", label: t("accounts.openings.sort.gamesDesc", { defaultValue: "Most games" }) },
-                {
-                  value: "score_desc",
-                  label: t("accounts.openings.sort.scoreDesc", { defaultValue: "Score (high to low)" }),
-                },
-                {
-                  value: "score_asc",
-                  label: t("accounts.openings.sort.scoreAsc", { defaultValue: "Score (low to high)" }),
-                },
-              ]}
-              onChange={(value) => setSortBy((value as OpeningSort) || "games_desc")}
-              clearable={false}
-            />
+            <Group
+              justify="center"
+              wrap="nowrap"
+              gap="md"
+              w="100%"
+            >
+              {isStackedLayout && (
+                <Select
+                  label={t("features.dashboard.playerColor", { defaultValue: "Player color" })}
+                  size="xs"
+                  value={activeColor}
+                  data={[
+                    { value: "white", label: t("features.dashboard.white", { defaultValue: "White" }) },
+                    { value: "black", label: t("features.dashboard.black", { defaultValue: "Black" }) },
+                  ]}
+                  onChange={(value) => setActiveColor((value as "white" | "black") || "white")}
+                  clearable={false}
+                />
+              )}
+              <Select
+                label={t("common.sort", { defaultValue: "Sort" })}
+                size="xs"
+                value={sortBy}
+                data={[
+                  { value: "games_desc", label: t("accounts.openings.sort.gamesDesc", { defaultValue: "Most games" }) },
+                  {
+                    value: "score_desc",
+                    label: t("accounts.openings.sort.scoreDesc", { defaultValue: "Score (high to low)" }),
+                  },
+                  {
+                    value: "score_asc",
+                    label: t("accounts.openings.sort.scoreAsc", { defaultValue: "Score (low to high)" }),
+                  },
+                ]}
+                onChange={(value) => setSortBy((value as OpeningSort) || "games_desc")}
+                clearable={false}
+              />
+            </Group>
           </Group>
           <PanelLoadGate
             isLoading={isLoadingWhiteOpenings || isLoadingBlackOpenings || !!isLoading}
@@ -219,28 +274,41 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
             hasData={hasPanelData || hasDataContext}
           >
             <>
-              {rowCount === 0 ? (
+              {((isStackedLayout ? activeOpenings.length : rowCount) === 0) ? (
                 <Text size="sm" c="dimmed" p="md">
                   {t("common.noData", { defaultValue: "No data" })}
                 </Text>
               ) : (
             <Stack gap="md" p="md" style={{ minWidth: 0, minHeight: 0, width: "100%" }}>
-              {Array.from({ length: rowCount }, (_, index) => {
-                const white = sortedWhiteOpenings[index];
-                const black = sortedBlackOpenings[index];
-                const key = `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
+              {(isStackedLayout ? activeOpenings : Array.from({ length: rowCount }, (_, i) => i)).map((item, index) => {
+                const white = isStackedLayout ? null : sortedWhiteOpenings[index];
+                const black = isStackedLayout ? null : sortedBlackOpenings[index];
+                const active = isStackedLayout ? (item as OpeningStats) : null;
+                const key = isStackedLayout
+                  ? `${activeColor}:${active?.name ?? "-"}:${active?.games ?? 0}`
+                  : `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
 
                 return (
                   <Box key={key} style={{ minWidth: 0 }}>
-                    {/* Two fixed columns that can shrink properly */}
-                    <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
-                      <Box style={{ flex: 1, minWidth: 0 }}>
-                        {white ? <OpeningDetail opening={white} totalGames={whiteGames} color="white" /> : <div />}
-                      </Box>
-                      <Box style={{ flex: 1, minWidth: 0 }}>
-                        {black ? <OpeningDetail opening={black} totalGames={blackGames} color="black" /> : <div />}
-                      </Box>
-                    </Group>
+                    {isStackedLayout ? (
+                      <Stack gap="sm" style={{ minWidth: 0 }}>
+                        <Box style={{ minWidth: 0 }}>
+                          {active ? (
+                            <OpeningDetail opening={active} totalGames={activeTotalGames} color={activeColor} />
+                          ) : null}
+                        </Box>
+                      </Stack>
+                    ) : (
+                      // Two fixed columns that can shrink properly
+                      <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          {white ? <OpeningDetail opening={white} totalGames={whiteGames} color="white" /> : <div />}
+                        </Box>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          {black ? <OpeningDetail opening={black} totalGames={blackGames} color="black" /> : <div />}
+                        </Box>
+                      </Group>
+                    )}
                     <Divider />
                   </Box>
                 );
@@ -251,7 +319,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
           </PanelLoadGate>
         </Box>
       </Box>
-    </Group>
+    </Flex>
   );
 }
 

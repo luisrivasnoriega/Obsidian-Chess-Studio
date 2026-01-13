@@ -3,6 +3,8 @@ import {
   Badge,
   Box,
   Button,
+  DEFAULT_THEME,
+  Flex,
   Group,
   MultiSelect,
   Pagination,
@@ -16,6 +18,7 @@ import {
   Text,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useMediaQuery } from "@mantine/hooks";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
@@ -113,6 +116,7 @@ function createPgnFromNormalizedGame(game: NormalizedGame): string {
 
 export default function PawnStructuresPanel({ playerName, databaseFile, profileId }: PawnStructuresPanelProps) {
   const { t } = useTranslation();
+  const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
 
   const [pawnMoveFilter, setPawnMoveFilter] = useState(10);
   const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
@@ -541,8 +545,21 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const isAnyLoading = isLoadingPersonalInfo || isFetchingPersonalInfo;
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
-      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
+    <Flex
+      h="100%"
+      align="stretch"
+      direction={isStackedLayout ? "column" : "row"}
+      gap="md"
+      style={{ minHeight: 0, minWidth: 0 }}
+    >
+      <Box
+        style={{
+          flex: isStackedLayout ? "0 0 auto" : "0 0 25%",
+          width: isStackedLayout ? "100%" : undefined,
+          minWidth: isStackedLayout ? 0 : 280,
+          minHeight: 0,
+        }}
+      >
         <Stack h="100%" gap="md" style={{ minHeight: 0 }}>
           <PlayerSidebarCard
             playerName={playerName}
@@ -663,9 +680,25 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           </Paper>
         </Stack>
       </Box>
-      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <Box
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         {/* Scrollable Content with Table */}
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+        <Box
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+          }}
+        >
           <PanelLoadGate
             isLoading={isLoadingPersonalInfo}
             isFetching={isFetchingPersonalInfo}
@@ -674,7 +707,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
             <Stack gap="md" p="md" style={{ minHeight: 0 }}>
               {sortedStructures.length > 0 ? (
               <Box>
-                <Table>
+                <ScrollArea type="auto" offsetScrollbars>
+                  <Table>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>{t("features.dashboard.structure")}</Table.Th>
@@ -709,9 +743,20 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                           {expandedStructure === structure.structure && (
                             <Table.Tr>
                               <Table.Td colSpan={4}>
-                                <Group align="flex-start" gap="md" wrap="nowrap">
-                                  {/* Board Preview - 38.20% */}
-                                  <Box style={{ flex: "0 0 38.2%", minWidth: 0 }}>
+                                <Flex
+                                  align="flex-start"
+                                  direction={isStackedLayout ? "column" : "row"}
+                                  gap="md"
+                                  style={{ minWidth: 0 }}
+                                >
+                                  {/* Board Preview */}
+                                  <Box
+                                    style={{
+                                      flex: isStackedLayout ? "0 0 auto" : "0 0 38.2%",
+                                      width: isStackedLayout ? "100%" : undefined,
+                                      minWidth: 0,
+                                    }}
+                                  >
                                     <Chessground
                                       fen={displayFen}
                                       coordinates={false}
@@ -720,8 +765,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                                     />
                                   </Box>
                                   
-                                  {/* Right Section - 61.8% */}
-                                  <Box style={{ flex: 1, minWidth: 0 }}>
+                                  {/* Right Section */}
+                                  <Box style={{ flex: 1, minWidth: 0, width: isStackedLayout ? "100%" : undefined }}>
                                     <Stack gap="md">
                                       {/* Structure Info with FEN */}
                                       <Box>
@@ -748,11 +793,12 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
 
                                       {/* Games Table */}
                                       {structure.games && structure.games.length > 0 && (
-                                        <Box>
+                                        <Box style={{ minWidth: 0 }}>
                                           <Text size="sm" fw={600} mb="xs">
                                             {t("features.dashboard.games", { defaultValue: "Games" })} ({structure.games.length})
                                           </Text>
-                                          <Table striped highlightOnHover>
+                                          <ScrollArea type="auto" offsetScrollbars>
+                                            <Table striped highlightOnHover>
                                             <Table.Thead>
                                               <Table.Tr>
                                                 <Table.Th>{t("features.dashboard.playerColor", { defaultValue: "Player color" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>
@@ -793,7 +839,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                                                   );
                                                 })}
                                             </Table.Tbody>
-                                          </Table>
+                                            </Table>
+                                          </ScrollArea>
                                           {structure.games.length > 5 && (
                                             <Group justify="center" mt="md">
                                               <Pagination
@@ -808,7 +855,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                                       )}
                                     </Stack>
                                   </Box>
-                                </Group>
+                                </Flex>
                               </Table.Td>
                             </Table.Tr>
                           )}
@@ -816,7 +863,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                       );
                     })}
                   </Table.Tbody>
-                </Table>
+                  </Table>
+                </ScrollArea>
               </Box>
             ) : (
               <Text size="sm" c="dimmed" p="md">
@@ -827,6 +875,6 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           </PanelLoadGate>
         </Box>
       </Box>
-    </Group>
+    </Flex>
   );
 }

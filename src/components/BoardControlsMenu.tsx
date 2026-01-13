@@ -164,8 +164,8 @@ function BoardControlsMenu({
       condition: !!copyPgn,
       icon: <IconShare size={iconSize} />,
       onClick: () => copyPgn?.(),
-      label: t("keybindings.copyPgn"),
-      tooltipLabel: t("keybindings.copyPgn"),
+      label: t("features.board.actions.sharePGN", { key: keyMap.COPY_PGN.keys }),
+      tooltipLabel: t("features.board.actions.sharePGN", { key: keyMap.COPY_PGN.keys }),
     },
     {
       id: "reload",

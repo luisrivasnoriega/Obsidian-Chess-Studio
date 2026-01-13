@@ -1,4 +1,5 @@
-import { Box, Group, Stack, Text } from "@mantine/core";
+import { Box, DEFAULT_THEME, Flex, Stack, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,10 +18,10 @@ import ResultsChart from "./ResultsChart";
 import { PanelLoadGate } from "./PanelLoadGate";
 
 /**
- * React 18 StrictMode (dev) puede montar/desmontar/montar y disparar queryFn 2 veces.
- * En Tauri los invokes no se cancelan “realmente”, así que terminabas calculando doble.
+ * React 18 StrictMode (dev) can mount/unmount/mount and run `queryFn` twice.
+ * In Tauri, invokes are not truly cancelable, so we could end up calculating twice.
  *
- * Este cache dedupea por key y reusa la misma Promise (aunque haya remount).
+ * This cache dedupes by key and reuses the same Promise (even across remounts).
  */
 const promiseCache = {
   eloBuckets: new Map<string, Promise<EloBucket[]>>(),
@@ -33,6 +34,7 @@ function makeCacheKey(parts: Array<string | number | null | undefined>) {
 
 function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName: string; info: PlayerGameInfo; profileId?: string; isLoading?: boolean }) {
   const { t } = useTranslation();
+  const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
@@ -139,7 +141,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
 
   const { total = 0, won = 0, draw = 0, lost = 0, data_per_month = [], unknown_count = 0 } = gameStats ?? {};
 
-  // Muy importante: mantener referencia estable hacia DateChart
+  // Keep a stable reference for DateChart.
   const dataPerMonth = useMemo(() => data_per_month.map((m) => ({ name: m.name, count: m.count })), [data_per_month]);
   const unknownCount = unknown_count;
 
@@ -150,8 +152,21 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
   const hasDataContext = !!info;
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
-      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
+    <Flex
+      h="100%"
+      align="stretch"
+      direction={isStackedLayout ? "column" : "row"}
+      gap="md"
+      style={{ minHeight: 0, minWidth: 0 }}
+    >
+      <Box
+        style={{
+          flex: isStackedLayout ? "0 0 auto" : "0 0 25%",
+          width: isStackedLayout ? "100%" : undefined,
+          minWidth: isStackedLayout ? 0 : 280,
+          minHeight: 0,
+        }}
+      >
         <PlayerSidebarCard
           playerName={playerName}
           info={info}
@@ -167,8 +182,23 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
         />
       </Box>
 
-      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+      <Box
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: isStackedLayout ? "visible" : "hidden",
+          display: "flex",
+        }}
+      >
+        <Box
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: isStackedLayout ? "visible" : "auto",
+            overflowX: "hidden",
+          }}
+        >
           <PanelLoadGate
             isLoading={isLoadingGameStats || !!isLoading}
             isFetching={isFetchingGameStats}
@@ -193,7 +223,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
           </PanelLoadGate>
         </Box>
       </Box>
-    </Group>
+    </Flex>
   );
 }
 
@@ -231,7 +261,7 @@ const DateChartTooltip = ({
 };
 
 function parseYearMonth(name: string): { year: number; month: number } | null {
-  // Acepta "YYYY-MM" o "YYYY/MM" o "YYYY.MM"
+  // Accepts "YYYY-MM", "YYYY/MM", or "YYYY.MM".
   const m = /^(\d{4})[-/.](\d{2})$/.exec(name.trim());
   if (!m) return null;
   const year = Number(m[1]);

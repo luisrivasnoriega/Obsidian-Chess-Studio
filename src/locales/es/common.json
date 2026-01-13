@@ -307,6 +307,11 @@
     "processingGames": "Procesando partidas...",
     "loadingGames": "Cargando partidas...",
     "databaseLoadError": "Error al cargar la base de datos",
+    "sync": {
+      "batchProgress": "Lote {{current}} de {{total}}",
+      "addAccountDisabled": "No se pueden agregar cuentas mientras la sincronización está en curso.",
+      "networkRetry": "Se detectó un problema de red. Reintentando pronto..."
+    },
     "searchPlaceholder": "Buscar cuentas...",
     "addAccount": "Agregar cuenta",
     "name": "Nombre",
@@ -927,6 +932,7 @@
         "clearDrawings": "Borrar dibujos",
         "editPosition": "Editar posición",
         "savePGN": "Guardar PGN ({{key}})",
+        "sharePGN": "Compartir PGN ({{key}})",
         "addGame": "Añadir partida",
         "flipBoard": "Voltear tablero ({{key}})",
         "takeBack": "Deshacer"
@@ -1939,6 +1945,9 @@
     "updated": "Perfil actualizado.",
     "deleted": "Perfil eliminado.",
     "activeSet": "Perfil activo actualizado.",
+    "tabs": {
+      "selectSection": "Sección"
+    },
     "errors": {
       "missingName": "El nombre del perfil es obligatorio.",
       "duplicateName": "Ya existe un perfil con ese nombre.",

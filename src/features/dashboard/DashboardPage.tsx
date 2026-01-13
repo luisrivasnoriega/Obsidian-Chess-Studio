@@ -12,11 +12,10 @@ import { useTranslation } from "react-i18next";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
-import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import type { ChessComGame } from "@/utils/chess.com/api";
-import { downloadChessCom, getChessComAccount } from "@/utils/chess.com/api";
+import { getChessComAccount } from "@/utils/chess.com/api";
 import { query_games } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
@@ -35,11 +34,10 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
-import { downloadLichess, getLichessAccount } from "@/utils/lichess/api";
-import { rewritePgnAccountTags } from "@/utils/pgnAccountTags";
+import { getLichessAccount } from "@/utils/lichess/api";
 import type { AnalysisResult } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
-import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
+import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
@@ -229,21 +227,6 @@ export default function DashboardPage() {
         // Best-effort; downloads/conversion will surface errors if this fails.
       }
 
-      const profileNameById = new Map(profiles.map((p) => [p.id, p.name] as const));
-
-      const getDbSyncState = async (
-        dbFile: string,
-        platform: "lichess" | "chesscom",
-        username: string,
-      ): Promise<{ lastGameDate: number | null; count: number }> => {
-        try {
-          const accountKey = getAccountKey(platform, username);
-          return await getAccountSyncStateFromProfileDb(dbFile, accountKey);
-        } catch {
-          return { lastGameDate: null, count: 0 };
-        }
-      };
-
       // Only process sessions for the active profile
       if (!activeProfileId) return;
 
@@ -253,86 +236,26 @@ export default function DashboardPage() {
 
       for (const session of activeProfileSessions) {
         const profileId = activeProfileId;
-        const dbPath = await getProfileDbPath(profileId);
-        const dbTitle = profileNameById.get(profileId) ?? `Profile ${profileId}`;
+        const profile = profiles.find((p) => p.id === profileId) ?? null;
+        if (!profile) continue;
 
-        if (session.lichess) {
-          try {
-            const username = session.lichess.username;
-            const token = session.lichess.accessToken;
+        try {
+          const res = await syncSessionGamesToProfileDb({ profile, session });
+          if (res.updatedSession) {
+            const username = res.updatedSession.lichess?.username ?? res.updatedSession.chessCom?.username ?? "";
+            const platform = res.updatedSession.lichess ? "lichess" : res.updatedSession.chessCom ? "chesscom" : null;
 
-            const updatedAccount = await getLichessAccount({ token, username });
-            if (updatedAccount) {
-              setSessions((prev) =>
-                prev.map((s) =>
-                  (s.profileId ?? activeProfileId) === activeProfileId && s.lichess?.username === username
-                    ? { ...s, updatedAt: Date.now(), lichess: { ...s.lichess, account: updatedAccount } }
-                    : s,
-                ),
-              );
-            }
-
-            const { lastGameDate, count } = await getDbSyncState(dbPath, "lichess", username);
-            const totalGames = updatedAccount?.count?.all ?? session.lichess.account.count?.all ?? 0;
-            const gamesToDownload = Math.max(0, totalGames - count);
-
-            const appDir = await appDataDir();
-            const pgnPath = await getAccountPgnPath({
-              appDataDir: appDir,
-              profileId,
-              platform: "lichess",
-              username,
-            });
-            await downloadLichess(
-              username,
-              lastGameDate,
-              gamesToDownload,
-              () => {},
-              token,
-              pgnPath,
-              `lichess_${profileId}_${username}`,
+            setSessions((prev) =>
+              prev.map((s) => {
+                if ((s.profileId ?? activeProfileId) !== profileId) return s;
+                if (platform === "lichess" && s.lichess?.username === username) return res.updatedSession;
+                if (platform === "chesscom" && s.chessCom?.username === username) return res.updatedSession;
+                return s;
+              }),
             );
-            await rewritePgnAccountTags(pgnPath, "lichess", username);
-            unwrap(
-              await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
-            );
-          } catch {
-            // Best-effort: keep processing other accounts.
           }
-        }
-
-        if (session.chessCom) {
-          try {
-            const username = session.chessCom.username;
-
-            const updatedStats = await getChessComAccount(username);
-            if (updatedStats) {
-              setSessions((prev) =>
-                prev.map((s) =>
-                  (s.profileId ?? activeProfileId) === activeProfileId && s.chessCom?.username === username
-                    ? { ...s, updatedAt: Date.now(), chessCom: { ...s.chessCom, stats: updatedStats } }
-                    : s,
-                ),
-              );
-            }
-
-            const { lastGameDate } = await getDbSyncState(dbPath, "chesscom", username);
-
-            const appDir = await appDataDir();
-            const pgnPath = await getAccountPgnPath({
-              appDataDir: appDir,
-              profileId,
-              platform: "chesscom",
-              username,
-            });
-            await downloadChessCom(username, lastGameDate, pgnPath, `chesscom_${profileId}_${username}`);
-            await rewritePgnAccountTags(pgnPath, "chesscom", username);
-            unwrap(
-              await commands.convertPgn(pgnPath, dbPath, lastGameDate ? lastGameDate / 1000 : null, dbTitle, null),
-            );
-          } catch {
-            // Best-effort: keep processing other accounts.
-          }
+        } catch {
+          // Best-effort: keep processing other accounts.
         }
       }
     };

@@ -1,4 +1,5 @@
-import { Box, Group, Stack, Text } from "@mantine/core";
+import { Box, DEFAULT_THEME, Flex, Stack, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,6 +18,7 @@ import { PanelLoadGate } from "./PanelLoadGate";
 
 function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: string; info: PlayerGameInfo; profileId?: string; isLoading?: boolean }) {
   const { t } = useTranslation();
+  const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [platform, setPlatform] = useState<PlatformFilter>("all");
@@ -159,8 +161,21 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
   const hasPanelData = dates.length > 1;
 
   return (
-    <Group h="100%" align="stretch" wrap="nowrap" gap="md" style={{ minHeight: 0, minWidth: 0 }}>
-      <Box style={{ flex: "0 0 25%", minWidth: 280, minHeight: 0 }}>
+    <Flex
+      h="100%"
+      align="stretch"
+      direction={isStackedLayout ? "column" : "row"}
+      gap="md"
+      style={{ minHeight: 0, minWidth: 0 }}
+    >
+      <Box
+        style={{
+          flex: isStackedLayout ? "0 0 auto" : "0 0 25%",
+          width: isStackedLayout ? "100%" : undefined,
+          minWidth: isStackedLayout ? 0 : 280,
+          minHeight: 0,
+        }}
+      >
         <PlayerSidebarCard
           playerName={playerName}
           info={info}
@@ -178,8 +193,23 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
         />
       </Box>
 
-      <Box style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex" }}>
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+      <Box
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: isStackedLayout ? "visible" : "hidden",
+          display: "flex",
+        }}
+      >
+        <Box
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: isStackedLayout ? "visible" : "auto",
+            overflowX: "hidden",
+          }}
+        >
           <PanelLoadGate
             isLoading={isLoadingRatingTimeline || isLoadingGameStats || !!isLoading}
             isFetching={isFetchingRatingTimeline || isFetchingGameStats}
@@ -246,7 +276,7 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
           </PanelLoadGate>
         </Box>
       </Box>
-    </Group>
+    </Flex>
   );
 }
 

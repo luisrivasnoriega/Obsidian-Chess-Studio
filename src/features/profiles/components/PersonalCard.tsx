@@ -1,4 +1,5 @@
-import { ActionIcon, Box, Flex, Paper, Select, Tabs, Tooltip } from "@mantine/core";
+import { ActionIcon, Box, DEFAULT_THEME, Flex, Paper, Select, Tabs, Tooltip } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { IconInfoCircle } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useContext, useEffect, useMemo, useState } from "react";
@@ -33,6 +34,7 @@ function PersonalPlayerCard({
   isLoading?: boolean;
 }) {
   const { t } = useTranslation();
+  const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const store = useContext(DatabaseViewStateContext);
   if (!store) {
     throw new Error("DatabaseViewStateContext is missing");
@@ -61,11 +63,11 @@ function PersonalPlayerCard({
 
   return (
     <Paper
-      h="100%"
+      h={isStackedLayout ? undefined : "100%"}
       shadow="sm"
       p="md"
       withBorder
-      style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
+      style={{ overflow: isStackedLayout ? "visible" : "hidden", display: "flex", flexDirection: "column" }}
     >
       <FideInfo key={name} opened={opened} setOpened={setOpened} name={name} />
       {!isOpeningsTab && showPlayerSelector && setName && (
@@ -126,8 +128,11 @@ function PersonalPlayerCard({
             </Tabs.Panel>
           )}
           {allowedTabs.includes("openings") && (
-            <Tabs.Panel value="openings" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
-              <Box style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <Tabs.Panel
+              value="openings"
+              style={{ flex: 1, minHeight: 0, overflow: isStackedLayout ? "visible" : "hidden", display: "flex" }}
+            >
+              <Box style={{ flex: 1, minHeight: 0, overflow: isStackedLayout ? "visible" : "hidden" }}>
                 <OpeningsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
               </Box>
             </Tabs.Panel>

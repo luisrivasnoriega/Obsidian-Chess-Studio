@@ -7,6 +7,8 @@ mod player_stats;
 mod position_cache;
 mod schema;
 mod search;
+mod sync_state;
+pub use sync_state::*;
 
 use crate::{
     db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
