@@ -13,10 +13,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("jotai", () => ({
-  useAtom: () => [[], vi.fn()],
-  useAtomValue: () => [],
-}));
+// Jotai is provided by test-utils with a preconfigured store.
 
 vi.mock("@mantine/modals", () => ({
   modals: {

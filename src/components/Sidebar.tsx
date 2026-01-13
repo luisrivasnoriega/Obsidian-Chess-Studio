@@ -87,7 +87,7 @@ function MayaActionLink({
   label,
   onClick,
 }: {
-  icon: Icon;
+  icon: SidebarIcon;
   label: string;
   onClick: (e?: React.MouseEvent) => void;
 }) {

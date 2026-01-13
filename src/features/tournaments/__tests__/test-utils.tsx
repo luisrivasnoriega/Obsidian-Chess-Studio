@@ -4,6 +4,8 @@ import { I18nextProvider } from "react-i18next";
 import type { ReactElement } from "react";
 import { render, type RenderOptions } from "@testing-library/react";
 import { vi } from "vitest";
+import { Provider as JotaiProvider, createStore } from "jotai";
+import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
 
 // Mock react-i18next before importing i18n
 vi.mock("react-i18next", async (importOriginal) => {
@@ -21,6 +23,18 @@ import i18n from "@/i18n";
 
 // Create a minimal theme for testing
 const testTheme = createTheme({});
+
+const jotaiStore = createStore();
+jotaiStore.set(profilesAtom, [
+  {
+    id: "p1",
+    name: "Test Profile",
+    lichessToken: null,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+]);
+jotaiStore.set(activeProfileIdAtom, "p1");
 
 // Ensure i18n is initialized for tests
 if (!i18n.isInitialized) {
@@ -51,13 +65,15 @@ function AllTheProviders({ children }: { children: React.ReactNode }) {
   });
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <DirectionProvider>
-        <MantineProvider theme={testTheme} defaultColorScheme="light">
-          <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
-        </MantineProvider>
-      </DirectionProvider>
-    </QueryClientProvider>
+    <JotaiProvider store={jotaiStore}>
+      <QueryClientProvider client={queryClient}>
+        <DirectionProvider>
+          <MantineProvider theme={testTheme} defaultColorScheme="light">
+            <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+          </MantineProvider>
+        </DirectionProvider>
+      </QueryClientProvider>
+    </JotaiProvider>
   );
 }
 
