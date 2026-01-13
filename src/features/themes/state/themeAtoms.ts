@@ -36,7 +36,7 @@ export const cleanupDuplicateThemesAtom = atom(null, (get, set) => {
 });
 
 // Currently selected theme ID
-export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", "default");
+export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", "oled");
 
 // Color scheme is separate from themes (light/dark/auto)
 export const colorSchemeAtom = atomWithStorage<"light" | "dark" | "auto">("color-scheme", "dark");
@@ -249,7 +249,7 @@ export const deleteThemeAtom = atom(null, (get, set, id: string) => {
   // If the deleted theme was active, switch to default
   const currentThemeId = get(currentThemeIdAtom);
   if (currentThemeId === id) {
-    set(currentThemeIdAtom, "default");
+    set(currentThemeIdAtom, "oled");
   }
 
   return true;

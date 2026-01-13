@@ -72,7 +72,7 @@ export function WelcomeCard({
 
   // Determine theme-based background image
   const isAcademiaMaya = currentThemeId === "academia-maya";
-  const backgroundImageSrc = isAcademiaMaya ? "/academia.maya.png" : "/chess-play.jpg";
+  const backgroundImageSrc = isAcademiaMaya ? "/academia.maya.png" : "/chess-play.png";
   const backgroundImageAlt = isAcademiaMaya ? "Academia Maya" : "Chess play";
 
   const handleImageError = () => {

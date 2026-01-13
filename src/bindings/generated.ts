@@ -859,6 +859,38 @@ async mergeYearsData(data: MonthData[]) : Promise<MonthData[]> {
  */
 async calculateEarliestDateFromRange(dateRange: DateRange, ratingDates: bigint[]) : Promise<bigint | null> {
     return await TAURI_INVOKE("calculate_earliest_date_from_range", { dateRange, ratingDates });
+},
+async getAccountSyncState(dbPath: string, accountKey: string, platform: string) : Promise<Result<AccountSyncState | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_account_sync_state", { dbPath, accountKey, platform }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async upsertAccountSyncState(dbPath: string, syncState: AccountSyncState) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upsert_account_sync_state", { dbPath, syncState }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async markAccountSyncBatchComplete(dbPath: string, accountKey: string, platform: string, batchId: string, completedAtMs: bigint) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mark_account_sync_batch_complete", { dbPath, accountKey, platform, batchId, completedAtMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listAccountSyncCompletedBatches(dbPath: string, accountKey: string, platform: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_account_sync_completed_batches", { dbPath, accountKey, platform }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -883,6 +915,7 @@ reportProgress: "report-progress"
 
 /** user-defined types **/
 
+export type AccountSyncState = { account_key: string; platform: string; cursor_until_ms: bigint | null; since_ms?: bigint | null; mode?: string; total_batches: bigint; completed_batches: bigint; running: boolean; updated_at_ms: bigint }
 /**
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */

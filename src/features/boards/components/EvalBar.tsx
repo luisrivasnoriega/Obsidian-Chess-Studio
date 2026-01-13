@@ -33,7 +33,8 @@ function EvalBar({
   const normalizedScore: ScoreValue | null = score;
   const displayScore = normalizedScore ? t("units.score", { score: normalizedScore, precision: 1 }) : null;
 
-  // `progress` is the White side share (0..100). White should be on the left (horizontal) / top (vertical).
+  // `progress` is the White side share (0..100). On mobile (horizontal) White is left and Black is right.
+  // On desktop (vertical) Black is above and White is below (to match the board's top=Black, bottom=White).
   const progress = normalizedScore
     ? normalizedScore.type === "cp"
       ? getWinChance(normalizedScore.value)
@@ -42,28 +43,47 @@ function EvalBar({
         : 0
     : 50;
 
-  let ScoreBars = [
-    <Box
-      key="white"
-      style={{
-        height: isHorizontal ? "100%" : `${progress}%`,
-        width: isHorizontal ? `${progress}%` : undefined,
-        backgroundColor: whiteColor,
-        transition: isHorizontal ? "width 0.2s ease" : "height 0.2s ease",
-      }}
-    />,
-    <Box
-      key="black"
-      style={{
-        height: isHorizontal ? "100%" : `${100 - progress}%`,
-        width: isHorizontal ? `${100 - progress}%` : undefined,
-        backgroundColor: blackColor,
-        transition: isHorizontal ? "width 0.2s ease" : "height 0.2s ease",
-      }}
-    />,
-  ];
+  let ScoreBars = isHorizontal
+    ? [
+        <Box
+          key="white"
+          style={{
+            height: "100%",
+            width: `${progress}%`,
+            backgroundColor: whiteColor,
+            transition: "width 0.2s ease",
+          }}
+        />,
+        <Box
+          key="black"
+          style={{
+            height: "100%",
+            width: `${100 - progress}%`,
+            backgroundColor: blackColor,
+            transition: "width 0.2s ease",
+          }}
+        />,
+      ]
+    : [
+        <Box
+          key="black"
+          style={{
+            height: `${100 - progress}%`,
+            backgroundColor: blackColor,
+            transition: "height 0.2s ease",
+          }}
+        />,
+        <Box
+          key="white"
+          style={{
+            height: `${progress}%`,
+            backgroundColor: whiteColor,
+            transition: "height 0.2s ease",
+          }}
+        />,
+      ];
 
-  // For the vertical eval bar, we mirror the bar when the board is flipped.
+  // For the vertical eval bar, mirror the bar when the board is flipped.
   // For the horizontal (mobile) bar, keep White on the left and Black on the right.
   if (!isHorizontal && orientation === "black") {
     ScoreBars = ScoreBars?.reverse();
