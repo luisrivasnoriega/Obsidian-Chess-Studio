@@ -3,9 +3,11 @@ import {
   Badge,
   Box,
   Button,
+  Center,
   DEFAULT_THEME,
   Flex,
   Group,
+  Modal,
   MultiSelect,
   Pagination,
   Paper,
@@ -129,6 +131,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [pawnProgress, setPawnProgress] = useState<number | null>(null);
   const [expandedStructure, setExpandedStructure] = useState<string | null>(null);
   const [expandedFen, setExpandedFen] = useState<string | null>(null);
+  const [mobileViewedStructure, setMobileViewedStructure] = useState<PawnStructureStat | null>(null);
   const [gamesPage, setGamesPage] = useState(1);
   const [, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
@@ -552,6 +555,133 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       gap="md"
       style={{ minHeight: 0, minWidth: 0 }}
     >
+      <Modal
+        opened={isStackedLayout && mobileViewedStructure !== null}
+        onClose={() => setMobileViewedStructure(null)}
+        fullScreen={isStackedLayout}
+        title={t("features.dashboard.pawnStructures", { defaultValue: "Pawn structures" })}
+        styles={{
+          header: {
+            paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--mantine-spacing-md))",
+          },
+          body: {
+            paddingTop: "var(--mantine-spacing-md)",
+            paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + var(--mantine-spacing-md))",
+          },
+        }}
+        centered
+      >
+        {mobileViewedStructure && (
+          <Stack gap="md">
+            <Box>
+              <Group gap="xs" mb="xs">
+                <Badge size="sm" variant="light">
+                  {t("features.dashboard.structure", { defaultValue: "Structure" })}:
+                </Badge>
+                <Text size="sm" fw={600}>
+                  {mobileViewedStructure.structure}
+                </Text>
+              </Group>
+              <Group gap="xs" align="flex-start">
+                <Text size="xs" c="dimmed">
+                  FEN:
+                </Text>
+                <Text size="xs" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                  {mobileViewedStructure.sampleFen ?? fallbackFen}
+                </Text>
+                <ActionIcon
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => copyFenToClipboard(mobileViewedStructure.sampleFen ?? fallbackFen)}
+                >
+                  <IconCopy size={14} />
+                </ActionIcon>
+              </Group>
+            </Box>
+
+            <Center>
+              <Box style={{ width: "min(92vw, 92vmin)", maxWidth: 520 }}>
+                <Chessground
+                  fen={mobileViewedStructure.sampleFen ?? fallbackFen}
+                  coordinates={false}
+                  viewOnly
+                  orientation={pawnColorFilter === "black" ? "black" : "white"}
+                />
+              </Box>
+            </Center>
+
+            {mobileViewedStructure.games && mobileViewedStructure.games.length > 0 && (
+              <Box style={{ minWidth: 0 }}>
+                <Text size="sm" fw={600} mb="xs">
+                  {t("features.dashboard.games", { defaultValue: "Games" })} ({mobileViewedStructure.games.length})
+                </Text>
+                <ScrollArea type="auto" offsetScrollbars>
+                  <Table striped highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>
+                          {t("features.dashboard.playerColor", { defaultValue: "Player color" })} (
+                          {t("common.elo", { defaultValue: "Elo" })})
+                        </Table.Th>
+                        <Table.Th>
+                          {t("common.opponent", { defaultValue: "Opponent" })} ({t("common.elo", { defaultValue: "Elo" })}
+                          )
+                        </Table.Th>
+                        <Table.Th>{t("features.dashboard.actions", { defaultValue: "Actions" })}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {mobileViewedStructure.games
+                        .slice((gamesPage - 1) * 5, gamesPage * 5)
+                        .map((game, idx) => {
+                          const isPlayerWhite = matchesName(game.white, playerAccountKeys);
+                          const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
+                          const opponentElo = isPlayerWhite ? game.blackElo : game.whiteElo;
+                          const opponentName = isPlayerWhite ? game.black : game.white;
+
+                          return (
+                            <Table.Tr key={idx}>
+                              <Table.Td>
+                                <Text size="xs">
+                                  {isPlayerWhite ? t("features.dashboard.white") : t("features.dashboard.black")} ({playerElo || "-"})
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Text size="xs">
+                                  {opponentName || "-"} ({opponentElo || "-"})
+                                </Text>
+                              </Table.Td>
+                              <Table.Td>
+                                <Button
+                                  size="xs"
+                                  variant="light"
+                                  onClick={() => openGameInNewTab(game.gameId ?? 0, game.fen)}
+                                  disabled={!game.gameId}
+                                >
+                                  {t("features.dashboard.openGame", { defaultValue: "Open Game" })}
+                                </Button>
+                              </Table.Td>
+                            </Table.Tr>
+                          );
+                        })}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+                {mobileViewedStructure.games.length > 5 && (
+                  <Group justify="center" mt="md">
+                    <Pagination
+                      value={gamesPage}
+                      onChange={setGamesPage}
+                      total={Math.ceil(mobileViewedStructure.games.length / 5)}
+                      size="sm"
+                    />
+                  </Group>
+                )}
+              </Box>
+            )}
+          </Stack>
+        )}
+      </Modal>
       <Box
         style={{
           flex: isStackedLayout ? "0 0 auto" : "0 0 25%",
@@ -733,14 +863,23 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                             <Table.Td>{structure.frequency}</Table.Td>
                             <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
                             <Table.Td>
-                              <Button size="xs" variant="light" onClick={() => toggleStructureDetails(structure)}>
-                                {expandedStructure === structure.structure
-                                  ? t("features.dashboard.hide")
-                                  : t("features.dashboard.view")}
+                              <Button
+                                size="xs"
+                                variant="light"
+                                onClick={() => {
+                                  if (isStackedLayout) {
+                                    setGamesPage(1);
+                                    setMobileViewedStructure(structure);
+                                  } else {
+                                    toggleStructureDetails(structure);
+                                  }
+                                }}
+                              >
+                                {expandedStructure === structure.structure ? t("features.dashboard.hide") : t("features.dashboard.view")}
                               </Button>
                             </Table.Td>
                           </Table.Tr>
-                          {expandedStructure === structure.structure && (
+                          {!isStackedLayout && expandedStructure === structure.structure && (
                             <Table.Tr>
                               <Table.Td colSpan={4}>
                                 <Flex
