@@ -29,7 +29,6 @@ jotaiStore.set(profilesAtom, [
   {
     id: "p1",
     name: "Test Profile",
-    lichessToken: null,
     createdAt: 0,
     updatedAt: 0,
   },
