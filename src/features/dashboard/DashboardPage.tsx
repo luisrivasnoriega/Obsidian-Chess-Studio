@@ -9,7 +9,7 @@ import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useDebouncedValue } from "@mantine/hooks";
+import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { commands, type GoMode } from "@/bindings";
 import type { Event } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
@@ -67,6 +67,7 @@ import {
 
 export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 48em)");
   useEffect(() => {
     const key = "obsidian-chess-studio.firstOpen";
 
@@ -216,55 +217,7 @@ export default function DashboardPage() {
   const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
   const defaultEngine = localEngines.length > 0 ? localEngines[0] : null;
 
-  const hasAutoSyncedAccountsRef = useRef(false);
-  useEffect(() => {
-    if (hasAutoSyncedAccountsRef.current) return;
-    if (sessions.length === 0) return;
-    hasAutoSyncedAccountsRef.current = true;
-
-    const run = async () => {
-      try {
-        const dbDir = await resolve(await appDataDir(), "db");
-        await mkdir(dbDir, { recursive: true });
-      } catch {
-        // Best-effort; downloads/conversion will surface errors if this fails.
-      }
-
-      // Only process sessions for the active profile
-      if (!activeProfileId) return;
-
-      const activeProfileSessions = sessions.filter(
-        (s) => (s.profileId ?? activeProfileId) === activeProfileId,
-      );
-
-      for (const session of activeProfileSessions) {
-        const profileId = activeProfileId;
-        const profile = profiles.find((p) => p.id === profileId) ?? null;
-        if (!profile) continue;
-
-        try {
-          const res = await syncSessionGamesToProfileDb({ profile, session });
-          if (res.updatedSession) {
-            const username = res.updatedSession.lichess?.username ?? res.updatedSession.chessCom?.username ?? "";
-            const platform = res.updatedSession.lichess ? "lichess" : res.updatedSession.chessCom ? "chesscom" : null;
-
-            setSessions((prev) =>
-              prev.map((s) => {
-                if ((s.profileId ?? activeProfileId) !== profileId) return s;
-                if (platform === "lichess" && s.lichess?.username === username) return res.updatedSession;
-                if (platform === "chesscom" && s.chessCom?.username === username) return res.updatedSession;
-                return s;
-              }),
-            );
-          }
-        } catch {
-          // Best-effort: keep processing other accounts.
-        }
-      }
-    };
-
-    void run();
-  }, [activeProfileId, profiles, sessions, setSessions]);
+  
 
   const [activeGamesTab, setActiveGamesTab] = useState<string | null>("games");
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
@@ -858,7 +811,7 @@ export default function DashboardPage() {
           const hasAnalysis = /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(gameRecord.pgn);
           return !hasAnalysis;
         } else if (item.type === "chesscom") {
-          const chessComGame = item.game as ChessComGame;
+          const chessComGame = item.game as ChessComGameWithEvent;
           const existsInDb = !!analyzedGames[chessComGame.url];
           if (existsInDb) return false;
           if (!chessComGame.pgn) return true;
@@ -1152,9 +1105,11 @@ export default function DashboardPage() {
             />
           </Grid.Col>
 
-          <Grid.Col span={{ base: 12, sm: 12, md: 8, lg: 9, xl: 9 }}>
-            <QuickActionsGrid actions={quickActions} />
-          </Grid.Col>
+          {!isMobile && (
+            <Grid.Col span={{ base: 12, sm: 12, md: 8, lg: 9, xl: 9 }}>
+              <QuickActionsGrid actions={quickActions} />
+            </Grid.Col>
+          )}
         </Grid>
 
         <Grid>
@@ -1461,7 +1416,7 @@ export default function DashboardPage() {
                       const hasAnalysis = /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(gameRecord.pgn);
                       return !hasAnalysis;
                     } else if (item.type === "chesscom") {
-                      const chessComGame = item.game as ChessComGame;
+                      const chessComGame = item.game as ChessComGameWithEvent;
                       // Check if this game has been analyzed
                       const existsInDb = !!analyzedGames[chessComGame.url];
                       if (existsInDb) return false; // Already analyzed
@@ -1561,7 +1516,7 @@ export default function DashboardPage() {
                   gameHeaders = createLocalGameHeaders(gameRecord);
                 } else if (gameType === "chesscom") {
                   // For Chess.com games, parse PGN
-                  const chessComGame = game as ChessComGame;
+                  const chessComGame = game as ChessComGameWithEvent;
                   const pgn = chessComGame.pgn;
                   if (!pgn) {
                     activeAnalysisIds.delete(analysisId);
@@ -1739,7 +1694,7 @@ export default function DashboardPage() {
                     // Also save to analyzed games database for consistency
                     await saveAnalyzedGame(gameRecord.id, analyzedPgn);
                   } else if (gameType === "chesscom") {
-                    const chessComGame = game as ChessComGame;
+                    const chessComGame = game as ChessComGameWithEvent;
                     chessComGame.pgn = analyzedPgn;
                     // Persist the analyzed PGN
                     await saveAnalyzedGame(chessComGame.url, analyzedPgn);
@@ -1772,7 +1727,7 @@ export default function DashboardPage() {
                       const updated = [...prev];
                       const index = updated.findIndex((g) => g.url === chessComGame.url);
                       if (index >= 0) {
-                        updated[index] = { ...chessComGame };
+                        updated[index] = { ...updated[index], ...chessComGame };
                       }
                       return updated;
                     });

@@ -52,6 +52,8 @@ use crate::db::{
     get_players_game_info, get_tournaments, init_profile_db, merge_player_site_stats,
     merge_years_data, precache_openings, search_position, get_account_sync_state,
     upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
+    upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
+    create_event_game,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
 use crate::fs::{set_file_as_executable, DownloadProgress};
@@ -216,7 +218,12 @@ pub async fn run() {
             get_account_sync_state,
             upsert_account_sync_state,
             mark_account_sync_batch_complete,
-            list_account_sync_completed_batches
+            list_account_sync_completed_batches,
+            upsert_managed_event,
+            list_managed_events,
+            delete_managed_event,
+            add_event_games_from_pgn,
+            create_event_game,
         ))
         .events(tauri_specta::collect_events!(
             BestMovesPayload,

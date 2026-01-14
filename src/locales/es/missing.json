@@ -1,5 +1,7 @@
 {
   "accounts.processing": "processing",
+  "dashboard.openGameFailedTitle": "Could not open game",
+  "dashboard.openGameFailedMessage": "Failed to open the game link. Please try again.",
   "keybindings.goToDashboard": "Go to Dashboard",
   "keybindings.goToProfiles": "Go to Profiles",
   "keybindings.goToDatabases": "Go to Databases",

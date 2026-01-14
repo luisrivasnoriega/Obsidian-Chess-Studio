@@ -311,6 +311,7 @@
                      "sync":  {
                                   "batchProgress":  "Batch {{current}} of {{total}}",
                                   "addAccountDisabled":  "Adding accounts is disabled while a sync is running.",
+                                  "cooldown":  "Rate limit reached. Cooling down for {{seconds}}s...",
                                   "networkRetry":  "Network issue detected. Retrying soon..."
                               },
                      "searchPlaceholder":  "Search accounts...",
@@ -489,14 +490,17 @@
                                            "result":  "Result",
                                            "accuracy":  "Accuracy",
                                            "moves":  "Moves",
+                                           "timeControl":  "Time control",
                                            "date":  "Date",
                                            "account":  "Account"
                                        },
                       "filterByOpponent":  "Filter by opponent",
                       "filterByResult":  "Filter by result",
-                      "filterByTimeControl":  "Filter by time control",
-                      "noGamesMatchFilters":  "No games match the filters"
-                  },
+                  "filterByTimeControl":  "Filter by time control",
+                  "openGameFailedTitle":  "Could not open game",
+                  "openGameFailedMessage":  "Failed to open the game link. Please try again.",
+                  "noGamesMatchFilters":  "No games match the filters"
+              },
     "databaseOptions":  {
                             "player":  "Player",
                             "search":  "Search",
@@ -667,29 +671,111 @@
                                      "checkingForUpdates":  "Checking for Updates",
                                      "noUpdatesAvailable":  "No Updates Available"
                                  },
-                     "sidebar":  {
-                                     "dashboard":  "Dashboard",
-                                     "board":  "Board",
-                                     "accounts":  "Accounts",
-                                     "profiles":  "Profiles",
-                                     "files":  "Files",
-                                     "databases":  "Databases",
-                                     "engines":  "Engines",
-                                     "puzzles":  "Puzzles",
-                                     "tournaments":  "Lichess",
+                      "sidebar":  {
+                                      "dashboard":  "Dashboard",
+                                      "board":  "Board",
+                                      "accounts":  "Accounts",
+                                      "profiles":  "Profiles",
+                                      "events":  "Events",
+                                      "files":  "Files",
+                                      "databases":  "Databases",
+                                      "engines":  "Engines",
+                                      "puzzles":  "Puzzles",
+                                      "tournaments":  "Lichess",
                                      "variants":  "Variants",
                                      "learn":  "Learn",
                                      "settings":  "Settings",
                                      "keyboardShortcuts":  "Keyboard Shortcuts",
                                      "quickPlay":  "Quick Play",
                                      "quickAnalyze":  "Quick Analyze",
-                                     "quickPuzzles":  "Quick Puzzles"
-                                 },
-                     "tournaments":  {
-                                         "import":  "Import",
-                                         "search":  "Search",
-                                         "create":  "Create",
-                                         "importTab":  {
+                                      "quickPuzzles":  "Quick Puzzles"
+                                  },
+                      "events":  {
+                                      "validation":  {
+                                                        "nameRequired":  "Name is required"
+                                                    },
+                                      "noProfile":  "Select a profile to manage events.",
+                                      "unnamedEvent":  "Unnamed event",
+                                      "addGame":  {
+                                                     "title":  "Add game",
+                                                     "createAndOpen":  "Create & open"
+                                                 },
+                                      "create":  {
+                                                    "title":  "Create OTB tournament"
+                                                },
+                                     "fields":  {
+                                                   "name":  "Name",
+                                                   "namePlaceholder":  "Tournament name",
+                                                   "location":  "Location",
+                                                   "locationPlaceholder":  "City, venue, etc.",
+                                                   "startDate":  "Start date",
+                                                   "endDate":  "End date"
+                                               },
+                                     "list":  {
+                                                 "title":  "Registered tournaments",
+                                                 "empty":  "No tournaments yet."
+                                             },
+                                     "table":  {
+                                                  "name":  "Name",
+                                                  "location":  "Location",
+                                                  "startDate":  "Start",
+                                                  "endDate":  "End",
+                                                  "actions":  "Actions"
+                                              },
+                                     "actions":  {
+                                                    "addGame":  "Add game",
+                                                    "listGames":  "List games"
+                                                },
+                                     "addGames":  {
+                                                     "title":  "Add games to tournament",
+                                                     "pgnLabel":  "PGN",
+                                                     "pgnPlaceholder":  "Paste one or more PGNs here...",
+                                                     "addButton":  "Import"
+                                                 },
+                                     "listGames":  {
+                                                      "title":  "Tournament games",
+                                                      "empty":  "No games found."
+                                                  },
+                                      "games":  {
+                                                    "white":  "White",
+                                                    "whitePlaceholder":  "White player name",
+                                                    "black":  "Black",
+                                                    "blackPlaceholder":  "Black player name",
+                                                    "result":  "Result",
+                                                    "resultOngoing":  "Ongoing (*)",
+                                                    "date":  "Date",
+                                                    "round":  "Round",
+                                                    "roundPlaceholder":  "Round",
+                                                    "actions":  "Actions",
+                                                    "analyze":  "Analyze",
+                                                    "validation":  {
+                                                                       "whiteRequired":  "White is required",
+                                                                       "blackRequired":  "Black is required"
+                                                                   }
+                                                },
+                                     "delete":  {
+                                                   "confirmTitle":  "Delete tournament",
+                                                   "confirmMessage":  "This will delete the tournament and all its games."
+                                               },
+                                     "notifications":  {
+                                                          "createdTitle":  "Tournament created",
+                                                          "createdMessage":  "Tournament saved successfully.",
+                                                          "createFailedTitle":  "Could not create tournament",
+                                                          "deletedTitle":  "Tournament deleted",
+                                                          "deletedMessage":  "Tournament removed successfully.",
+                                                          "deleteFailedTitle":  "Could not delete tournament",
+                                                          "gamesAddedTitle":  "Games imported",
+                                                           "gamesAddedMessage":  "Imported {{count}} games.",
+                                                           "addGamesFailedTitle":  "Could not import games",
+                                                           "createGameFailedTitle":  "Could not create game",
+                                                           "openGameFailedTitle":  "Could not open game"
+                                                       }
+                                  },
+                      "tournaments":  {
+                                          "import":  "Import",
+                                          "search":  "Search",
+                                          "create":  "Create",
+                                          "importTab":  {
                                                            "title":  "Import Tournament from Lichess",
                                                            "description":  "Import tournament games from Lichess using a tournament ID or URL",
                                                            "noToken":  "Lichess token not found. Please add your Lichess token in the active profile settings.",

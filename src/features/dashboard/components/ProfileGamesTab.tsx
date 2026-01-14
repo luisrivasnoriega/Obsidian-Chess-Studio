@@ -1,14 +1,17 @@
-import { ActionIcon, Autocomplete, Avatar, Badge, Box, Button, Group, Loader, Menu, Pagination, ScrollArea, Stack, Table, Text, Select } from "@mantine/core";
+import { ActionIcon, Autocomplete, Avatar, Badge, Box, Button, Group, Loader, Menu, Pagination, ScrollArea, Stack, Table, Text, Select, Tooltip } from "@mantine/core";
 import {
   IconChartLine,
   IconChevronDown,
   IconChess,
+  IconExternalLink,
   IconSortAscending,
   IconSortDescending,
   IconStar,
   IconStarFilled,
   IconTrash,
 } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
@@ -69,7 +72,7 @@ function resultOutcome(color: "white" | "black", result: string): "win" | "loss"
   return "unknown";
 }
 const EVENT_TAG_REGEX = /\[Event\s+"([^"]+)"\]/i;
-const getEventNameFromPgn = (pgn?: string | null, fallback: string) => {
+const getEventNameFromPgn = (pgn: string | null | undefined, fallback: string) => {
   if (!pgn) return fallback;
   const match = pgn.match(EVENT_TAG_REGEX);
   if (match && match[1]) return match[1];
@@ -83,22 +86,25 @@ const getTimeControlFromPgn = (pgn?: string | null): string | null => {
   return match?.[1] ?? null;
 };
 
-function getTimeControlLabel(t: (key: string, fallback?: string) => string, value: TimeControlCategory) {
+function getTimeControlLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  value: TimeControlCategory,
+) {
   switch (value) {
     case "ultra_bullet":
-      return t("chess.timeControl.ultraBullet", "UltraBullet");
+      return t("chess.timeControl.ultraBullet", { defaultValue: "UltraBullet" });
     case "bullet":
-      return t("chess.timeControl.bullet", "Bullet");
+      return t("chess.timeControl.bullet", { defaultValue: "Bullet" });
     case "blitz":
-      return t("chess.timeControl.blitz", "Blitz");
+      return t("chess.timeControl.blitz", { defaultValue: "Blitz" });
     case "rapid":
-      return t("chess.timeControl.rapid", "Rapid");
+      return t("chess.timeControl.rapid", { defaultValue: "Rapid" });
     case "classical":
-      return t("chess.timeControl.classical", "Classical");
+      return t("chess.timeControl.classical", { defaultValue: "Classical" });
     case "correspondence":
-      return t("chess.timeControl.correspondence", "Correspondence");
+      return t("chess.timeControl.correspondence", { defaultValue: "Correspondence" });
     case "daily":
-      return t("chess.timeControl.daily", "Daily");
+      return t("chess.timeControl.daily", { defaultValue: "Daily" });
   }
 }
 
@@ -479,6 +485,42 @@ export function ProfileGamesTab({
     else onAnalyzeLichessGame(item.game);
   };
 
+  const handleOpenGame = async (item: GameItem) => {
+    const url =
+      item.type === "chesscom"
+        ? item.game.url
+        : item.type === "lichess"
+          ? `https://lichess.org/${item.game.id}`
+          : null;
+
+    if (!url) return;
+    try {
+      await openUrl(url, "inAppBrowser");
+      return;
+    } catch {}
+
+    try {
+      await openUrl(url);
+      return;
+    } catch {}
+
+    try {
+      await openPath(url);
+      return;
+    } catch {}
+
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    } catch {}
+
+    notifications.show({
+      title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
+      message: t("features.dashboard.openGameFailedMessage", "Failed to open the game link. Please try again."),
+      color: "red",
+    });
+  };
+
   const handleToggleFavorite = async (item: GameItem) => {
     if (item.type === "local" && onToggleFavoriteLocal) return await onToggleFavoriteLocal(item.id);
     if (item.type === "chesscom" && onToggleFavoriteChessCom) return await onToggleFavoriteChessCom(item.id);
@@ -523,9 +565,8 @@ export function ProfileGamesTab({
           clearable
           size="sm"
           maxDropdownHeight={240}
-          withinPortal
-          nothingFound={t("features.dashboard.noEventsMatch", "No events match")}
-          loading={isLoadingEventOptions}
+          nothingFoundMessage={t("features.dashboard.noEventsMatch", "No events match")}
+          rightSection={isLoadingEventOptions ? <Loader size="xs" /> : undefined}
           searchValue={eventSearchValue}
           onSearchChange={onEventSearchChange}
           style={{ minWidth: 200, maxWidth: 280 }}
@@ -567,9 +608,7 @@ export function ProfileGamesTab({
           data={opponentOptions}
           limit={25}
           maxDropdownHeight={240}
-          withinPortal
           rightSection={isLoadingOpponentOptions ? <Loader size="xs" /> : undefined}
-          nothingFound={t("common.noRecordsFound")}
           style={{ flex: 1 }}
           size="sm"
         />
@@ -618,6 +657,7 @@ export function ProfileGamesTab({
                 </Group>
               </Table.Th>
               <Table.Th style={{ width: 75 }}>Moves</Table.Th>
+              <Table.Th style={{ width: 95 }}>{t("dashboard.tableHeaders.timeControl")}</Table.Th>
               <Table.Th style={{ width: 95, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
                 <Group gap="xs" wrap="nowrap">
                   Date
@@ -653,7 +693,7 @@ export function ProfileGamesTab({
           <Table.Tbody>
             {sortedAndPaginatedItems.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={11} style={{ textAlign: "center", padding: "2rem" }}>
+                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
                   <Text c="dimmed">{t("features.dashboard.noGamesMatchFilters", "No games match the filters")}</Text>
                 </Table.Td>
               </Table.Tr>
@@ -719,6 +759,15 @@ export function ProfileGamesTab({
                   <Table.Td>{meta.acpl ? Math.round(meta.acpl) : "-"}</Table.Td>
                   <Table.Td>{meta.elo ? Math.round(meta.elo) : "-"}</Table.Td>
                   <Table.Td>{meta.moves || "-"}</Table.Td>
+                  <Table.Td>
+                    {meta.timeControl?.trim()
+                      ? (() => {
+                          const platform: "Lichess" | "Chess.com" = item.type === "chesscom" ? "Chess.com" : "Lichess";
+                          const category = getTimeControlCategory(platform, meta.timeControl);
+                          return getTimeControlLabel(t, category);
+                        })()
+                      : "-"}
+                  </Table.Td>
                   <Table.Td>{dateStr}</Table.Td>
                   <Table.Td>
                     <ActionIcon variant="subtle" onClick={() => handleToggleFavorite(item)} disabled={
@@ -758,6 +807,13 @@ export function ProfileGamesTab({
                         >
                           {t("features.dashboard.analyze") || "Analyze"}
                         </Button>
+                      )}
+                      {item.type !== "local" && (
+                        <Tooltip label={t("features.dashboard.openGame", "Open game")}>
+                          <ActionIcon variant="subtle" onClick={() => void handleOpenGame(item)}>
+                            <IconExternalLink size={16} />
+                          </ActionIcon>
+                        </Tooltip>
                       )}
                     </Group>
                   </Table.Td>

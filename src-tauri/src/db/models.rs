@@ -113,6 +113,14 @@ pub struct NewSite<'a> {
 pub struct Event {
     pub id: i32,
     pub name: Option<String>,
+    #[specta(optional)]
+    pub event_type: Option<String>,
+    #[specta(optional)]
+    pub location: Option<String>,
+    #[specta(optional)]
+    pub start_date: Option<String>,
+    #[specta(optional)]
+    pub end_date: Option<String>,
 }
 
 #[derive(Insertable, Debug)]

@@ -9,6 +9,7 @@ import {
   IconFiles,
   IconGitBranch,
   IconKeyboard,
+  IconCalendarEvent,
   IconLayoutDashboard,
   IconPlayerPlay,
   IconPuzzle,
@@ -115,6 +116,7 @@ function MayaActionLink({
 const primaryLinks = [
   { icon: IconLayoutDashboard, label: "dashboard", url: "/" },
   { icon: IconUserCircle, label: "profiles", url: "/profiles" },
+  { icon: IconCalendarEvent, label: "events", url: "/events" },
 ];
 
 // Sección secundaria (uso regular)
@@ -133,6 +135,7 @@ const tertiaryLinksData = [
 const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: string }> = [
   { icon: IconLayoutDashboard, labelKey: "features.sidebar.dashboard", url: "/" },
   { icon: IconUserCircle, labelKey: "features.sidebar.profiles", url: "/profiles" },
+  { icon: IconCalendarEvent, labelKey: "features.sidebar.events", url: "/events" },
   { icon: IconChartLine, labelKey: "maya.nav.analysis", url: "/analysis" },
   { icon: IconGitBranch, labelKey: "features.sidebar.variants", url: "/variants" },
   { icon: IconPuzzle, labelKey: "features.sidebar.puzzles", url: "/puzzles" },

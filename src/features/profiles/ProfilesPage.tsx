@@ -98,6 +98,7 @@ export default function ProfilesPage() {
   const autoUpdateRetryAttemptRef = useRef(0);
   const backgroundSyncRetryTimersRef = useRef<Map<string, number>>(new Map());
   const backgroundSyncRetryAttemptsRef = useRef<Map<string, number>>(new Map());
+  const syncNotificationIdsRef = useRef<Set<string>>(new Set());
   const useTabDropdown = layout.accounts.layoutType === "mobile";
   const isAccountSyncRunning = syncingAccountIds.size > 0;
   const detailsTabOptions = useMemo(
@@ -257,12 +258,27 @@ export default function ProfilesPage() {
           loading: true,
           autoClose: false,
         });
+      syncNotificationIdsRef.current.add(id);
 
         try {
           const res = await syncSessionGamesToProfileDb({
             profile,
             session,
             onBatchUpdate: (u) => {
+              if (u.cooldownSeconds != null) {
+                notifications.update({
+                  id,
+                  title: t("common.warning", { defaultValue: "Warning" }),
+                  message: t("accounts.sync.cooldown", {
+                    defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
+                    seconds: u.cooldownSeconds,
+                  }),
+                  color: "yellow",
+                  loading: true,
+                  autoClose: false,
+                });
+                return;
+              }
               notifications.update({
                 id,
                 message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
@@ -322,6 +338,7 @@ export default function ProfilesPage() {
             return "stop";
           }
         } finally {
+          syncNotificationIdsRef.current.delete(id);
           setSyncingAccountIds((prev) => {
             const next = new Set(prev);
             next.delete(id);
@@ -717,6 +734,7 @@ export default function ProfilesPage() {
         loading: true,
         autoClose: false,
       });
+      syncNotificationIdsRef.current.add(id);
 
       const clearRetryTimer = () => {
         const existing = backgroundSyncRetryTimersRef.current.get(id) ?? null;
@@ -728,6 +746,7 @@ export default function ProfilesPage() {
 
       const cleanup = () => {
         clearRetryTimer();
+        syncNotificationIdsRef.current.delete(id);
         backgroundSyncRetryAttemptsRef.current.delete(id);
         setSyncingAccountIds((prev) => {
           const next = new Set(prev);
@@ -741,6 +760,20 @@ export default function ProfilesPage() {
           profile,
           session,
           onBatchUpdate: (u) => {
+            if (u.cooldownSeconds != null) {
+              notifications.update({
+                id,
+                title: t("common.warning", { defaultValue: "Warning" }),
+                message: t("accounts.sync.cooldown", {
+                  defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
+                  seconds: u.cooldownSeconds,
+                }),
+                color: "yellow",
+                loading: true,
+                autoClose: false,
+              });
+              return;
+            }
             notifications.update({
               id,
               message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
@@ -814,6 +847,12 @@ export default function ProfilesPage() {
         } catch {}
       }
       backgroundSyncRetryTimersRef.current.clear();
+      for (const notificationId of syncNotificationIdsRef.current.values()) {
+        try {
+          notifications.hide(notificationId);
+        } catch {}
+      }
+      syncNotificationIdsRef.current.clear();
     };
   }, []);
 

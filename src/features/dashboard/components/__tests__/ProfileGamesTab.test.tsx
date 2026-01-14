@@ -36,6 +36,16 @@ describe("ProfileGamesTab", () => {
         onAnalyzeChessComGame={mockOnAnalyzeChessComGame}
         onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
         isLoadingOnline={false}
+        eventFilterId={null}
+        onEventFilterChange={() => {}}
+        eventOptions={[]}
+        isLoadingEventOptions={false}
+        onEventSearchChange={() => {}}
+        eventSearchValue=""
+        profileDbPath={null}
+        onOpponentSelected={() => {}}
+        timeControlCategory={null}
+        onTimeControlCategoryChange={() => {}}
       />
     );
     expect(document.body).toBeTruthy();

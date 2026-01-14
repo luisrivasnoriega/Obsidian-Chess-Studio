@@ -8,7 +8,11 @@ CREATE TABLE Info (
 
 CREATE TABLE Events (
     ID INTEGER PRIMARY KEY AUTOINCREMENT,
-    Name TEXT UNIQUE
+    Name TEXT UNIQUE,
+    EventType TEXT,
+    Location TEXT,
+    StartDate TEXT,
+    EndDate TEXT
 );
 
 CREATE TABLE Sites (

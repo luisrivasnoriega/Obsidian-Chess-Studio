@@ -141,6 +141,9 @@ pub enum Error {
     #[allow(dead_code)]
     #[error("Illegal move error: {0}")]
     IllegalMoveError(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl serde::Serialize for Error {

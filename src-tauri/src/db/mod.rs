@@ -79,6 +79,40 @@ const GAMES_DELETE_DUPLICATES: &str =
 const GAMES_CREATE_DEDUPE_UNIQUE_INDEX: &str =
     include_str!("../../../database/queries/games/create_dedupe_unique_index.sql");
 
+fn ensure_events_columns(conn: &mut SqliteConnection) -> std::result::Result<(), diesel::result::Error> {
+    #[derive(QueryableByName)]
+    struct ColumnInfo {
+        #[diesel(sql_type = Text, column_name = "name")]
+        name: String,
+    }
+
+    let columns: Vec<ColumnInfo> = match sql_query("PRAGMA table_info('Events')").load(conn) {
+        Ok(cols) => cols,
+        Err(_) => return Ok(()),
+    };
+
+    let has_column = |column_name: &str| -> bool {
+        columns
+            .iter()
+            .any(|c| c.name.eq_ignore_ascii_case(column_name))
+    };
+
+    if !has_column("EventType") {
+        conn.batch_execute("ALTER TABLE Events ADD COLUMN EventType TEXT")?;
+    }
+    if !has_column("Location") {
+        conn.batch_execute("ALTER TABLE Events ADD COLUMN Location TEXT")?;
+    }
+    if !has_column("StartDate") {
+        conn.batch_execute("ALTER TABLE Events ADD COLUMN StartDate TEXT")?;
+    }
+    if !has_column("EndDate") {
+        conn.batch_execute("ALTER TABLE Events ADD COLUMN EndDate TEXT")?;
+    }
+
+    Ok(())
+}
+
 const WHITE_PAWN: Piece = Piece {
     color: shakmaty::Color::White,
     role: shakmaty::Role::Pawn,
@@ -140,6 +174,7 @@ impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
 
             // Only apply performance PRAGMAs if database is already initialized
             if tables_exist {
+                let _ = ensure_events_columns(conn);
                 conn.batch_execute(PRAGMA_PERFORMANCE)?;
             }
 
@@ -249,6 +284,98 @@ pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
     };
 
     let _inserted = core::add_game(db, new_game)?;
+
+    Ok(())
+}
+
+pub fn insert_to_db_with_event_override(
+    db: &mut SqliteConnection,
+    game: &TempGame,
+    event_id_override: i32,
+) -> Result<bool> {
+    let pawn_home = get_pawn_home(game.position.board());
+
+    let white_id = if let Some(name) = &game.white_name {
+        create_player(db, name)?.id
+    } else {
+        0
+    };
+
+    let black_id = if let Some(name) = &game.black_name {
+        create_player(db, name)?.id
+    } else {
+        0
+    };
+
+    let event_id = if event_id_override > 0 {
+        event_id_override
+    } else if let Some(name) = &game.event_name {
+        create_event(db, name)?.id
+    } else {
+        0
+    };
+
+    let site_id = if let Some(name) = &game.site_name {
+        let trimmed = name.trim();
+        if trimmed.is_empty() || trimmed == "?" {
+            create_site(db, "OTB")?.id
+        } else {
+            create_site(db, trimmed)?.id
+        }
+    } else {
+        create_site(db, "OTB")?.id
+    };
+
+    let ply_count = game.tree.count_main_line_moves() as i32;
+    let final_material = pgn::get_material_count(game.position.board());
+    let minimal_white_material = game.material_count.white.min(final_material.white) as i32;
+    let minimal_black_material = game.material_count.black.min(final_material.black) as i32;
+
+    let new_game = NewGame {
+        white_id,
+        black_id,
+        ply_count,
+        eco: game.eco.as_deref(),
+        round: game.round.as_deref(),
+        white_elo: game.white_elo,
+        black_elo: game.black_elo,
+        white_material: minimal_white_material,
+        black_material: minimal_black_material,
+        date: game.date.as_deref(),
+        time: game.time.as_deref(),
+        time_control: game.time_control.as_deref(),
+        site_id,
+        event_id,
+        fen: game.fen.as_deref(),
+        result: game.result.as_deref(),
+        moves: game.moves.as_slice(),
+        pawn_home: pawn_home as i32,
+    };
+
+    core::add_game(db, new_game)
+}
+
+fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
+    #[derive(QueryableByName)]
+    struct TableInfo {
+        #[diesel(sql_type = Text, column_name = "name")]
+        _name: String,
+    }
+
+    let tables_exist = {
+        let result: std::result::Result<Vec<TableInfo>, _> = sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1",
+        )
+        .load(db);
+        result.is_ok() && !result.unwrap().is_empty()
+    };
+
+    if !tables_exist {
+        core::init_db(db, "Profile Database", "Profile database")?;
+        // Ensure dedupe protections are present for future INSERT OR IGNORE behavior.
+        db.batch_execute(GAMES_DELETE_DUPLICATES)?;
+        db.batch_execute(GAMES_CREATE_DEDUPE_UNIQUE_INDEX)?;
+    }
 
     Ok(())
 }
@@ -1382,6 +1509,7 @@ pub async fn get_tournaments(
     state: tauri::State<'_, AppState>,
 ) -> Result<QueryResponse<Vec<Event>>> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
     let mut count: Option<i64> = None;
 
     let mut sql_query = events::table.into_boxed();
@@ -1423,6 +1551,278 @@ pub async fn get_tournaments(
         data: events,
         count: count.map(|c| c as i32),
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub enum ManagedEventType {
+    #[serde(rename = "otb_tournament")]
+    OtbTournament,
+}
+
+impl ManagedEventType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ManagedEventType::OtbTournament => "otb_tournament",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateManagedEventPayload {
+    pub name: String,
+    pub event_type: ManagedEventType,
+    #[specta(optional)]
+    pub location: Option<String>,
+    #[specta(optional)]
+    pub start_date: Option<String>,
+    #[specta(optional)]
+    pub end_date: Option<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn upsert_managed_event(
+    file: PathBuf,
+    payload: CreateManagedEventPayload,
+    state: tauri::State<'_, AppState>,
+) -> Result<Event> {
+    use crate::db::schema::events;
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    let name = payload.name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::InvalidInput("Event name cannot be empty".to_string()));
+    }
+
+    let event_type = payload.event_type.as_str();
+    let location = payload.location.as_ref().map(|s| s.trim().to_string());
+    let start_date = payload.start_date.as_ref().map(|s| s.trim().to_string());
+    let end_date = payload.end_date.as_ref().map(|s| s.trim().to_string());
+
+    diesel::insert_into(events::table)
+        .values((
+            events::name.eq(&name),
+            events::event_type.eq(Some(event_type)),
+            events::location.eq(location.as_deref()),
+            events::start_date.eq(start_date.as_deref()),
+            events::end_date.eq(end_date.as_deref()),
+        ))
+        .on_conflict(events::name)
+        .do_update()
+        .set((
+            events::event_type.eq(Some(event_type)),
+            events::location.eq(location.as_deref()),
+            events::start_date.eq(start_date.as_deref()),
+            events::end_date.eq(end_date.as_deref()),
+        ))
+        .execute(db)?;
+
+    let event = events::table
+        .filter(events::name.eq(&name))
+        .first::<Event>(db)?;
+    Ok(event)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_managed_events(
+    file: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<Event>> {
+    use crate::db::schema::events;
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    let out = events::table
+        .filter(events::event_type.is_not_null())
+        .order(events::id.asc())
+        .load::<Event>(db)?;
+    Ok(out)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_managed_event(
+    file: PathBuf,
+    event_id: i32,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool> {
+    use crate::db::schema::{comments, events, games};
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    let deleted = db.transaction::<_, Error, _>(|db| {
+        // Only allow deleting managed events.
+        let managed_exists = events::table
+            .filter(events::id.eq(event_id))
+            .filter(events::event_type.is_not_null())
+            .select(events::id)
+            .first::<i32>(db)
+            .optional()?
+            .is_some();
+
+        if !managed_exists {
+            return Ok(false);
+        }
+
+        let game_ids = games::table
+            .filter(games::event_id.eq(event_id))
+            .select(games::id)
+            .load::<i32>(db)?;
+
+        if !game_ids.is_empty() {
+            diesel::delete(comments::table.filter(comments::game_id.eq_any(&game_ids)))
+                .execute(db)?;
+        }
+
+        diesel::delete(games::table.filter(games::event_id.eq(event_id))).execute(db)?;
+        diesel::delete(events::table.filter(events::id.eq(event_id))).execute(db)?;
+
+        Ok(true)
+    })?;
+
+    Ok(deleted)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_event_games_from_pgn(
+    file: PathBuf,
+    event_id: i32,
+    pgn: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<i32> {
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    if event_id <= 0 {
+        return Err(Error::InvalidInput("Invalid event id".to_string()));
+    }
+
+    let trimmed = pgn.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidInput("PGN cannot be empty".to_string()));
+    }
+
+    let mut importer = Importer::new(None);
+    let mut inserted_total: i32 = 0;
+
+    db.transaction::<_, Error, _>(|db| {
+        for game in BufferedReader::new_cursor(trimmed.as_bytes())
+            .into_iter(&mut importer)
+            .flatten()
+            .flatten()
+        {
+            let inserted = insert_to_db_with_event_override(db, &game, event_id)?;
+            if inserted {
+                inserted_total += 1;
+            }
+        }
+        Ok(())
+    })?;
+
+    Ok(inserted_total)
+}
+
+#[derive(Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateEventGamePayload {
+    pub white: String,
+    pub black: String,
+    #[specta(optional)]
+    pub date: Option<String>,
+    #[specta(optional)]
+    pub round: Option<String>,
+    pub result: Outcome,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn create_event_game(
+    file: PathBuf,
+    event_id: i32,
+    payload: CreateEventGamePayload,
+    state: tauri::State<'_, AppState>,
+) -> Result<i32> {
+    use crate::db::schema::games;
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    if event_id <= 0 {
+        return Err(Error::InvalidInput("Invalid event id".to_string()));
+    }
+
+    let white_name = payload.white.trim().to_string();
+    let black_name = payload.black.trim().to_string();
+    if white_name.is_empty() || black_name.is_empty() {
+        return Err(Error::InvalidInput(
+            "White and Black player names are required".to_string(),
+        ));
+    }
+
+    let white_id = create_player(db, &white_name)?.id;
+    let black_id = create_player(db, &black_name)?.id;
+    let site_id = create_site(db, "OTB")?.id;
+
+    let mut moves: Vec<u8> = Vec::new();
+    GameTree::new().encode(&mut moves, None);
+
+    let pos = Chess::default();
+    let pawn_home = get_pawn_home(pos.board());
+    let material = pgn::get_material_count(pos.board());
+    let white_material = material.white as i32;
+    let black_material = material.black as i32;
+
+    let date = payload.date.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let round = payload.round.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    let result_str = payload.result.to_string();
+
+    let new_game = NewGame {
+        event_id,
+        site_id,
+        date,
+        time: None,
+        round,
+        white_id,
+        white_elo: None,
+        black_id,
+        black_elo: None,
+        white_material,
+        black_material,
+        result: Some(result_str.as_str()),
+        time_control: None,
+        eco: None,
+        ply_count: 0,
+        fen: None,
+        moves: moves.as_slice(),
+        pawn_home: pawn_home as i32,
+    };
+
+    // We may hit the dedupe index; insert-or-ignore and then fetch the matching row ID.
+    diesel::insert_or_ignore_into(games::table)
+        .values(&new_game)
+        .execute(db)?;
+
+    let game_id = games::table
+        .filter(games::event_id.eq(event_id))
+        .filter(games::site_id.eq(site_id))
+        .filter(games::white_id.eq(white_id))
+        .filter(games::black_id.eq(black_id))
+        .filter(games::moves.eq(moves.as_slice()))
+        .filter(games::date.eq(date))
+        .filter(games::time.is_null())
+        .order(games::id.desc())
+        .select(games::id)
+        .first::<i32>(db)?;
+
+    Ok(game_id)
 }
 
 #[derive(Debug, Clone, Serialize, Type, Default)]

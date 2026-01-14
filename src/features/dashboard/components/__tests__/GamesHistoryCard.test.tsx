@@ -48,6 +48,16 @@ describe("GamesHistoryCard", () => {
         onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
         gameHistoryLimit={10}
         onGameHistoryLimitChange={vi.fn()}
+        eventFilterId={null}
+        onEventFilterChange={() => {}}
+        eventOptions={[]}
+        isLoadingEventOptions={false}
+        onEventSearchChange={() => {}}
+        eventSearchValue=""
+        profileDbPath={null}
+        onOpponentSelected={() => {}}
+        timeControlCategory={null}
+        onTimeControlCategoryChange={() => {}}
       />
     );
     expect(document.body).toBeTruthy();
@@ -68,6 +78,16 @@ describe("GamesHistoryCard", () => {
         onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
         gameHistoryLimit={10}
         onGameHistoryLimitChange={vi.fn()}
+        eventFilterId={null}
+        onEventFilterChange={() => {}}
+        eventOptions={[]}
+        isLoadingEventOptions={false}
+        onEventSearchChange={() => {}}
+        eventSearchValue=""
+        profileDbPath={null}
+        onOpponentSelected={() => {}}
+        timeControlCategory={null}
+        onTimeControlCategoryChange={() => {}}
       />
     );
     // Tab change would be tested if tabs are visible

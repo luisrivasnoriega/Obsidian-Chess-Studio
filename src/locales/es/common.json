@@ -310,6 +310,7 @@
     "databaseLoadError": "Error al cargar la base de datos",
     "sync": {
       "batchProgress": "Lote {{current}} de {{total}}",
+      "cooldown": "Límite de uso alcanzado. Esperando {{seconds}}s antes de continuar...",
       "addAccountDisabled": "No se pueden agregar cuentas mientras la sincronización está en curso.",
       "networkRetry": "Se detectó un problema de red. Reintentando pronto..."
     },
@@ -459,6 +460,7 @@
       "result": "Resultado",
       "accuracy": "Precisión",
       "moves": "Movimientos",
+      "timeControl": "Control de tiempo",
       "date": "Fecha",
       "account": "Cuenta",
       "estimatedElo": "Elo Est."
@@ -626,6 +628,7 @@
       "board": "Tablero",
       "accounts": "Cuentas",
       "profiles": "Perfiles",
+      "events": "Eventos",
       "files": "Archivos",
       "databases": "Bases de datos",
       "engines": "Motores",
@@ -638,6 +641,87 @@
       "quickPlay": "Jugar rápido",
       "quickAnalyze": "Analizar rápido",
       "quickPuzzles": "Puzzles rápidos"
+    },
+    "events": {
+      "validation": {
+        "nameRequired": "El nombre es obligatorio"
+      },
+      "noProfile": "Selecciona un perfil para administrar eventos.",
+      "unnamedEvent": "Evento sin nombre",
+      "addGame": {
+        "title": "Agregar partida",
+        "createAndOpen": "Crear y abrir"
+      },
+      "create": {
+        "title": "Crear torneo OTB"
+      },
+      "fields": {
+        "name": "Nombre",
+        "namePlaceholder": "Nombre del torneo",
+        "location": "Lugar",
+        "locationPlaceholder": "Ciudad, sede, etc.",
+        "startDate": "Fecha de inicio",
+        "endDate": "Fecha de fin"
+      },
+      "list": {
+        "title": "Torneos registrados",
+        "empty": "Aún no hay torneos."
+      },
+      "table": {
+        "name": "Nombre",
+        "location": "Lugar",
+        "startDate": "Inicio",
+        "endDate": "Fin",
+        "actions": "Acciones"
+      },
+      "actions": {
+        "addGame": "Agregar partida",
+        "listGames": "Listar partidas"
+      },
+      "addGames": {
+        "title": "Agregar partidas al torneo",
+        "pgnLabel": "PGN",
+        "pgnPlaceholder": "Pega uno o varios PGN aquí...",
+        "addButton": "Importar"
+      },
+      "listGames": {
+        "title": "Partidas del torneo",
+        "empty": "No se encontraron partidas."
+      },
+      "games": {
+        "white": "Blancas",
+        "whitePlaceholder": "Nombre del jugador de blancas",
+        "black": "Negras",
+        "blackPlaceholder": "Nombre del jugador de negras",
+        "result": "Resultado",
+        "resultOngoing": "En curso (*)",
+        "date": "Fecha",
+        "round": "Ronda",
+        "roundPlaceholder": "Ronda",
+        "actions": "Acciones",
+        "analyze": "Analizar",
+        "validation": {
+          "whiteRequired": "El jugador de blancas es obligatorio",
+          "blackRequired": "El jugador de negras es obligatorio"
+        }
+      },
+      "delete": {
+        "confirmTitle": "Eliminar torneo",
+        "confirmMessage": "Esto eliminará el torneo y todas sus partidas."
+      },
+      "notifications": {
+        "createdTitle": "Torneo creado",
+        "createdMessage": "El torneo se guardó correctamente.",
+        "createFailedTitle": "No se pudo crear el torneo",
+        "deletedTitle": "Torneo eliminado",
+        "deletedMessage": "El torneo se eliminó correctamente.",
+        "deleteFailedTitle": "No se pudo eliminar el torneo",
+        "gamesAddedTitle": "Partidas importadas",
+        "gamesAddedMessage": "Se importaron {{count}} partidas.",
+        "addGamesFailedTitle": "No se pudieron importar las partidas",
+        "createGameFailedTitle": "No se pudo crear la partida",
+        "openGameFailedTitle": "No se pudo abrir la partida"
+      }
     },
     "dashboard": {
       "any": "Cualquiera",
@@ -691,6 +775,8 @@
       "pliesAnalyzed": "Plies analizados",
       "playerStats": "Estadísticas del jugador",
       "openGame": "Abrir partida",
+      "openGameFailedTitle": "No se pudo abrir la partida",
+      "openGameFailedMessage": "No se pudo abrir el enlace de la partida. Inténtalo de nuevo.",
       "showingIssues": "Mostrando {{count}} de {{total}} problemas",
       "showingFirst100": "Mostrando los primeros 100 de {{total}} problemas",
       "sortBy": "Ordenar por",

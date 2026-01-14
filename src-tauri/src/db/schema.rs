@@ -90,6 +90,14 @@ diesel::table! {
         id -> Integer,
         #[sql_name = "Name"]
         name -> Nullable<Text>,
+        #[sql_name = "EventType"]
+        event_type -> Nullable<Text>,
+        #[sql_name = "Location"]
+        location -> Nullable<Text>,
+        #[sql_name = "StartDate"]
+        start_date -> Nullable<Text>,
+        #[sql_name = "EndDate"]
+        end_date -> Nullable<Text>,
     }
 }
 

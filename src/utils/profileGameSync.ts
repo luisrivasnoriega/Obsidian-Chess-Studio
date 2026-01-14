@@ -62,10 +62,41 @@ export type SyncBatchUpdate = {
   completedBatches: number;
   currentBatch: number;
   batchLabel: string;
+  cooldownSeconds?: number;
 };
 
 const LICHESS_BATCH_SIZE = 500;
 const NETWORK_CONNECT_TIMEOUT_MS = 5000;
+
+let globalProfileSyncChain: Promise<void> = Promise.resolve();
+
+async function runWithGlobalProfileSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = globalProfileSyncChain;
+
+  let release: () => void = () => {};
+  globalProfileSyncChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function parseRetryAfterSeconds(res: Response): number | null {
+  const raw = res.headers.get("Retry-After");
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 function parsePgnUtcRange(pgn: string): { oldestUtcMs: number | null; newestUtcMs: number | null; gameCount: number } {
   const games = pgn
@@ -130,6 +161,7 @@ export async function syncSessionGamesToProfileDb(input: {
   session: Session;
   onBatchUpdate?: (update: SyncBatchUpdate) => void;
 }) {
+  return await runWithGlobalProfileSyncLock(async () => {
   const profileId = input.profile.id;
   const profileTitle = input.profile.name || `Profile ${profileId}`;
 
@@ -286,15 +318,35 @@ export async function syncSessionGamesToProfileDb(input: {
 
         const url = `https://lichess.org/api/games/user/${encodeURIComponent(username)}?max=${LICHESS_BATCH_SIZE}${sinceMs != null ? `&since=${sinceMs}` : ""}&until=${cursorUntilMs}`;
 
-        const res = await fetch(url, {
-          method: "GET",
-          headers: {
-            "User-Agent": "Obsidian Chess Studio",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          connectTimeout: NETWORK_CONNECT_TIMEOUT_MS,
-        });
-        if (!res.ok) throw new Error(`Lichess batch request failed (${res.status})`);
+        let res: Response;
+        while (true) {
+          res = await fetch(url, {
+            method: "GET",
+            headers: {
+              "User-Agent": "Obsidian Chess Studio",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            connectTimeout: NETWORK_CONNECT_TIMEOUT_MS,
+          });
+
+          if (res.ok) break;
+
+          if (res.status === 429) {
+            const retryAfterSeconds = parseRetryAfterSeconds(res) ?? 30;
+            input.onBatchUpdate?.({
+              platform: "lichess",
+              totalBatches: plannedTotalBatches,
+              completedBatches,
+              currentBatch,
+              batchLabel: `Lichess ${currentBatch}/${plannedTotalBatches}`,
+              cooldownSeconds: retryAfterSeconds,
+            });
+            await sleep(retryAfterSeconds * 1000);
+            continue;
+          }
+
+          throw new Error(`Lichess batch request failed (${res.status})`);
+        }
         await writeTextFile(tempFile, await res.text(), { append: false });
 
         const pgn = await readTextFile(tempFile).catch(() => "");
@@ -314,6 +366,11 @@ export async function syncSessionGamesToProfileDb(input: {
 
         // Import this batch. The profile DB has dedupe protections, and `timestamp` further limits incremental sync.
         unwrap(await commands.convertPgn(tempFile, dbPath, minTimestampSeconds, profileTitle, null));
+        try {
+          unwrap(await commands.deleteDuplicatedGames(dbPath));
+        } catch {
+          // Best-effort: don't fail sync if dedupe fails.
+        }
 
         completedBatches += 1;
         cursorUntilMs = Math.max(0, oldestUtcMs - 1);
@@ -425,12 +482,30 @@ export async function syncSessionGamesToProfileDb(input: {
           batchLabel: `Chess.com ${currentBatch}/${totalBatches}`,
         });
 
-        const response = await fetch(archiveUrl, {
-          method: "GET",
-          headers: { "User-Agent": "Obsidian Chess Studio" },
-          connectTimeout: NETWORK_CONNECT_TIMEOUT_MS,
-        });
-        if (!response.ok) {
+        let response: Response;
+        while (true) {
+          response = await fetch(archiveUrl, {
+            method: "GET",
+            headers: { "User-Agent": "Obsidian Chess Studio" },
+            connectTimeout: NETWORK_CONNECT_TIMEOUT_MS,
+          });
+
+          if (response.ok) break;
+
+          if (response.status === 429) {
+            const retryAfterSeconds = parseRetryAfterSeconds(response) ?? 60;
+            input.onBatchUpdate?.({
+              platform: "chesscom",
+              totalBatches,
+              completedBatches,
+              currentBatch,
+              batchLabel: `Chess.com ${currentBatch}/${totalBatches}`,
+              cooldownSeconds: retryAfterSeconds,
+            });
+            await sleep(retryAfterSeconds * 1000);
+            continue;
+          }
+
           throw new Error(`Chess.com archive request failed (${response.status})`);
         }
         const gamesPayload = ChessComGamesSchema.safeParse(await response.json());
@@ -463,6 +538,11 @@ export async function syncSessionGamesToProfileDb(input: {
               null,
             ),
           );
+          try {
+            unwrap(await commands.deleteDuplicatedGames(dbPath));
+          } catch {
+            // Best-effort: don't fail sync if dedupe fails.
+          }
         }
 
         await markAccountSyncBatchComplete({
@@ -521,4 +601,5 @@ export async function syncSessionGamesToProfileDb(input: {
   }
 
   return { updatedSession: input.session };
+  });
 }

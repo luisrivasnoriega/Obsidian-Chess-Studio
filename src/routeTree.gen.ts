@@ -15,6 +15,7 @@ import { Route as PuzzlesRouteImport } from './routes/puzzles'
 import { Route as ProfilesRouteImport } from './routes/profiles'
 import { Route as PlayRouteImport } from './routes/play'
 import { Route as FilesRouteImport } from './routes/files'
+import { Route as EventsRouteImport } from './routes/events'
 import { Route as EnginesRouteImport } from './routes/engines'
 import { Route as AnalysisRouteImport } from './routes/analysis'
 import { Route as AccountsRouteImport } from './routes/accounts'
@@ -57,6 +58,11 @@ const PlayRoute = PlayRouteImport.update({
 const FilesRoute = FilesRouteImport.update({
   id: '/files',
   path: '/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EventsRoute = EventsRouteImport.update({
+  id: '/events',
+  path: '/events',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EnginesRoute = EnginesRouteImport.update({
@@ -133,6 +139,7 @@ export interface FileRoutesByFullPath {
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
   '/engines': typeof EnginesRoute
+  '/events': typeof EventsRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
   '/profiles': typeof ProfilesRoute
@@ -152,6 +159,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
   '/engines': typeof EnginesRoute
+  '/events': typeof EventsRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
   '/profiles': typeof ProfilesRoute
@@ -174,6 +182,7 @@ export interface FileRoutesById {
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
   '/engines': typeof EnginesRoute
+  '/events': typeof EventsRoute
   '/files': typeof FilesRoute
   '/play': typeof PlayRoute
   '/profiles': typeof ProfilesRoute
@@ -197,6 +206,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/analysis'
     | '/engines'
+    | '/events'
     | '/files'
     | '/play'
     | '/profiles'
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/analysis'
     | '/engines'
+    | '/events'
     | '/files'
     | '/play'
     | '/profiles'
@@ -237,6 +248,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/analysis'
     | '/engines'
+    | '/events'
     | '/files'
     | '/play'
     | '/profiles'
@@ -259,6 +271,7 @@ export interface RootRouteChildren {
   AccountsRoute: typeof AccountsRoute
   AnalysisRoute: typeof AnalysisRoute
   EnginesRoute: typeof EnginesRoute
+  EventsRoute: typeof EventsRoute
   FilesRoute: typeof FilesRoute
   PlayRoute: typeof PlayRoute
   ProfilesRoute: typeof ProfilesRoute
@@ -311,6 +324,13 @@ declare module '@tanstack/react-router' {
       path: '/files'
       fullPath: '/files'
       preLoaderRoute: typeof FilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/events': {
+      id: '/events'
+      path: '/events'
+      fullPath: '/events'
+      preLoaderRoute: typeof EventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/engines': {
@@ -444,6 +464,7 @@ const rootRouteChildren: RootRouteChildren = {
   AccountsRoute: AccountsRoute,
   AnalysisRoute: AnalysisRoute,
   EnginesRoute: EnginesRoute,
+  EventsRoute: EventsRoute,
   FilesRoute: FilesRoute,
   PlayRoute: PlayRoute,
   ProfilesRoute: ProfilesRoute,
