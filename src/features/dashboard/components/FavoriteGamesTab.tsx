@@ -6,34 +6,20 @@ import { useTranslation } from "react-i18next";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import { getAnalyzedGamesBulk } from "@/utils/analyzedGames";
-import type { ChessComGame } from "@/utils/chess.com/api";
 import type { GameRecord } from "@/utils/gameRecords";
 import type { FavoriteGame } from "@/utils/favoriteGames";
-
-interface LichessGame {
-  id: string;
-  players: {
-    white: { user?: { name: string } };
-    black: { user?: { name: string } };
-  };
-  speed: string;
-  createdAt: number;
-  winner?: string;
-  status: string;
-  pgn?: string;
-  lastFen: string;
-}
+import type { ChessComGameWithEvent, DashboardLichessGame } from "../types";
 
 interface FavoriteGamesTabProps {
   localGames: GameRecord[];
-  chessComGames: ChessComGame[];
-  lichessGames: LichessGame[];
+  chessComGames: ChessComGameWithEvent[];
+  lichessGames: DashboardLichessGame[];
   favoriteGames: FavoriteGame[];
   chessComUsernames: string[];
   lichessUsernames: string[];
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGame) => void;
-  onAnalyzeLichessGame: (game: LichessGame) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
@@ -41,8 +27,8 @@ interface FavoriteGamesTabProps {
 
 type FavoriteGameItem =
   | { type: "local"; game: GameRecord }
-  | { type: "chesscom"; game: ChessComGame }
-  | { type: "lichess"; game: LichessGame };
+  | { type: "chesscom"; game: ChessComGameWithEvent }
+  | { type: "lichess"; game: DashboardLichessGame };
 
 export function FavoriteGamesTab({
   localGames,

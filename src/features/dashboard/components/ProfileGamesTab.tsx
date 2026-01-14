@@ -1,4 +1,4 @@
-import { ActionIcon, Avatar, Badge, Box, Button, Group, Loader, Menu, Pagination, ScrollArea, Stack, Table, Text, TextInput, Select } from "@mantine/core";
+import { ActionIcon, Autocomplete, Avatar, Badge, Box, Button, Group, Loader, Menu, Pagination, ScrollArea, Stack, Table, Text, Select } from "@mantine/core";
 import {
   IconChartLine,
   IconChevronDown,
@@ -9,29 +9,19 @@ import {
   IconStarFilled,
   IconTrash,
 } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { getAnalyzedGamesBulk, getGameStatsBulk } from "@/utils/analyzedGames";
 import { stripAccountKey } from "@/utils/accountKeys";
-import type { ChessComGame } from "@/utils/chess.com/api";
+import type { Event } from "@/bindings";
+import { query_players } from "@/utils/db";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
+import { getTimeControl } from "@/utils/timeControl";
 import { createPGNFromMoves } from "../utils/gameHelpers";
-
-type LichessGame = {
-  id: string;
-  players: {
-    white: { user?: { name: string } };
-    black: { user?: { name: string } };
-  };
-  speed: string;
-  createdAt: number;
-  winner?: string;
-  status: string;
-  pgn?: string;
-  lastFen: string;
-};
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
+import { useDebouncedValue } from "@mantine/hooks";
 
 type OnlineGameStats = {
   accuracy: number;
@@ -41,8 +31,27 @@ type OnlineGameStats = {
 
 type GameItem =
   | { type: "local"; id: string; timestamp: number; game: GameRecord }
-  | { type: "chesscom"; id: string; timestamp: number; game: ChessComGame }
-  | { type: "lichess"; id: string; timestamp: number; game: LichessGame };
+  | { type: "chesscom"; id: string; timestamp: number; game: ChessComGameWithEvent }
+  | { type: "lichess"; id: string; timestamp: number; game: DashboardLichessGame };
+
+function getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
+  const trimmed = (timeControl ?? "").trim();
+  const lower = trimmed.toLowerCase();
+
+  // Handle common textual categories (some PGNs store "blitz"/"rapid" instead of seconds).
+  if (lower.includes("ultra")) return "ultra_bullet";
+  if (lower.includes("bullet")) return "bullet";
+  if (lower.includes("blitz")) return "blitz";
+  if (lower.includes("rapid")) return "rapid";
+  if (lower.includes("classical")) return "classical";
+  if (lower.includes("correspondence")) return "correspondence";
+
+  // Special cases used by our existing categorizer.
+  if (website === "Chess.com" && lower.startsWith("1/")) return "daily";
+  if (website === "Lichess" && trimmed === "-") return "correspondence";
+
+  return getTimeControl(website, trimmed);
+}
 
 function isFavorite(favorites: FavoriteGame[], source: FavoriteGame["source"], id: string) {
   return favorites.some((f) => f.source === source && f.gameId === id);
@@ -58,6 +67,39 @@ function resultOutcome(color: "white" | "black", result: string): "win" | "loss"
   if (r === "1-0") return color === "white" ? "win" : "loss";
   if (r === "0-1") return color === "black" ? "win" : "loss";
   return "unknown";
+}
+const EVENT_TAG_REGEX = /\[Event\s+"([^"]+)"\]/i;
+const getEventNameFromPgn = (pgn?: string | null, fallback: string) => {
+  if (!pgn) return fallback;
+  const match = pgn.match(EVENT_TAG_REGEX);
+  if (match && match[1]) return match[1];
+  return fallback;
+};
+
+const TIME_CONTROL_TAG_REGEX = /\[TimeControl\s+"([^"]+)"\]/i;
+const getTimeControlFromPgn = (pgn?: string | null): string | null => {
+  if (!pgn) return null;
+  const match = pgn.match(TIME_CONTROL_TAG_REGEX);
+  return match?.[1] ?? null;
+};
+
+function getTimeControlLabel(t: (key: string, fallback?: string) => string, value: TimeControlCategory) {
+  switch (value) {
+    case "ultra_bullet":
+      return t("chess.timeControl.ultraBullet", "UltraBullet");
+    case "bullet":
+      return t("chess.timeControl.bullet", "Bullet");
+    case "blitz":
+      return t("chess.timeControl.blitz", "Blitz");
+    case "rapid":
+      return t("chess.timeControl.rapid", "Rapid");
+    case "classical":
+      return t("chess.timeControl.classical", "Classical");
+    case "correspondence":
+      return t("chess.timeControl.correspondence", "Correspondence");
+    case "daily":
+      return t("chess.timeControl.daily", "Daily");
+  }
 }
 
 export function ProfileGamesTab({
@@ -75,21 +117,41 @@ export function ProfileGamesTab({
   onToggleFavoriteLichess,
   onAnalyzeAll,
   favoriteGames = [],
+  eventFilterId,
+  onEventFilterChange,
+  eventOptions,
+  isLoadingEventOptions = false,
+  onEventSearchChange,
+  eventSearchValue,
+  profileDbPath,
+  onOpponentSelected,
+  timeControlCategory,
+  onTimeControlCategoryChange,
 }: {
   localGames: GameRecord[];
-  chessComGames: ChessComGame[];
-  lichessGames: LichessGame[];
+  chessComGames: ChessComGameWithEvent[];
+  lichessGames: DashboardLichessGame[];
   profileUsernames: string[];
   isLoadingOnline?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGame) => void;
-  onAnalyzeLichessGame: (game: LichessGame) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
   onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
   favoriteGames?: FavoriteGame[];
+  eventFilterId: number | null;
+  onEventFilterChange: (eventId: number | null) => void;
+  eventOptions: Event[];
+  isLoadingEventOptions?: boolean;
+  onEventSearchChange: (value: string) => void;
+  eventSearchValue: string;
+  profileDbPath: string | null;
+  onOpponentSelected: (opponentName: string | null) => void;
+  timeControlCategory: TimeControlCategory | null;
+  onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
 }) {
   const { t } = useTranslation();
   const usernamesLower = useMemo(() => {
@@ -139,9 +201,66 @@ export function ProfileGamesTab({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [opponentFilter, setOpponentFilter] = useState("");
   const [resultFilter, setResultFilter] = useState<string | null>(null);
+  const [opponentOptions, setOpponentOptions] = useState<string[]>([]);
+  const [isLoadingOpponentOptions, setIsLoadingOpponentOptions] = useState(false);
+  const [debouncedOpponentFilter] = useDebouncedValue(opponentFilter, 250);
+  const selectedOpponentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const query = debouncedOpponentFilter.trim();
+    if (!profileDbPath) {
+      setOpponentOptions([]);
+      setIsLoadingOpponentOptions(false);
+      return;
+    }
+
+    if (query.length < 3) {
+      setOpponentOptions([]);
+      setIsLoadingOpponentOptions(false);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setIsLoadingOpponentOptions(true);
+      try {
+        const res = await query_players(profileDbPath, {
+          options: {
+            skipCount: true,
+            page: 1,
+            pageSize: 25,
+            sort: "name",
+            direction: "asc",
+          },
+          name: query,
+          range: null,
+        });
+
+        if (cancelled) return;
+
+        const options = (res.data ?? [])
+          .map((p) => (p.name ?? "").trim())
+          .filter(Boolean)
+          .filter((name) => !usernamesLower.has(name.toLowerCase()));
+
+        setOpponentOptions(options);
+      } catch {
+        if (!cancelled) setOpponentOptions([]);
+      } finally {
+        if (!cancelled) setIsLoadingOpponentOptions(false);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedOpponentFilter, profileDbPath, usernamesLower]);
 
   const itemMeta = (item: GameItem) => {
     if (item.type === "local") {
+      const fallbackEvent = t("features.dashboard.defaultLocalEvent", "Local Game");
+      const eventName = getEventNameFromPgn(item.game.pgn, fallbackEvent);
       const isUserWhite = item.game.white.type === "human";
       const opponent = isUserWhite ? item.game.black : item.game.white;
       const color: "white" | "black" = isUserWhite ? "white" : "black";
@@ -154,10 +273,14 @@ export function ProfileGamesTab({
         accuracy: item.game.stats?.accuracy ?? 0,
         acpl: item.game.stats?.acpl ?? 0,
         elo: item.game.stats?.estimatedElo ?? 0,
+        eventName,
+        eventId: null,
+        timeControl: item.game.timeControl ?? getTimeControlFromPgn(item.game.pgn),
       };
     }
 
     if (item.type === "chesscom") {
+      const fallbackEvent = t("features.dashboard.defaultChessComEvent", "Chess.com Game");
       const whiteRaw = item.game.white.username || "";
       const blackRaw = item.game.black.username || "";
       const whiteName = stripAccountKey(whiteRaw);
@@ -168,6 +291,7 @@ export function ProfileGamesTab({
       const opponent = userIsWhite ? blackName : whiteName;
       const color: "white" | "black" = userIsWhite ? "white" : "black";
       const stats = onlineStats.get(item.id);
+      const eventName = item.game.eventName ?? getEventNameFromPgn(item.game.pgn, fallbackEvent);
       return {
         source: "Chess.com" as const,
         color,
@@ -177,9 +301,13 @@ export function ProfileGamesTab({
         accuracy: stats?.accuracy ?? 0,
         acpl: stats?.acpl ?? 0,
         elo: stats?.estimatedElo ?? 0,
+        eventName,
+        eventId: item.game.eventId,
+        timeControl: item.game.time_control ?? null,
       };
     }
 
+    const fallbackEvent = t("features.dashboard.defaultLichessEvent", "Lichess Game");
     const whiteRaw = item.game.players.white.user?.name || "";
     const blackRaw = item.game.players.black.user?.name || "";
     const whiteName = stripAccountKey(whiteRaw);
@@ -199,6 +327,9 @@ export function ProfileGamesTab({
       accuracy: stats?.accuracy ?? 0,
       acpl: stats?.acpl ?? 0,
       elo: stats?.estimatedElo ?? 0,
+      eventName: item.game.eventName ?? fallbackEvent,
+      eventId: item.game.eventId,
+      timeControl: item.game.timeControl ?? null,
     };
   };
 
@@ -206,6 +337,19 @@ export function ProfileGamesTab({
     return items.filter((item) => {
       const meta = itemMeta(item);
       
+      // Filter by event
+      if (eventFilterId != null && meta.eventId !== eventFilterId) {
+        return false;
+      }
+
+      // Filter by time control (DB-backed for online games).
+      if (timeControlCategory) {
+        if (!meta.timeControl) return false;
+        const platform: "Lichess" | "Chess.com" = item.type === "chesscom" ? "Chess.com" : "Lichess";
+        const category = getTimeControlCategory(platform, meta.timeControl);
+        if (category !== timeControlCategory) return false;
+      }
+
       // Filter by opponent name
       const trimmedFilter = opponentFilter.trim();
       if (trimmedFilter) {
@@ -226,7 +370,7 @@ export function ProfileGamesTab({
       
       return true;
     });
-  }, [items, opponentFilter, resultFilter, usernamesLower, onlineStats, t]);
+  }, [items, opponentFilter, resultFilter, usernamesLower, onlineStats, t, eventFilterId, timeControlCategory]);
 
   const sortedAndPaginatedItems = useMemo(() => {
     const sorted = [...filteredItems];
@@ -247,7 +391,7 @@ export function ProfileGamesTab({
 
   useEffect(() => {
     setPage(1);
-  }, [items.length, opponentFilter, resultFilter]);
+  }, [items.length, opponentFilter, resultFilter, eventFilterId, timeControlCategory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -367,10 +511,65 @@ export function ProfileGamesTab({
   return (
     <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       <Group gap="xs">
-        <TextInput
+        <Select
+          placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
+          value={eventFilterId != null ? String(eventFilterId) : undefined}
+          onChange={(value) => onEventFilterChange(value ? Number(value) : null)}
+          data={[...eventOptions].sort((a, b) => a.id - b.id).map((event) => ({
+            value: String(event.id),
+            label: `#${event.id} - ${(event.name ?? "").trim() || t("features.dashboard.unnamedEvent", "Unnamed event")}`,
+          }))}
+          searchable
+          clearable
+          size="sm"
+          maxDropdownHeight={240}
+          withinPortal
+          nothingFound={t("features.dashboard.noEventsMatch", "No events match")}
+          loading={isLoadingEventOptions}
+          searchValue={eventSearchValue}
+          onSearchChange={onEventSearchChange}
+          style={{ minWidth: 200, maxWidth: 280 }}
+        />
+        <Autocomplete
           placeholder={t("features.dashboard.filterByOpponent", "Filter by opponent")}
           value={opponentFilter}
-          onChange={(e) => setOpponentFilter(e.currentTarget.value)}
+          onChange={(value) => {
+            setOpponentFilter(value);
+            const trimmed = value.trim();
+            if (!trimmed) {
+              selectedOpponentRef.current = null;
+              onOpponentSelected(null);
+              return;
+            }
+
+            if (selectedOpponentRef.current && trimmed !== selectedOpponentRef.current) {
+              selectedOpponentRef.current = null;
+              onOpponentSelected(null);
+            }
+          }}
+          onBlur={() => {
+            const trimmed = opponentFilter.trim();
+            if (trimmed.length < 3) return;
+            if (selectedOpponentRef.current === trimmed) return;
+
+            const exact = opponentOptions.find((o) => o.toLowerCase() === trimmed.toLowerCase());
+            if (!exact) return;
+
+            selectedOpponentRef.current = exact;
+            setOpponentFilter(exact);
+            onOpponentSelected(exact);
+          }}
+          onOptionSubmit={(value) => {
+            selectedOpponentRef.current = value.trim() || null;
+            setOpponentFilter(value);
+            onOpponentSelected(value);
+          }}
+          data={opponentOptions}
+          limit={25}
+          maxDropdownHeight={240}
+          withinPortal
+          rightSection={isLoadingOpponentOptions ? <Loader size="xs" /> : undefined}
+          nothingFound={t("common.noRecordsFound")}
           style={{ flex: 1 }}
           size="sm"
         />
@@ -386,6 +585,19 @@ export function ProfileGamesTab({
           clearable
           size="sm"
           style={{ width: 150 }}
+        />
+        <Select
+          placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
+          value={timeControlCategory ?? undefined}
+          onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
+          data={(["ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"] as const).map((value) => ({
+            value,
+            label: getTimeControlLabel(t, value),
+          }))}
+          clearable
+          searchable
+          size="sm"
+          style={{ width: 180 }}
         />
       </Group>
       <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">

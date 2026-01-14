@@ -174,7 +174,8 @@
                                       "blitz":  "Blitz",
                                       "rapid":  "Rapid",
                                       "classical":  "Classical",
-                                      "correspondence":  "Correspondence"
+                                      "correspondence":  "Correspondence",
+                                      "daily":  "Daily"
                                   },
                   "outcome":  {
                                   "outcome":  "Result",
@@ -493,6 +494,7 @@
                                        },
                       "filterByOpponent":  "Filter by opponent",
                       "filterByResult":  "Filter by result",
+                      "filterByTimeControl":  "Filter by time control",
                       "noGamesMatchFilters":  "No games match the filters"
                   },
     "databaseOptions":  {
@@ -866,6 +868,12 @@
                                        "showing":  "Showing",
                                        "count":  "Count",
                                        "maxGames":  "Max games",
+                                       "filterByEvent":  "Filter by event",
+                                       "noEventsMatch":  "No events match",
+                                       "unnamedEvent":  "Unnamed event",
+                                       "defaultLocalEvent":  "Local Game",
+                                       "defaultChessComEvent":  "Chess.com Game",
+                                       "defaultLichessEvent":  "Lichess Game",
                                        "mostCommonSchemes":  "Most common schemes",
                                        "errorAnalyzingPawns":  "Failed to analyze pawn structures",
                                        "analyzingPawnStructures":  "Analyzing pawn structures...",

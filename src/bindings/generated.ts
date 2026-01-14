@@ -965,7 +965,12 @@ export type GameQueryJs = { options?: QueryOptions<GameSort> | null;
  * Using u64 instead of usize for better bigint compatibility with TypeScript
  * Serialized as string to handle bigint in JSON
  */
-game_details_limit?: bigint | null; player1?: number | null; player2?: number | null; tournament_id?: number | null; start_date?: string | null; end_date?: string | null; range1?: [number, number] | null; range2?: [number, number] | null; sides?: Sides | null; outcome?: string | null; position?: PositionQueryJs | null; wanted_result?: string | null }
+game_details_limit?: bigint | null; player1?: number | null; player2?: number | null; tournament_id?: number | null; start_date?: string | null; end_date?: string | null; range1?: [number, number] | null; range2?: [number, number] | null; sides?: Sides | null; outcome?: string | null; position?: PositionQueryJs | null; wanted_result?: string | null; 
+/**
+ * Optional time control category filter.
+ * Expected values: ultra_bullet, bullet, blitz, rapid, classical, correspondence, daily.
+ */
+time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }

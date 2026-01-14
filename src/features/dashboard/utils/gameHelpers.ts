@@ -170,6 +170,7 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
     black: { user?: { name: string } };
   };
   speed: string;
+  timeControl: string | null;
   createdAt: number;
   winner?: string;
   status: string;
@@ -239,6 +240,7 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
       black: { user: { name: stripAccountKey(game.black) } },
     },
     speed: speed,
+    timeControl: game.time_control ?? null,
     createdAt: createdAt,
     winner: winner,
     status: status,

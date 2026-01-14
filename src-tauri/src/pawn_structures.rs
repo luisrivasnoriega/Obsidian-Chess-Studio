@@ -1006,6 +1006,7 @@ pub async fn compute_pawn_structures(
                     // ✅ FIX: game_details_limit espera u64
                     game_details_limit: Some(game_details_limit_u64),
                     wanted_result: None,
+                    time_control_category: None,
                     options: Some(QueryOptions {
                         skip_count: page != 1,
                         page: Some(page),

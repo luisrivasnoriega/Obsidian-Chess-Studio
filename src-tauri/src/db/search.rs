@@ -2881,6 +2881,7 @@ mod tests {
             sides: None,
             outcome: None,
             wanted_result: None,
+            time_control_category: None,
         };
 
         // Test the internal search function directly
@@ -2943,6 +2944,7 @@ mod tests {
             sides: None,
             outcome: None,
             wanted_result: Some("draw".to_string()),
+            time_control_category: None,
         };
 
         // Verify query structure is correct

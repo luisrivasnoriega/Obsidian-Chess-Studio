@@ -955,6 +955,10 @@ pub struct GameQueryJs {
     pub position: Option<PositionQueryJs>,
     #[specta(optional)]
     pub wanted_result: Option<String>,
+    /// Optional time control category filter.
+    /// Expected values: ultra_bullet, bullet, blitz, rapid, classical, correspondence, daily.
+    #[specta(optional)]
+    pub time_control_category: Option<String>,
 }
 
 impl GameQueryJs {
@@ -1017,6 +1021,50 @@ pub async fn get_games(
     if let Some(tournament_id) = query.tournament_id {
         sql_query = sql_query.filter(games::event_id.eq(tournament_id));
         count_query = count_query.filter(games::event_id.eq(tournament_id));
+    }
+
+    if let Some(category) = query.time_control_category.as_deref() {
+        let normalized = category.trim().to_lowercase();
+        let tc_lower_sql = "lower(Games.TimeControl)";
+        let total_seconds_sql = "(CASE \
+            WHEN Games.TimeControl IS NULL THEN NULL \
+            WHEN Games.TimeControl = '-' THEN NULL \
+            WHEN Games.TimeControl LIKE '1/%' THEN NULL \
+            WHEN instr(Games.TimeControl,'+') > 0 THEN \
+              CAST(substr(Games.TimeControl,1,instr(Games.TimeControl,'+')-1) AS INTEGER) + \
+              CAST(substr(Games.TimeControl,instr(Games.TimeControl,'+')+1) AS INTEGER) * 40 \
+            ELSE CAST(Games.TimeControl AS INTEGER) \
+          END)";
+
+        let clause: Option<String> = match normalized.as_str() {
+            "correspondence" => Some(format!(
+                "Games.TimeControl = '-' OR {tc_lower_sql} LIKE '%correspondence%'"
+            )),
+            "daily" => Some(format!("Games.TimeControl LIKE '1/%' OR {tc_lower_sql} LIKE '%daily%'")),
+            "ultra_bullet" => Some(format!(
+                "{tc_lower_sql} LIKE '%ultra%' OR ({total_seconds_sql} < 30)"
+            )),
+            "bullet" => Some(format!(
+                "{tc_lower_sql} LIKE '%bullet%' OR ({total_seconds_sql} >= 30 AND {total_seconds_sql} < 180)"
+            )),
+            "blitz" => Some(format!(
+                "{tc_lower_sql} LIKE '%blitz%' OR ({total_seconds_sql} >= 180 AND {total_seconds_sql} < 480)"
+            )),
+            "rapid" => Some(format!(
+                "{tc_lower_sql} LIKE '%rapid%' OR ({total_seconds_sql} >= 480 AND {total_seconds_sql} < 1500)"
+            )),
+            "classical" => Some(format!(
+                "{tc_lower_sql} LIKE '%classical%' OR ({total_seconds_sql} >= 1500)"
+            )),
+            _ => None,
+        };
+
+        if let Some(where_sql) = clause {
+            sql_query =
+                sql_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(where_sql.as_str()));
+            count_query =
+                count_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(where_sql.as_str()));
+        }
     }
 
     if let Some(limit) = query_options.page_size {
@@ -1338,8 +1386,8 @@ pub async fn get_tournaments(
 
     let mut sql_query = events::table.into_boxed();
     let mut count_query = events::table.into_boxed();
-    sql_query = sql_query.filter(events::name.is_not("Unknown").and(events::name.is_not("")));
-    count_query = count_query.filter(events::name.is_not("Unknown").and(events::name.is_not("")));
+    sql_query = sql_query.filter(events::name.is_not("Unknown"));
+    count_query = count_query.filter(events::name.is_not("Unknown"));
 
     if let Some(name) = query.name {
         sql_query = sql_query.filter(events::name.like(format!("%{}%", name)));

@@ -9,14 +9,16 @@ import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useDebouncedValue } from "@mantine/hooks";
 import { commands, type GoMode } from "@/bindings";
+import type { Event } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import type { ChessComGame } from "@/utils/chess.com/api";
 import { getChessComAccount } from "@/utils/chess.com/api";
-import { query_games } from "@/utils/db";
+import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
 import {
@@ -38,6 +40,7 @@ import { getLichessAccount } from "@/utils/lichess/api";
 import type { AnalysisResult } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "./types";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
@@ -434,6 +437,125 @@ export default function DashboardPage() {
 
   const [recentGames, setRecentGames] = useState<GameRecord[]>([]);
   const [gameHistoryLimit, setGameHistoryLimit] = useState(100);
+  const [eventFilterId, setEventFilterId] = useState<number | null>(null);
+  const [eventOptions, setEventOptions] = useState<Event[]>([]);
+  const [eventSearch, setEventSearch] = useState("");
+  const [isLoadingEventOptions, setIsLoadingEventOptions] = useState(false);
+  const [debouncedEventSearch] = useDebouncedValue(eventSearch, 250);
+  const [activeProfileDbPath, setActiveProfileDbPath] = useState<string | null>(null);
+  const [selectedOpponentName, setSelectedOpponentName] = useState<string | null>(null);
+  const [selectedOpponentId, setSelectedOpponentId] = useState<number | null>(null);
+  const [timeControlCategory, setTimeControlCategory] = useState<TimeControlCategory | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!activeProfileId) {
+        setActiveProfileDbPath(null);
+        return;
+      }
+      try {
+        const dbPath = await getProfileDbPath(activeProfileId);
+        if (!cancelled) setActiveProfileDbPath(dbPath);
+      } catch {
+        if (!cancelled) setActiveProfileDbPath(null);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId]);
+
+  useEffect(() => {
+    if (!activeProfileDbPath || !selectedOpponentName) {
+      setSelectedOpponentId(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const name = selectedOpponentName.trim();
+        if (!name) {
+          setSelectedOpponentId(null);
+          return;
+        }
+
+        const res = await query_players(activeProfileDbPath, {
+          options: {
+            skipCount: true,
+            page: 1,
+            pageSize: 10,
+            sort: "name",
+            direction: "asc",
+          },
+          name,
+          range: null,
+        });
+
+        if (cancelled) return;
+        const exact = (res.data ?? []).find((p) => (p.name ?? "").toLowerCase() === name.toLowerCase());
+        setSelectedOpponentId(exact?.id ?? null);
+      } catch {
+        if (!cancelled) setSelectedOpponentId(null);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileDbPath, selectedOpponentName]);
+
+  useEffect(() => {
+    if (!activeProfileId) {
+      setEventOptions([]);
+      setIsLoadingEventOptions(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadEvents = async () => {
+      setIsLoadingEventOptions(true);
+      try {
+        const dbPath = await getProfileDbPath(activeProfileId);
+        const result = await commands.getTournaments(dbPath, {
+          name: debouncedEventSearch || null,
+          options: {
+            skipCount: true,
+            sort: "id",
+            direction: "asc",
+            page: 1,
+            pageSize: 200,
+          },
+        });
+
+        if (!cancelled && result.status === "ok") {
+          setEventOptions(result.data.data);
+        }
+      } catch {
+        if (!cancelled) {
+          setEventOptions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingEventOptions(false);
+        }
+      }
+    };
+
+    void loadEvents();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId, debouncedEventSearch]);
+
+  useEffect(() => {
+    setEventFilterId(null);
+    setEventSearch("");
+    setTimeControlCategory(null);
+  }, [activeProfileId]);
 
   const getOrientationFromFen = useCallback((fen?: string | null) => {
     if (!fen) return null;
@@ -484,21 +606,7 @@ export default function DashboardPage() {
     };
   }, [loadGames]);
 
-  const [lichessGames, setLichessGames] = useState<
-    Array<{
-      id: string;
-      players: {
-        white: { user?: { name: string } };
-        black: { user?: { name: string } };
-      };
-      speed: string;
-      createdAt: number;
-      winner?: string;
-      status: string;
-      pgn?: string;
-      lastFen: string;
-    }>
-  >([]);
+  const [lichessGames, setLichessGames] = useState<DashboardLichessGame[]>([]);
   const [isLoadingLichessGames, setIsLoadingLichessGames] = useState(false);
   useEffect(() => {
     const hasEnoughMoves = (pgn?: string | null) => {
@@ -538,12 +646,22 @@ export default function DashboardPage() {
             direction: "desc",
             skipCount: true,
           },
-        });
+          tournament_id: eventFilterId ?? null,
+          time_control_category: timeControlCategory ?? null,
+          ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
+        } as any);
 
         const analyzedGames = await getAllAnalyzedGames();
         const games = (queryResult.data ?? [])
           .filter((g) => g.site?.toLowerCase().includes("lichess.org"))
-          .map(convertNormalizedToLichessGame)
+          .map((g) => {
+            const base = convertNormalizedToLichessGame(g);
+            return {
+              ...base,
+              eventId: g.event_id,
+              eventName: g.event ?? null,
+            };
+          })
           .filter((g) => hasEnoughMoves(g.pgn))
           .slice(0, gameHistoryLimit)
           .map((g) => (analyzedGames[g.id] ? { ...g, pgn: analyzedGames[g.id] } : g));
@@ -568,9 +686,9 @@ export default function DashboardPage() {
     return () => {
       window.removeEventListener("lichess:games:updated", handleLichessGamesUpdated);
     };
-  }, [activeProfileId, gameHistoryLimit]);
+  }, [activeProfileId, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
 
-  const [chessComGames, setChessComGames] = useState<ChessComGame[]>([]);
+  const [chessComGames, setChessComGames] = useState<ChessComGameWithEvent[]>([]);
   const [isLoadingChessComGames, setIsLoadingChessComGames] = useState(false);
   useEffect(() => {
     const hasEnoughMoves = (pgn?: string | null) => {
@@ -610,12 +728,22 @@ export default function DashboardPage() {
             direction: "desc",
             skipCount: true,
           },
-        });
+          tournament_id: eventFilterId ?? null,
+          time_control_category: timeControlCategory ?? null,
+          ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
+        } as any);
 
         const analyzedGames = await getAllAnalyzedGames();
         const games = (queryResult.data ?? [])
           .filter((g) => g.site?.toLowerCase().includes("chess.com"))
-          .map(convertNormalizedToChessComGame)
+          .map((g) => {
+            const base = convertNormalizedToChessComGame(g);
+            return {
+              ...base,
+              eventId: g.event_id,
+              eventName: g.event ?? null,
+            };
+          })
           .filter((g) => hasEnoughMoves(g.pgn))
           .slice(0, gameHistoryLimit)
           .map((g) => (analyzedGames[g.url] ? { ...g, pgn: analyzedGames[g.url] } : g));
@@ -640,7 +768,7 @@ export default function DashboardPage() {
     return () => {
       window.removeEventListener("chesscom:games:updated", handleChessComGamesUpdated);
     };
-  }, [activeProfileId, gameHistoryLimit]);
+  }, [activeProfileId, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
 
   const [puzzleStats, setPuzzleStats] = useState(() => getPuzzleStats());
   const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
@@ -1052,6 +1180,16 @@ export default function DashboardPage() {
               lichessGames={lichessGames}
               profileUsernames={profileUsernames}
               isLoadingOnlineGames={isLoadingChessComGames || isLoadingLichessGames}
+              eventFilterId={eventFilterId}
+              onEventFilterChange={setEventFilterId}
+              eventOptions={eventOptions}
+              isLoadingEventOptions={isLoadingEventOptions}
+              onEventSearchChange={setEventSearch}
+              eventSearchValue={eventSearch}
+              profileDbPath={activeProfileDbPath}
+              onOpponentSelected={setSelectedOpponentName}
+              timeControlCategory={timeControlCategory}
+              onTimeControlCategoryChange={setTimeControlCategory}
               onAnalyzeLocalGame={(game) => {
                 const headers = createLocalGameHeaders(game);
                 const pgn = game.pgn || createPGNFromMoves(game.moves, game.result, game.initialFen);

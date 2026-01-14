@@ -1,37 +1,24 @@
 import { Card, Group, Select, Tabs } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ChessComGame } from "@/utils/chess.com/api";
+import type { Event } from "@/bindings";
 import type { GameRecord } from "@/utils/gameRecords";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import { FavoriteGamesTab } from "./FavoriteGamesTab";
 import { ProfileGamesTab } from "./ProfileGamesTab";
-
-interface LichessGame {
-  id: string;
-  players: {
-    white: { user?: { name: string } };
-    black: { user?: { name: string } };
-  };
-  speed: string;
-  createdAt: number;
-  winner?: string;
-  status: string;
-  pgn?: string;
-  lastFen: string;
-}
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 
 interface GamesHistoryCardProps {
   activeTab: string | null;
   onTabChange: (tab: string | null) => void;
   localGames: GameRecord[];
-  chessComGames: ChessComGame[];
-  lichessGames: LichessGame[];
+  chessComGames: ChessComGameWithEvent[];
+  lichessGames: DashboardLichessGame[];
   profileUsernames: string[];
   isLoadingOnlineGames?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGame) => void;
-  onAnalyzeLichessGame: (game: LichessGame) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame) => void;
   onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
@@ -40,6 +27,16 @@ interface GamesHistoryCardProps {
   favoriteGames?: FavoriteGame[];
   gameHistoryLimit: number;
   onGameHistoryLimitChange: (limit: number) => void;
+  eventFilterId: number | null;
+  onEventFilterChange: (eventId: number | null) => void;
+  eventOptions: Event[];
+  isLoadingEventOptions?: boolean;
+  onEventSearchChange: (value: string) => void;
+  eventSearchValue: string;
+  profileDbPath: string | null;
+  onOpponentSelected: (opponentName: string | null) => void;
+  timeControlCategory: TimeControlCategory | null;
+  onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
 }
 
 export function GamesHistoryCard({
@@ -61,6 +58,16 @@ export function GamesHistoryCard({
   favoriteGames = [],
   gameHistoryLimit,
   onGameHistoryLimitChange,
+  eventFilterId,
+  onEventFilterChange,
+  eventOptions,
+  isLoadingEventOptions = false,
+  onEventSearchChange,
+  eventSearchValue,
+  profileDbPath,
+  onOpponentSelected,
+  timeControlCategory,
+  onTimeControlCategoryChange,
 }: GamesHistoryCardProps) {
   const { t } = useTranslation();
 
@@ -208,6 +215,16 @@ export function GamesHistoryCard({
             onToggleFavoriteChessCom={onToggleFavoriteChessCom}
             onToggleFavoriteLichess={onToggleFavoriteLichess}
             favoriteGames={favoriteGames}
+            eventFilterId={eventFilterId}
+            onEventFilterChange={onEventFilterChange}
+            eventOptions={eventOptions}
+            isLoadingEventOptions={isLoadingEventOptions}
+            onEventSearchChange={onEventSearchChange}
+            eventSearchValue={eventSearchValue}
+            profileDbPath={profileDbPath}
+            onOpponentSelected={onOpponentSelected}
+            timeControlCategory={timeControlCategory}
+            onTimeControlCategoryChange={onTimeControlCategoryChange}
           />
         </Tabs.Panel>
 

@@ -118,33 +118,38 @@ function normalizeRange(range?: [number, number] | null): [number, number] | und
 
 export async function query_games(db: string, query: GameQuery): Promise<QueryResponse<NormalizedGame[]>> {
   try {
+    const timeControlCategory = (query as unknown as { time_control_category?: string | null }).time_control_category ?? null;
     return unwrap(
-      await commands.getGames(db, {
-        player1: query.player1,
-        range1: normalizeRange(query.range1),
-        player2: query.player2,
-        range2: normalizeRange(query.range2),
-        tournament_id: query.tournament_id,
-        sides: query.sides,
-        outcome: query.outcome,
-        start_date: query.start_date,
-        end_date: query.end_date,
-        position: null,
-        // Always include game_details_limit - use null if undefined.
-        // IMPORTANT: At runtime we MUST send a JSON-safe value (string/number/null).
-        // The generated TS binding currently expects `bigint`, so we cast for typing while
-        // keeping the runtime value as a string (see __tests__/dbBigIntSerialization.test.ts).
-        game_details_limit:
-          query.game_details_limit == null ? null : (String(query.game_details_limit) as unknown as bigint),
-        wanted_result: query.wanted_result ?? null,
-        options: {
-          skipCount: query.options?.skipCount ?? false,
-          page: query.options?.page,
-          pageSize: query.options?.pageSize,
-          sort: query.options?.sort || "id",
-          direction: query.options?.direction || "desc",
-        },
-      }),
+      await commands.getGames(
+        db,
+        {
+          player1: query.player1,
+          range1: normalizeRange(query.range1),
+          player2: query.player2,
+          range2: normalizeRange(query.range2),
+          tournament_id: query.tournament_id,
+          sides: query.sides,
+          outcome: query.outcome,
+          start_date: query.start_date,
+          end_date: query.end_date,
+          position: null,
+          time_control_category: timeControlCategory,
+          // Always include game_details_limit - use null if undefined.
+          // IMPORTANT: At runtime we MUST send a JSON-safe value (string/number/null).
+          // The generated TS binding currently expects `bigint`, so we cast for typing while
+          // keeping the runtime value as a string (see __tests__/dbBigIntSerialization.test.ts).
+          game_details_limit:
+            query.game_details_limit == null ? null : (String(query.game_details_limit) as unknown as bigint),
+          wanted_result: query.wanted_result ?? null,
+          options: {
+            skipCount: query.options?.skipCount ?? false,
+            page: query.options?.page,
+            pageSize: query.options?.pageSize,
+            sort: query.options?.sort || "id",
+            direction: query.options?.direction || "desc",
+          },
+        } as any,
+      ),
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

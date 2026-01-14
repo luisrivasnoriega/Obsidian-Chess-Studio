@@ -175,7 +175,8 @@
       "blitz": "Blitz",
       "rapid": "Rápida",
       "classical": "Clásica",
-      "correspondence": "Correspondencia"
+      "correspondence": "Correspondencia",
+      "daily": "Diaria"
     },
     "outcome": {
       "outcome": "Resultado",
@@ -464,6 +465,7 @@
     },
     "filterByOpponent": "Filtrar por oponente",
     "filterByResult": "Filtrar por resultado",
+    "filterByTimeControl": "Filtrar por control de tiempo",
     "noGamesMatchFilters": "No hay partidas que coincidan con los filtros"
   },
   "databaseOptions": {
@@ -725,6 +727,12 @@
       "noDebugPgns": "No hay PGN de depuración disponibles",
       "count": "Cantidad",
       "maxGames": "Máx. partidas",
+      "filterByEvent": "Filtrar por evento",
+      "noEventsMatch": "Ningún evento coincide",
+      "unnamedEvent": "Evento sin nombre",
+      "defaultLocalEvent": "Partida local",
+      "defaultChessComEvent": "Partida de Chess.com",
+      "defaultLichessEvent": "Partida de Lichess",
       "mostCommonSchemes": "Esquemas más comunes",
       "errorAnalyzingPawns": "Error al analizar las estructuras de peones",
       "analyzingPawnStructures": "Analizando estructuras de peones...",
