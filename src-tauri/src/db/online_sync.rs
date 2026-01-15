@@ -1013,24 +1013,48 @@ pub async fn sync_account_games_to_profile_db(
 
     let account_key = account_key(&platform, &username);
 
-    // Mark running early.
-    upsert_account_sync_state(
+    // IMPORTANT (resume): do NOT overwrite persisted cursor/batch state when starting.
+    // If the app was closed mid-sync, we must preserve `cursor_until_ms` / `completed_batches`
+    // so the next run can resume from the last confirmed batch.
+    let existing_state0 = get_account_sync_state(
         db_path.clone(),
-        super::AccountSyncState {
-            account_key: account_key.clone(),
-            platform: platform.clone(),
-            cursor_until_ms: None,
-            since_ms: None,
-            mode: "incremental".to_string(),
-            total_batches: 0,
-            completed_batches: 0,
-            running: true,
-            updated_at_ms: chrono::Utc::now().timestamp_millis(),
-        },
+        account_key.clone(),
+        platform.clone(),
         state.clone(),
     )
     .await
-    .ok();
+    .ok()
+    .flatten();
+    let _ = upsert_account_sync_state(
+        db_path.clone(),
+        if let Some(s) = existing_state0.clone() {
+            super::AccountSyncState {
+                account_key: s.account_key,
+                platform: s.platform,
+                cursor_until_ms: s.cursor_until_ms,
+                since_ms: s.since_ms,
+                mode: s.mode,
+                total_batches: s.total_batches,
+                completed_batches: s.completed_batches,
+                running: true,
+                updated_at_ms: chrono::Utc::now().timestamp_millis(),
+            }
+        } else {
+            super::AccountSyncState {
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                cursor_until_ms: None,
+                since_ms: None,
+                mode: "incremental".to_string(),
+                total_batches: 0,
+                completed_batches: 0,
+                running: true,
+                updated_at_ms: chrono::Utc::now().timestamp_millis(),
+            }
+        },
+        state.clone(),
+    )
+    .await;
 
     let client = if platform == "lichess" {
         reqwest_client_lichess().await?
@@ -1039,15 +1063,7 @@ pub async fn sync_account_games_to_profile_db(
     };
 
     if platform == "lichess" {
-        let existing_state = get_account_sync_state(
-            db_path.clone(),
-            account_key.clone(),
-            platform.clone(),
-            state.clone(),
-        )
-        .await
-        .ok()
-        .flatten();
+        let existing_state = existing_state0;
 
         let has_resume_cursor = existing_state
             .as_ref()
