@@ -1,6 +1,7 @@
 import { notifications } from "@mantine/notifications";
 import { IconX } from "@tabler/icons-react";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { fetch } from "@tauri-apps/plugin-http";
 import { error, info } from "@tauri-apps/plugin-log";
@@ -70,10 +71,31 @@ const ChessComGames = z.object({
 export async function getChessComAccount(player: string): Promise<ChessComStats | null> {
   if (isInNetworkCooldown()) return null;
 
-  const url = `${baseURL}/pub/player/${player.toLowerCase()}/stats`;
-  let response: Response;
   try {
-    response = await fetch(url, { headers, method: "GET" });
+    const raw = await invoke<string | null>("get_chesscom_account", { username: player });
+    if (!raw) {
+      notifications.show({
+        title: "Failed to fetch Chess.com account",
+        message: `Could not find account "${player}" on chess.com`,
+        color: "red",
+        icon: <IconX />,
+      });
+      return null;
+    }
+
+    const parsedJson = JSON.parse(raw);
+    const stats = ChessComStatsSchema.safeParse(parsedJson);
+    if (!stats.success) {
+      error(`Invalid response for Chess.com account: ${stats.error}`);
+      notifications.show({
+        title: "Failed to fetch Chess.com account",
+        message: `Invalid response for "${player}" on chess.com`,
+        color: "red",
+        icon: <IconX />,
+      });
+      return null;
+    }
+    return stats.data;
   } catch (e) {
     if (isFailedToFetchError(e)) {
       startNetworkCooldown();
@@ -83,29 +105,6 @@ export async function getChessComAccount(player: string): Promise<ChessComStats 
     }
     throw e;
   }
-  if (!response.ok) {
-    error(`Failed to fetch Chess.com account: ${response.status} ${response.url}`);
-    notifications.show({
-      title: "Failed to fetch Chess.com account",
-      message: `Could not find account "${player}" on chess.com`,
-      color: "red",
-      icon: <IconX />,
-    });
-    return null;
-  }
-  const data = await response.json();
-  const stats = ChessComStatsSchema.safeParse(data);
-  if (!stats.success) {
-    error(`Invalid response for Chess.com account: ${response.status} ${response.url}\n${stats.error}`);
-    notifications.show({
-      title: "Failed to fetch Chess.com account",
-      message: `Invalid response for "${player}" on chess.com`,
-      color: "red",
-      icon: <IconX />,
-    });
-    return null;
-  }
-  return stats.data;
 }
 
 async function getGameArchives(player: string) {

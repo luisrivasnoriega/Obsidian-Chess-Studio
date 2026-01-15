@@ -891,6 +891,86 @@ async listAccountSyncCompletedBatches(dbPath: string, accountKey: string, platfo
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getAccountImportStats(profileId: string, platform: string, username: string) : Promise<Result<AccountImportStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_account_import_stats", { profileId, platform, username }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async syncAccountGamesToProfileDb(profileId: string, profileTitle: string, platform: string, username: string, token: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sync_account_games_to_profile_db", { profileId, profileTitle, platform, username, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getLichessAccount(token: string | null, username: string | null) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_lichess_account", { token, username }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getChesscomAccount(username: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_chesscom_account", { username }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createLichessTournament(input: LichessTournamentCreateRequest) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_lichess_tournament", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async upsertManagedEvent(file: string, payload: CreateManagedEventPayload) : Promise<Result<Event, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upsert_managed_event", { file, payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listManagedEvents(file: string) : Promise<Result<Event[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_managed_events", { file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async deleteManagedEvent(file: string, eventId: number) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("delete_managed_event", { file, eventId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async addEventGamesFromPgn(file: string, eventId: number, pgn: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_event_games_from_pgn", { file, eventId, pgn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async createEventGame(file: string, eventId: number, payload: CreateEventGamePayload) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("create_event_game", { file, eventId, payload }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -898,11 +978,13 @@ async listAccountSyncCompletedBatches(dbPath: string, accountKey: string, platfo
 
 
 export const events = __makeEvents__<{
+accountSyncProgress: AccountSyncProgress,
 bestMovesPayload: BestMovesPayload,
 databaseProgress: DatabaseProgress,
 downloadProgress: DownloadProgress,
 reportProgress: ReportProgress
 }>({
+accountSyncProgress: "account-sync-progress",
 bestMovesPayload: "best-moves-payload",
 databaseProgress: "database-progress",
 downloadProgress: "download-progress",
@@ -915,6 +997,8 @@ reportProgress: "report-progress"
 
 /** user-defined types **/
 
+export type AccountImportStats = { last_game_utc_ms?: bigint | null; count: bigint }
+export type AccountSyncProgress = { profile_id: string; account_key: string; platform: string; total_batches: bigint; completed_batches: bigint; current_batch: bigint; batch_label: string; cooldown_seconds?: bigint | null }
 export type AccountSyncState = { account_key: string; platform: string; cursor_until_ms: bigint | null; since_ms?: bigint | null; mode?: string; total_batches: bigint; completed_batches: bigint; running: boolean; updated_at_ms: bigint }
 /**
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
@@ -931,6 +1015,8 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
 export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
+export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
+export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
@@ -954,7 +1040,7 @@ export type EngineOption = { name: string; value: string }
  */
 export type EngineOptions = { fen: string; moves: string[]; extraOptions: EngineOption[] }
 export type EngineRequestDto = { name: string; path: string; extraOptions?: EngineOption[] }
-export type Event = { id: number; name: string | null }
+export type Event = { id: number; name: string | null; event_type?: string | null; location?: string | null; start_date?: string | null; end_date?: string | null }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
 export type GameOutcome = "Won" | "Drawn" | "Lost"
@@ -984,7 +1070,13 @@ export type LichessGamesOptionsDto = { variant?: string | null; speeds?: string[
  * Serialized from JS Date as ISO string (or omitted).
  */
 since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null; recentGames?: number | null; player?: string | null; color: string }
+export type LichessTournamentCreateRequest = { token: string; 
+/**
+ * Form-encoded fields (key/value), same as URLSearchParams in the frontend.
+ */
+form: ([string, string])[] }
 export type LineDto = { moves: MoveSpecDto[] }
+export type ManagedEventType = "otb_tournament"
 export type MasterGamesOptionsDto = { since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null }
 export type MonthData = { name: string; count: bigint }
 /**

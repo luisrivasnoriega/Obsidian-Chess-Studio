@@ -12,6 +12,7 @@ mod fide;
 mod fs;
 mod lexer;
 mod oauth;
+mod online;
 mod opening;
 mod package_manager;
 mod pawn_structures;
@@ -52,6 +53,7 @@ use crate::db::{
     get_players_game_info, get_tournaments, init_profile_db, merge_player_site_stats,
     merge_years_data, precache_openings, search_position, get_account_sync_state,
     upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
+    get_account_import_stats, sync_account_games_to_profile_db,
     upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
     create_event_game,
 };
@@ -59,6 +61,7 @@ use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, s
 use crate::fs::{set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
+use crate::online::{create_lichess_tournament, get_chesscom_account, get_lichess_account};
 use crate::package_manager::{
     check_package_installed, check_package_manager_available, find_executable_path, install_package,
 };
@@ -219,6 +222,11 @@ pub async fn run() {
             upsert_account_sync_state,
             mark_account_sync_batch_complete,
             list_account_sync_completed_batches,
+            get_account_import_stats,
+            sync_account_games_to_profile_db,
+            get_lichess_account,
+            get_chesscom_account,
+            create_lichess_tournament,
             upsert_managed_event,
             list_managed_events,
             delete_managed_event,
@@ -229,7 +237,8 @@ pub async fn run() {
             BestMovesPayload,
             DatabaseProgress,
             DownloadProgress,
-            ReportProgress
+            ReportProgress,
+            db::AccountSyncProgress
         ));
 
     #[cfg(all(debug_assertions, not(target_os = "android")))]

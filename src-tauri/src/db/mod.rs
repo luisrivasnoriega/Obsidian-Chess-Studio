@@ -1,3 +1,4 @@
+mod bulk_insert;
 mod core;
 mod encoding;
 mod models;
@@ -8,7 +9,9 @@ mod position_cache;
 mod schema;
 mod search;
 mod sync_state;
+mod online_sync;
 pub use sync_state::*;
+pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress};
 
 use crate::{
     db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
@@ -43,6 +46,31 @@ use tauri::{Emitter, State};
 
 use tauri_specta::Event as _;
 
+// #region agent log
+fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let line = serde_json::json!({
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": ts
+    });
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(r#"d:\OCS\.cursor\debug.log"#)
+    {
+        let _ = writeln!(f, "{}", line.to_string());
+    }
+}
+// #endregion
+
 #[allow(unused_imports)]
 pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Outcome, Puzzle};
 #[allow(unused_imports)]
@@ -59,18 +87,21 @@ pub use self::search::{
     is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
 };
 
-const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
+pub(crate) const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
 const DELETE_INDEXES_SQL: &str =
     include_str!("../../../database/queries/indexes/delete_indexes.sql");
+pub(crate) const DROP_INDEXES_FOR_BULK_SQL: &str =
+    include_str!("../../../database/queries/indexes/drop_indexes_for_bulk.sql");
 
 // PRAGMA queries
 const PRAGMA_JOURNAL_MODE_DELETE: &str =
     include_str!("../../../database/pragmas/journal_mode_delete.sql");
 const PRAGMA_JOURNAL_MODE_OFF: &str =
     include_str!("../../../database/pragmas/journal_mode_off.sql");
-const PRAGMA_FOREIGN_KEYS_ON: &str = include_str!("../../../database/pragmas/foreign_keys_on.sql");
+pub(crate) const PRAGMA_FOREIGN_KEYS_ON: &str = include_str!("../../../database/pragmas/foreign_keys_on.sql");
 const PRAGMA_BUSY_TIMEOUT: &str = include_str!("../../../database/pragmas/busy_timeout.sql");
-const PRAGMA_PERFORMANCE: &str = include_str!("../../../database/pragmas/performance_pragmas.sql");
+pub(crate) const PRAGMA_PERFORMANCE: &str = include_str!("../../../database/pragmas/performance_pragmas.sql");
+pub(crate) const PRAGMA_BULK_INSERT: &str = include_str!("../../../database/pragmas/bulk_insert_pragmas.sql");
 
 // Games queries
 const GAMES_CHECK_INDEXES: &str = include_str!("../../../database/queries/games/check_indexes.sql");
@@ -125,7 +156,7 @@ const BLACK_PAWN: Piece = Piece {
 
 /// Returns the bit representation of the pawns on the second and seventh rank
 /// of the given board.
-fn get_pawn_home(board: &Board) -> u16 {
+pub(crate) fn get_pawn_home(board: &Board) -> u16 {
     let white_pawns = board.by_piece(WHITE_PAWN);
     let black_pawns = board.by_piece(BLACK_PAWN);
     let second_rank_pawns = (white_pawns.0 >> 8) as u8;
@@ -377,28 +408,98 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
         db.batch_execute(GAMES_CREATE_DEDUPE_UNIQUE_INDEX)?;
     }
 
+    // If a previous version created Players as WITHOUT ROWID, inserts that omit ID will fail.
+    // Migrate it back to a rowid table in-place (keeps existing data).
+    ensure_players_rowid_table(db)?;
+
     Ok(())
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn convert_pgn(
+fn ensure_players_rowid_table(db: &mut SqliteConnection) -> Result<()> {
+    #[derive(QueryableByName)]
+    struct SqlRow {
+        #[diesel(sql_type = Text, column_name = "sql")]
+        sql: String,
+    }
+
+    let sql: Option<String> = sql_query(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1",
+    )
+    .load::<SqlRow>(db)?
+    .into_iter()
+    .next()
+    .map(|r| r.sql);
+
+    let Some(sql) = sql else { return Ok(()); };
+    if !sql.to_ascii_uppercase().contains("WITHOUT ROWID") {
+        return Ok(());
+    }
+
+    // Recreate Players as a normal rowid table.
+    // Preserve existing data (ID, Name, Elo) if any.
+    // Use SAVEPOINT so this can run inside an outer transaction too.
+    // (Fixes: 'cannot start a transaction within a transaction')
+    sql_query("SAVEPOINT ocs_players_rowid_fix").execute(db)?;
+    let migrate_res = (|| -> Result<()> {
+        db.batch_execute(
+            "CREATE TABLE IF NOT EXISTS Players__rowid_fix (
+               ID INTEGER PRIMARY KEY,
+               Name TEXT UNIQUE,
+               Elo INTEGER
+             );
+             INSERT OR IGNORE INTO Players__rowid_fix (ID, Name, Elo)
+               SELECT ID, Name, Elo FROM Players;
+             DROP TABLE Players;
+             ALTER TABLE Players__rowid_fix RENAME TO Players;",
+        )?;
+        Ok(())
+    })();
+
+    match migrate_res {
+        Ok(()) => {
+            sql_query("RELEASE SAVEPOINT ocs_players_rowid_fix").execute(db)?;
+        }
+        Err(e) => {
+            let _ = sql_query("ROLLBACK TO SAVEPOINT ocs_players_rowid_fix").execute(db);
+            let _ = sql_query("RELEASE SAVEPOINT ocs_players_rowid_fix").execute(db);
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn convert_pgn_impl<'a>(
     file: PathBuf,
     db_path: PathBuf,
     timestamp: Option<i32>,
     app: tauri::AppHandle,
     title: String,
     description: Option<String>,
-    state: tauri::State<'_, AppState>,
+    state: &tauri::State<'a, AppState>,
 ) -> Result<()> {
     let description = description.unwrap_or_default();
     let extension = file.extension();
+
+    // #region agent log
+    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    agent_log(
+        "H1",
+        "src-tauri/src/db/mod.rs:convert_pgn_impl",
+        "convert_pgn_impl:enter",
+        serde_json::json!({
+            "file_ext": extension.and_then(|e| e.to_str()).unwrap_or(""),
+            "file_size": file_size,
+            "has_timestamp_filter": timestamp.is_some()
+        }),
+    );
+    // #endregion
 
     let db_exists = db_path.exists();
 
     // create the database file
     let db = &mut get_db_or_create(
-        &state,
+        state,
         db_path.to_str().unwrap(),
         ConnectionOptions {
             enable_foreign_keys: false,
@@ -455,57 +556,120 @@ pub async fn convert_pgn(
 
     let mut importer = Importer::new(timestamp.map(|t| t as i64));
 
-    // OPTIMIZED: Batch inserts for better performance
-    // Collect games in batches to reduce transaction overhead
-    const BATCH_SIZE: usize = 5000;
-    let mut batch: Vec<TempGame> = Vec::with_capacity(BATCH_SIZE);
-    let mut total_processed = 0;
+    // OPTIMIZED: Use bulk insert context for maximum performance
+    // This applies aggressive pragmas, drops indexes, uses BEGIN IMMEDIATE,
+    // and caches lookups for players/events/sites
+    // Run the heavy insert portion inside Diesel's transaction manager.
+    // This avoids nested-BEGIN issues because Diesel uses SAVEPOINTs for nested transactions.
+    // #region agent log
+    agent_log(
+        "H2",
+        "src-tauri/src/db/mod.rs:convert_pgn_impl",
+        "convert_pgn_impl:before_transaction",
+        serde_json::json!({}),
+    );
+    // #endregion
 
-    for game in BufferedReader::new(uncompressed)
-        .into_iter(&mut importer)
-        .flatten()
-        .flatten()
-    {
-        batch.push(game);
+    let txn_start = Instant::now();
+    let txn_res = db.transaction::<_, Error, _>(|db| {
+        // #region agent log
+        agent_log(
+            "H2",
+            "src-tauri/src/db/mod.rs:convert_pgn_impl",
+            "convert_pgn_impl:transaction_enter",
+            serde_json::json!({}),
+        );
+        // #endregion
+        let mut bulk_ctx = bulk_insert::BulkInsertContext::new(db)?;
 
-        if batch.len() >= BATCH_SIZE {
-            // Process batch in a single transaction
-            db.transaction::<_, Error, _>(|db| {
-                for game in batch.drain(..) {
-                    insert_to_db(db, &game)?;
-                }
-                Ok(())
-            })?;
+        // OPTIMIZED: Batch inserts for better performance
+        // Collect games in batches to reduce transaction overhead
+        const BATCH_SIZE: usize = 5000;
+        let mut batch: Vec<TempGame> = Vec::with_capacity(BATCH_SIZE);
+        let mut total_processed = 0;
 
-            total_processed += BATCH_SIZE;
+        for game in BufferedReader::new(uncompressed)
+            .into_iter(&mut importer)
+            .flatten()
+            .flatten()
+        {
+            batch.push(game);
+
+            if batch.len() >= BATCH_SIZE {
+                let insert_start = Instant::now();
+                bulk_ctx.insert_games_batch(batch.drain(..).collect())?;
+                // #region agent log
+                agent_log(
+                    "H3",
+                    "src-tauri/src/db/mod.rs:convert_pgn_impl",
+                    "bulk_insert:batch_inserted",
+                    serde_json::json!({
+                        "batch_size": BATCH_SIZE,
+                        "insert_ms": insert_start.elapsed().as_millis()
+                    }),
+                );
+                // #endregion
+
+                total_processed += BATCH_SIZE;
+                let elapsed = start.elapsed().as_millis() as u32;
+                app.emit("convert_progress", (total_processed, elapsed))
+                    .unwrap();
+            }
+        }
+
+        if !batch.is_empty() {
+            let batch_len = batch.len();
+            let insert_start = Instant::now();
+            bulk_ctx.insert_games_batch(batch.drain(..).collect())?;
+            // #region agent log
+            agent_log(
+                "H3",
+                "src-tauri/src/db/mod.rs:convert_pgn_impl",
+                "bulk_insert:final_batch_inserted",
+                serde_json::json!({
+                    "batch_size": batch_len,
+                    "insert_ms": insert_start.elapsed().as_millis()
+                }),
+            );
+            // #endregion
+
+            total_processed += batch_len;
             let elapsed = start.elapsed().as_millis() as u32;
             app.emit("convert_progress", (total_processed, elapsed))
                 .unwrap();
         }
-    }
 
-    // Process remaining games in batch
-    if !batch.is_empty() {
-        // FIXED: Save batch length before moving into closure
-        let batch_len = batch.len();
+        // Recreate indexes + restore pragmas (best-effort) inside the transaction.
+        // If any of these fail, the transaction will roll back, keeping DB consistent.
+        bulk_ctx.finalize()?;
+        Ok(())
+    });
 
-        db.transaction::<_, Error, _>(|db| {
-            for game in batch.drain(..) {
-                insert_to_db(db, &game)?;
-            }
-            Ok(())
-        })?;
+    // #region agent log
+    agent_log(
+        "H2",
+        "src-tauri/src/db/mod.rs:convert_pgn_impl",
+        "convert_pgn_impl:transaction_exit",
+        serde_json::json!({
+            "txn_ms": txn_start.elapsed().as_millis(),
+            "ok": txn_res.is_ok(),
+            "err": txn_res.as_ref().err().map(|e| e.to_string())
+        }),
+    );
+    // #endregion
 
-        total_processed += batch_len;
-        let elapsed = start.elapsed().as_millis() as u32;
-        app.emit("convert_progress", (total_processed, elapsed))
-            .unwrap();
-    }
+    txn_res?;
 
-    if needs_init {
-        // Create all the necessary indexes
-        db.batch_execute(INDEXES_SQL)?;
-    }
+    // Re-obtain connection after bulk insert finalization to ensure it's in a valid state
+    let db = &mut get_db_or_create(
+        state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions {
+            enable_foreign_keys: false,
+            busy_timeout: None,
+            journal_mode: JournalMode::Off,
+        },
+    )?;
 
     // get game, player, event and site counts and to the info table
     let game_count: i64 = games::table.count().get_result(db)?;
@@ -529,7 +693,32 @@ pub async fn convert_pgn(
             .execute(db)?;
     }
 
+    // #region agent log
+    agent_log(
+        "H4",
+        "src-tauri/src/db/mod.rs:convert_pgn_impl",
+        "convert_pgn_impl:exit_ok",
+        serde_json::json!({
+            "total_ms": start.elapsed().as_millis()
+        }),
+    );
+    // #endregion
+
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn convert_pgn(
+    file: PathBuf,
+    db_path: PathBuf,
+    timestamp: Option<i32>,
+    app: tauri::AppHandle,
+    title: String,
+    description: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    convert_pgn_impl(file, db_path, timestamp, app, title, description, &state)
 }
 
 #[tauri::command]
@@ -2105,7 +2294,7 @@ pub async fn delete_database(
                 Ok(_) => {
                     return Ok(());
                 }
-                Err(e) if attempt < 2 => {
+                Err(_e) if attempt < 2 => {
                     // Shorter delay: 200ms instead of 500ms * attempt
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }

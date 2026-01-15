@@ -72,6 +72,7 @@ pub fn setup_tauri_plugins(
     builder: tauri::Builder<tauri::Wry>,
     specta_builder: &tauri_specta::Builder,
 ) -> tauri::Builder<tauri::Wry> {
+    let log_level = get_log_level();
     let builder = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -85,7 +86,12 @@ pub fn setup_tauri_plugins(
                     }),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                 ])
-                .level(get_log_level())
+                .level(log_level)
+                // Avoid extremely noisy dependency logs in dev (e.g. h2 frame spam during downloads).
+                // Users can still explicitly enable them via environment configuration if needed.
+                .level_for("h2", LevelFilter::Info)
+                .level_for("hyper", LevelFilter::Info)
+                .level_for("reqwest", LevelFilter::Info)
                 .build(),
         );
 

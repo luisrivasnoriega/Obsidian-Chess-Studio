@@ -1,7 +1,7 @@
 import { ActionIcon, Button, Divider, Group, Modal, Stack, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconCheck, IconCopy, IconShare } from "@tabler/icons-react";
-import { fetch } from "@tauri-apps/plugin-http";
+import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TournamentTemplate } from "@/utils/tournamentTemplates";
@@ -116,21 +116,10 @@ export function ScheduleTournamentModal({
         body.append("nbRatedGame.nb", template.conditions.nbRatedGame.nb.toString());
       }
 
-      const response = await fetch("https://lichess.org/api/tournament", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${lichessToken}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: body.toString(),
+      const raw = await invoke<string>("create_lichess_tournament", {
+        input: { token: lichessToken, form: Array.from(body.entries()) },
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
+      const result = JSON.parse(raw);
 
       // Extract tournament ID and URL from response
       // Lichess API returns an object with 'id' field, URL is https://lichess.org/tournament/{id}

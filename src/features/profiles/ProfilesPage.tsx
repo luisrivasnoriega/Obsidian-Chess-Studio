@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActionIcon,
   Badge,
   Box,
@@ -60,6 +60,24 @@ function sessionMeta(session: { lichess?: { username: string }; chessCom?: { use
 
 function cleanFideId(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+function formatSyncError(e: unknown): string {
+  if (e == null) return "Unknown error";
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message || String(e);
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+function truncateMiddle(text: string, maxLen: number) {
+  if (text.length <= maxLen) return text;
+  const head = Math.floor((maxLen - 3) / 2);
+  const tail = maxLen - 3 - head;
+  return `${text.slice(0, head)}...${text.slice(text.length - tail)}`;
 }
 
 export default function ProfilesPage() {
@@ -315,10 +333,11 @@ export default function ProfilesPage() {
             autoClose: 2500,
           });
         } catch (e) {
+          const details = truncateMiddle(formatSyncError(e), 600);
           notifications.update({
             id,
             title: t("common.error", { defaultValue: "Error" }),
-            message: t("accounts.databaseLoadError", { defaultValue: "Error loading database" }),
+            message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${details}`,
             color: "red",
             loading: false,
             autoClose: 4000,
@@ -825,7 +844,7 @@ export default function ProfilesPage() {
             notifications.update({
               id,
               title: t("common.error", { defaultValue: "Error" }),
-              message: t("accounts.databaseLoadError", { defaultValue: "Error loading database" }),
+              message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${truncateMiddle(formatSyncError(e), 600)}`,
               color: "red",
               loading: false,
               autoClose: 4000,

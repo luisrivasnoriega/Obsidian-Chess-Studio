@@ -1,11 +1,14 @@
-﻿-- Core database schema for Obsidian Chess Studio
+-- Core database schema for Obsidian Chess Studio
 -- Contains the main table definitions for chess game storage
 
+-- Info table: WITHOUT ROWID for better performance (Name is primary key)
 CREATE TABLE Info (
-    Name TEXT UNIQUE NOT NULL,
+    Name TEXT PRIMARY KEY NOT NULL,
     Value TEXT
-);
+) WITHOUT ROWID;
 
+-- Events table: Cannot use WITHOUT ROWID with AUTOINCREMENT
+-- AUTOINCREMENT requires rowid, so we keep standard table structure
 CREATE TABLE Events (
     ID INTEGER PRIMARY KEY AUTOINCREMENT,
     Name TEXT UNIQUE,
@@ -15,11 +18,15 @@ CREATE TABLE Events (
     EndDate TEXT
 );
 
+-- Sites table: Cannot use WITHOUT ROWID with AUTOINCREMENT
+-- AUTOINCREMENT requires rowid, so we keep standard table structure
 CREATE TABLE Sites (
     ID INTEGER PRIMARY KEY AUTOINCREMENT,
     Name TEXT UNIQUE
 );
 
+-- Players table: MUST remain a rowid table.
+-- We rely on SQLite's implicit rowid assignment when inserting without specifying ID.
 CREATE TABLE Players (
     ID INTEGER PRIMARY KEY,
     Name TEXT UNIQUE,

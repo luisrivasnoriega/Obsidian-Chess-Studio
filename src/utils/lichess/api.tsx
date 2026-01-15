@@ -2,6 +2,7 @@ import type { Color } from "@lichess-org/chessground/types";
 import { notifications } from "@mantine/notifications";
 import { IconX } from "@tabler/icons-react";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 import { fetch } from "@tauri-apps/plugin-http";
 import { error } from "@tauri-apps/plugin-log";
 import { parseUci } from "chessops";
@@ -211,17 +212,26 @@ export async function getLichessAccount({
 }): Promise<LichessAccount | null> {
   if (isInNetworkCooldown()) return null;
 
-  let response: Response;
   try {
-    if (token) {
-      response = await fetch(`${baseURL}/account`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } else {
-      const url = `${baseURL}/user/${username}`;
-      response = await fetch(url);
+    const raw = await invoke<string | null>("get_lichess_account", {
+      token: token ?? null,
+      username: username ?? null,
+    });
+
+    if (!raw) {
+      // Preserve previous UX: show the "not found" notification for username lookups.
+      if (!token && username) {
+        notifications.show({
+          title: "Failed to fetch Lichess account",
+          message: `Could not find account "${username}" on lichess.org`,
+          color: "red",
+          icon: <IconX />,
+        });
+      }
+      return null;
     }
+
+    return JSON.parse(raw) as LichessAccount;
   } catch (e) {
     if (isFailedToFetchError(e)) {
       startNetworkCooldown();
@@ -231,17 +241,6 @@ export async function getLichessAccount({
     }
     throw e;
   }
-  if (!response.ok) {
-    error(`Failed to fetch Lichess account: ${response.status} ${response.url}`);
-    notifications.show({
-      title: "Failed to fetch Lichess account",
-      message: `Could not find account "${username}" on lichess.org`,
-      color: "red",
-      icon: <IconX />,
-    });
-    return null;
-  }
-  return response.json();
 }
 
 export async function fetchLastLichessGames(
