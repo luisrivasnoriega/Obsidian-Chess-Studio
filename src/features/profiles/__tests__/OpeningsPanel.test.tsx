@@ -59,7 +59,7 @@ vi.mock("jotai", async () => {
   };
 });
 
-// Sidebar mock: also exposes profileId/isLoading for assertions
+// Sidebar mock: keeps tests stable and fast.
 vi.mock("../components/PersonalCardPanels/PlayerSidebarCard", () => ({
   __esModule: true,
   default: ({
@@ -67,12 +67,12 @@ vi.mock("../components/PersonalCardPanels/PlayerSidebarCard", () => ({
     onTimeControlChange,
     onOpponentEloChange,
     onDateRangeChange,
-    profileId,
+    model,
     isLoading,
   }: any) => (
     <div data-testid="sidebar">
-      <div data-testid="sidebar-profileId">{profileId ?? ""}</div>
       <div data-testid="sidebar-loading">{String(!!isLoading)}</div>
+      <div data-testid="sidebar-has-model">{String(!!model)}</div>
 
       <button onClick={() => onPlatformChange?.("Lichess")}>Change Platform</button>
       <button onClick={() => onTimeControlChange?.("blitz")}>Change Time Control</button>
@@ -80,12 +80,6 @@ vi.mock("../components/PersonalCardPanels/PlayerSidebarCard", () => ({
       <button onClick={() => onDateRangeChange?.(null)}>Change Date Range</button>
     </div>
   ),
-  normalizePlatform: (site: string | null | undefined) => {
-    const s = (site ?? "").toLowerCase();
-    if (s.includes("chess")) return "Chess.com";
-    if (s.includes("lichess")) return "Lichess";
-    return null;
-  },
 }));
 
 vi.mock("../components/PersonalCardPanels/ResultsChart", () => ({
@@ -127,6 +121,18 @@ vi.mock("@/utils/treeReducer", () => ({
 // Player stats commands
 vi.mock("@/bindings/playerStats", () => ({
   playerStatsCommands: {
+    calculatePlayerSidebarModel: vi.fn(async () => ({
+      status: "ok",
+      data: {
+        has_data: true,
+        style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+        elo: {
+          all: { bullet: "-", blitz: "-", rapid: "-" },
+          lichess: { bullet: "-", blitz: "-", rapid: "-" },
+          chesscom: { bullet: "-", blitz: "-", rapid: "-" },
+        },
+      },
+    })),
     calculatePlayerEloBuckets: vi.fn(async () => ({
       status: "ok",
       data: [{ value: "1200", label: "1200-1399" }],
@@ -455,11 +461,10 @@ describe("OpeningsPanel", () => {
     expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).not.toHaveBeenCalled();
   });
 
-  test("passes profileId and isLoading props to sidebar (smoke)", async () => {
+  test("passes isLoading prop to sidebar (smoke)", async () => {
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} profileId="profile-123" isLoading />);
 
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
-    expect(screen.getByTestId("sidebar-profileId")).toHaveTextContent("profile-123");
     expect(screen.getByTestId("sidebar-loading")).toHaveTextContent("true");
   });
 

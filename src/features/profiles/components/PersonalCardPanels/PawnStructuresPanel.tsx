@@ -28,9 +28,9 @@ import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame, PlayerGameInfo, SiteStatsData } from "@/bindings";
 import { commands } from "@/bindings";
+import { playerStatsCommands } from "@/bindings/playerStats";
 import { Chessground } from "@/components/Chessground";
 import PlayerSidebarCard, {
-  normalizePlatform,
   type PlatformFilter,
   type TimeControlFilter,
 } from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
@@ -45,7 +45,6 @@ import type { PawnStructureStat as PawnStructureStatBackend, PawnStructureGame a
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
-import { getTimeControl } from "@/utils/timeControl";
 
 type PawnStructuresPanelProps = {
   playerName: string;
@@ -281,6 +280,26 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   }, [personalInfo]);
 
   const playerInfo = mergedInfo ?? { site_stats_data: [] };
+
+  const statsSignature = useMemo(() => {
+    const ssd = playerInfo.site_stats_data ?? [];
+    if (ssd.length === 0) return { sites: 0, games: 0, firstSite: "", lastSite: "" };
+    const sites = ssd.length;
+    const games = ssd.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
+    const firstSite = ssd[0]?.site ?? "";
+    const lastSite = ssd[ssd.length - 1]?.site ?? "";
+    return { sites, games, firstSite, lastSite };
+  }, [playerInfo.site_stats_data]);
+
+  const { data: sidebarModel } = useQuery({
+    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryFn: async () => {
+      return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(playerInfo.site_stats_data ?? []));
+    },
+    staleTime: Infinity,
+    retry: false,
+    enabled: statsSignature.games > 0,
+  });
 
   const opponentEloOptions = useMemo(() => {
     const buckets = new Set<number>();
@@ -693,7 +712,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         <Stack h="100%" gap="md" style={{ minHeight: 0 }}>
           <PlayerSidebarCard
             playerName={playerName}
-            info={playerInfo}
+            model={sidebarModel ?? null}
+            visiblePlatforms={[...(platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const))]}
             platform={platform}
             onPlatformChange={setPlatform}
             timeControl={timeControl}
@@ -703,7 +723,6 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
             onOpponentEloChange={setOpponentEloBucket}
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
-            profileId={profileId}
             isLoading={isAnyLoading}
             fullHeight={false}
           />

@@ -26,11 +26,22 @@ vi.mock("../components/PersonalCardPanels/ResultsChart", () => ({
 vi.mock("../components/PersonalCardPanels/PlayerSidebarCard", () => ({
   __esModule: true,
   default: () => <div data-testid="sidebar" />,
-  normalizePlatform: (s: string) => (s.includes("chess") ? "Chess.com" : "Lichess"),
 }));
 
 vi.mock("@/bindings/playerStats", () => ({
   playerStatsCommands: {
+    calculatePlayerSidebarModel: vi.fn(async () => ({
+      status: "ok",
+      data: {
+        has_data: true,
+        style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+        elo: {
+          all: { bullet: "-", blitz: "-", rapid: "-" },
+          lichess: { bullet: "-", blitz: "-", rapid: "-" },
+          chesscom: { bullet: "-", blitz: "-", rapid: "-" },
+        },
+      },
+    })),
     calculatePlayerRatingTimeline: vi.fn(async () => ({
       status: "ok",
       data: {

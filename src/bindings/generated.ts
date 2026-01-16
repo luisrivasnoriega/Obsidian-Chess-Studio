@@ -814,6 +814,12 @@ async calculatePlayerEloBuckets(siteStatsData: SiteStatsData[]) : Promise<EloBuc
     return await TAURI_INVOKE("calculate_player_elo_buckets", { siteStatsData });
 },
 /**
+ * Calculate the sidebar model for PlayerSidebarCard (style + ELO summary).
+ */
+async calculatePlayerSidebarModel(siteStatsData: SiteStatsData[]) : Promise<PlayerSidebarModel> {
+    return await TAURI_INVOKE("calculate_player_sidebar_model", { siteStatsData });
+},
+/**
  * Calculate opening statistics
  */
 async calculatePlayerOpeningsStats(siteStatsData: SiteStatsData[], filters: PlayerStatsFilters, color: boolean) : Promise<OpeningStats[]> {
@@ -1136,8 +1142,12 @@ export type PlatformInfo = { key: string; label: string; stroke: string }
 export type Player = { id: number; name: string | null; elo: number | null }
 export type PlayerGameInfo = { site_stats_data: SiteStatsData[] }
 export type PlayerQuery = { options: QueryOptions<PlayerSort>; name?: string | null; range?: [number, number] | null }
+export type PlayerSidebarEloSummary = { bullet: string; blitz: string; rapid: string }
+export type PlayerSidebarModel = { has_data: boolean; style: PlayerStyleLabel; elo: PlayerSidebarPlatformSummary }
+export type PlayerSidebarPlatformSummary = { all: PlayerSidebarEloSummary; lichess: PlayerSidebarEloSummary; chesscom: PlayerSidebarEloSummary }
 export type PlayerSort = "id" | "name" | "elo"
 export type PlayerStatsFilters = { platform: PlatformFilter; time_control: TimeControlFilter; opponent_elo_bucket: string | null; date_range: DateRange | null }
+export type PlayerStyleLabel = { label: string; description: string; color: string }
 /**
  * Player time controls for GoMode::PlayersTime.
  */

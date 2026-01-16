@@ -8,7 +8,7 @@ import type { NameType, ValueType } from "recharts/types/component/DefaultToolti
 
 import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
-import type { EloBucket, GameStats } from "@/bindings/playerStats";
+import type { EloBucket, GameStats, PlayerSidebarModel } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { createPlayerStatsFilters } from "@/utils/playerStats";
 import { unwrap } from "@/utils/unwrap";
@@ -26,6 +26,7 @@ import { PanelLoadGate } from "./PanelLoadGate";
 const promiseCache = {
   eloBuckets: new Map<string, Promise<EloBucket[]>>(),
   gameStats: new Map<string, Promise<GameStats>>(),
+  sidebarModel: new Map<string, Promise<PlayerSidebarModel>>(),
 };
 
 function makeCacheKey(parts: Array<string | number | null | undefined>) {
@@ -54,6 +55,29 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
   }, [info?.site_stats_data]);
 
   const statsEnabled = statsSignature.games > 0;
+
+  // --- Sidebar model (style + ELO summary) ---
+  const { data: sidebarModel } = useQuery({
+    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryFn: async () => {
+      const key = makeCacheKey(["sidebar", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite]);
+      const existing = promiseCache.sidebarModel.get(key);
+      if (existing) return existing;
+
+      const p = (async () => {
+        const res = unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
+        return res;
+      })();
+      promiseCache.sidebarModel.set(key, p);
+      return p;
+    },
+    staleTime: Infinity,
+    retry: false,
+    enabled: statsEnabled,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: true,
+  });
 
   // --- ELO buckets ---
   const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
@@ -150,6 +174,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
   const hasPanelData = total > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;
+  const visiblePlatforms = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
 
   return (
     <Flex
@@ -169,7 +194,8 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
       >
         <PlayerSidebarCard
           playerName={playerName}
-          info={info}
+          model={sidebarModel ?? null}
+          visiblePlatforms={[...visiblePlatforms]}
           platform={platform}
           onPlatformChange={setPlatform}
           timeControl={timeControl}
@@ -177,7 +203,6 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
           opponentEloOptions={opponentEloOptions}
           opponentEloBucket={opponentEloBucket}
           onOpponentEloChange={setOpponentEloBucket}
-          profileId={profileId}
           isLoading={isAnyLoading}
         />
       </Box>

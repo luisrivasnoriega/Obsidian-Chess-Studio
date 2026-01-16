@@ -47,6 +47,7 @@ use crate::chess::{
 use crate::db::{
     calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
     calculate_player_game_stats, calculate_player_openings_stats, calculate_player_rating_timeline,
+    calculate_player_sidebar_model,
     clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games,
     delete_indexes, download_position_cache, export_position_games_to_pgn,
     export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
@@ -211,6 +212,7 @@ pub async fn run() {
             compute_pawn_structures,
             calculate_player_game_stats,
             calculate_player_elo_buckets,
+            calculate_player_sidebar_model,
             calculate_player_openings_stats,
             calculate_player_rating_timeline,
             calculate_player_elo_domain,

@@ -17,7 +17,7 @@ import { countMainPly, defaultTree } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
 import * as classes from "./OpeningsPanel.css";
-import PlayerSidebarCard, { normalizePlatform, type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
+import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
 import { PanelLoadGate } from "./PanelLoadGate";
 
@@ -65,6 +65,16 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
   const [activeColor, setActiveColor] = useState<"white" | "black">("white");
+
+  const { data: sidebarModel } = useQuery({
+    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryFn: async () => {
+      return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
+    },
+    staleTime: Infinity,
+    retry: false,
+    enabled: statsSignature.games > 0,
+  });
 
   // Create filters for backend
   const filters = useMemo(
@@ -174,6 +184,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const hasPanelData = (isStackedLayout ? activeOpenings.length : rowCount) > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;
+  const visiblePlatforms = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
 
   return (
     <Flex
@@ -193,7 +204,8 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
       >
         <PlayerSidebarCard
           playerName={playerName}
-          info={info}
+          model={sidebarModel ?? null}
+          visiblePlatforms={[...visiblePlatforms]}
           platform={platform}
           onPlatformChange={setPlatform}
           timeControl={timeControl}
@@ -203,7 +215,6 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
           onOpponentEloChange={setOpponentEloBucket}
           dateRange={dateRange}
           onDateRangeChange={setDateRange}
-          profileId={profileId}
           isLoading={isAnyLoading}
         />
       </Box>

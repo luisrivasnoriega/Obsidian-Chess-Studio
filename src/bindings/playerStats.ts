@@ -78,6 +78,30 @@ export interface EloDomain {
   max: number;
 }
 
+export interface PlayerStyleLabel {
+  label: string;
+  description: string;
+  color: string;
+}
+
+export interface PlayerSidebarEloSummary {
+  bullet: string;
+  blitz: string;
+  rapid: string;
+}
+
+export interface PlayerSidebarPlatformSummary {
+  all: PlayerSidebarEloSummary;
+  lichess: PlayerSidebarEloSummary;
+  chesscom: PlayerSidebarEloSummary;
+}
+
+export interface PlayerSidebarModel {
+  has_data: boolean;
+  style: PlayerStyleLabel;
+  elo: PlayerSidebarPlatformSummary;
+}
+
 // -----------------------------------------------------------------------------
 // Commands (snake_case = Rust `#[tauri::command]` function names)
 // -----------------------------------------------------------------------------
@@ -88,6 +112,9 @@ export const playerStatsCommands = {
   },
   calculatePlayerEloBuckets(site_stats_data: SiteStatsData[]) {
     return invoke_result<EloBucket[]>("calculate_player_elo_buckets", { siteStatsData: site_stats_data });
+  },
+  calculatePlayerSidebarModel(site_stats_data: SiteStatsData[]) {
+    return invoke_result<PlayerSidebarModel>("calculate_player_sidebar_model", { siteStatsData: site_stats_data });
   },
   calculatePlayerOpeningsStats(site_stats_data: SiteStatsData[], filters: PlayerStatsFilters, color: boolean) {
     return invoke_result<OpeningStats[]>("calculate_player_openings_stats", {

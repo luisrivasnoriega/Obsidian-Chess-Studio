@@ -11,7 +11,7 @@ import { playerStatsCommands } from "@/bindings/playerStats";
 import { createPlayerStatsFilters } from "@/utils/playerStats";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
-import PlayerSidebarCard, { normalizePlatform, type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
+import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import { gradientStops, linearGradientProps, tooltipContentStyle, tooltipCursorStyle } from "./RatingsPanel.css";
 import ResultsChart from "./ResultsChart";
 import { PanelLoadGate } from "./PanelLoadGate";
@@ -38,6 +38,16 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
     const lastSite = info.site_stats_data[info.site_stats_data.length - 1]?.site ?? "";
     return { sites, games, firstSite, lastSite };
   }, [info?.site_stats_data]);
+
+  const { data: sidebarModel } = useQuery({
+    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryFn: async () => {
+      return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
+    },
+    staleTime: Infinity,
+    retry: false,
+    enabled: statsSignature.games > 0,
+  });
 
   // Create filters for backend
   const filters = useMemo(
@@ -159,6 +169,7 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
     isLoadingGameStats ||
     isFetchingGameStats;
   const hasPanelData = dates.length > 1;
+  const visiblePlatforms = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
 
   return (
     <Flex
@@ -178,7 +189,8 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
       >
         <PlayerSidebarCard
           playerName={playerName}
-          info={info}
+          model={sidebarModel ?? null}
+          visiblePlatforms={[...visiblePlatforms]}
           platform={platform}
           onPlatformChange={setPlatform}
           timeControl={timeControl}
@@ -188,7 +200,6 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
           onOpponentEloChange={setOpponentEloBucket}
           dateRange={dateRange}
           onDateRangeChange={setDateRange}
-          profileId={profileId}
           isLoading={isAnyLoading}
         />
       </Box>

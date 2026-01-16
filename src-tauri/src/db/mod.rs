@@ -5,6 +5,7 @@ mod models;
 mod ops;
 mod pgn;
 mod player_stats;
+mod player_style;
 mod position_cache;
 mod schema;
 mod search;
@@ -76,10 +77,11 @@ pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Ou
 #[allow(unused_imports)]
 pub use self::player_stats::{
     aggregate_openings, calculate_elo_buckets, calculate_elo_domain, calculate_earliest_date,
-    calculate_rating_timeline, extract_game_stats, fill_missing_months, filter_games,
+    calculate_rating_timeline, compute_player_sidebar_model, extract_game_stats, fill_missing_months, filter_games,
     get_score_rate, merge_site_stats_data, merge_years, sort_openings,
     DateRange, EloBucket, EloDomain, GameStats, MonthData, OpeningStats, PlatformFilter,
-    PlayerStatsFilters, PlatformInfo, RatingDataPoint, RatingTimeline, TimeControlFilter,
+    PlayerSidebarEloSummary, PlayerSidebarModel, PlayerSidebarPlatformSummary, PlayerStatsFilters,
+    PlayerStyleLabel, PlatformInfo, RatingDataPoint, RatingTimeline, TimeControlFilter,
 };
 pub use self::position_cache::{get_cached_position, is_position_cached, save_position_cache};
 pub use self::schema::puzzles;
@@ -3077,6 +3079,15 @@ pub async fn calculate_player_game_stats(
 #[specta::specta]
 pub async fn calculate_player_elo_buckets(site_stats_data: Vec<SiteStatsData>) -> Vec<EloBucket> {
     tauri::async_runtime::spawn_blocking(move || calculate_elo_buckets(&site_stats_data))
+        .await
+        .unwrap_or_default()
+}
+
+/// Calculate the sidebar model for PlayerSidebarCard (style + ELO summary).
+#[tauri::command]
+#[specta::specta]
+pub async fn calculate_player_sidebar_model(site_stats_data: Vec<SiteStatsData>) -> PlayerSidebarModel {
+    tauri::async_runtime::spawn_blocking(move || compute_player_sidebar_model(&site_stats_data))
         .await
         .unwrap_or_default()
 }

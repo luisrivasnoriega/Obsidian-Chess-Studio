@@ -1,13 +1,7 @@
-import { Badge, Box, Card, Center, Divider, Group, Image, Loader, Select, Stack, Text, Tooltip } from "@mantine/core";
+import { Badge, Box, Card, Divider, Group, Image, Loader, Select, Stack, Text, Tooltip } from "@mantine/core";
 import { IconBolt, IconCircleDot, IconGauge } from "@tabler/icons-react";
-import { useAtomValue } from "jotai";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { PlayerGameInfo } from "@/bindings";
-import { activeProfileIdAtom, sessionsAtom } from "@/state/atoms";
-import { analyzePlayerStyle } from "@/utils/playerStyle";
-import { getTimeControl } from "@/utils/timeControl";
-import LichessLogo from "../LichessLogo";
+import type { PlayerSidebarModel } from "@/bindings/playerStats";
 import DateRangeTabs, { type DateRange } from "./DateRangeTabs";
 
 export type PlatformFilter = "all" | "Chess.com" | "Lichess";
@@ -34,17 +28,7 @@ const TIME_CONTROL_OPTIONS: Array<{ value: TimeControlFilter; label: string }> =
 
 type OpponentEloOption = { value: string; label: string };
 
-export function normalizePlatform(site: string): PlatformFilter | null {
-  const lower = site.trim().toLowerCase();
-  const condensed = lower.replace(/[^a-z0-9]/g, "");
-  if (condensed.includes("chesscom") || /chess\s*\.?\s*com/.test(lower)) return "Chess.com";
-  if (condensed.includes("lichess") || lower.includes("lichess")) return "Lichess";
-  return null;
-}
-
-function PlatformIcon({ platform }: { platform: PlatformFilter }) {
-  if (platform === "all") return null;
-  
+function PlatformIcon({ platform }: { platform: Exclude<PlatformFilter, "all"> }) {
   return (
     <Box
       style={{
@@ -80,15 +64,10 @@ function PlatformIcon({ platform }: { platform: PlatformFilter }) {
   );
 }
 
-type PlatformEloSummary = {
-  bullet: number;
-  blitz: number;
-  rapid: number;
-};
-
 type PlayerSidebarCardProps = {
   playerName: string;
-  info: PlayerGameInfo;
+  model: PlayerSidebarModel | null;
+  visiblePlatforms: Array<Exclude<PlatformFilter, "all">>;
   platform: PlatformFilter;
   onPlatformChange: (value: PlatformFilter) => void;
   timeControl: TimeControlFilter;
@@ -107,13 +86,10 @@ type PlayerSidebarCardProps = {
   fullHeight?: boolean;
 };
 
-function formatElo(value: number): string {
-  return value > 0 ? String(value) : "-";
-}
-
 export default function PlayerSidebarCard({
   playerName,
-  info,
+  model,
+  visiblePlatforms,
   platform,
   onPlatformChange,
   timeControl,
@@ -123,132 +99,17 @@ export default function PlayerSidebarCard({
   onOpponentEloChange,
   dateRange,
   onDateRangeChange,
-  profileId,
   isLoading = false,
   fullHeight = true,
 }: PlayerSidebarCardProps) {
   const { t } = useTranslation();
-  const sessions = useAtomValue(sessionsAtom);
-  const activeProfileId = useAtomValue(activeProfileIdAtom);
-  const effectiveProfileId = profileId ?? activeProfileId;
+  const platformOptions = [
+    { value: "all", label: t("common.all", { defaultValue: "All" }) },
+    { value: "Chess.com", label: "Chess.com" },
+    { value: "Lichess", label: "Lichess" },
+  ];
 
-  // Check if data is actually loaded
-  const hasData = useMemo(() => {
-    if (isLoading) return false;
-    
-    // If we have a profileId, check if we have sessions with account data
-    if (effectiveProfileId) {
-      const profileSessions = sessions.filter(
-        (s) => (s.profileId ?? activeProfileId) === effectiveProfileId,
-      );
-      
-      // If we have sessions, check if they have account data loaded
-      if (profileSessions.length > 0) {
-        const hasAccountData = profileSessions.some(
-          (s) => s.lichess?.account?.perfs || s.chessCom?.stats,
-        );
-        // If we have sessions but no account data yet, show loading
-        if (!hasAccountData) return false;
-      }
-      
-      // If we have profileId but no sessions yet, show loading
-      if (profileSessions.length === 0) return false;
-    }
-    
-    // Check if we have site_stats_data (game data)
-    // If we have profileId, we might not have game data yet but still show the card
-    // with elos from sessions
-    if (!info?.site_stats_data || info.site_stats_data.length === 0) {
-      // If no profileId, we need game data
-      if (!effectiveProfileId) return false;
-      // If we have profileId, we can show the card with session elos even without game data
-      return true;
-    }
-    
-    return true;
-  }, [isLoading, info?.site_stats_data, effectiveProfileId, sessions, activeProfileId]);
-
-  const playerStyle = useMemo(() => analyzePlayerStyle(info), [info]);
-
-  const platformOptions = useMemo(
-    () => [
-      { value: "all", label: t("common.all", { defaultValue: "All" }) },
-      { value: "Chess.com", label: "Chess.com" },
-      { value: "Lichess", label: "Lichess" },
-    ],
-    [t],
-  );
-
-  // Get current elos from active profile sessions instead of historical games
-  const platformSummary = useMemo(() => {
-    const summary: Record<PlatformFilter, PlatformEloSummary> = {
-      all: { bullet: 0, blitz: 0, rapid: 0 },
-      "Chess.com": { bullet: 0, blitz: 0, rapid: 0 },
-      Lichess: { bullet: 0, blitz: 0, rapid: 0 },
-    };
-
-    if (!effectiveProfileId) {
-      // Fallback to historical data if no profile ID
-      for (const entry of info.site_stats_data ?? []) {
-        const normalized = normalizePlatform(entry.site);
-        if (!normalized) continue;
-        for (const game of entry.data) {
-          const speed = getTimeControl(entry.site, game.time_control);
-          if (speed !== "bullet" && speed !== "blitz" && speed !== "rapid") continue;
-          const elo = typeof game.player_elo === "number" ? game.player_elo : 0;
-          summary[normalized][speed] = Math.max(summary[normalized][speed], elo);
-        }
-      }
-      return summary;
-    }
-
-    // Get sessions for the active profile
-    const profileSessions = sessions.filter(
-      (s) => (s.profileId ?? activeProfileId) === effectiveProfileId,
-    );
-
-    for (const session of profileSessions) {
-      // Lichess elos
-      if (session.lichess?.account?.perfs) {
-        const perfs = session.lichess.account.perfs;
-        if (perfs.bullet?.rating) {
-          summary.Lichess.bullet = Math.max(summary.Lichess.bullet, perfs.bullet.rating);
-          summary.all.bullet = Math.max(summary.all.bullet, perfs.bullet.rating);
-        }
-        if (perfs.blitz?.rating) {
-          summary.Lichess.blitz = Math.max(summary.Lichess.blitz, perfs.blitz.rating);
-          summary.all.blitz = Math.max(summary.all.blitz, perfs.blitz.rating);
-        }
-        if (perfs.rapid?.rating) {
-          summary.Lichess.rapid = Math.max(summary.Lichess.rapid, perfs.rapid.rating);
-          summary.all.rapid = Math.max(summary.all.rapid, perfs.rapid.rating);
-        }
-      }
-
-      // Chess.com elos
-      if (session.chessCom?.stats) {
-        const stats = session.chessCom.stats;
-        if (stats.chess_bullet?.last?.rating) {
-          summary["Chess.com"].bullet = Math.max(summary["Chess.com"].bullet, stats.chess_bullet.last.rating);
-          summary.all.bullet = Math.max(summary.all.bullet, stats.chess_bullet.last.rating);
-        }
-        if (stats.chess_blitz?.last?.rating) {
-          summary["Chess.com"].blitz = Math.max(summary["Chess.com"].blitz, stats.chess_blitz.last.rating);
-          summary.all.blitz = Math.max(summary.all.blitz, stats.chess_blitz.last.rating);
-        }
-        if (stats.chess_rapid?.last?.rating) {
-          summary["Chess.com"].rapid = Math.max(summary["Chess.com"].rapid, stats.chess_rapid.last.rating);
-          summary.all.rapid = Math.max(summary.all.rapid, stats.chess_rapid.last.rating);
-        }
-      }
-    }
-
-    return summary;
-  }, [info.site_stats_data, sessions, effectiveProfileId, activeProfileId]);
-
-  const platformsToShow = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
-
-  if (!hasData) {
+  if (isLoading) {
     return (
       <Card
         withBorder
@@ -268,6 +129,25 @@ export default function PlayerSidebarCard({
     );
   }
 
+  if (!model) {
+    return (
+      <Card
+        withBorder
+        radius="md"
+        shadow="sm"
+        bg="var(--mantine-color-dark-6)"
+        h={fullHeight ? "100%" : undefined}
+        style={{ overflow: "hidden" }}
+      >
+        <Stack gap="sm" h="100%" justify="center" align="center" p="md">
+          <Text size="sm" c="dimmed" ta="center">
+            {t("common.noData", { defaultValue: "No data" })}
+          </Text>
+        </Stack>
+      </Card>
+    );
+  }
+
   return (
     <Card
       withBorder
@@ -281,11 +161,11 @@ export default function PlayerSidebarCard({
         <Text fz="lg" fw={700} ta="center">
           {playerName}
         </Text>
-        <Badge color={playerStyle.color} variant="light" size="lg" mx="auto">
-          {t(playerStyle.label)}
+        <Badge color={model.style.color} variant="light" size="lg" mx="auto">
+          {t(model.style.label)}
         </Badge>
         <Text fz="xs" c="dimmed" ta="center">
-          {t(playerStyle.description)}
+          {t(model.style.description)}
         </Text>
         <Divider />
         <Stack gap={4}>
@@ -326,8 +206,8 @@ export default function PlayerSidebarCard({
         <Divider />
         <Stack gap="xs">
           <Text fw={600}>{t("common.elo", { defaultValue: "Elo" })}</Text>
-          {platformsToShow.map((site) => {
-            const summary = platformSummary[site];
+          {visiblePlatforms.map((site) => {
+            const summary = site === "Lichess" ? model.elo.lichess : model.elo.chesscom;
             return (
               <Group key={site} justify="space-between" align="flex-start" wrap="nowrap">
                 <Group gap="xs" wrap="nowrap">
@@ -342,7 +222,7 @@ export default function PlayerSidebarCard({
                       </span>
                     </Tooltip>
                     <Text size="sm" fw={700}>
-                      {formatElo(summary.bullet)}
+                      {summary.bullet}
                     </Text>
                   </Group>
                   <Text size="sm" c="dimmed">
@@ -355,7 +235,7 @@ export default function PlayerSidebarCard({
                       </span>
                     </Tooltip>
                     <Text size="sm" fw={700}>
-                      {formatElo(summary.blitz)}
+                      {summary.blitz}
                     </Text>
                   </Group>
                   <Text size="sm" c="dimmed">
@@ -368,7 +248,7 @@ export default function PlayerSidebarCard({
                       </span>
                     </Tooltip>
                     <Text size="sm" fw={700}>
-                      {formatElo(summary.rapid)}
+                      {summary.rapid}
                     </Text>
                   </Group>
                 </Group>

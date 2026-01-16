@@ -105,6 +105,48 @@ pub struct EloDomain {
 }
 
 // ============================================================================
+// Player sidebar model (used by frontend PlayerSidebarCard)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct PlayerStyleLabel {
+    pub label: String,
+    pub description: String,
+    pub color: String,
+}
+
+impl Default for PlayerStyleLabel {
+    fn default() -> Self {
+        Self {
+            label: "playerStyle.mixedStyle".to_string(),
+            description: "playerStyle.mixedStyleDescription".to_string(),
+            color: "gray".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
+pub struct PlayerSidebarEloSummary {
+    pub bullet: String,
+    pub blitz: String,
+    pub rapid: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
+pub struct PlayerSidebarPlatformSummary {
+    pub all: PlayerSidebarEloSummary,
+    pub lichess: PlayerSidebarEloSummary,
+    pub chesscom: PlayerSidebarEloSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
+pub struct PlayerSidebarModel {
+    pub has_data: bool,
+    pub style: PlayerStyleLabel,
+    pub elo: PlayerSidebarPlatformSummary,
+}
+
+// ============================================================================
 // ELO processing functions
 // ============================================================================
 
@@ -655,6 +697,14 @@ fn get_time_control(_site: &str, time_control: &str) -> TimeControlFilter {
     }
 }
 
+fn format_elo(value: i32) -> String {
+    if value > 0 {
+        value.to_string()
+    } else {
+        "-".to_string()
+    }
+}
+
 /// Filter games based on criteria
 pub fn filter_games(site_stats_data: &[SiteStatsData], filters: &PlayerStatsFilters) -> Vec<(StatsData, String)> {
     // Flatten all games with their site (owned return type)
@@ -741,6 +791,68 @@ pub fn merge_site_stats_data(site_stats_data_list: &[SiteStatsData]) -> Vec<Site
     }
 
     by_key.into_values().collect()
+}
+
+// ============================================================================
+// Sidebar style computations are implemented in `player_style.rs` for strict
+// parity with the previous frontend implementation.
+// ============================================================================
+
+pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> PlayerSidebarModel {
+    let has_data = site_stats_data.iter().any(|s| !s.data.is_empty());
+    let style = super::player_style::analyze_player_style_label(site_stats_data);
+
+    let mut max_all = [0i32; 3];
+    let mut max_lichess = [0i32; 3];
+    let mut max_chesscom = [0i32; 3];
+
+    for site in site_stats_data {
+        let platform = normalize_platform(&site.site);
+        for game in &site.data {
+            let tc = get_time_control(&site.site, &game.time_control);
+            let idx = match tc {
+                TimeControlFilter::Bullet => Some(0),
+                TimeControlFilter::Blitz => Some(1),
+                TimeControlFilter::Rapid => Some(2),
+                _ => None,
+            };
+            let Some(i) = idx else { continue };
+            let elo = game.player_elo;
+
+            if elo > max_all[i] {
+                max_all[i] = elo;
+            }
+            if platform == "lichess" {
+                if elo > max_lichess[i] {
+                    max_lichess[i] = elo;
+                }
+            } else if platform == "chesscom" {
+                if elo > max_chesscom[i] {
+                    max_chesscom[i] = elo;
+                }
+            }
+        }
+    }
+
+    let elo = PlayerSidebarPlatformSummary {
+        all: PlayerSidebarEloSummary {
+            bullet: format_elo(max_all[0]),
+            blitz: format_elo(max_all[1]),
+            rapid: format_elo(max_all[2]),
+        },
+        lichess: PlayerSidebarEloSummary {
+            bullet: format_elo(max_lichess[0]),
+            blitz: format_elo(max_lichess[1]),
+            rapid: format_elo(max_lichess[2]),
+        },
+        chesscom: PlayerSidebarEloSummary {
+            bullet: format_elo(max_chesscom[0]),
+            blitz: format_elo(max_chesscom[1]),
+            rapid: format_elo(max_chesscom[2]),
+        },
+    };
+
+    PlayerSidebarModel { has_data, style, elo }
 }
 
 #[cfg(test)]

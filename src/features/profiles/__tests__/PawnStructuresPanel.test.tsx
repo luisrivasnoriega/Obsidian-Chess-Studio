@@ -134,11 +134,22 @@ vi.mock("@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard", (
       <button onClick={() => props.onOpponentEloChange("all")}>opp-all</button>
     </div>
   ),
-  normalizePlatform: (site: string | null | undefined) => {
-    const s = (site ?? "").toLowerCase();
-    if (s.includes("chess")) return "Chess.com";
-    if (s.includes("lichess")) return "Lichess";
-    return null;
+}));
+
+vi.mock("@/bindings/playerStats", () => ({
+  playerStatsCommands: {
+    calculatePlayerSidebarModel: vi.fn(async () => ({
+      status: "ok",
+      data: {
+        has_data: true,
+        style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+        elo: {
+          all: { bullet: "-", blitz: "-", rapid: "-" },
+          lichess: { bullet: "-", blitz: "-", rapid: "-" },
+          chesscom: { bullet: "-", blitz: "-", rapid: "-" },
+        },
+      },
+    })),
   },
 }));
 
