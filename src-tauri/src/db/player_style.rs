@@ -1271,7 +1271,7 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
             }
 
             // Only add offbeat if it's truly offbeat and NOT hypermodern
-            if (((30..=39).contains(&num) || characteristics.is_offbeat) && !characteristics.is_hypermodern) {
+            if ((30..=39).contains(&num) || characteristics.is_offbeat) && !characteristics.is_hypermodern {
                 v.offbeat += 1.0 * weight;
             }
 

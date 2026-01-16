@@ -494,14 +494,6 @@ async fn lichess_get_user_total_games(
     Ok(user.count.map(|c| c.all))
 }
 
-#[derive(Debug, Deserialize)]
-struct LichessNdjsonGame {
-    #[serde(default)]
-    createdAt: Option<i64>,
-    #[serde(default)]
-    pgn: Option<String>,
-}
-
 fn normalize_pgn_line(line: &str, username_lc: &str, account_key: &str) -> Option<String> {
     if let Some(rest) = line.strip_prefix("[White \"") {
         if let Some(end) = rest.find("\"]") {
@@ -519,30 +511,6 @@ fn normalize_pgn_line(line: &str, username_lc: &str, account_key: &str) -> Optio
         }
     }
     None
-}
-
-async fn write_normalized_pgn_async(
-    writer: &mut TokioBufWriter<tokio::fs::File>,
-    pgn: &str,
-    platform: &str,
-    username: &str,
-) -> Result<()> {
-    let username_lc = username.to_ascii_lowercase();
-    let key = account_key(platform, username);
-
-    for line in pgn.lines() {
-        if let Some(rewritten) = normalize_pgn_line(line, &username_lc, &key) {
-            writer.write_all(rewritten.as_bytes()).await?;
-            writer.write_all(b"\n").await?;
-        } else {
-            writer.write_all(line.as_bytes()).await?;
-            writer.write_all(b"\n").await?;
-        }
-    }
-
-    // Ensure a blank line between games.
-    writer.write_all(b"\n").await?;
-    Ok(())
 }
 
 /// Lichess PGN batch download:

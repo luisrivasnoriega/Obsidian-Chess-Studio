@@ -238,6 +238,7 @@ pub struct TempPlayer {
     rating: Option<i32>,
 }
 
+#[allow(dead_code)]
 pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
     let pawn_home = get_pawn_home(game.position.board());
 

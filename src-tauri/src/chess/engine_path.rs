@@ -1,9 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[cfg(target_os = "android")]
 use log::{info, warn};
 
 use tauri::AppHandle;
+#[cfg(target_os = "android")]
 use tauri::Manager;
 
 /// On Android, find libstockfish.so in the native library directory.
@@ -57,7 +58,7 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                             .and_then(|s| s.split('/').next())
                             .filter(|s| !s.is_empty())
                         {
-                            if let Some(apk_parent) = Path::new(apk_path).parent() {
+                            if let Some(apk_parent) = std::path::Path::new(apk_path).parent() {
                                 let candidate = apk_parent
                                     .join("lib")
                                     .join(abi)
@@ -135,6 +136,8 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
 }
 
 pub fn resolve_engine_path(engine: &str, app: &AppHandle) -> PathBuf {
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     let path = PathBuf::from(engine);
 
     // On Android, ALWAYS prefer the bundled libstockfish.so from native libs
@@ -220,7 +223,7 @@ pub fn resolve_engine_path(engine: &str, app: &AppHandle) -> PathBuf {
     {
         let file_name = path
             .file_name()
-            .or_else(|| Path::new(engine).file_name())
+            .or_else(|| std::path::Path::new(engine).file_name())
             .map(|name| name.to_owned());
 
         if let Some(file_name) = file_name {

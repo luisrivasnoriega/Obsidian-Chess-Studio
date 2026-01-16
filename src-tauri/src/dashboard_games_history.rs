@@ -132,8 +132,11 @@ struct LocalGameRecord {
     time_control: Option<String>,
     timestamp: i64,
     moves: Vec<String>,
+    #[allow(dead_code)]
     variant: Option<String>,
+    #[allow(dead_code)]
     fen: String,
+    #[allow(dead_code)]
     initial_fen: Option<String>,
     pgn: Option<String>,
     stats: Option<LocalGameStats>,
