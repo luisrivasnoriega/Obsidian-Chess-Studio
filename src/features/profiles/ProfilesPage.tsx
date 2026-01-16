@@ -44,6 +44,7 @@ import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
 import { getAccountKey } from "@/utils/accountKeys";
+import { getAccountSyncState } from "@/utils/accountSyncState";
 import { parseDate } from "@/utils/format";
 import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
@@ -70,6 +71,28 @@ function formatSyncError(e: unknown): string {
     return JSON.stringify(e);
   } catch {
     return String(e);
+  }
+}
+
+async function shouldSuppressAccountSyncToasts(input: {
+  profileId: string;
+  platform: "lichess" | "chesscom";
+  username: string;
+}): Promise<boolean> {
+  try {
+    const dbPath = await getProfileDbPath(input.profileId);
+    const accountKey = getAccountKey(input.platform, input.username);
+    const state = await getAccountSyncState({
+      dbPath,
+      accountKey,
+      platform: input.platform,
+    });
+    if (!state) return false;
+    if (state.running) return false;
+    const ageMs = Date.now() - (state.updated_at_ms ?? 0);
+    return ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000;
+  } catch {
+    return false;
   }
 }
 
@@ -261,7 +284,14 @@ export default function ProfilesPage() {
         if (!profile) return "continue";
 
         const { platform, username } = sessionMeta(session);
+        if (platform !== "lichess" && platform !== "chesscom") return "continue";
         const id = `sync:${profile.id}:${platform}:${username}`;
+
+        const showToasts = !(await shouldSuppressAccountSyncToasts({
+          profileId: profile.id,
+          platform,
+          username,
+        }));
 
         setSyncingAccountIds((prev) => {
           const next = new Set(prev);
@@ -269,45 +299,54 @@ export default function ProfilesPage() {
           return next;
         });
 
-        notifications.show({
-          id,
-          title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-          message: `${profile.name} - ${username} (${platform})`,
-          loading: true,
-          autoClose: false,
-        });
-      syncNotificationIdsRef.current.add(id);
+        if (showToasts) {
+          notifications.show({
+            id,
+            title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
+            message: `${profile.name} - ${username} (${platform})`,
+            loading: true,
+            autoClose: false,
+          });
+          syncNotificationIdsRef.current.add(id);
+        }
 
         try {
           const res = await syncSessionGamesToProfileDb({
             profile,
             session,
-            onBatchUpdate: (u) => {
-              if (u.cooldownSeconds != null) {
-                notifications.update({
-                  id,
-                  title: t("common.warning", { defaultValue: "Warning" }),
-                  message: t("accounts.sync.cooldown", {
-                    defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
-                    seconds: u.cooldownSeconds,
-                  }),
-                  color: "yellow",
-                  loading: true,
-                  autoClose: false,
-                });
-                return;
-              }
-              notifications.update({
-                id,
-                message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
-                  defaultValue: "Batch {{current}} of {{total}}",
-                  current: u.currentBatch,
-                  total: u.totalBatches,
-                })}`,
-                loading: true,
-                autoClose: false,
-              });
-            },
+            onBatchUpdate: showToasts
+              ? (u) => {
+                  if (u.cooldownSeconds != null) {
+                    notifications.update({
+                      id,
+                      title: t("common.warning", { defaultValue: "Warning" }),
+                      message: t("accounts.sync.cooldown", {
+                        defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
+                        seconds: u.cooldownSeconds,
+                      }),
+                      color: "yellow",
+                      loading: true,
+                      autoClose: false,
+                    });
+                    return;
+                  }
+                  // Show optimization message or batch progress
+                  const message =
+                    u.totalBatches > 0
+                      ? `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
+                          defaultValue: "Batch {{current}} of {{total}}",
+                          current: u.currentBatch,
+                          total: u.totalBatches,
+                        })}`
+                      : u.batchLabel || `${profile.name} - ${username} (${u.platform})`;
+                  notifications.update({
+                    id,
+                    message,
+                    loading: u.batchLabel?.toLowerCase().includes("optimiz") ? true : u.totalBatches > 0,
+                    autoClose: u.batchLabel?.toLowerCase().includes("complete") ? 3000 : false,
+                  });
+                }
+              : undefined,
           });
 
           if (res.updatedSession) {
@@ -324,24 +363,32 @@ export default function ProfilesPage() {
             });
           }
 
-          notifications.update({
-            id,
-            title: t("common.success", { defaultValue: "Success" }),
-            message: `${profile.name} - ${username} (${platform})`,
-            color: "green",
-            loading: false,
-            autoClose: 2500,
-          });
+          if ((res.importedGames ?? 0) > 0) {
+            mutateDatabases();
+          }
+
+          if (showToasts) {
+            notifications.update({
+              id,
+              title: t("common.success", { defaultValue: "Success" }),
+              message: `${profile.name} - ${username} (${platform})`,
+              color: "green",
+              loading: false,
+              autoClose: 2500,
+            });
+          }
         } catch (e) {
-          const details = truncateMiddle(formatSyncError(e), 600);
-          notifications.update({
-            id,
-            title: t("common.error", { defaultValue: "Error" }),
-            message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${details}`,
-            color: "red",
-            loading: false,
-            autoClose: 4000,
-          });
+          if (showToasts) {
+            const details = truncateMiddle(formatSyncError(e), 600);
+            notifications.update({
+              id,
+              title: t("common.error", { defaultValue: "Error" }),
+              message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${details}`,
+              color: "red",
+              loading: false,
+              autoClose: 4000,
+            });
+          }
 
           if (isFailedToFetchError(e)) {
             didAutoUpdateAccountsRef.current = false;
@@ -357,7 +404,9 @@ export default function ProfilesPage() {
             return "stop";
           }
         } finally {
-          syncNotificationIdsRef.current.delete(id);
+          if (showToasts) {
+            syncNotificationIdsRef.current.delete(id);
+          }
           setSyncingAccountIds((prev) => {
             const next = new Set(prev);
             next.delete(id);
@@ -738,124 +787,160 @@ export default function ProfilesPage() {
 
   const startBackgroundSync = useCallback(
     (profile: Profile, session: Session) => {
-      const username = session.lichess?.username ?? session.chessCom?.username ?? "account";
-      const meta = sessionMeta(session);
-      const id = `sync:${profile.id}:${username}`;
-      setSyncingAccountIds((prev) => {
-        const next = new Set(prev);
-        next.add(id);
-        return next;
-      });
-      notifications.show({
-        id,
-        title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-        message: `${profile.name} - ${username} (${meta.platform})`,
-        loading: true,
-        autoClose: false,
-      });
-      syncNotificationIdsRef.current.add(id);
+      void (async () => {
+        const username = session.lichess?.username ?? session.chessCom?.username ?? "account";
+        const meta = sessionMeta(session);
+        const id = `sync:${profile.id}:${username}`;
 
-      const clearRetryTimer = () => {
-        const existing = backgroundSyncRetryTimersRef.current.get(id) ?? null;
-        if (existing != null) {
-          window.clearTimeout(existing);
-          backgroundSyncRetryTimersRef.current.delete(id);
-        }
-      };
+        const showToasts =
+          meta.platform === "lichess" || meta.platform === "chesscom"
+            ? !(await shouldSuppressAccountSyncToasts({
+                profileId: profile.id,
+                platform: meta.platform,
+                username,
+              }))
+            : true;
 
-      const cleanup = () => {
-        clearRetryTimer();
-        syncNotificationIdsRef.current.delete(id);
-        backgroundSyncRetryAttemptsRef.current.delete(id);
         setSyncingAccountIds((prev) => {
           const next = new Set(prev);
-          next.delete(id);
+          next.add(id);
           return next;
         });
-      };
 
-      const runOnce = () => {
-        void syncSessionGamesToProfileDb({
-          profile,
-          session,
-          onBatchUpdate: (u) => {
-            if (u.cooldownSeconds != null) {
-              notifications.update({
-                id,
-                title: t("common.warning", { defaultValue: "Warning" }),
-                message: t("accounts.sync.cooldown", {
-                  defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
-                  seconds: u.cooldownSeconds,
-                }),
-                color: "yellow",
-                loading: true,
-                autoClose: false,
-              });
-              return;
-            }
-            notifications.update({
-              id,
-              message: `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
-                defaultValue: "Batch {{current}} of {{total}}",
-                current: u.currentBatch,
-                total: u.totalBatches,
-              })}`,
-              loading: true,
-              autoClose: false,
-            });
-          },
-        })
-          .then((res) => {
-            if (res.updatedSession) {
-              upsertSession(res.updatedSession);
-            }
-            notifications.update({
-              id,
-              title: t("common.success", { defaultValue: "Success" }),
-              message: `${profile.name} - ${username} (${meta.platform})`,
-              color: "green",
-              loading: false,
-              autoClose: 2500,
-            });
-            cleanup();
-          })
-          .catch((e) => {
-            if (isFailedToFetchError(e)) {
-              const prevAttempts = backgroundSyncRetryAttemptsRef.current.get(id) ?? 0;
-              const nextAttempts = prevAttempts + 1;
-              backgroundSyncRetryAttemptsRef.current.set(id, nextAttempts);
-              const delay = Math.min(60_000, 3_000 * 2 ** Math.min(6, nextAttempts - 1));
-
-              notifications.update({
-                id,
-                title: t("common.warning", { defaultValue: "Warning" }),
-                message: t("accounts.sync.networkRetry", { defaultValue: "Network issue detected. Retrying soon..." }),
-                color: "yellow",
-                loading: true,
-                autoClose: false,
-              });
-
-              clearRetryTimer();
-              const timer = window.setTimeout(runOnce, delay);
-              backgroundSyncRetryTimersRef.current.set(id, timer);
-              return;
-            }
-
-            notifications.update({
-              id,
-              title: t("common.error", { defaultValue: "Error" }),
-              message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${truncateMiddle(formatSyncError(e), 600)}`,
-              color: "red",
-              loading: false,
-              autoClose: 4000,
-            });
-            cleanup();
+        if (showToasts) {
+          notifications.show({
+            id,
+            title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
+            message: `${profile.name} - ${username} (${meta.platform})`,
+            loading: true,
+            autoClose: false,
           });
-      };
+          syncNotificationIdsRef.current.add(id);
+        }
 
-      runOnce();
+        const clearRetryTimer = () => {
+          const existing = backgroundSyncRetryTimersRef.current.get(id) ?? null;
+          if (existing != null) {
+            window.clearTimeout(existing);
+            backgroundSyncRetryTimersRef.current.delete(id);
+          }
+        };
+
+        const cleanup = () => {
+          clearRetryTimer();
+          if (showToasts) {
+            syncNotificationIdsRef.current.delete(id);
+          }
+          backgroundSyncRetryAttemptsRef.current.delete(id);
+          setSyncingAccountIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        };
+
+        const runOnce = () => {
+          void syncSessionGamesToProfileDb({
+            profile,
+            session,
+            onBatchUpdate: showToasts
+              ? (u) => {
+                  if (u.cooldownSeconds != null) {
+                    notifications.update({
+                      id,
+                      title: t("common.warning", { defaultValue: "Warning" }),
+                      message: t("accounts.sync.cooldown", {
+                        defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
+                        seconds: u.cooldownSeconds,
+                      }),
+                      color: "yellow",
+                      loading: true,
+                      autoClose: false,
+                    });
+                    return;
+                  }
+                  // Show optimization message or batch progress
+                  const message =
+                    u.totalBatches > 0
+                      ? `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
+                          defaultValue: "Batch {{current}} of {{total}}",
+                          current: u.currentBatch,
+                          total: u.totalBatches,
+                        })}`
+                      : u.batchLabel || `${profile.name} - ${username} (${u.platform})`;
+                  notifications.update({
+                    id,
+                    message,
+                    loading: u.batchLabel?.toLowerCase().includes("optimiz") ? true : u.totalBatches > 0,
+                    autoClose: u.batchLabel?.toLowerCase().includes("complete") ? 3000 : false,
+                  });
+                }
+              : undefined,
+          })
+            .then((res) => {
+              if (res.updatedSession) {
+                upsertSession(res.updatedSession);
+              }
+              // Reload Databases tab only if new games were imported
+              if ((res.importedGames ?? 0) > 0) {
+                void loadDatabases();
+              }
+              if (showToasts) {
+                notifications.update({
+                  id,
+                  title: t("common.success", { defaultValue: "Success" }),
+                  message: `${profile.name} - ${username} (${meta.platform})`,
+                  color: "green",
+                  loading: false,
+                  autoClose: 2500,
+                });
+              }
+              cleanup();
+            })
+            .catch((e) => {
+              if (isFailedToFetchError(e)) {
+                const prevAttempts = backgroundSyncRetryAttemptsRef.current.get(id) ?? 0;
+                const nextAttempts = prevAttempts + 1;
+                backgroundSyncRetryAttemptsRef.current.set(id, nextAttempts);
+                const delay = Math.min(60_000, 3_000 * 2 ** Math.min(6, nextAttempts - 1));
+
+                if (showToasts) {
+                  notifications.update({
+                    id,
+                    title: t("common.warning", { defaultValue: "Warning" }),
+                    message: t("accounts.sync.networkRetry", {
+                      defaultValue: "Network issue detected. Retrying soon...",
+                    }),
+                    color: "yellow",
+                    loading: true,
+                    autoClose: false,
+                  });
+                }
+
+                clearRetryTimer();
+                const timer = window.setTimeout(runOnce, delay);
+                backgroundSyncRetryTimersRef.current.set(id, timer);
+                return;
+              }
+
+              if (showToasts) {
+                notifications.update({
+                  id,
+                  title: t("common.error", { defaultValue: "Error" }),
+                  message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${truncateMiddle(formatSyncError(e), 600)}`,
+                  color: "red",
+                  loading: false,
+                  autoClose: 4000,
+                });
+              }
+              cleanup();
+            });
+        };
+
+        runOnce();
+      })();
     },
-    [t, upsertSession],
+    [t, upsertSession, loadDatabases],
   );
 
   useEffect(() => {

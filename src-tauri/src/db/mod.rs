@@ -88,6 +88,7 @@ pub use self::search::{
 };
 
 pub(crate) const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
+pub(crate) const ADDITIONAL_INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_additional_indexes.sql");
 const DELETE_INDEXES_SQL: &str =
     include_str!("../../../database/queries/indexes/delete_indexes.sql");
 pub(crate) const DROP_INDEXES_FOR_BULK_SQL: &str =

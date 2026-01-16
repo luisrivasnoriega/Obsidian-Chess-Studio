@@ -900,7 +900,7 @@ async getAccountImportStats(profileId: string, platform: string, username: strin
     else return { status: "error", error: e  as any };
 }
 },
-async syncAccountGamesToProfileDb(profileId: string, profileTitle: string, platform: string, username: string, token: string | null) : Promise<Result<null, string>> {
+async syncAccountGamesToProfileDb(profileId: string, profileTitle: string, platform: string, username: string, token: string | null) : Promise<Result<AccountSyncResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sync_account_games_to_profile_db", { profileId, profileTitle, platform, username, token }) };
 } catch (e) {
@@ -999,6 +999,12 @@ reportProgress: "report-progress"
 
 export type AccountImportStats = { last_game_utc_ms?: bigint | null; count: bigint }
 export type AccountSyncProgress = { profile_id: string; account_key: string; platform: string; total_batches: bigint; completed_batches: bigint; current_batch: bigint; batch_label: string; cooldown_seconds?: bigint | null }
+export type AccountSyncResult = { 
+/**
+ * Number of new games imported during this sync session.
+ * Computed as (post_count - pre_count) for the account.
+ */
+imported_games: bigint }
 export type AccountSyncState = { account_key: string; platform: string; cursor_until_ms: bigint | null; since_ms?: bigint | null; mode?: string; total_batches: bigint; completed_batches: bigint; running: boolean; updated_at_ms: bigint }
 /**
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).

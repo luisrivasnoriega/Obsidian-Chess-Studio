@@ -7,6 +7,7 @@ use std::{
 };
 
 use chrono::{DateTime, TimeZone, Utc};
+use diesel::connection::SimpleConnection;
 use diesel::sql_query;
 use diesel::RunQueryDsl;
 use once_cell::sync::Lazy;
@@ -50,7 +51,7 @@ use crate::{
 use super::{
     convert_pgn_impl, delete_duplicated_games, get_account_sync_state,
     list_account_sync_completed_batches, mark_account_sync_batch_complete, upsert_account_sync_state,
-    ConnectionOptions, JournalMode,
+    ConnectionOptions, JournalMode, ADDITIONAL_INDEXES_SQL, PRAGMA_PERFORMANCE,
 };
 
 static GLOBAL_PROFILE_SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -84,6 +85,13 @@ pub struct AccountImportStats {
     #[specta(optional)]
     pub last_game_utc_ms: Option<i64>,
     pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AccountSyncResult {
+    /// Number of new games imported during this sync session.
+    /// Computed as (post_count - pre_count) for the account.
+    pub imported_games: i64,
 }
 
 fn account_key(platform: &str, username: &str) -> String {
@@ -986,6 +994,117 @@ fn ensure_db_dir(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Optimize profile database after sync completes:
+/// - Create additional indexes (TimeControl, ECO, opponent level, etc.)
+/// - Run ANALYZE to update query planner statistics
+/// - Apply performance pragmas
+/// Emits progress events for UI feedback (unless suppress_events is true).
+async fn optimize_profile_db_after_sync(
+    db_path: PathBuf,
+    profile_id: String,
+    account_key: String,
+    platform: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    suppress_events: bool,
+) -> Result<()> {
+    // Emit optimization start event
+    if !suppress_events {
+        let _ = AccountSyncProgress {
+            profile_id: profile_id.clone(),
+            account_key: account_key.clone(),
+            platform: platform.clone(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: "Optimizing database...".to_string(),
+            cooldown_seconds: None,
+        }
+        .emit(&app);
+    }
+
+    let db = &mut super::get_db_or_create(
+        &state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions {
+            enable_foreign_keys: false,
+            busy_timeout: None,
+            journal_mode: JournalMode::Delete,
+        },
+    )?;
+
+    // Step 1: Create additional indexes for TimeControl, ECO, opponent level, etc.
+    if let Err(e) = db.batch_execute(ADDITIONAL_INDEXES_SQL) {
+        // Log but don't fail - indexes are best-effort
+        if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: format!("Database optimization warning: {}", e),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+    }
+
+    // Step 2: Update query planner statistics (critical for optimal query performance)
+    if let Err(e) = db.batch_execute("ANALYZE Games; ANALYZE Players; ANALYZE Events; ANALYZE Sites;") {
+        // Log but don't fail
+        if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: format!("ANALYZE warning: {}", e),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+    }
+
+    // Apply performance pragmas (cache, mmap, PRAGMA optimize, etc.)
+    if let Err(e) = db.batch_execute(PRAGMA_PERFORMANCE) {
+        // Log but don't fail
+        if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: format!("Performance pragmas warning: {}", e),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+    }
+
+    // Emit completion event
+    if !suppress_events {
+        let _ = AccountSyncProgress {
+            profile_id: profile_id.clone(),
+            account_key: account_key.clone(),
+            platform: platform.clone(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: "Database optimization complete".to_string(),
+            cooldown_seconds: None,
+        }
+        .emit(&app);
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_account_games_to_profile_db(
@@ -996,7 +1115,7 @@ pub async fn sync_account_games_to_profile_db(
     token: Option<String>,
     state: State<'_, AppState>,
     app: AppHandle,
-) -> Result<()> {
+) -> Result<AccountSyncResult> {
     // #region agent log
     agent_log(
         "H7",
@@ -1025,6 +1144,20 @@ pub async fn sync_account_games_to_profile_db(
     .await
     .ok()
     .flatten();
+    // Determine if we should suppress progress events (silent mode) if last update was recent
+    // Sync will still execute, but no toasts/notifications will be shown
+    let suppress_events = if let Some(state) = existing_state0.as_ref() {
+        if !state.running && state.completed_batches > 0 {
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let hours_since_update = (now_ms - state.updated_at_ms) / (1000 * 60 * 60);
+            hours_since_update < 24
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    
     let _ = upsert_account_sync_state(
         db_path.clone(),
         if let Some(s) = existing_state0.clone() {
@@ -1070,7 +1203,7 @@ pub async fn sync_account_games_to_profile_db(
             .and_then(|s| s.cursor_until_ms)
             .is_some();
 
-        let stats = get_account_import_stats(
+        let stats_before = get_account_import_stats(
             profile_id.clone(),
             platform.clone(),
             username.clone(),
@@ -1079,7 +1212,8 @@ pub async fn sync_account_games_to_profile_db(
         )
         .await?;
 
-        let last_game_ms = stats.last_game_utc_ms;
+        let before_count = stats_before.count;
+        let last_game_ms = stats_before.last_game_utc_ms;
 
         let mode = if has_resume_cursor {
             existing_state
@@ -1087,7 +1221,7 @@ pub async fn sync_account_games_to_profile_db(
                 .map(|s| s.mode.as_str())
                 .unwrap_or("incremental")
                 .to_string()
-        } else if stats.count == 0 || last_game_ms.is_none() {
+        } else if stats_before.count == 0 || last_game_ms.is_none() {
             "backfill".to_string()
         } else {
             "incremental".to_string()
@@ -1134,7 +1268,7 @@ pub async fn sync_account_games_to_profile_db(
                             )
                             .await
                             .ok();
-                            return Ok(());
+                            return Ok(AccountSyncResult { imported_games: 0 });
                         }
                         Ok(true) => break,
                         Err(e) => {
@@ -1145,17 +1279,19 @@ pub async fn sync_account_games_to_profile_db(
                                     break;
                                 }
                                 let wait: i64 = rest.parse().unwrap_or(30);
-                                let _ = AccountSyncProgress {
-                                    profile_id: profile_id.clone(),
-                                    account_key: account_key.clone(),
-                                    platform: platform.clone(),
-                                    total_batches: 1,
-                                    completed_batches: 0,
-                                    current_batch: 1,
-                                    batch_label: "Lichess sync (cooldown)".to_string(),
-                                    cooldown_seconds: Some(wait),
+                                if !suppress_events {
+                                    let _ = AccountSyncProgress {
+                                        profile_id: profile_id.clone(),
+                                        account_key: account_key.clone(),
+                                        platform: platform.clone(),
+                                        total_batches: 1,
+                                        completed_batches: 0,
+                                        current_batch: 1,
+                                        batch_label: "Lichess sync (cooldown)".to_string(),
+                                        cooldown_seconds: Some(wait),
+                                    }
+                                    .emit(&app);
                                 }
-                                .emit(&app);
                                 tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                                 continue;
                             }
@@ -1168,17 +1304,19 @@ pub async fn sync_account_games_to_profile_db(
                                 break;
                             }
                             let wait = retry_delay_seconds(attempts_net);
-                            let _ = AccountSyncProgress {
-                                profile_id: profile_id.clone(),
-                                account_key: account_key.clone(),
-                                platform: platform.clone(),
-                                total_batches: 1,
-                                completed_batches: 0,
-                                current_batch: 1,
-                                batch_label: "Lichess sync (network retry)".to_string(),
-                                cooldown_seconds: Some(wait),
+                            if !suppress_events {
+                                let _ = AccountSyncProgress {
+                                    profile_id: profile_id.clone(),
+                                    account_key: account_key.clone(),
+                                    platform: platform.clone(),
+                                    total_batches: 1,
+                                    completed_batches: 0,
+                                    current_batch: 1,
+                                    batch_label: "Lichess sync (network retry)".to_string(),
+                                    cooldown_seconds: Some(wait),
+                                }
+                                .emit(&app);
                             }
-                            .emit(&app);
                             tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                         }
                     }
@@ -1261,17 +1399,19 @@ pub async fn sync_account_games_to_profile_db(
                 planned_total_batches = current_batch;
             }
 
-            let _ = AccountSyncProgress {
-                profile_id: profile_id.clone(),
-                account_key: account_key.clone(),
-                platform: platform.clone(),
-                total_batches: planned_total_batches,
-                completed_batches,
-                current_batch,
-                batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
-                cooldown_seconds: None,
+            if !suppress_events {
+                let _ = AccountSyncProgress {
+                    profile_id: profile_id.clone(),
+                    account_key: account_key.clone(),
+                    platform: platform.clone(),
+                    total_batches: planned_total_batches,
+                    completed_batches,
+                    current_batch,
+                    batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
+                    cooldown_seconds: None,
+                }
+                .emit(&app);
             }
-            .emit(&app);
 
             // PGN batch download returns times and count via tags while streaming.
             let mut attempts_429: u32 = 0;
@@ -1300,17 +1440,19 @@ pub async fn sync_account_games_to_profile_db(
                                 break (None, None, 0);
                             }
                             let wait: i64 = rest.parse().unwrap_or(30);
-                            let _ = AccountSyncProgress {
-                                profile_id: profile_id.clone(),
-                                account_key: account_key.clone(),
-                                platform: platform.clone(),
-                                total_batches: planned_total_batches,
-                                completed_batches,
-                                current_batch,
-                                batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
-                                cooldown_seconds: Some(wait),
+                            if !suppress_events {
+                                let _ = AccountSyncProgress {
+                                    profile_id: profile_id.clone(),
+                                    account_key: account_key.clone(),
+                                    platform: platform.clone(),
+                                    total_batches: planned_total_batches,
+                                    completed_batches,
+                                    current_batch,
+                                    batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
+                                    cooldown_seconds: Some(wait),
+                                }
+                                .emit(&app);
                             }
-                            .emit(&app);
                             tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                             continue;
                         }
@@ -1322,17 +1464,19 @@ pub async fn sync_account_games_to_profile_db(
                                 break (None, None, 0);
                             }
                             let wait = retry_delay_seconds(attempts_net);
-                            let _ = AccountSyncProgress {
-                                profile_id: profile_id.clone(),
-                                account_key: account_key.clone(),
-                                platform: platform.clone(),
-                                total_batches: planned_total_batches,
-                                completed_batches,
-                                current_batch,
-                                batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
-                                cooldown_seconds: Some(wait),
+                            if !suppress_events {
+                                let _ = AccountSyncProgress {
+                                    profile_id: profile_id.clone(),
+                                    account_key: account_key.clone(),
+                                    platform: platform.clone(),
+                                    total_batches: planned_total_batches,
+                                    completed_batches,
+                                    current_batch,
+                                    batch_label: format!("Lichess {current_batch}/{planned_total_batches}"),
+                                    cooldown_seconds: Some(wait),
+                                }
+                                .emit(&app);
                             }
-                            .emit(&app);
                             tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                             continue;
                         }
@@ -1417,6 +1561,21 @@ pub async fn sync_account_games_to_profile_db(
         let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
 
         let is_complete = sync_error.is_none();
+        
+        // Optimize database after sync completes (indexes, ANALYZE, VACUUM)
+        if is_complete {
+            let _ = optimize_profile_db_after_sync(
+                db_path.clone(),
+                profile_id.clone(),
+                account_key.clone(),
+                platform.clone(),
+                app.clone(),
+                state.clone(),
+                suppress_events,
+            )
+            .await;
+        }
+
         upsert_account_sync_state(
             db_path.clone(),
             super::AccountSyncState {
@@ -1439,10 +1598,34 @@ pub async fn sync_account_games_to_profile_db(
             return Err(Error::PackageManager(err));
         }
 
-        return Ok(());
+        let stats_after = get_account_import_stats(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            state.clone(),
+            app.clone(),
+        )
+        .await
+        .unwrap_or(AccountImportStats {
+            last_game_utc_ms: None,
+            count: before_count,
+        });
+        let imported_games = (stats_after.count - before_count).max(0);
+
+        return Ok(AccountSyncResult { imported_games });
     }
 
     if platform == "chesscom" {
+        let stats_before = get_account_import_stats(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            state.clone(),
+            app.clone(),
+        )
+        .await?;
+        let before_count = stats_before.count;
+
         // Archives list with robust retry, so we don't fail early on transient errors.
         let mut archives_attempt_429 = 0u32;
         let mut archives_attempt_net = 0u32;
@@ -1460,17 +1643,19 @@ pub async fn sync_account_games_to_profile_db(
                             ));
                         }
                         let wait: i64 = rest.parse().unwrap_or(60);
-                        let _ = AccountSyncProgress {
-                            profile_id: profile_id.clone(),
-                            account_key: account_key.clone(),
-                            platform: platform.clone(),
-                            total_batches: 1,
-                            completed_batches: 0,
-                            current_batch: 1,
-                            batch_label: "Chess.com archives (cooldown)".to_string(),
-                            cooldown_seconds: Some(wait),
+                        if !suppress_events {
+                            let _ = AccountSyncProgress {
+                                profile_id: profile_id.clone(),
+                                account_key: account_key.clone(),
+                                platform: platform.clone(),
+                                total_batches: 1,
+                                completed_batches: 0,
+                                current_batch: 1,
+                                batch_label: "Chess.com archives (cooldown)".to_string(),
+                                cooldown_seconds: Some(wait),
+                            }
+                            .emit(&app);
                         }
-                        .emit(&app);
                         tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                         continue;
                     }
@@ -1481,17 +1666,19 @@ pub async fn sync_account_games_to_profile_db(
                             return Err(e);
                         }
                         let wait = retry_delay_seconds(archives_attempt_net);
-                        let _ = AccountSyncProgress {
-                            profile_id: profile_id.clone(),
-                            account_key: account_key.clone(),
-                            platform: platform.clone(),
-                            total_batches: 1,
-                            completed_batches: 0,
-                            current_batch: 1,
-                            batch_label: "Chess.com archives (network retry)".to_string(),
-                            cooldown_seconds: Some(wait),
+                        if !suppress_events {
+                            let _ = AccountSyncProgress {
+                                profile_id: profile_id.clone(),
+                                account_key: account_key.clone(),
+                                platform: platform.clone(),
+                                total_batches: 1,
+                                completed_batches: 0,
+                                current_batch: 1,
+                                batch_label: "Chess.com archives (network retry)".to_string(),
+                                cooldown_seconds: Some(wait),
+                            }
+                            .emit(&app);
                         }
-                        .emit(&app);
                         tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                         continue;
                     }
@@ -1557,17 +1744,19 @@ pub async fn sync_account_games_to_profile_db(
         for archive_url in archives_to_process {
             let current_batch = completed_batches + 1;
 
-            let _ = AccountSyncProgress {
-                profile_id: profile_id.clone(),
-                account_key: account_key.clone(),
-                platform: platform.clone(),
-                total_batches,
-                completed_batches,
-                current_batch,
-                batch_label: format!("Chess.com {current_batch}/{total_batches}"),
-                cooldown_seconds: None,
+            if !suppress_events {
+                let _ = AccountSyncProgress {
+                    profile_id: profile_id.clone(),
+                    account_key: account_key.clone(),
+                    platform: platform.clone(),
+                    total_batches,
+                    completed_batches,
+                    current_batch,
+                    batch_label: format!("Chess.com {current_batch}/{total_batches}"),
+                    cooldown_seconds: None,
+                }
+                .emit(&app);
             }
-            .emit(&app);
 
             // Robust retry loop: 429 + network/5xx
             let mut attempts_429: u32 = 0;
@@ -1588,17 +1777,19 @@ pub async fn sync_account_games_to_profile_db(
                                 break;
                             }
                             let wait: i64 = rest.parse().unwrap_or(60);
-                            let _ = AccountSyncProgress {
-                                profile_id: profile_id.clone(),
-                                account_key: account_key.clone(),
-                                platform: platform.clone(),
-                                total_batches,
-                                completed_batches,
-                                current_batch,
-                                batch_label: format!("Chess.com {current_batch}/{total_batches}"),
-                                cooldown_seconds: Some(wait),
+                            if !suppress_events {
+                                let _ = AccountSyncProgress {
+                                    profile_id: profile_id.clone(),
+                                    account_key: account_key.clone(),
+                                    platform: platform.clone(),
+                                    total_batches,
+                                    completed_batches,
+                                    current_batch,
+                                    batch_label: format!("Chess.com {current_batch}/{total_batches}"),
+                                    cooldown_seconds: Some(wait),
+                                }
+                                .emit(&app);
                             }
-                            .emit(&app);
                             tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                             continue;
                         }
@@ -1610,17 +1801,19 @@ pub async fn sync_account_games_to_profile_db(
                                 break;
                             }
                             let wait = retry_delay_seconds(attempts_net);
-                            let _ = AccountSyncProgress {
-                                profile_id: profile_id.clone(),
-                                account_key: account_key.clone(),
-                                platform: platform.clone(),
-                                total_batches,
-                                completed_batches,
-                                current_batch,
-                                batch_label: format!("Chess.com {current_batch}/{total_batches}"),
-                                cooldown_seconds: Some(wait),
+                            if !suppress_events {
+                                let _ = AccountSyncProgress {
+                                    profile_id: profile_id.clone(),
+                                    account_key: account_key.clone(),
+                                    platform: platform.clone(),
+                                    total_batches,
+                                    completed_batches,
+                                    current_batch,
+                                    batch_label: format!("Chess.com {current_batch}/{total_batches}"),
+                                    cooldown_seconds: Some(wait),
+                                }
+                                .emit(&app);
                             }
-                            .emit(&app);
                             tokio::time::sleep(Duration::from_secs(wait as u64)).await;
                             continue;
                         }
@@ -1689,6 +1882,20 @@ pub async fn sync_account_games_to_profile_db(
         // Best-effort dedupe once at the end
         let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
 
+        // Optimize database after sync completes (indexes, ANALYZE, VACUUM)
+        if completed_batches >= total_batches {
+            let _ = optimize_profile_db_after_sync(
+                db_path.clone(),
+                profile_id.clone(),
+                account_key.clone(),
+                platform.clone(),
+                app.clone(),
+                state.clone(),
+                suppress_events,
+            )
+            .await;
+        }
+
         upsert_account_sync_state(
             db_path.clone(),
             super::AccountSyncState {
@@ -1715,7 +1922,21 @@ pub async fn sync_account_games_to_profile_db(
             return Err(Error::PackageManager(err));
         }
 
-        return Ok(());
+        let stats_after = get_account_import_stats(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            state.clone(),
+            app.clone(),
+        )
+        .await
+        .unwrap_or(AccountImportStats {
+            last_game_utc_ms: None,
+            count: before_count,
+        });
+        let imported_games = (stats_after.count - before_count).max(0);
+
+        return Ok(AccountSyncResult { imported_games });
     }
 
     Err(Error::PackageManager(format!(

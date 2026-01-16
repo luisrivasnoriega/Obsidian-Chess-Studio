@@ -253,6 +253,7 @@ impl<'a> BulkInsertContext<'a> {
         // Recreate indexes (best-effort: if this fails, DB still has data; user can recreate later).
         if self.indexes_dropped {
             let _ = self.conn.batch_execute(super::INDEXES_SQL);
+            let _ = self.conn.batch_execute(super::ADDITIONAL_INDEXES_SQL);
         }
 
         if self.pragmas_applied {

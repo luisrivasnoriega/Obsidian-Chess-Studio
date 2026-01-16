@@ -23,6 +23,10 @@ type BackendAccountSyncProgress = {
   cooldown_seconds?: number | null;
 };
 
+type BackendAccountSyncResult = {
+  imported_games: number;
+};
+
 function parseAccountKey(accountKey: string): { platform: AccountSyncPlatform; username: string } | null {
   const match = accountKey.match(/^(lichess|chesscom):(.*)$/i);
   if (!match) return null;
@@ -78,6 +82,7 @@ export async function syncSessionGamesToProfileDb(input: {
     const token = input.session.lichess.accessToken;
     const accountKey = getAccountKey("lichess", username);
     let unlisten: (() => void) | null = null;
+    let result: BackendAccountSyncResult | null = null;
     try {
       unlisten = await listen<BackendAccountSyncProgress>("account-sync-progress", ({ payload }) => {
         if (payload.profile_id !== profileId) return;
@@ -92,7 +97,7 @@ export async function syncSessionGamesToProfileDb(input: {
         });
       });
 
-      await invoke("sync_account_games_to_profile_db", {
+      result = await invoke<BackendAccountSyncResult>("sync_account_games_to_profile_db", {
         profileId,
         profileTitle,
         platform: "lichess",
@@ -111,13 +116,14 @@ export async function syncSessionGamesToProfileDb(input: {
       lichess: { ...input.session.lichess, account: updatedAccount ?? input.session.lichess.account },
     };
 
-    return { updatedSession };
+    return { updatedSession, importedGames: result?.imported_games ?? 0 };
   }
 
   if (input.session.chessCom) {
     const username = input.session.chessCom.username;
     const accountKey = getAccountKey("chesscom", username);
     let unlisten: (() => void) | null = null;
+    let result: BackendAccountSyncResult | null = null;
     try {
       unlisten = await listen<BackendAccountSyncProgress>("account-sync-progress", ({ payload }) => {
         if (payload.profile_id !== profileId) return;
@@ -132,7 +138,7 @@ export async function syncSessionGamesToProfileDb(input: {
         });
       });
 
-      await invoke("sync_account_games_to_profile_db", {
+      result = await invoke<BackendAccountSyncResult>("sync_account_games_to_profile_db", {
         profileId,
         profileTitle,
         platform: "chesscom",
@@ -151,8 +157,8 @@ export async function syncSessionGamesToProfileDb(input: {
       chessCom: { ...input.session.chessCom, stats: updatedStats ?? input.session.chessCom.stats },
     };
 
-    return { updatedSession };
+    return { updatedSession, importedGames: result?.imported_games ?? 0 };
   }
 
-  return { updatedSession: input.session };
+  return { updatedSession: input.session, importedGames: 0 };
 }
