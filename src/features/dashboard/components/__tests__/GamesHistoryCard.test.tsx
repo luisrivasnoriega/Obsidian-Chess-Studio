@@ -37,6 +37,8 @@ describe("GamesHistoryCard", () => {
   test("renders without crashing", () => {
     render(
       <GamesHistoryCard
+        profileId={"p1"}
+        selectedOpponentId={null}
         activeTab="local"
         onTabChange={mockOnTabChange}
         localGames={[]}
@@ -67,6 +69,8 @@ describe("GamesHistoryCard", () => {
     const user = userEvent.setup();
     render(
       <GamesHistoryCard
+        profileId={"p1"}
+        selectedOpponentId={null}
         activeTab="local"
         onTabChange={mockOnTabChange}
         localGames={[]}

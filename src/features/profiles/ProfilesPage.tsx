@@ -28,9 +28,19 @@ import { mkdir, remove } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import { playerStatsCommands } from "@/bindings/playerStats";
 import GenericHeader from "@/components/GenericHeader";
 import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
+import {
+  buildSessionsSignature,
+  computePersonalInfoSignature,
+  fetchMergedPlayerInfo,
+  fetchPersonalInfoForProfile,
+  getMergedPlayerInfoQueryKey,
+  getPersonalInfoQueryKey,
+} from "@/features/profiles/components/PersonalCardPanels/Databases";
 import { DatabaseDetails } from "@/features/databases/DatabasesPage";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessionsAtom } from "@/state/atoms";
@@ -46,6 +56,8 @@ import { genID } from "@/utils/tabs";
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountSyncState } from "@/utils/accountSyncState";
 import { parseDate } from "@/utils/format";
+import { unwrap } from "@/utils/unwrap";
+import { createSiteStatsSignature } from "@/utils/playerStats";
 import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
@@ -106,6 +118,7 @@ function truncateMiddle(text: string, maxLen: number) {
 export default function ProfilesPage() {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
+  const queryClient = useQueryClient();
   const [profileQuery, setProfileQuery] = useState("");
   const [detailsTab, setDetailsTab] = useState<
     "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
@@ -171,6 +184,67 @@ export default function ProfilesPage() {
     if (!q) return profiles;
     return profiles.filter((p) => p.name.toLowerCase().includes(q));
   }, [profileQuery, profiles]);
+
+  const invalidateProfilePlayerStats = useCallback((profileId: string) => {
+    // Broad invalidation is OK here: these queries are only used for the player
+    // sidebar/overview panels and we only do it when we *actually* import new games.
+    queryClient.invalidateQueries({ queryKey: ["personalInfo", profileId] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["mergedPlayerInfo"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerOpeningsWhite"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerOpeningsBlack"] }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["playerRatingTimeline"] }).catch(() => {});
+  }, [queryClient]);
+
+  // Prefetch the active profile's sidebar model as soon as Profiles loads.
+  // This makes switching to Overview/Ratings/Openings instant (no "thinking").
+  const sessionsSignature = useMemo(() => buildSessionsSignature(sessions), [sessions]);
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!activeProfileId) return;
+      if (sessions.length === 0) return;
+
+      const personalInfoKey = getPersonalInfoQueryKey(activeProfileId, sessionsSignature);
+      const personalInfo = await queryClient.fetchQuery({
+        queryKey: personalInfoKey,
+        queryFn: () => fetchPersonalInfoForProfile({ effectiveProfileId: activeProfileId, sessions }),
+        staleTime: Infinity,
+        gcTime: Infinity,
+      });
+      if (cancelled) return;
+
+      const sig = computePersonalInfoSignature(personalInfo);
+      if (!sig) return;
+
+      const mergedKey = getMergedPlayerInfoQueryKey(sig);
+      const mergedInfo = await queryClient.fetchQuery({
+        queryKey: mergedKey,
+        queryFn: () => fetchMergedPlayerInfo(personalInfo),
+        staleTime: Infinity,
+        gcTime: Infinity,
+      });
+      if (cancelled) return;
+
+      const ssd = mergedInfo?.site_stats_data ?? [];
+      const statsSig = createSiteStatsSignature(ssd);
+      if (statsSig.games <= 0) return;
+
+      await queryClient.prefetchQuery({
+        queryKey: ["playerSidebarModel", statsSig.key],
+        queryFn: async () => unwrap(await playerStatsCommands.calculatePlayerSidebarModel(ssd)),
+        staleTime: Infinity,
+        gcTime: Infinity,
+      });
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId, sessions, sessionsSignature, queryClient]);
 
   // Load last activity dates for all profiles
   useEffect(() => {
@@ -365,6 +439,7 @@ export default function ProfilesPage() {
 
           if ((res.importedGames ?? 0) > 0) {
             mutateDatabases();
+            invalidateProfilePlayerStats(profile.id);
           }
 
           if (showToasts) {
@@ -884,6 +959,7 @@ export default function ProfilesPage() {
               // Reload Databases tab only if new games were imported
               if ((res.importedGames ?? 0) > 0) {
                 void loadDatabases();
+                invalidateProfilePlayerStats(profile.id);
               }
               if (showToasts) {
                 notifications.update({

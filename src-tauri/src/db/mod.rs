@@ -80,7 +80,7 @@ pub use self::player_stats::{
     calculate_rating_timeline, compute_player_sidebar_model, extract_game_stats, fill_missing_months, filter_games,
     get_score_rate, merge_site_stats_data, merge_years, sort_openings,
     DateRange, EloBucket, EloDomain, GameStats, MonthData, OpeningStats, PlatformFilter,
-    PlayerSidebarEloSummary, PlayerSidebarModel, PlayerSidebarPlatformSummary, PlayerStatsFilters,
+    PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel, PlayerStatsFilters,
     PlayerStyleLabel, PlatformInfo, RatingDataPoint, RatingTimeline, TimeControlFilter,
 };
 pub use self::position_cache::{get_cached_position, is_position_cached, save_position_cache};

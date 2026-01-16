@@ -22,6 +22,26 @@ type StoredGameStatsRowBulk = { gameId: string; accuracy: number; acpl: number; 
 
 let migrationAttempted = false;
 
+function getActiveProfileIdFromStorage(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("activeProfileId");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `analysis.db3` is shared across profiles. If the caller does not explicitly provide a `profileId`
+ * (i.e. it's `undefined`), we default to the current active profile id (if available).
+ *
+ * Passing `null` explicitly means "no profile" (legacy / global scope).
+ */
+function resolveProfileId(profileId?: string | null): string | null {
+  if (profileId === undefined) return getActiveProfileIdFromStorage();
+  return profileId;
+}
+
 async function migrateLegacyJsonToSqlite(): Promise<void> {
   if (migrationAttempted) return;
   migrationAttempted = true;
@@ -88,9 +108,23 @@ async function migrateLegacyJsonToSqlite(): Promise<void> {
  * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
  * @param analyzedPgn - The analyzed PGN string
  */
-export async function saveAnalyzedGame(gameId: string, analyzedPgn: string): Promise<void> {
+export async function saveAnalyzedGame(
+  gameId: string,
+  analyzedPgn: string,
+  profileId?: string | null,
+): Promise<void> {
   await migrateLegacyJsonToSqlite();
-  await invoke("analysis_db_set_analyzed_game", { gameId, analyzedPgn });
+  const pid = resolveProfileId(profileId);
+  await invoke("analysis_db_set_analyzed_game", { gameId, analyzedPgn, profileId: pid ?? null });
+}
+
+// Profile-aware helpers (analysis.db3 is shared across profiles)
+export async function saveProfileAnalyzedGame(
+  profileId: string,
+  gameId: number | string,
+  analyzedPgn: string,
+): Promise<void> {
+  return saveAnalyzedGame(String(gameId), analyzedPgn, profileId);
 }
 
 /**
@@ -98,18 +132,25 @@ export async function saveAnalyzedGame(gameId: string, analyzedPgn: string): Pro
  * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
  * @returns The analyzed PGN string if found, null otherwise
  */
-export async function getAnalyzedGame(gameId: string): Promise<string | null> {
+export async function getAnalyzedGame(gameId: string, profileId?: string | null): Promise<string | null> {
   await migrateLegacyJsonToSqlite();
-  return (await invoke<string | null>("analysis_db_get_analyzed_game", { gameId })) ?? null;
+  const pid = resolveProfileId(profileId);
+  return (await invoke<string | null>("analysis_db_get_analyzed_game", { gameId, profileId: pid ?? null })) ?? null;
+}
+
+export async function getProfileAnalyzedGame(profileId: string, gameId: number | string): Promise<string | null> {
+  return getAnalyzedGame(String(gameId), profileId);
 }
 
 /**
  * Get all analyzed games
  * @returns Map of game IDs to analyzed PGNs
  */
-export async function getAllAnalyzedGames(): Promise<AnalyzedGamesMap> {
+export async function getAllAnalyzedGames(profileId?: string | null): Promise<AnalyzedGamesMap> {
   await migrateLegacyJsonToSqlite();
-  const rows = (await invoke<AnalyzedGameRow[]>("analysis_db_get_all_analyzed_games")) ?? [];
+  const pid = resolveProfileId(profileId);
+  const rows =
+    (await invoke<AnalyzedGameRow[]>("analysis_db_get_all_analyzed_games", { profileId: pid ?? null })) ?? [];
   return rows.reduce<AnalyzedGamesMap>((acc, row) => {
     if (row?.game_id && row?.analyzed_pgn) acc[row.game_id] = row.analyzed_pgn;
     return acc;
@@ -120,9 +161,10 @@ export async function getAllAnalyzedGames(): Promise<AnalyzedGamesMap> {
  * Remove an analyzed game
  * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
  */
-export async function removeAnalyzedGame(gameId: string): Promise<void> {
+export async function removeAnalyzedGame(gameId: string, profileId?: string | null): Promise<void> {
   await migrateLegacyJsonToSqlite();
-  await invoke("analysis_db_delete_entries", { gameIds: [gameId] });
+  const pid = resolveProfileId(profileId);
+  await invoke("analysis_db_delete_entries", { gameIds: [gameId], profileId: pid ?? null });
 }
 
 /**
@@ -130,9 +172,13 @@ export async function removeAnalyzedGame(gameId: string): Promise<void> {
  * @param username - Username of the account
  * @param type - Type of account ("lichess" or "chesscom")
  */
-export async function removeAnalyzedGamesForAccount(username: string, type: "lichess" | "chesscom"): Promise<void> {
+export async function removeAnalyzedGamesForAccount(
+  username: string,
+  type: "lichess" | "chesscom",
+  profileId?: string | null,
+): Promise<void> {
   await migrateLegacyJsonToSqlite();
-  const analyzedGames = await getAllAnalyzedGames();
+  const analyzedGames = await getAllAnalyzedGames(profileId);
 
   const idsToDelete: string[] = [];
   for (const [gameId, pgn] of Object.entries(analyzedGames)) {
@@ -167,7 +213,8 @@ export async function removeAnalyzedGamesForAccount(username: string, type: "lic
   }
 
   if (idsToDelete.length > 0) {
-    await invoke("analysis_db_delete_entries", { gameIds: idsToDelete });
+    const pid = resolveProfileId(profileId);
+    await invoke("analysis_db_delete_entries", { gameIds: idsToDelete, profileId: pid ?? null });
   }
 }
 
@@ -189,8 +236,13 @@ export async function clearAllAnalyzedGames(): Promise<void> {
  * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
  * @param stats - The game stats including estimatedElo
  */
-export async function saveGameStats(gameId: string, stats: GameStats): Promise<void> {
+export async function saveGameStats(
+  gameId: string,
+  stats: GameStats,
+  profileId?: string | null,
+): Promise<void> {
   await migrateLegacyJsonToSqlite();
+  const pid = resolveProfileId(profileId);
   await invoke("analysis_db_set_game_stats", {
     gameId,
     stats: {
@@ -198,7 +250,16 @@ export async function saveGameStats(gameId: string, stats: GameStats): Promise<v
       acpl: stats.acpl,
       estimatedElo: stats.estimatedElo ?? null,
     },
+    profileId: pid ?? null,
   });
+}
+
+export async function saveProfileGameStats(
+  profileId: string,
+  gameId: number | string,
+  stats: GameStats,
+): Promise<void> {
+  return saveGameStats(String(gameId), stats, profileId);
 }
 
 /**
@@ -206,9 +267,12 @@ export async function saveGameStats(gameId: string, stats: GameStats): Promise<v
  * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
  * @returns The game stats if found, null otherwise
  */
-export async function getGameStats(gameId: string): Promise<GameStats | null> {
+export async function getGameStats(gameId: string, profileId?: string | null): Promise<GameStats | null> {
   await migrateLegacyJsonToSqlite();
-  const stats = (await invoke<StoredGameStats | null>("analysis_db_get_game_stats", { gameId })) ?? null;
+  const pid = resolveProfileId(profileId);
+  const stats =
+    (await invoke<StoredGameStats | null>("analysis_db_get_game_stats", { gameId, profileId: pid ?? null })) ??
+    null;
   if (!stats) return null;
   return {
     accuracy: stats.accuracy,
@@ -217,10 +281,16 @@ export async function getGameStats(gameId: string): Promise<GameStats | null> {
   };
 }
 
-export async function getGameStatsBulk(gameIds: string[]): Promise<Map<string, GameStats>> {
+export async function getGameStatsBulk(
+  gameIds: string[],
+  profileId?: string | null,
+): Promise<Map<string, GameStats>> {
   await migrateLegacyJsonToSqlite();
   if (!gameIds.length) return new Map();
-  const rows = (await invoke<StoredGameStatsRowBulk[]>("analysis_db_get_game_stats_bulk", { gameIds })) ?? [];
+  const pid = resolveProfileId(profileId);
+  const rows =
+    (await invoke<StoredGameStatsRowBulk[]>("analysis_db_get_game_stats_bulk", { gameIds, profileId: pid ?? null })) ??
+    [];
   const out = new Map<string, GameStats>();
   for (const row of rows) {
     if (!row?.gameId) continue;
@@ -233,10 +303,16 @@ export async function getGameStatsBulk(gameIds: string[]): Promise<Map<string, G
   return out;
 }
 
-export async function getAnalyzedGamesBulk(gameIds: string[]): Promise<Map<string, string>> {
+export async function getAnalyzedGamesBulk(
+  gameIds: string[],
+  profileId?: string | null,
+): Promise<Map<string, string>> {
   await migrateLegacyJsonToSqlite();
   if (!gameIds.length) return new Map();
-  const rows = (await invoke<AnalyzedGameRow[]>("analysis_db_get_analyzed_games_bulk", { gameIds })) ?? [];
+  const pid = resolveProfileId(profileId);
+  const rows =
+    (await invoke<AnalyzedGameRow[]>("analysis_db_get_analyzed_games_bulk", { gameIds, profileId: pid ?? null })) ??
+    [];
   const out = new Map<string, string>();
   for (const row of rows) {
     if (!row?.game_id || !row?.analyzed_pgn) continue;

@@ -8,7 +8,7 @@ import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import type { EloBucket, EloDomain, GameStats, RatingTimeline } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
-import { createPlayerStatsFilters } from "@/utils/playerStats";
+import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
@@ -28,25 +28,20 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
   // IMPORTANT: Never put `info.site_stats_data` directly into a react-query key.
   // It's a large nested structure and hashing it is extremely expensive.
   // Create a stable signature that only changes when the actual data changes.
-  const statsSignature = useMemo(() => {
-    if (!info?.site_stats_data || info.site_stats_data.length === 0) {
-      return { sites: 0, games: 0, firstSite: "", lastSite: "" };
-    }
-    const sites = info.site_stats_data.length;
-    const games = info.site_stats_data.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
-    const firstSite = info.site_stats_data[0]?.site ?? "";
-    const lastSite = info.site_stats_data[info.site_stats_data.length - 1]?.site ?? "";
-    return { sites, games, firstSite, lastSite };
-  }, [info?.site_stats_data]);
+  const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
 
   const { data: sidebarModel } = useQuery({
-    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // Create filters for backend
@@ -63,10 +58,7 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
   } = useQuery<RatingTimeline>({
     queryKey: [
       "playerRatingTimeline",
-      statsSignature.sites,
-      statsSignature.games,
-      statsSignature.firstSite,
-      statsSignature.lastSite,
+      statsSig.key,
       filters.platform,
       filters.time_control,
       filters.opponent_elo_bucket,
@@ -76,18 +68,19 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
       return unwrap(await playerStatsCommands.calculatePlayerRatingTimeline(info.site_stats_data ?? [], filters));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // Get game stats summary from backend
   const { data: gameStats, isLoading: isLoadingGameStats, isFetching: isFetchingGameStats } = useQuery<GameStats>({
     queryKey: [
       "playerGameStats",
-      statsSignature.sites,
-      statsSignature.games,
-      statsSignature.firstSite,
-      statsSignature.lastSite,
+      statsSig.key,
       filters.platform,
       filters.time_control,
       filters.opponent_elo_bucket,
@@ -97,8 +90,12 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
       return unwrap(await playerStatsCommands.calculatePlayerGameStats(info.site_stats_data ?? [], filters));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const dates = ratingTimeline?.dates ?? [];
@@ -131,13 +128,21 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
 
   // Get ELO domain from backend
   const { data: eloDomain } = useQuery<EloDomain | null>({
-    queryKey: ["playerEloDomain", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite, filters.platform, filters.time_control, filters.opponent_elo_bucket, filters.date_range],
+    queryKey: [
+      "playerEloDomain",
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+    ],
     queryFn: async () => {
       if (!ratingTimeline) return null;
       return unwrap(await playerStatsCommands.calculatePlayerEloDomain(ratingTimeline));
     },
     enabled: !!ratingTimeline,
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
   });
 
@@ -145,13 +150,17 @@ function RatingsPanel({ playerName, info, profileId, isLoading }: { playerName: 
 
   // Get ELO buckets from backend
   const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
-    queryKey: ["playerEloBuckets", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerEloBuckets(info.site_stats_data ?? []));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const opponentEloOptions = useMemo(() => {

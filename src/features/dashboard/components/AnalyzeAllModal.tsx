@@ -47,6 +47,35 @@ export function AnalyzeAllModal({
   const cancelledRef = useRef(false);
   const stopAnalysisRef = useRef<(() => Promise<void>) | null>(null);
 
+  const counts = useMemo(() => {
+    const total = Math.max(0, Number.isFinite(gameCount) ? gameCount : 0);
+    const rawUnanalyzed =
+      unanalyzedGameCount == null ? total : Math.max(0, Number.isFinite(unanalyzedGameCount) ? unanalyzedGameCount : 0);
+    const unanalyzed = Math.min(total, rawUnanalyzed);
+    const analyzed = Math.max(0, total - unanalyzed);
+    return { total, unanalyzed, analyzed };
+  }, [gameCount, unanalyzedGameCount]);
+
+  useEffect(() => {
+    if (!opened) return;
+    // #region agent log (debug)
+    fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+        location: "src/features/dashboard/components/AnalyzeAllModal.tsx:opened",
+        message: "AnalyzeAllModal opened with counts",
+        data: { gameCount, unanalyzedGameCount, analyzeMode, counts },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
+
   const form = useForm<AnalyzeAllConfig>({
     initialValues: {
       speed: "t1000",
@@ -57,12 +86,12 @@ export function AnalyzeAllModal({
 
   // Calculate the actual game count based on selected mode - use useMemo to update when form values change
   const actualGameCount = useMemo(() => {
-    return form.values.analyzeMode === "unanalyzed" ? (unanalyzedGameCount ?? gameCount) : gameCount;
-  }, [form.values.analyzeMode, unanalyzedGameCount, gameCount]);
+    return form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
+  }, [form.values.analyzeMode, counts]);
 
   const handleSubmit = async () => {
     const selectedOption = ANALYSIS_OPTIONS[form.values.speed];
-    const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? (unanalyzedGameCount ?? gameCount) : gameCount;
+    const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
     setIsAnalyzing(true);
     setProgress({ current: 0, total: countToAnalyze });
     cancelledRef.current = false;
@@ -145,7 +174,14 @@ export function AnalyzeAllModal({
             disabled={isAnalyzing}
           >
             <Stack gap="xs">
-              <Radio value="unanalyzed" label={t("features.dashboard.onlyUnanalyzedGames")} />
+              <Radio
+                value="unanalyzed"
+                label={t("features.dashboard.onlyUnanalyzedGamesWithCounts", {
+                  defaultValue: "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
+                  unanalyzed: counts.unanalyzed,
+                  analyzed: counts.analyzed,
+                })}
+              />
               <Radio value="all" label={t("features.dashboard.allGamesReanalyze")} />
             </Stack>
           </Radio.Group>

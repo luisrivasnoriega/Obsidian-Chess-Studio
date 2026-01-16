@@ -10,7 +10,7 @@ import type { PlayerGameInfo } from "@/bindings";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import type { EloBucket, GameStats, PlayerSidebarModel } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
-import { createPlayerStatsFilters } from "@/utils/playerStats";
+import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { unwrap } from "@/utils/unwrap";
 
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
@@ -41,26 +41,14 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
 
 
-  const statsSignature = useMemo(() => {
-    const ssd = info?.site_stats_data ?? [];
-    if (ssd.length === 0) {
-      return { sites: 0, games: 0, firstSite: "", lastSite: "" };
-    }
-
-    const sites = ssd.length;
-    const games = ssd.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
-    const firstSite = ssd[0]?.site ?? "";
-    const lastSite = ssd[ssd.length - 1]?.site ?? "";
-    return { sites, games, firstSite, lastSite };
-  }, [info?.site_stats_data]);
-
-  const statsEnabled = statsSignature.games > 0;
+  const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
+  const statsEnabled = statsSig.games > 0;
 
   // --- Sidebar model (style + ELO summary) ---
   const { data: sidebarModel } = useQuery({
-    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
-      const key = makeCacheKey(["sidebar", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite]);
+      const key = makeCacheKey(["sidebar", statsSig.key]);
       const existing = promiseCache.sidebarModel.get(key);
       if (existing) return existing;
 
@@ -72,6 +60,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
       return p;
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
     enabled: statsEnabled,
     refetchOnWindowFocus: false,
@@ -81,9 +70,9 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
 
   // --- ELO buckets ---
   const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
-    queryKey: ["playerEloBuckets", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => {
-      const key = makeCacheKey(["elo", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite]);
+      const key = makeCacheKey(["elo", statsSig.key]);
 
       const existing = promiseCache.eloBuckets.get(key);
       if (existing) return existing;
@@ -97,6 +86,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
       return p;
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
     enabled: statsEnabled,
     refetchOnWindowFocus: false,
@@ -122,10 +112,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
     useQuery<GameStats>({
       queryKey: [
         "playerGameStats",
-        statsSignature.sites,
-        statsSignature.games,
-        statsSignature.firstSite,
-        statsSignature.lastSite,
+        statsSig.key,
         filters.platform,
         filters.time_control,
         filters.opponent_elo_bucket,
@@ -134,10 +121,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
       queryFn: async () => {
         const key = makeCacheKey([
           "stats",
-          statsSignature.sites,
-          statsSignature.games,
-          statsSignature.firstSite,
-          statsSignature.lastSite,
+          statsSig.key,
           filters.platform,
           filters.time_control,
           filters.opponent_elo_bucket,
@@ -156,6 +140,7 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
         return p;
       },
       staleTime: Infinity,
+      gcTime: Infinity,
       retry: false,
       enabled: statsEnabled,
       refetchOnWindowFocus: false,

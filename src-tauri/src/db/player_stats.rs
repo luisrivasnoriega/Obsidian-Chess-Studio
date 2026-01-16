@@ -126,24 +126,26 @@ impl Default for PlayerStyleLabel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
-pub struct PlayerSidebarEloSummary {
+pub struct PlayerSidebarEloRow {
+    pub label: String,
     pub bullet: String,
     pub blitz: String,
     pub rapid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
-pub struct PlayerSidebarPlatformSummary {
-    pub all: PlayerSidebarEloSummary,
-    pub lichess: PlayerSidebarEloSummary,
-    pub chesscom: PlayerSidebarEloSummary,
+pub struct PlayerSidebarEloBlock {
+    /// Display label (e.g. "Lichess", "Chess.com")
+    pub platform: String,
+    /// One row per platform (when multiple platforms exist) OR one row per account (when a single platform has multiple accounts).
+    pub rows: Vec<PlayerSidebarEloRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
 pub struct PlayerSidebarModel {
     pub has_data: bool,
     pub style: PlayerStyleLabel,
-    pub elo: PlayerSidebarPlatformSummary,
+    pub elo: Vec<PlayerSidebarEloBlock>,
 }
 
 // ============================================================================
@@ -682,19 +684,60 @@ pub fn calculate_elo_domain(rating_series: &RatingTimeline) -> Option<EloDomain>
 // ============================================================================
 
 /// Get time control from site and time control string
-fn get_time_control(_site: &str, time_control: &str) -> TimeControlFilter {
-    let lower = time_control.to_lowercase();
-    if lower.contains("bullet") {
-        TimeControlFilter::Bullet
-    } else if lower.contains("blitz") {
-        TimeControlFilter::Blitz
-    } else if lower.contains("rapid") {
-        TimeControlFilter::Rapid
-    } else if lower.contains("classical") || lower.contains("correspondence") {
-        TimeControlFilter::Classical
+fn get_time_control(site: &str, time_control: &str) -> TimeControlFilter {
+    // Ported from `src/utils/timeControl.ts`
+    let website = if normalize_platform(site) == "chesscom" {
+        "Chess.com"
+    } else if normalize_platform(site) == "lichess" {
+        "Lichess"
     } else {
-        TimeControlFilter::Any
+        "Unknown"
+    };
+
+    let tc = time_control.trim();
+
+    // Chess.com daily like "1/86400"
+    if website == "Chess.com" && tc.starts_with("1/") {
+        return TimeControlFilter::Classical;
     }
+
+    // Lichess correspondence uses "-"
+    if website == "Lichess" && tc == "-" {
+        return TimeControlFilter::Classical;
+    }
+
+    let mut parts = tc.split('+');
+    let initial: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
+    let increment: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
+    if initial <= 0.0 && increment <= 0.0 {
+        return TimeControlFilter::Any;
+    }
+    let total = initial + increment * 40.0;
+
+    if website == "Chess.com" {
+        if total < 180.0 {
+            return TimeControlFilter::Bullet;
+        }
+        if total <= 500.0 {
+            return TimeControlFilter::Blitz;
+        }
+        return TimeControlFilter::Rapid;
+    }
+
+    // Lichess time controls (ultra-bullet is grouped into Bullet for our UI).
+    if total < 30.0 {
+        return TimeControlFilter::Bullet;
+    }
+    if total < 180.0 {
+        return TimeControlFilter::Bullet;
+    }
+    if total < 480.0 {
+        return TimeControlFilter::Blitz;
+    }
+    if total < 1500.0 {
+        return TimeControlFilter::Rapid;
+    }
+    TimeControlFilter::Classical
 }
 
 fn format_elo(value: i32) -> String {
@@ -802,12 +845,18 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
     let has_data = site_stats_data.iter().any(|s| !s.data.is_empty());
     let style = super::player_style::analyze_player_style_label(site_stats_data);
 
-    let mut max_all = [0i32; 3];
-    let mut max_lichess = [0i32; 3];
-    let mut max_chesscom = [0i32; 3];
-
+    // ELO blocks:
+    // - If the player has BOTH platforms, show one row per platform.
+    // - If the player has only ONE platform and multiple accounts, show one row per account.
+    let mut by_platform_account: HashMap<(String, String), [i32; 3]> = HashMap::new();
     for site in site_stats_data {
         let platform = normalize_platform(&site.site);
+        if platform == "unknown" {
+            continue;
+        }
+        let account = site.player.trim().to_string();
+        let account = if account.is_empty() { "(account)".to_string() } else { account };
+
         for game in &site.data {
             let tc = get_time_control(&site.site, &game.time_control);
             let idx = match tc {
@@ -818,41 +867,102 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
             };
             let Some(i) = idx else { continue };
             let elo = game.player_elo;
-
-            if elo > max_all[i] {
-                max_all[i] = elo;
-            }
-            if platform == "lichess" {
-                if elo > max_lichess[i] {
-                    max_lichess[i] = elo;
-                }
-            } else if platform == "chesscom" {
-                if elo > max_chesscom[i] {
-                    max_chesscom[i] = elo;
-                }
+            let entry = by_platform_account
+                .entry((platform.clone(), account.clone()))
+                .or_insert([0i32; 3]);
+            if elo > entry[i] {
+                entry[i] = elo;
             }
         }
     }
 
-    let elo = PlayerSidebarPlatformSummary {
-        all: PlayerSidebarEloSummary {
-            bullet: format_elo(max_all[0]),
-            blitz: format_elo(max_all[1]),
-            rapid: format_elo(max_all[2]),
-        },
-        lichess: PlayerSidebarEloSummary {
-            bullet: format_elo(max_lichess[0]),
-            blitz: format_elo(max_lichess[1]),
-            rapid: format_elo(max_lichess[2]),
-        },
-        chesscom: PlayerSidebarEloSummary {
-            bullet: format_elo(max_chesscom[0]),
-            blitz: format_elo(max_chesscom[1]),
-            rapid: format_elo(max_chesscom[2]),
-        },
-    };
+    let mut platforms: HashSet<String> = HashSet::new();
+    for ((platform, _account), maxes) in &by_platform_account {
+        if maxes.iter().any(|v| *v > 0) {
+            platforms.insert(platform.clone());
+        }
+    }
 
-    PlayerSidebarModel { has_data, style, elo }
+    fn platform_label(platform: &str) -> String {
+        match platform {
+            "lichess" => "Lichess".to_string(),
+            "chesscom" => "Chess.com".to_string(),
+            _ => platform.to_string(),
+        }
+    }
+
+    let mut elo_blocks: Vec<PlayerSidebarEloBlock> = Vec::new();
+    if platforms.len() >= 2 {
+        let mut list: Vec<String> = platforms.into_iter().collect();
+        list.sort();
+        for platform in list {
+            let mut agg = [0i32; 3];
+            for ((p, _account), maxes) in &by_platform_account {
+                if p != &platform {
+                    continue;
+                }
+                for i in 0..3 {
+                    agg[i] = agg[i].max(maxes[i]);
+                }
+            }
+            let label = platform_label(&platform);
+            elo_blocks.push(PlayerSidebarEloBlock {
+                platform: label.clone(),
+                rows: vec![PlayerSidebarEloRow {
+                    label,
+                    bullet: format_elo(agg[0]),
+                    blitz: format_elo(agg[1]),
+                    rapid: format_elo(agg[2]),
+                }],
+            });
+        }
+    } else if platforms.len() == 1 {
+        let platform = platforms.into_iter().next().unwrap();
+        let mut accounts: Vec<(String, [i32; 3])> = by_platform_account
+            .iter()
+            .filter_map(|((p, a), maxes)| {
+                if p == &platform {
+                    Some((a.clone(), *maxes))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        accounts.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let label = platform_label(&platform);
+        if accounts.len() <= 1 {
+            let maxes = accounts.first().map(|a| a.1).unwrap_or([0i32; 3]);
+            elo_blocks.push(PlayerSidebarEloBlock {
+                platform: label.clone(),
+                rows: vec![PlayerSidebarEloRow {
+                    label,
+                    bullet: format_elo(maxes[0]),
+                    blitz: format_elo(maxes[1]),
+                    rapid: format_elo(maxes[2]),
+                }],
+            });
+        } else {
+            elo_blocks.push(PlayerSidebarEloBlock {
+                platform: label,
+                rows: accounts
+                    .into_iter()
+                    .map(|(account, maxes)| PlayerSidebarEloRow {
+                        label: account,
+                        bullet: format_elo(maxes[0]),
+                        blitz: format_elo(maxes[1]),
+                        rapid: format_elo(maxes[2]),
+                    })
+                    .collect(),
+            });
+        }
+    }
+
+    PlayerSidebarModel {
+        has_data,
+        style,
+        elo: elo_blocks,
+    }
 }
 
 #[cfg(test)]

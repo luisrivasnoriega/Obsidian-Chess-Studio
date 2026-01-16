@@ -206,53 +206,61 @@ export default function PlayerSidebarCard({
         <Divider />
         <Stack gap="xs">
           <Text fw={600}>{t("common.elo", { defaultValue: "Elo" })}</Text>
-          {visiblePlatforms.map((site) => {
-            const summary = site === "Lichess" ? model.elo.lichess : model.elo.chesscom;
+          {model.elo.map((block) => {
+            const platformLabel = block.platform as Exclude<PlatformFilter, "all">;
             return (
-              <Group key={site} justify="space-between" align="flex-start" wrap="nowrap">
+              <Stack key={block.platform} gap={6}>
                 <Group gap="xs" wrap="nowrap">
-                  <PlatformIcon platform={site} />
-                  <Text fw={600}>{site}</Text>
+                  {(platformLabel === "Chess.com" || platformLabel === "Lichess") && <PlatformIcon platform={platformLabel} />}
+                  <Text fw={600}>{block.platform}</Text>
                 </Group>
-                <Group gap="xs" wrap="nowrap" style={{ whiteSpace: "nowrap" }}>
-                  <Group gap={4} wrap="nowrap">
-                    <Tooltip label="Bullet">
-                      <span>
-                        <IconCircleDot size={14} />
-                      </span>
-                    </Tooltip>
-                    <Text size="sm" fw={700}>
-                      {summary.bullet}
+
+                {block.rows.map((row) => (
+                  <Group key={`${block.platform}:${row.label}`} justify="space-between" align="flex-start" wrap="nowrap">
+                    <Text size="sm" fw={600} style={{ maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {row.label}
                     </Text>
+                    <Group gap="xs" wrap="nowrap" style={{ whiteSpace: "nowrap" }}>
+                      <Group gap={4} wrap="nowrap">
+                        <Tooltip label="Bullet">
+                          <span>
+                            <IconCircleDot size={14} />
+                          </span>
+                        </Tooltip>
+                        <Text size="sm" fw={700}>
+                          {row.bullet}
+                        </Text>
+                      </Group>
+                      <Text size="sm" c="dimmed">
+                        |
+                      </Text>
+                      <Group gap={4} wrap="nowrap">
+                        <Tooltip label="Blitz">
+                          <span>
+                            <IconBolt size={14} />
+                          </span>
+                        </Tooltip>
+                        <Text size="sm" fw={700}>
+                          {row.blitz}
+                        </Text>
+                      </Group>
+                      <Text size="sm" c="dimmed">
+                        |
+                      </Text>
+                      <Group gap={4} wrap="nowrap">
+                        <Tooltip label="Rapid">
+                          <span>
+                            <IconGauge size={14} />
+                          </span>
+                        </Tooltip>
+                        <Text size="sm" fw={700}>
+                          {row.rapid}
+                        </Text>
+                      </Group>
+                    </Group>
                   </Group>
-                  <Text size="sm" c="dimmed">
-                    |
-                  </Text>
-                  <Group gap={4} wrap="nowrap">
-                    <Tooltip label="Blitz">
-                      <span>
-                        <IconBolt size={14} />
-                      </span>
-                    </Tooltip>
-                    <Text size="sm" fw={700}>
-                      {summary.blitz}
-                    </Text>
-                  </Group>
-                  <Text size="sm" c="dimmed">
-                    |
-                  </Text>
-                  <Group gap={4} wrap="nowrap">
-                    <Tooltip label="Rapid">
-                      <span>
-                        <IconGauge size={14} />
-                      </span>
-                    </Tooltip>
-                    <Text size="sm" fw={700}>
-                      {summary.rapid}
-                    </Text>
-                  </Group>
-                </Group>
-              </Group>
+                ))}
+              </Stack>
             );
           })}
         </Stack>

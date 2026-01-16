@@ -11,14 +11,13 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
+import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
-import { getAnalyzedGamesBulk, getGameStatsBulk } from "@/utils/analyzedGames";
 import { stripAccountKey } from "@/utils/accountKeys";
 import type { Event } from "@/bindings";
-import { query_players } from "@/utils/db";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
 import { getTimeControl } from "@/utils/timeControl";
@@ -32,10 +31,33 @@ type OnlineGameStats = {
   estimatedElo?: number;
 };
 
-type GameItem =
-  | { type: "local"; id: string; timestamp: number; game: GameRecord }
-  | { type: "chesscom"; id: string; timestamp: number; game: ChessComGameWithEvent }
-  | { type: "lichess"; id: string; timestamp: number; game: DashboardLichessGame };
+type GamesHistoryKind = "Local" | "Chesscom" | "Lichess";
+
+type GamesHistoryRow = {
+  kind: GamesHistoryKind;
+  gameKey: string;
+  analysisGameId: string;
+  externalUrl: string | null;
+  opponent: string;
+  color: "white" | "black";
+  outcome: "win" | "loss" | "draw" | "unknown";
+  pgn: string | null;
+  accuracy: number | null;
+  acpl: number | null;
+  estimatedElo: number | null;
+  moves: number;
+  timeControl: string | null;
+  timeControlCategory: TimeControlCategory | null;
+  timestampMs: number;
+  eventId: number | null;
+  eventName: string | null;
+  isAnalyzed: boolean;
+};
+
+type GamesHistoryResponse = {
+  rows: GamesHistoryRow[];
+  totalCount: number;
+};
 
 function getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
   const trimmed = (timeControl ?? "").trim();
@@ -109,6 +131,9 @@ function getTimeControlLabel(
 }
 
 export function ProfileGamesTab({
+  profileId,
+  selectedOpponentId,
+  gameHistoryLimit,
   localGames,
   chessComGames,
   lichessGames,
@@ -134,14 +159,17 @@ export function ProfileGamesTab({
   timeControlCategory,
   onTimeControlCategoryChange,
 }: {
+  profileId: string | null;
+  selectedOpponentId: number | null;
+  gameHistoryLimit: number;
   localGames: GameRecord[];
   chessComGames: ChessComGameWithEvent[];
   lichessGames: DashboardLichessGame[];
   profileUsernames: string[];
   isLoadingOnline?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGameWithEvent) => void;
-  onAnalyzeLichessGame: (game: DashboardLichessGame) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
@@ -171,36 +199,8 @@ export function ProfileGamesTab({
     return set;
   }, [profileUsernames]);
 
-  const items = useMemo<GameItem[]>(() => {
-    const res: GameItem[] = [];
-    for (const g of localGames) res.push({ type: "local", id: g.id, timestamp: g.timestamp, game: g });
-    for (const g of chessComGames) res.push({ type: "chesscom", id: g.url, timestamp: g.end_time * 1000, game: g });
-    for (const g of lichessGames) res.push({ type: "lichess", id: g.id, timestamp: g.createdAt, game: g });
-    return res.sort((a, b) => b.timestamp - a.timestamp);
-  }, [localGames, chessComGames, lichessGames]);
-
-  const [onlineStats, setOnlineStats] = useState<Map<string, OnlineGameStats>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      const onlineIds = items.filter((i) => i.type !== "local").map((i) => i.id);
-      if (onlineIds.length === 0) {
-        setOnlineStats(new Map());
-        return;
-      }
-      const stats = await getGameStatsBulk(onlineIds);
-      if (!cancelled) setOnlineStats(stats as unknown as Map<string, OnlineGameStats>);
-    };
-
-    load().catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [items]);
-
-  const [analyzedPgns, setAnalyzedPgns] = useState<Map<string, string>>(new Map());
-  const [analyzedGameIds, setAnalyzedGameIds] = useState<Set<string>>(new Set());
+  const [rows, setRows] = useState<GamesHistoryRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
   const itemsPerPage = 25;
   const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
@@ -214,246 +214,89 @@ export function ProfileGamesTab({
 
   useEffect(() => {
     const query = debouncedOpponentFilter.trim();
-    if (!profileDbPath) {
+    if (!profileId || query.length < 3) {
       setOpponentOptions([]);
       setIsLoadingOpponentOptions(false);
       return;
     }
-
-    if (query.length < 3) {
-      setOpponentOptions([]);
-      setIsLoadingOpponentOptions(false);
-      return;
-    }
-
     let cancelled = false;
     const run = async () => {
       setIsLoadingOpponentOptions(true);
       try {
-        const res = await query_players(profileDbPath, {
-          options: {
-            skipCount: true,
-            page: 1,
-            pageSize: 25,
-            sort: "name",
-            direction: "asc",
-          },
-          name: query,
-          range: null,
-        });
-
-        if (cancelled) return;
-
-        const options = (res.data ?? [])
-          .map((p) => (p.name ?? "").trim())
-          .filter(Boolean)
-          .filter((name) => !usernamesLower.has(name.toLowerCase()));
-
-        setOpponentOptions(options);
+        const options =
+          (await invoke<string[]>("dashboard_search_profile_opponents", {
+            profileId,
+            query,
+            profileUsernames,
+          })) ?? [];
+        if (!cancelled) {
+          setOpponentOptions(options);
+        }
       } catch {
         if (!cancelled) setOpponentOptions([]);
       } finally {
         if (!cancelled) setIsLoadingOpponentOptions(false);
       }
     };
-
     void run();
     return () => {
       cancelled = true;
     };
-  }, [debouncedOpponentFilter, profileDbPath, usernamesLower]);
-
-  const itemMeta = (item: GameItem) => {
-    if (item.type === "local") {
-      const fallbackEvent = t("features.dashboard.defaultLocalEvent", "Local Game");
-      const eventName = getEventNameFromPgn(item.game.pgn, fallbackEvent);
-      const isUserWhite = item.game.white.type === "human";
-      const opponent = isUserWhite ? item.game.black : item.game.white;
-      const color: "white" | "black" = isUserWhite ? "white" : "black";
-      return {
-        source: "Local" as const,
-        color,
-        opponent: opponent.name ?? (opponent.engine ? `${t("features.dashboard.engine")} (${opponent.engine})` : "?"),
-        result: item.game.result,
-        moves: item.game.moves?.length ?? 0,
-        accuracy: item.game.stats?.accuracy ?? 0,
-        acpl: item.game.stats?.acpl ?? 0,
-        elo: item.game.stats?.estimatedElo ?? 0,
-        eventName,
-        eventId: null,
-        timeControl: item.game.timeControl ?? getTimeControlFromPgn(item.game.pgn),
-      };
-    }
-
-    if (item.type === "chesscom") {
-      const fallbackEvent = t("features.dashboard.defaultChessComEvent", "Chess.com Game");
-      const whiteRaw = item.game.white.username || "";
-      const blackRaw = item.game.black.username || "";
-      const whiteName = stripAccountKey(whiteRaw);
-      const blackName = stripAccountKey(blackRaw);
-      const isUserWhite = usernamesLower.has(whiteRaw.toLowerCase()) || usernamesLower.has(whiteName.toLowerCase());
-      const isUserBlack = usernamesLower.has(blackRaw.toLowerCase()) || usernamesLower.has(blackName.toLowerCase());
-      const userIsWhite = isUserWhite || (!isUserBlack && true);
-      const opponent = userIsWhite ? blackName : whiteName;
-      const color: "white" | "black" = userIsWhite ? "white" : "black";
-      const stats = onlineStats.get(item.id);
-      const eventName = item.game.eventName ?? getEventNameFromPgn(item.game.pgn, fallbackEvent);
-      return {
-        source: "Chess.com" as const,
-        color,
-        opponent: opponent || "?",
-        result: item.game.white.result === "win" ? "1-0" : item.game.black.result === "win" ? "0-1" : "1/2-1/2",
-        moves: item.game.pgn ? (item.game.pgn.match(/\d+\.\s+\S+/g) || []).length : 0,
-        accuracy: stats?.accuracy ?? 0,
-        acpl: stats?.acpl ?? 0,
-        elo: stats?.estimatedElo ?? 0,
-        eventName,
-        eventId: item.game.eventId,
-        timeControl: item.game.time_control ?? null,
-      };
-    }
-
-    const fallbackEvent = t("features.dashboard.defaultLichessEvent", "Lichess Game");
-    const whiteRaw = item.game.players.white.user?.name || "";
-    const blackRaw = item.game.players.black.user?.name || "";
-    const whiteName = stripAccountKey(whiteRaw);
-    const blackName = stripAccountKey(blackRaw);
-    const isUserWhite = usernamesLower.has(whiteRaw.toLowerCase()) || usernamesLower.has(whiteName.toLowerCase());
-    const isUserBlack = usernamesLower.has(blackRaw.toLowerCase()) || usernamesLower.has(blackName.toLowerCase());
-    const userIsWhite = isUserWhite || (!isUserBlack && true);
-    const opponent = userIsWhite ? blackName : whiteName;
-    const color: "white" | "black" = userIsWhite ? "white" : "black";
-    const stats = onlineStats.get(item.id);
-    return {
-      source: "Lichess" as const,
-      color,
-      opponent: opponent || "?",
-      result: item.game.winner === "white" ? "1-0" : item.game.winner === "black" ? "0-1" : "1/2-1/2",
-      moves: item.game.pgn ? (item.game.pgn.match(/\d+\.\s+\S+/g) || []).length : 0,
-      accuracy: stats?.accuracy ?? 0,
-      acpl: stats?.acpl ?? 0,
-      elo: stats?.estimatedElo ?? 0,
-      eventName: item.game.eventName ?? fallbackEvent,
-      eventId: item.game.eventId,
-      timeControl: item.game.timeControl ?? null,
-    };
-  };
-
-  const filteredItems = useMemo(() => {
-    return items.filter((item) => {
-      const meta = itemMeta(item);
-      
-      // Filter by event
-      if (eventFilterId != null && meta.eventId !== eventFilterId) {
-        return false;
-      }
-
-      // Filter by time control (DB-backed for online games).
-      if (timeControlCategory) {
-        if (!meta.timeControl) return false;
-        const platform: "Lichess" | "Chess.com" = item.type === "chesscom" ? "Chess.com" : "Lichess";
-        const category = getTimeControlCategory(platform, meta.timeControl);
-        if (category !== timeControlCategory) return false;
-      }
-
-      // Filter by opponent name
-      const trimmedFilter = opponentFilter.trim();
-      if (trimmedFilter) {
-        const opponentLower = meta.opponent.trim().toLowerCase();
-        const filterLower = trimmedFilter.toLowerCase();
-        if (!opponentLower.includes(filterLower)) {
-          return false;
-        }
-      }
-      
-      // Filter by result
-      if (resultFilter) {
-        const outcome = resultOutcome(meta.color, meta.result);
-        if (resultFilter === "win" && outcome !== "win") return false;
-        if (resultFilter === "loss" && outcome !== "loss") return false;
-        if (resultFilter === "draw" && outcome !== "draw") return false;
-      }
-      
-      return true;
-    });
-  }, [items, opponentFilter, resultFilter, usernamesLower, onlineStats, t, eventFilterId, timeControlCategory]);
-
-  const sortedAndPaginatedItems = useMemo(() => {
-    const sorted = [...filteredItems];
-
-    if (sortBy === "elo") {
-      sorted.sort((a, b) => {
-        const eloA = a.type === "local" ? a.game.stats?.estimatedElo || 0 : onlineStats.get(a.id)?.estimatedElo || 0;
-        const eloB = b.type === "local" ? b.game.stats?.estimatedElo || 0 : onlineStats.get(b.id)?.estimatedElo || 0;
-        return sortDirection === "asc" ? eloA - eloB : eloB - eloA;
-      });
-    } else if (sortBy === "date") {
-      sorted.sort((a, b) => (sortDirection === "asc" ? a.timestamp - b.timestamp : b.timestamp - a.timestamp));
-    }
-
-    const start = (page - 1) * itemsPerPage;
-    return sorted.slice(start, start + itemsPerPage);
-  }, [filteredItems, onlineStats, page, itemsPerPage, sortBy, sortDirection]);
+  }, [debouncedOpponentFilter, profileId, profileUsernames]);
 
   useEffect(() => {
-    setPage(1);
-  }, [items.length, opponentFilter, resultFilter, eventFilterId, timeControlCategory]);
-
-  useEffect(() => {
+    if (!profileId) {
+      setRows([]);
+      setTotalCount(0);
+      return;
+    }
     let cancelled = false;
+    const run = async () => {
+      const res =
+        (await invoke<GamesHistoryResponse>("dashboard_get_games_history_rows", {
+          req: {
+            profileId,
+            profileUsernames,
+            gameHistoryLimit,
+            page,
+            pageSize: itemsPerPage,
+            eventFilterId,
+            selectedOpponentId,
+            opponentContains: opponentFilter.trim() || null,
+            timeControlCategory,
+            resultFilter,
+            sortBy: sortBy ?? "date",
+            sortDirection,
+          },
+        })) ?? { rows: [], totalCount: 0 };
 
-    const load = async () => {
-      const idsToLoad = sortedAndPaginatedItems.map((i) => i.id).filter((id) => !analyzedPgns.has(id));
-      if (idsToLoad.length === 0) return;
-
-      const analyzed = await getAnalyzedGamesBulk(idsToLoad);
       if (cancelled) return;
-
-      setAnalyzedPgns((prev) => {
-        const next = new Map(prev);
-        const analyzedIds = new Set<string>();
-        
-        for (const item of sortedAndPaginatedItems) {
-          if (next.has(item.id)) {
-            // Already loaded, check if it's analyzed by checking if it has analysis markers
-            const existingPgn = next.get(item.id);
-            if (existingPgn && /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i.test(existingPgn)) {
-              analyzedIds.add(item.id);
-            }
-            continue;
-          }
-          const analyzedPgn = analyzed.get(item.id);
-          if (analyzedPgn) {
-            // This PGN is actually analyzed
-            next.set(item.id, analyzedPgn);
-            analyzedIds.add(item.id);
-            continue;
-          }
-          // Fallback: use original PGN (not analyzed)
-          const fallback =
-            item.type === "local"
-              ? item.game.pgn ?? createPGNFromMoves(item.game.moves, item.game.result, item.game.initialFen)
-              : item.type === "chesscom"
-                ? item.game.pgn ?? undefined
-                : item.game.pgn;
-          if (fallback) next.set(item.id, fallback);
-        }
-        
-        setAnalyzedGameIds((prevIds) => {
-          const nextIds = new Set(prevIds);
-          analyzedIds.forEach((id) => nextIds.add(id));
-          return nextIds;
-        });
-        
-        return next;
-      });
+      setRows(res.rows ?? []);
+      setTotalCount(res.totalCount ?? 0);
     };
-
-    load().catch(() => {});
+    void run().catch(() => {
+      if (!cancelled) {
+        setRows([]);
+        setTotalCount(0);
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [sortedAndPaginatedItems, analyzedPgns]);
+  }, [
+    profileId,
+    profileUsernames,
+    gameHistoryLimit,
+    page,
+    itemsPerPage,
+    eventFilterId,
+    opponentFilter,
+    timeControlCategory,
+    resultFilter,
+    sortBy,
+    sortDirection,
+    selectedOpponentId,
+  ]);
 
   const handleSort = (field: "elo" | "date") => {
     if (sortBy === field) setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -464,8 +307,8 @@ export function ProfileGamesTab({
     setPage(1);
   };
 
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
-  const now = useMemo(() => Date.now(), [sortedAndPaginatedItems]);
+  const totalPages = Math.ceil(totalCount / itemsPerPage);
+  const now = useMemo(() => Date.now(), [rows]);
   const analyzeAllOptions = useMemo(
     () => {
       const totalCount = localGames.length + chessComGames.length + lichessGames.length;
@@ -479,20 +322,7 @@ export function ProfileGamesTab({
     [localGames.length, chessComGames.length, lichessGames.length],
   );
 
-  const handleAnalyze = (item: GameItem) => {
-    if (item.type === "local") onAnalyzeLocalGame(item.game);
-    else if (item.type === "chesscom") onAnalyzeChessComGame(item.game);
-    else onAnalyzeLichessGame(item.game);
-  };
-
-  const handleOpenGame = async (item: GameItem) => {
-    const url =
-      item.type === "chesscom"
-        ? item.game.url
-        : item.type === "lichess"
-          ? `https://lichess.org/${item.game.id}`
-          : null;
-
+  const handleOpenGame = async (url: string | null) => {
     if (!url) return;
     try {
       await openUrl(url, "inAppBrowser");
@@ -521,15 +351,7 @@ export function ProfileGamesTab({
     });
   };
 
-  const handleToggleFavorite = async (item: GameItem) => {
-    if (item.type === "local" && onToggleFavoriteLocal) return await onToggleFavoriteLocal(item.id);
-    if (item.type === "chesscom" && onToggleFavoriteChessCom) return await onToggleFavoriteChessCom(item.id);
-    if (item.type === "lichess" && onToggleFavoriteLichess) return await onToggleFavoriteLichess(item.id);
-  };
-
-  const isGameAnalyzed = (gameId: string): boolean => {
-    return analyzedGameIds.has(gameId);
-  };
+  // Favorite toggling & analyzed detection are handled per-row using backend-provided fields.
 
   if (isLoadingOnline) {
     return (
@@ -542,7 +364,14 @@ export function ProfileGamesTab({
     );
   }
 
-  if (items.length === 0) {
+  if (!profileId) {
+    return (
+      <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
+        <Text c="dimmed">{t("features.dashboard.noGames") || "No games yet"}</Text>
+      </Stack>
+    );
+  }
+  if (totalCount === 0) {
     return (
       <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
         <Text c="dimmed">{t("features.dashboard.noGames") || "No games yet"}</Text>
@@ -643,6 +472,7 @@ export function ProfileGamesTab({
         <Table striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>
+              <Table.Th style={{ width: 70 }}>{t("dashboard.tableHeaders.dbId", "DB ID")}</Table.Th>
               <Table.Th style={{ width: 105 }}>Source</Table.Th>
               <Table.Th style={{ width: 180 }}>Opponent</Table.Th>
               <Table.Th style={{ width: 70 }}>Color</Table.Th>
@@ -691,17 +521,16 @@ export function ProfileGamesTab({
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {sortedAndPaginatedItems.length === 0 ? (
+            {rows.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
+                <Table.Td colSpan={13} style={{ textAlign: "center", padding: "2rem" }}>
                   <Text c="dimmed">{t("features.dashboard.noGamesMatchFilters", "No games match the filters")}</Text>
                 </Table.Td>
               </Table.Tr>
             ) : (
-              sortedAndPaginatedItems.map((item) => {
-              const meta = itemMeta(item);
-              const pgn = analyzedPgns.get(item.id) ?? null;
-              const diffMs = now - item.timestamp;
+              rows.map((row) => {
+              const pgn = row.pgn ?? null;
+              const diffMs = now - row.timestampMs;
               const dateStr =
                 diffMs < 60 * 60 * 1000
                   ? `${Math.floor(diffMs / (60 * 1000))}m ago`
@@ -709,45 +538,46 @@ export function ProfileGamesTab({
                     ? `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`
                     : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
 
-              const favoriteSource = item.type === "local" ? "local" : item.type === "chesscom" ? "chesscom" : "lichess";
-              const fav = isFavorite(favoriteGames, favoriteSource, item.id);
+              const favoriteSource =
+                row.kind === "Local" ? "local" : row.kind === "Chesscom" ? "chesscom" : "lichess";
+              const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
 
               return (
-                <Table.Tr key={`${item.type}:${item.id}`}>
+                <Table.Tr key={`${row.kind}:${row.gameKey}`}>
+                  <Table.Td>{row.analysisGameId || "-"}</Table.Td>
                   <Table.Td>
-                    <Badge variant="light" color={item.type === "lichess" ? "red" : item.type === "chesscom" ? "green" : "gray"}>
-                      {meta.source}
+                    <Badge variant="light" color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}>
+                      {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}
                     </Badge>
                   </Table.Td>
                   <Table.Td style={{ width: 180 }}>
                     <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
                       <Avatar size={24} radius="xl">
-                        {(meta.opponent || "?")[0]?.toUpperCase()}
+                        {(row.opponent || "?")[0]?.toUpperCase()}
                       </Avatar>
                       <Text truncate style={{ minWidth: 0 }}>
-                        {meta.opponent}
+                        {row.opponent}
                       </Text>
                     </Group>
                   </Table.Td>
                   <Table.Td>
                     <Box
-                      aria-label={meta.color}
+                      aria-label={row.color}
                       style={{
                         width: 12,
                         height: 12,
                         borderRadius: 999,
-                        backgroundColor: meta.color === "white" ? "#ffffff" : "#000000",
-                        border: meta.color === "white" ? "1px solid #666666" : "1px solid #000000",
+                        backgroundColor: row.color === "white" ? "#ffffff" : "#000000",
+                        border: row.color === "white" ? "1px solid #666666" : "1px solid #000000",
                         marginLeft: 4,
                       }}
                     />
                   </Table.Td>
                   <Table.Td style={{ width: 85 }}>
                     {(() => {
-                      const outcome = resultOutcome(meta.color, meta.result);
                       const label =
-                        outcome === "win" ? "Win" : outcome === "loss" ? "Loss" : outcome === "draw" ? "Draw" : "-";
-                      const color = outcome === "win" ? "blue" : outcome === "loss" ? "red" : "gray";
+                        row.outcome === "win" ? "Win" : row.outcome === "loss" ? "Loss" : row.outcome === "draw" ? "Draw" : "-";
+                      const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
                       return (
                         <Badge variant="light" color={color}>
                           {label}
@@ -755,44 +585,66 @@ export function ProfileGamesTab({
                       );
                     })()}
                   </Table.Td>
-                  <Table.Td>{meta.accuracy ? `${Math.round(meta.accuracy)}%` : "-"}</Table.Td>
-                  <Table.Td>{meta.acpl ? Math.round(meta.acpl) : "-"}</Table.Td>
-                  <Table.Td>{meta.elo ? Math.round(meta.elo) : "-"}</Table.Td>
-                  <Table.Td>{meta.moves || "-"}</Table.Td>
+                  <Table.Td>{row.accuracy ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
+                  <Table.Td>{row.acpl ? Math.round(row.acpl) : "-"}</Table.Td>
+                  <Table.Td>{row.estimatedElo ? Math.round(row.estimatedElo) : "-"}</Table.Td>
+                  <Table.Td>{row.moves || "-"}</Table.Td>
                   <Table.Td>
-                    {meta.timeControl?.trim()
+                    {row.timeControl?.trim()
                       ? (() => {
-                          const platform: "Lichess" | "Chess.com" = item.type === "chesscom" ? "Chess.com" : "Lichess";
-                          const category = getTimeControlCategory(platform, meta.timeControl);
-                          return getTimeControlLabel(t, category);
+                          const category = row.timeControlCategory ?? null;
+                          return category ? getTimeControlLabel(t, category) : "-";
                         })()
                       : "-"}
                   </Table.Td>
                   <Table.Td>{dateStr}</Table.Td>
                   <Table.Td>
-                    <ActionIcon variant="subtle" onClick={() => handleToggleFavorite(item)} disabled={
-                      (item.type === "local" && !onToggleFavoriteLocal) ||
-                      (item.type === "chesscom" && !onToggleFavoriteChessCom) ||
-                      (item.type === "lichess" && !onToggleFavoriteLichess)
+                    <ActionIcon variant="subtle" onClick={async () => {
+                      if (row.kind === "Local" && onToggleFavoriteLocal) return await onToggleFavoriteLocal(row.gameKey);
+                      if (row.kind === "Chesscom" && onToggleFavoriteChessCom) return await onToggleFavoriteChessCom(row.gameKey);
+                      if (row.kind === "Lichess" && onToggleFavoriteLichess) return await onToggleFavoriteLichess(row.gameKey);
+                    }} disabled={
+                      (row.kind === "Local" && !onToggleFavoriteLocal) ||
+                      (row.kind === "Chesscom" && !onToggleFavoriteChessCom) ||
+                      (row.kind === "Lichess" && !onToggleFavoriteLichess)
                     }>
                       {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
                     </ActionIcon>
                   </Table.Td>
                   <Table.Td style={{ textAlign: "left" }}>
                     <Group gap="xs" wrap="nowrap" justify="flex-start">
-                      {item.type === "local" && onDeleteLocalGame && (
-                        <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(item.id)}>
+                      {row.kind === "Local" && onDeleteLocalGame && (
+                        <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
                           <IconTrash size={16} />
                         </ActionIcon>
                       )}
-                      {isGameAnalyzed(item.id) && pgn ? (
+                      {row.isAnalyzed && pgn ? (
                         <AnalysisPreview pgn={pgn}>
                           <Button
                             size="xs"
                             variant="default"
                             leftSection={<IconChess size={16} />}
-                            onClick={() => handleAnalyze(item)}
-                            disabled={!pgn && item.type !== "local"}
+                            onClick={() => {
+                              if (row.kind === "Local") {
+                                const g = localGames.find((x) => x.id === row.gameKey);
+                                if (g) onAnalyzeLocalGame(g);
+                              } else if (row.kind === "Chesscom") {
+                                const g = chessComGames.find((x) => x.url === row.gameKey);
+                                if (g && profileId) {
+                                  onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                                } else if (g) {
+                                  onAnalyzeChessComGame(g);
+                                }
+                              } else {
+                                const g = lichessGames.find((x) => x.id === row.gameKey);
+                                if (g && profileId) {
+                                  onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                                } else if (g) {
+                                  onAnalyzeLichessGame(g);
+                                }
+                              }
+                            }}
+                            disabled={!pgn && row.kind !== "Local"}
                           >
                             {t("features.dashboard.analyze") || "Analyze"}
                           </Button>
@@ -802,15 +654,34 @@ export function ProfileGamesTab({
                           size="xs"
                           variant="default"
                           leftSection={<IconChess size={16} />}
-                          onClick={() => handleAnalyze(item)}
-                          disabled={!pgn && item.type !== "local"}
+                          onClick={() => {
+                            if (row.kind === "Local") {
+                              const g = localGames.find((x) => x.id === row.gameKey);
+                              if (g) onAnalyzeLocalGame(g);
+                            } else if (row.kind === "Chesscom") {
+                              const g = chessComGames.find((x) => x.url === row.gameKey);
+                              if (g && profileId) {
+                                onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                              } else if (g) {
+                                onAnalyzeChessComGame(g);
+                              }
+                            } else {
+                              const g = lichessGames.find((x) => x.id === row.gameKey);
+                              if (g && profileId) {
+                                onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                              } else if (g) {
+                                onAnalyzeLichessGame(g);
+                              }
+                            }
+                          }}
+                          disabled={!pgn && row.kind !== "Local"}
                         >
                           {t("features.dashboard.analyze") || "Analyze"}
                         </Button>
                       )}
-                      {item.type !== "local" && (
+                      {row.kind !== "Local" && (
                         <Tooltip label={t("features.dashboard.openGame", "Open game")}>
-                          <ActionIcon variant="subtle" onClick={() => void handleOpenGame(item)}>
+                          <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
                             <IconExternalLink size={16} />
                           </ActionIcon>
                         </Tooltip>

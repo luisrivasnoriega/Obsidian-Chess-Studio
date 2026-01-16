@@ -37,11 +37,16 @@ const model: PlayerSidebarModel = {
     label: "playerStyle.positional",
     description: "playerStyle.positionalDescription",
   },
-  elo: {
-    all: { bullet: "1500", blitz: "1520", rapid: "1800" },
-    chesscom: { bullet: "1500", blitz: "1520", rapid: "-" },
-    lichess: { bullet: "-", blitz: "-", rapid: "1800" },
-  },
+  elo: [
+    {
+      platform: "Chess.com",
+      rows: [{ label: "Chess.com", bullet: "1500", blitz: "1520", rapid: "-" }],
+    },
+    {
+      platform: "Lichess",
+      rows: [{ label: "Lichess", bullet: "-", blitz: "-", rapid: "1800" }],
+    },
+  ],
 };
 
 describe("PlayerSidebarCard (presentational)", () => {

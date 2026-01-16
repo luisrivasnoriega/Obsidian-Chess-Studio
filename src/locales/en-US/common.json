@@ -492,6 +492,7 @@
                                            "moves":  "Moves",
                                            "timeControl":  "Time control",
                                            "date":  "Date",
+                                           "dbId":  "DB ID",
                                            "account":  "Account"
                                        },
                       "filterByOpponent":  "Filter by opponent",
@@ -1037,6 +1038,7 @@
                                        "selectAnalysisDepth_other":  "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the default engine.",
                                        "analyze":  "Analyze",
                                        "onlyUnanalyzedGames":  "Only unanalyzed games",
+                                       "onlyUnanalyzedGamesWithCounts":  "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
                                        "allGamesReanalyze":  "All games (re-analyze)",
                                        "analysisDepth":  "Analysis Depth",
                                        "analyzingGames":  "Analyzing {{current}} of {{total}} games...",

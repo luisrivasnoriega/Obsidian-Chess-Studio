@@ -90,16 +90,19 @@ export interface PlayerSidebarEloSummary {
   rapid: string;
 }
 
-export interface PlayerSidebarPlatformSummary {
-  all: PlayerSidebarEloSummary;
-  lichess: PlayerSidebarEloSummary;
-  chesscom: PlayerSidebarEloSummary;
+export interface PlayerSidebarEloRow extends PlayerSidebarEloSummary {
+  label: string;
+}
+
+export interface PlayerSidebarEloBlock {
+  platform: string;
+  rows: PlayerSidebarEloRow[];
 }
 
 export interface PlayerSidebarModel {
   has_data: boolean;
   style: PlayerStyleLabel;
-  elo: PlayerSidebarPlatformSummary;
+  elo: PlayerSidebarEloBlock[];
 }
 
 // -----------------------------------------------------------------------------

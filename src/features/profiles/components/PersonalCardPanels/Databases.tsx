@@ -20,6 +20,81 @@ interface PersonalInfo {
   info: PlayerGameInfo | null;
 }
 
+export function buildSessionsSignature(sessions: Session[]): string {
+  return sessions
+    .map((s) => `${s.profileId ?? ""}:${s.lichess?.username ?? ""}:${s.chessCom?.username ?? ""}`)
+    .sort()
+    .join("|");
+}
+
+export function getPersonalInfoQueryKey(profileIdOrName: string, sessionsSignature: string) {
+  return ["personalInfo", profileIdOrName, sessionsSignature] as const;
+}
+
+export async function fetchPersonalInfoForProfile(input: {
+  effectiveProfileId: string;
+  sessions: Session[];
+}): Promise<PersonalInfo[]> {
+  const dbPath = await getProfileDbPath(input.effectiveProfileId);
+
+  const playerSessions = input.sessions.filter(
+    (s) => s.profileId === input.effectiveProfileId && (s.lichess?.username || s.chessCom?.username),
+  );
+
+  const results = await Promise.allSettled(
+    playerSessions.map(async (session) => {
+      const accountKey = session.lichess
+        ? getAccountKey("lichess", session.lichess.username)
+        : session.chessCom
+          ? getAccountKey("chesscom", session.chessCom.username)
+          : null;
+      if (!accountKey) throw new Error("Session does not have an account key");
+
+      const players = await query_players(dbPath, {
+        name: accountKey,
+        options: {
+          pageSize: 200,
+          direction: "asc",
+          sort: "id",
+          skipCount: false,
+        },
+      });
+      const normalizedAccountKey = accountKey.trim().toLowerCase();
+      const player =
+        players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
+      if (!player) throw new Error("Player not found in database");
+
+      const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
+      return { session, info };
+    }),
+  );
+
+  return results
+    .filter((r) => r.status === "fulfilled")
+    .map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
+}
+
+export function computePersonalInfoSignature(personalInfo: PersonalInfo[] | undefined | null): string | null {
+  if (!personalInfo || personalInfo.length === 0) return null;
+  const totalSites = personalInfo.reduce((acc, p) => acc + (p.info?.site_stats_data?.length ?? 0), 0);
+  const totalGames = personalInfo.reduce(
+    (acc, p) => acc + (p.info?.site_stats_data ?? []).reduce((sum, s) => sum + (s.data?.length ?? 0), 0),
+    0,
+  );
+  return `${totalSites}:${totalGames}`;
+}
+
+export function getMergedPlayerInfoQueryKey(personalInfoSignature: string) {
+  return ["mergedPlayerInfo", personalInfoSignature] as const;
+}
+
+export async function fetchMergedPlayerInfo(personalInfo: PersonalInfo[]): Promise<PlayerGameInfo | null> {
+  if (personalInfo.length === 0) return null;
+  const allSiteStats = personalInfo.flatMap((i) => i.info?.site_stats_data ?? []);
+  const merged = unwrap(await playerStatsCommands.mergePlayerSiteStats(allSiteStats));
+  return { site_stats_data: merged };
+}
+
 function Databases({
   initialPlayer,
   profileId,
@@ -59,10 +134,7 @@ function Databases({
 
   // Create stable session signature to avoid unnecessary re-renders
   const sessionSignature = useMemo(() => {
-    return sessions
-      .map((s) => `${s.profileId ?? ""}:${s.lichess?.username ?? ""}:${s.chessCom?.username ?? ""}`)
-      .sort()
-      .join("|");
+    return buildSessionsSignature(sessions);
   }, [sessions]);
 
   const {
@@ -71,76 +143,37 @@ function Databases({
     isFetching,
     error,
   } = useQuery<PersonalInfo[]>({
-    queryKey: ["personalInfo", profileId ?? name, sessionSignature],
+    queryKey: getPersonalInfoQueryKey(profileId ?? name, sessionSignature),
     queryFn: async () => {
       const effectiveProfileId = profileId ?? profilesByName.get(name) ?? null;
       if (!effectiveProfileId) return [];
-      const dbPath = await getProfileDbPath(effectiveProfileId);
 
-      const playerSessions = sessions.filter(
-        (s) => s.profileId === effectiveProfileId && (s.lichess?.username || s.chessCom?.username),
-      );
-
-      const results = await Promise.allSettled(
-        playerSessions.map(async (session) => {
-          const accountKey = session.lichess
-            ? getAccountKey("lichess", session.lichess.username)
-            : session.chessCom
-              ? getAccountKey("chesscom", session.chessCom.username)
-              : null;
-          if (!accountKey) throw new Error("Session does not have an account key");
-
-          const players = await query_players(dbPath, {
-            name: accountKey,
-            options: {
-              pageSize: 200,
-              direction: "asc",
-              sort: "id",
-              skipCount: false,
-            },
-          });
-          const normalizedAccountKey = accountKey.trim().toLowerCase();
-          const player =
-            players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
-          if (!player) throw new Error("Player not found in database");
-
-          const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
-          return { session, info };
-        }),
-      );
-      return results
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
+      return fetchPersonalInfoForProfile({ effectiveProfileId, sessions });
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    // We want tab switches to be instant. We explicitly invalidate these queries
+    // when sync imports new games.
+    staleTime: Infinity,
+    gcTime: Infinity,
     refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     enabled: (profileId != null || !!name) && sessions.length > 0,
   });
 
   // Create stable signature for merged info to avoid unnecessary re-computations
   const personalInfoSignature = useMemo(() => {
-    if (!personalInfo || personalInfo.length === 0) return null;
-    // Create a signature based on site count and total games, not the full data
-    const totalSites = personalInfo.reduce((acc, p) => acc + (p.info?.site_stats_data?.length ?? 0), 0);
-    const totalGames = personalInfo.reduce(
-      (acc, p) => acc + (p.info?.site_stats_data ?? []).reduce((sum, s) => sum + (s.data?.length ?? 0), 0),
-      0,
-    );
-    return `${totalSites}:${totalGames}`;
+    return computePersonalInfoSignature(personalInfo);
   }, [personalInfo]);
 
   const { data: mergedInfo } = useQuery<PlayerGameInfo | null>({
-    queryKey: ["mergedPlayerInfo", personalInfoSignature],
+    queryKey: personalInfoSignature ? getMergedPlayerInfoQueryKey(personalInfoSignature) : ["mergedPlayerInfo", null],
     queryFn: async () => {
       if (!personalInfo || personalInfo.length === 0) return null;
-
-      const allSiteStats = personalInfo.flatMap((i) => i.info?.site_stats_data ?? []);
-      const merged = unwrap(await playerStatsCommands.mergePlayerSiteStats(allSiteStats));
-
-      return { site_stats_data: merged };
+      return fetchMergedPlayerInfo(personalInfo);
     },
     enabled: !!personalInfo && personalInfo.length > 0 && personalInfoSignature !== null,
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
   });
 

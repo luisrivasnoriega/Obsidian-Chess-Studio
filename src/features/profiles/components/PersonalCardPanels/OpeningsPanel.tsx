@@ -11,7 +11,7 @@ import type { EloBucket, OpeningStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
-import { createPlayerStatsFilters } from "@/utils/playerStats";
+import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { createTab } from "@/utils/tabs";
 import { countMainPly, defaultTree } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
@@ -30,26 +30,21 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   // IMPORTANT: Never put `info.site_stats_data` directly into a react-query key.
   // It's a large nested structure and hashing it is extremely expensive.
   // Create a stable signature that only changes when the actual data changes.
-  const statsSignature = useMemo(() => {
-    if (!info?.site_stats_data || info.site_stats_data.length === 0) {
-      return { sites: 0, games: 0, firstSite: "", lastSite: "" };
-    }
-    const sites = info.site_stats_data.length;
-    const games = info.site_stats_data.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
-    const firstSite = info.site_stats_data[0]?.site ?? "";
-    const lastSite = info.site_stats_data[info.site_stats_data.length - 1]?.site ?? "";
-    return { sites, games, firstSite, lastSite };
-  }, [info?.site_stats_data]);
+  const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
 
   // Get ELO buckets from backend
   const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
-    queryKey: ["playerEloBuckets", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerEloBuckets(info?.site_stats_data ?? []));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const opponentEloOptions = useMemo(() => {
@@ -67,13 +62,17 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const [activeColor, setActiveColor] = useState<"white" | "black">("white");
 
   const { data: sidebarModel } = useQuery({
-    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // Create filters for backend
@@ -90,10 +89,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   } = useQuery<OpeningStats[]>({
     queryKey: [
       "playerOpeningsWhite",
-      statsSignature.sites,
-      statsSignature.games,
-      statsSignature.firstSite,
-      statsSignature.lastSite,
+      statsSig.key,
       filters.platform,
       filters.time_control,
       filters.opponent_elo_bucket,
@@ -103,8 +99,12 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
       return unwrap(await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, true));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const {
@@ -114,10 +114,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   } = useQuery<OpeningStats[]>({
     queryKey: [
       "playerOpeningsBlack",
-      statsSignature.sites,
-      statsSignature.games,
-      statsSignature.firstSite,
-      statsSignature.lastSite,
+      statsSig.key,
       filters.platform,
       filters.time_control,
       filters.opponent_elo_bucket,
@@ -127,8 +124,12 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
       return unwrap(await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, false));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   // Sort openings (backend doesn't sort, so we do it here for now)

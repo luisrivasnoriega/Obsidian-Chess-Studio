@@ -35,11 +35,7 @@ vi.mock("@/bindings/playerStats", () => ({
       data: {
         has_data: true,
         style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
-        elo: {
-          all: { bullet: "-", blitz: "-", rapid: "-" },
-          lichess: { bullet: "-", blitz: "-", rapid: "-" },
-          chesscom: { bullet: "-", blitz: "-", rapid: "-" },
-        },
+        elo: [],
       },
     })),
     calculatePlayerRatingTimeline: vi.fn(async () => ({

@@ -6,6 +6,7 @@
 mod analysis_storage;
 mod app;
 mod chess;
+mod dashboard_games_history;
 mod db;
 mod error;
 mod fide;
@@ -39,6 +40,9 @@ use crate::analysis_storage::{
     analysis_db_clear_analyzed_pgns, analysis_db_delete_entries, analysis_db_get_all_analyzed_games,
     analysis_db_get_analyzed_game, analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
     analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
+};
+use crate::dashboard_games_history::{
+    dashboard_get_games_history_rows, dashboard_resolve_profile_db_game_id, dashboard_search_profile_opponents,
 };
 use crate::chess::{
     analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
@@ -208,6 +212,9 @@ pub async fn run() {
             analysis_db_delete_entries,
             analysis_db_clear_analyzed_pgns,
             analysis_db_get_analyzed_games_bulk,
+            dashboard_get_games_history_rows,
+            dashboard_search_profile_opponents,
+            dashboard_resolve_profile_db_game_id,
             open_external_link,
             compute_pawn_structures,
             calculate_player_game_stats,

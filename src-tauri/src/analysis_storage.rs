@@ -11,6 +11,7 @@ const DB_FILENAME: &str = "analysis.db3";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct AnalyzedGameEntry {
+    pub profile_id: String,
     pub game_id: String,
     pub analyzed_pgn: String,
 }
@@ -26,6 +27,7 @@ pub struct StoredGameStats {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GameStatsEntry {
+    pub profile_id: String,
     pub game_id: String,
     pub accuracy: f64,
     pub acpl: f64,
@@ -39,6 +41,10 @@ fn normalize_game_id(game_id: &str) -> Option<&str> {
     } else {
         Some(gid)
     }
+}
+
+fn normalize_profile_id(profile_id: Option<String>) -> String {
+    profile_id.unwrap_or_default().trim().to_string()
 }
 
 fn resolve_analysis_db_path(app: &AppHandle) -> Result<PathBuf> {
@@ -71,22 +77,103 @@ fn get_analysis_db_at_path(db_path: &Path) -> Result<Connection> {
 }
 
 fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS game_analysis (
-            game_id TEXT PRIMARY KEY,
-            analyzed_pgn TEXT,
-            accuracy REAL,
-            acpl REAL,
-            estimated_elo INTEGER,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
+    // analysis.db3 is shared across profiles, so key analysis by (profile_id, game_id).
+    //
+    // Legacy note:
+    // - Old schema used `game_id TEXT PRIMARY KEY` where game_id was an external identifier
+    //   (Chess.com URL or Lichess game id). We migrate legacy rows into v2 under profile_id = ''
+    //   and keep the old key in `legacy_game_key` for best-effort backwards compatibility.
 
-        CREATE INDEX IF NOT EXISTS idx_game_analysis_estimated_elo
-            ON game_analysis(estimated_elo);
-        "#,
-    )?;
+    // Detect whether `game_analysis` already exists and whether it's legacy.
+    let mut has_table = false;
+    let mut has_profile_id = false;
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(game_analysis)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for r in rows {
+            has_table = true;
+            let name = r?;
+            if name.eq_ignore_ascii_case("profile_id") {
+                has_profile_id = true;
+            }
+        }
+    }
+
+    if !has_table {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS game_analysis (
+                profile_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                legacy_game_key TEXT,
+                analyzed_pgn TEXT,
+                accuracy REAL,
+                acpl REAL,
+                estimated_elo INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (profile_id, game_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_profile_estimated_elo
+                ON game_analysis(profile_id, estimated_elo);
+
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_legacy_key
+                ON game_analysis(legacy_game_key);
+            "#,
+        )?;
+        return Ok(());
+    }
+
+    if !has_profile_id {
+        // Legacy table exists: rebuild & migrate.
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE game_analysis RENAME TO game_analysis_old;
+
+            CREATE TABLE game_analysis (
+                profile_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                legacy_game_key TEXT,
+                analyzed_pgn TEXT,
+                accuracy REAL,
+                acpl REAL,
+                estimated_elo INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (profile_id, game_id)
+            );
+
+            INSERT INTO game_analysis (
+                profile_id, game_id, legacy_game_key, analyzed_pgn, accuracy, acpl, estimated_elo, created_at, updated_at
+            )
+            SELECT
+                '', game_id, game_id, analyzed_pgn, accuracy, acpl, estimated_elo, created_at, updated_at
+            FROM game_analysis_old;
+
+            DROP TABLE game_analysis_old;
+
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_profile_estimated_elo
+                ON game_analysis(profile_id, estimated_elo);
+
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_legacy_key
+                ON game_analysis(legacy_game_key);
+
+            COMMIT;
+            "#,
+        )?;
+    } else {
+        // Ensure indexes exist.
+        conn.execute_batch(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_profile_estimated_elo
+                ON game_analysis(profile_id, estimated_elo);
+            CREATE INDEX IF NOT EXISTS idx_game_analysis_legacy_key
+                ON game_analysis(legacy_game_key);
+            "#,
+        )?;
+    }
     Ok(())
 }
 
@@ -94,75 +181,96 @@ fn init_schema(conn: &Connection) -> Result<()> {
 // Pure DB operations (testable)
 // -----------------------------
 
-fn set_analyzed_game_conn(conn: &Connection, game_id: &str, analyzed_pgn: &str) -> Result<()> {
+fn set_analyzed_game_conn(
+    conn: &Connection,
+    profile_id: &str,
+    game_id: &str,
+    analyzed_pgn: &str,
+) -> Result<()> {
     conn.execute(
         r#"
-        INSERT INTO game_analysis (game_id, analyzed_pgn, created_at, updated_at)
-        VALUES (?1, ?2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(game_id) DO UPDATE SET
+        INSERT INTO game_analysis (profile_id, game_id, analyzed_pgn, created_at, updated_at)
+        VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(profile_id, game_id) DO UPDATE SET
             analyzed_pgn = excluded.analyzed_pgn,
             updated_at = CURRENT_TIMESTAMP
         "#,
-        params![game_id, analyzed_pgn],
+        params![profile_id, game_id, analyzed_pgn],
     )?;
     Ok(())
 }
 
-fn get_analyzed_game_conn(conn: &Connection, game_id: &str) -> Result<Option<String>> {
+fn get_analyzed_game_conn(conn: &Connection, profile_id: &str, game_id: &str) -> Result<Option<String>> {
     let mut stmt = conn.prepare(
-        "SELECT analyzed_pgn FROM game_analysis WHERE game_id = ?1 AND analyzed_pgn IS NOT NULL",
+        "SELECT analyzed_pgn FROM game_analysis WHERE profile_id = ?1 AND game_id = ?2 AND analyzed_pgn IS NOT NULL",
     )?;
     let res = stmt
-        .query_row(params![game_id], |row| row.get::<_, String>(0))
+        .query_row(params![profile_id, game_id], |row| row.get::<_, String>(0))
         .optional()?;
     Ok(res)
 }
 
-fn get_all_analyzed_games_conn(conn: &Connection) -> Result<Vec<AnalyzedGameEntry>> {
+fn get_all_analyzed_games_conn(conn: &Connection, profile_id: &str) -> Result<Vec<AnalyzedGameEntry>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT game_id, analyzed_pgn
+        SELECT profile_id, game_id, analyzed_pgn
         FROM game_analysis
-        WHERE analyzed_pgn IS NOT NULL
+        WHERE profile_id = ?1 AND analyzed_pgn IS NOT NULL
         "#,
     )?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![profile_id], |row| {
             Ok(AnalyzedGameEntry {
-                game_id: row.get(0)?,
-                analyzed_pgn: row.get(1)?,
+                profile_id: row.get(0)?,
+                game_id: row.get(1)?,
+                analyzed_pgn: row.get(2)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
-fn set_game_stats_conn(conn: &Connection, game_id: &str, stats: &StoredGameStats) -> Result<()> {
+fn set_game_stats_conn(
+    conn: &Connection,
+    profile_id: &str,
+    game_id: &str,
+    stats: &StoredGameStats,
+) -> Result<()> {
     conn.execute(
         r#"
-        INSERT INTO game_analysis (game_id, accuracy, acpl, estimated_elo, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(game_id) DO UPDATE SET
+        INSERT INTO game_analysis (profile_id, game_id, accuracy, acpl, estimated_elo, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(profile_id, game_id) DO UPDATE SET
             accuracy = excluded.accuracy,
             acpl = excluded.acpl,
             estimated_elo = excluded.estimated_elo,
             updated_at = CURRENT_TIMESTAMP
         "#,
-        params![game_id, stats.accuracy, stats.acpl, stats.estimated_elo],
+        params![
+            profile_id,
+            game_id,
+            stats.accuracy,
+            stats.acpl,
+            stats.estimated_elo
+        ],
     )?;
     Ok(())
 }
 
-fn get_game_stats_conn(conn: &Connection, game_id: &str) -> Result<Option<StoredGameStats>> {
+fn get_game_stats_conn(
+    conn: &Connection,
+    profile_id: &str,
+    game_id: &str,
+) -> Result<Option<StoredGameStats>> {
     let mut stmt = conn.prepare(
         r#"
         SELECT accuracy, acpl, estimated_elo
         FROM game_analysis
-        WHERE game_id = ?1 AND accuracy IS NOT NULL AND acpl IS NOT NULL
+        WHERE profile_id = ?1 AND game_id = ?2 AND accuracy IS NOT NULL AND acpl IS NOT NULL
         "#,
     )?;
     let res = stmt
-        .query_row(params![game_id], |row| {
+        .query_row(params![profile_id, game_id], |row| {
             Ok(StoredGameStats {
                 accuracy: row.get(0)?,
                 acpl: row.get(1)?,
@@ -173,7 +281,11 @@ fn get_game_stats_conn(conn: &Connection, game_id: &str) -> Result<Option<Stored
     Ok(res)
 }
 
-fn get_game_stats_bulk_conn(conn: &Connection, game_ids: &[String]) -> Result<Vec<GameStatsEntry>> {
+fn get_game_stats_bulk_conn(
+    conn: &Connection,
+    profile_id: &str,
+    game_ids: &[String],
+) -> Result<Vec<GameStatsEntry>> {
     if game_ids.is_empty() {
         return Ok(vec![]);
     }
@@ -189,22 +301,29 @@ fn get_game_stats_bulk_conn(conn: &Connection, game_ids: &[String]) -> Result<Ve
             .join(",");
         let sql = format!(
             r#"
-            SELECT game_id, accuracy, acpl, estimated_elo
+            SELECT profile_id, game_id, accuracy, acpl, estimated_elo
             FROM game_analysis
-            WHERE game_id IN ({})
+            WHERE profile_id = ?1
+              AND game_id IN ({})
               AND accuracy IS NOT NULL
               AND acpl IS NOT NULL
             "#,
             placeholders
         );
         let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::with_capacity(1 + chunk.len());
+        params_vec.push(rusqlite::types::Value::from(profile_id.to_string()));
+        for gid in chunk {
+            params_vec.push(rusqlite::types::Value::from(gid.clone()));
+        }
         let rows = stmt
-            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            .query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
                 Ok(GameStatsEntry {
-                    game_id: row.get(0)?,
-                    accuracy: row.get(1)?,
-                    acpl: row.get(2)?,
-                    estimated_elo: row.get(3)?,
+                    profile_id: row.get(0)?,
+                    game_id: row.get(1)?,
+                    accuracy: row.get(2)?,
+                    acpl: row.get(3)?,
+                    estimated_elo: row.get(4)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -216,6 +335,7 @@ fn get_game_stats_bulk_conn(conn: &Connection, game_ids: &[String]) -> Result<Ve
 
 fn get_analyzed_games_bulk_conn(
     conn: &Connection,
+    profile_id: &str,
     game_ids: &[String],
 ) -> Result<Vec<AnalyzedGameEntry>> {
     if game_ids.is_empty() {
@@ -233,19 +353,26 @@ fn get_analyzed_games_bulk_conn(
             .join(",");
         let sql = format!(
             r#"
-            SELECT game_id, analyzed_pgn
+            SELECT profile_id, game_id, analyzed_pgn
             FROM game_analysis
-            WHERE game_id IN ({})
+            WHERE profile_id = ?1
+              AND game_id IN ({})
               AND analyzed_pgn IS NOT NULL
             "#,
             placeholders
         );
         let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::with_capacity(1 + chunk.len());
+        params_vec.push(rusqlite::types::Value::from(profile_id.to_string()));
+        for gid in chunk {
+            params_vec.push(rusqlite::types::Value::from(gid.clone()));
+        }
         let rows = stmt
-            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            .query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
                 Ok(AnalyzedGameEntry {
-                    game_id: row.get(0)?,
-                    analyzed_pgn: row.get(1)?,
+                    profile_id: row.get(0)?,
+                    game_id: row.get(1)?,
+                    analyzed_pgn: row.get(2)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -255,7 +382,7 @@ fn get_analyzed_games_bulk_conn(
     Ok(out)
 }
 
-fn delete_entries_conn(conn: &Connection, game_ids: &[String]) -> Result<()> {
+fn delete_entries_conn(conn: &Connection, profile_id: &str, game_ids: &[String]) -> Result<()> {
     if game_ids.is_empty() {
         return Ok(());
     }
@@ -267,9 +394,17 @@ fn delete_entries_conn(conn: &Connection, game_ids: &[String]) -> Result<()> {
             .take(chunk.len())
             .collect::<Vec<_>>()
             .join(",");
-        let sql = format!("DELETE FROM game_analysis WHERE game_id IN ({})", placeholders);
+        let sql = format!(
+            "DELETE FROM game_analysis WHERE profile_id = ?1 AND game_id IN ({})",
+            placeholders
+        );
         let mut stmt = conn.prepare(&sql)?;
-        stmt.execute(rusqlite::params_from_iter(chunk.iter()))?;
+        let mut params_vec: Vec<rusqlite::types::Value> = Vec::with_capacity(1 + chunk.len());
+        params_vec.push(rusqlite::types::Value::from(profile_id.to_string()));
+        for gid in chunk {
+            params_vec.push(rusqlite::types::Value::from(gid.clone()));
+        }
+        stmt.execute(rusqlite::params_from_iter(params_vec.iter()))?;
     }
 
     Ok(())
@@ -293,30 +428,49 @@ pub fn analysis_db_set_analyzed_game(
     app: AppHandle,
     game_id: String,
     analyzed_pgn: String,
+    profile_id: Option<String>,
 ) -> Result<()> {
     let Some(gid) = normalize_game_id(&game_id) else {
         return Ok(());
     };
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    set_analyzed_game_conn(&conn, gid, &analyzed_pgn)?;
+    set_analyzed_game_conn(&conn, &pid, gid, &analyzed_pgn)?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_analyzed_game(app: AppHandle, game_id: String) -> Result<Option<String>> {
+pub fn analysis_db_get_analyzed_game(
+    app: AppHandle,
+    game_id: String,
+    profile_id: Option<String>,
+) -> Result<Option<String>> {
     let Some(gid) = normalize_game_id(&game_id) else {
         return Ok(None);
     };
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    get_analyzed_game_conn(&conn, gid)
+    // Exact match first.
+    if let Some(pgn) = get_analyzed_game_conn(&conn, &pid, gid)? {
+        return Ok(Some(pgn));
+    }
+    // Backwards compatibility: allow looking up legacy entries stored under the empty profile id.
+    if !pid.is_empty() {
+        return get_analyzed_game_conn(&conn, "", gid);
+    }
+    Ok(None)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_all_analyzed_games(app: AppHandle) -> Result<Vec<AnalyzedGameEntry>> {
+pub fn analysis_db_get_all_analyzed_games(
+    app: AppHandle,
+    profile_id: Option<String>,
+) -> Result<Vec<AnalyzedGameEntry>> {
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    get_all_analyzed_games_conn(&conn)
+    get_all_analyzed_games_conn(&conn, &pid)
 }
 
 #[tauri::command]
@@ -325,33 +479,45 @@ pub fn analysis_db_set_game_stats(
     app: AppHandle,
     game_id: String,
     stats: StoredGameStats,
+    profile_id: Option<String>,
 ) -> Result<()> {
     let Some(gid) = normalize_game_id(&game_id) else {
         return Ok(());
     };
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    set_game_stats_conn(&conn, gid, &stats)?;
+    set_game_stats_conn(&conn, &pid, gid, &stats)?;
     Ok(())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_game_stats(app: AppHandle, game_id: String) -> Result<Option<StoredGameStats>> {
+pub fn analysis_db_get_game_stats(
+    app: AppHandle,
+    game_id: String,
+    profile_id: Option<String>,
+) -> Result<Option<StoredGameStats>> {
     let Some(gid) = normalize_game_id(&game_id) else {
         return Ok(None);
     };
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    get_game_stats_conn(&conn, gid)
+    get_game_stats_conn(&conn, &pid, gid)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_get_game_stats_bulk(app: AppHandle, game_ids: Vec<String>) -> Result<Vec<GameStatsEntry>> {
+pub fn analysis_db_get_game_stats_bulk(
+    app: AppHandle,
+    game_ids: Vec<String>,
+    profile_id: Option<String>,
+) -> Result<Vec<GameStatsEntry>> {
     if game_ids.is_empty() {
         return Ok(vec![]);
     }
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    get_game_stats_bulk_conn(&conn, &game_ids)
+    get_game_stats_bulk_conn(&conn, &pid, &game_ids)
 }
 
 #[tauri::command]
@@ -359,22 +525,29 @@ pub fn analysis_db_get_game_stats_bulk(app: AppHandle, game_ids: Vec<String>) ->
 pub fn analysis_db_get_analyzed_games_bulk(
     app: AppHandle,
     game_ids: Vec<String>,
+    profile_id: Option<String>,
 ) -> Result<Vec<AnalyzedGameEntry>> {
     if game_ids.is_empty() {
         return Ok(vec![]);
     }
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    get_analyzed_games_bulk_conn(&conn, &game_ids)
+    get_analyzed_games_bulk_conn(&conn, &pid, &game_ids)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn analysis_db_delete_entries(app: AppHandle, game_ids: Vec<String>) -> Result<()> {
+pub fn analysis_db_delete_entries(
+    app: AppHandle,
+    game_ids: Vec<String>,
+    profile_id: Option<String>,
+) -> Result<()> {
     if game_ids.is_empty() {
         return Ok(());
     }
+    let pid = normalize_profile_id(profile_id);
     let conn = get_analysis_db(&app)?;
-    delete_entries_conn(&conn, &game_ids)
+    delete_entries_conn(&conn, &pid, &game_ids)
 }
 
 #[tauri::command]
@@ -438,13 +611,20 @@ mod tests {
         )?;
         assert_eq!(table_count, 1);
 
-        // Index exists
-        let idx_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_game_analysis_estimated_elo'",
+        // Indexes exist
+        let idx_profile_stats: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_game_analysis_profile_estimated_elo'",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(idx_count, 1);
+        assert_eq!(idx_profile_stats, 1);
+
+        let idx_legacy_key: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_game_analysis_legacy_key'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(idx_legacy_key, 1);
 
         drop(conn);
         cleanup_db_files(&path);
@@ -456,8 +636,8 @@ mod tests {
         let path = temp_db_path("set_get_analyzed_game_roundtrip");
         let conn = get_analysis_db_at_path(&path)?;
 
-        set_analyzed_game_conn(&conn, "g1", "PGN_1")?;
-        let res = get_analyzed_game_conn(&conn, "g1")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_1")?;
+        let res = get_analyzed_game_conn(&conn, "", "g1")?;
         assert_eq!(res.as_deref(), Some("PGN_1"));
 
         drop(conn);
@@ -470,9 +650,9 @@ mod tests {
         let path = temp_db_path("analyzed_game_upsert_updates_value");
         let conn = get_analysis_db_at_path(&path)?;
 
-        set_analyzed_game_conn(&conn, "g1", "PGN_1")?;
-        set_analyzed_game_conn(&conn, "g1", "PGN_2")?;
-        let res = get_analyzed_game_conn(&conn, "g1")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_1")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_2")?;
+        let res = get_analyzed_game_conn(&conn, "", "g1")?;
         assert_eq!(res.as_deref(), Some("PGN_2"));
 
         drop(conn);
@@ -497,8 +677,8 @@ mod tests {
             acpl: 23.0,
             estimated_elo: Some(1850),
         };
-        set_game_stats_conn(&conn, "g1", &s1)?;
-        let got1 = get_game_stats_conn(&conn, "g1")?.unwrap();
+        set_game_stats_conn(&conn, "", "g1", &s1)?;
+        let got1 = get_game_stats_conn(&conn, "", "g1")?.unwrap();
         assert!((got1.accuracy - 91.2).abs() < 1e-9);
         assert!((got1.acpl - 23.0).abs() < 1e-9);
         assert_eq!(got1.estimated_elo, Some(1850));
@@ -508,8 +688,8 @@ mod tests {
             acpl: 45.0,
             estimated_elo: None,
         };
-        set_game_stats_conn(&conn, "g2", &s2)?;
-        let got2 = get_game_stats_conn(&conn, "g2")?.unwrap();
+        set_game_stats_conn(&conn, "", "g2", &s2)?;
+        let got2 = get_game_stats_conn(&conn, "", "g2")?.unwrap();
         assert!((got2.accuracy - 77.7).abs() < 1e-9);
         assert!((got2.acpl - 45.0).abs() < 1e-9);
         assert_eq!(got2.estimated_elo, None);
@@ -524,15 +704,15 @@ mod tests {
         let path = temp_db_path("set_stats_preserves_existing_analyzed_pgn");
         let conn = get_analysis_db_at_path(&path)?;
 
-        set_analyzed_game_conn(&conn, "g1", "PGN_KEEP")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_KEEP")?;
         let stats = StoredGameStats {
             accuracy: 99.0,
             acpl: 5.0,
             estimated_elo: Some(2400),
         };
-        set_game_stats_conn(&conn, "g1", &stats)?;
+        set_game_stats_conn(&conn, "", "g1", &stats)?;
 
-        let pgn = get_analyzed_game_conn(&conn, "g1")?;
+        let pgn = get_analyzed_game_conn(&conn, "", "g1")?;
         assert_eq!(pgn.as_deref(), Some("PGN_KEEP"));
 
         drop(conn);
@@ -545,16 +725,16 @@ mod tests {
         let path = temp_db_path("get_all_analyzed_games_only_returns_non_null");
         let conn = get_analysis_db_at_path(&path)?;
 
-        set_analyzed_game_conn(&conn, "g1", "PGN_1")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_1")?;
         // insert stats only, analyzed_pgn stays NULL
         let stats = StoredGameStats {
             accuracy: 50.0,
             acpl: 100.0,
             estimated_elo: None,
         };
-        set_game_stats_conn(&conn, "g2", &stats)?;
+        set_game_stats_conn(&conn, "", "g2", &stats)?;
 
-        let all = get_all_analyzed_games_conn(&conn)?;
+        let all = get_all_analyzed_games_conn(&conn, "")?;
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].game_id, "g1");
         assert_eq!(all[0].analyzed_pgn, "PGN_1");
@@ -581,10 +761,10 @@ mod tests {
                 acpl: (i as f64) + 0.5,
                 estimated_elo: if i % 2 == 0 { Some(i as i64) } else { None },
             };
-            set_game_stats_conn(&conn, &id, &s)?;
+            set_game_stats_conn(&conn, "", &id, &s)?;
         }
 
-        let rows = get_game_stats_bulk_conn(&conn, &ids)?;
+        let rows = get_game_stats_bulk_conn(&conn, "", &ids)?;
         assert_eq!(rows.len(), total);
 
         // Convert to map for easy assertions (order not guaranteed)
@@ -621,10 +801,10 @@ mod tests {
         for i in 0..total {
             let id = format!("g{}", i);
             ids.push(id.clone());
-            set_analyzed_game_conn(&conn, &id, &format!("PGN_{}", i))?;
+            set_analyzed_game_conn(&conn, "", &id, &format!("PGN_{}", i))?;
         }
 
-        let rows = get_analyzed_games_bulk_conn(&conn, &ids)?;
+        let rows = get_analyzed_games_bulk_conn(&conn, "", &ids)?;
         assert_eq!(rows.len(), total);
 
         let map: HashMap<String, String> = rows
@@ -651,13 +831,13 @@ mod tests {
         for i in 0..total {
             let id = format!("g{}", i);
             ids.push(id.clone());
-            set_analyzed_game_conn(&conn, &id, "PGN")?;
+            set_analyzed_game_conn(&conn, "", &id, "PGN")?;
         }
 
         let before: i64 = conn.query_row("SELECT COUNT(*) FROM game_analysis", [], |r| r.get(0))?;
         assert_eq!(before as usize, total);
 
-        delete_entries_conn(&conn, &ids)?;
+        delete_entries_conn(&conn, "", &ids)?;
 
         let after: i64 = conn.query_row("SELECT COUNT(*) FROM game_analysis", [], |r| r.get(0))?;
         assert_eq!(after, 0);
@@ -672,29 +852,29 @@ mod tests {
         let path = temp_db_path("clear_analyzed_pgns_sets_only_pgn_to_null");
         let conn = get_analysis_db_at_path(&path)?;
 
-        set_analyzed_game_conn(&conn, "g1", "PGN_1")?;
-        set_analyzed_game_conn(&conn, "g2", "PGN_2")?;
+        set_analyzed_game_conn(&conn, "", "g1", "PGN_1")?;
+        set_analyzed_game_conn(&conn, "", "g2", "PGN_2")?;
         let stats = StoredGameStats {
             accuracy: 88.8,
             acpl: 12.3,
             estimated_elo: Some(2000),
         };
-        set_game_stats_conn(&conn, "g1", &stats)?;
+        set_game_stats_conn(&conn, "", "g1", &stats)?;
 
         clear_analyzed_pgns_conn(&conn)?;
 
         // analyzed_pgn is cleared
-        assert_eq!(get_analyzed_game_conn(&conn, "g1")?, None);
-        assert_eq!(get_analyzed_game_conn(&conn, "g2")?, None);
+        assert_eq!(get_analyzed_game_conn(&conn, "", "g1")?, None);
+        assert_eq!(get_analyzed_game_conn(&conn, "", "g2")?, None);
 
         // stats remain
-        let got = get_game_stats_conn(&conn, "g1")?.unwrap();
+        let got = get_game_stats_conn(&conn, "", "g1")?.unwrap();
         assert!((got.accuracy - 88.8).abs() < 1e-9);
         assert!((got.acpl - 12.3).abs() < 1e-9);
         assert_eq!(got.estimated_elo, Some(2000));
 
         // all analyzed list now empty
-        let all = get_all_analyzed_games_conn(&conn)?;
+        let all = get_all_analyzed_games_conn(&conn, "")?;
         assert!(all.is_empty());
 
         drop(conn);
@@ -708,11 +888,11 @@ mod tests {
         let conn = get_analysis_db_at_path(&path)?;
 
         // Missing
-        assert!(get_game_stats_conn(&conn, "missing")?.is_none());
+        assert!(get_game_stats_conn(&conn, "", "missing")?.is_none());
 
         // Only analyzed_pgn, no stats
-        set_analyzed_game_conn(&conn, "g1", "PGN")?;
-        assert!(get_game_stats_conn(&conn, "g1")?.is_none());
+        set_analyzed_game_conn(&conn, "", "g1", "PGN")?;
+        assert!(get_game_stats_conn(&conn, "", "g1")?.is_none());
 
         drop(conn);
         cleanup_db_files(&path);

@@ -7,6 +7,7 @@ import { useAtomValue } from "jotai";
 import React, { memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import EvalChart from "@/components/EvalChart";
 import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
@@ -188,6 +189,7 @@ function ReportPanel() {
 
           // Check if this tab is associated with a local game
           const localGameId = typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_localGameId`) : null;
+          const activeProfileId = typeof window !== "undefined" ? localStorage.getItem("activeProfileId") : null;
 
           if (localGameId) {
             // Get the game record to determine user color
@@ -223,12 +225,12 @@ function ReportPanel() {
                 await updateGameRecord(localGameId, { pgn: pgnWithEvals });
               }
               // Also save to analyzed games database for consistency
-              await saveAnalyzedGame(localGameId, pgnWithEvals);
+              await saveAnalyzedGame(localGameId, pgnWithEvals, gameRecord.profileId ?? activeProfileId ?? null);
             } else {
               // Fallback: just update PGN if game not found
               await updateGameRecord(localGameId, { pgn: pgnWithEvals });
               // Also save to analyzed games database for consistency
-              await saveAnalyzedGame(localGameId, pgnWithEvals);
+              await saveAnalyzedGame(localGameId, pgnWithEvals, activeProfileId ?? null);
             }
 
             // Trigger refresh of games list in dashboard
@@ -241,10 +243,45 @@ function ReportPanel() {
               typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_chessComGameUrl`) : null;
             const lichessGameId =
               typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_lichessGameId`) : null;
+            const profileDbGameId =
+              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileDbGameId`) : null;
+            const profileIdFromTab = typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
+
+            // If this analysis tab was opened from a profile DB game, we always persist using (profileId, Games.ID)
+            // so the dashboard LEFT JOIN can match exactly.
+            const preferredProfileId = profileIdFromTab ?? activeProfileId ?? null;
+            let preferredGameId = profileDbGameId ?? null;
+
+            // Safety net: if the tab didn't get `${tabId}_profileDbGameId` in time, resolve it now using the backend.
+            if (!preferredGameId && preferredProfileId) {
+              try {
+                if (chessComGameUrl) {
+                  preferredGameId =
+                    (await invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+                      profileId: preferredProfileId,
+                      kind: "Chesscom",
+                      gameKey: chessComGameUrl,
+                    })) ?? null;
+                } else if (lichessGameId) {
+                  preferredGameId =
+                    (await invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+                      profileId: preferredProfileId,
+                      kind: "Lichess",
+                      gameKey: lichessGameId,
+                    })) ?? null;
+                }
+                if (preferredGameId && typeof window !== "undefined") {
+                  sessionStorage.setItem(`${activeTab}_profileId`, preferredProfileId);
+                  sessionStorage.setItem(`${activeTab}_profileDbGameId`, preferredGameId);
+                }
+              } catch {
+                // ignore
+              }
+            }
 
             if (chessComGameUrl) {
               // Save analyzed PGN for Chess.com game
-              await saveAnalyzedGame(chessComGameUrl, pgnWithEvals);
+              await saveAnalyzedGame(preferredGameId ?? chessComGameUrl, pgnWithEvals, preferredProfileId);
 
               // Calculate and save stats using the stats already calculated in the report
               try {
@@ -272,7 +309,7 @@ function ReportPanel() {
                       acpl,
                       estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
                     };
-                    await saveGameStats(chessComGameUrl, statsToSave);
+                    await saveGameStats(preferredGameId ?? chessComGameUrl, statsToSave, preferredProfileId);
                   }
                 }
               } catch {
@@ -285,7 +322,7 @@ function ReportPanel() {
               }
             } else if (lichessGameId) {
               // Save analyzed PGN for Lichess game
-              await saveAnalyzedGame(lichessGameId, pgnWithEvals);
+              await saveAnalyzedGame(preferredGameId ?? lichessGameId, pgnWithEvals, preferredProfileId);
 
               // Calculate and save stats using the stats already calculated in the report
               try {
@@ -313,7 +350,7 @@ function ReportPanel() {
                       acpl,
                       estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
                     };
-                    await saveGameStats(lichessGameId, statsToSave);
+                    await saveGameStats(preferredGameId ?? lichessGameId, statsToSave, preferredProfileId);
                   }
                 }
               } catch {

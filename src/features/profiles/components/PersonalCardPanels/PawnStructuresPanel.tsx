@@ -22,7 +22,7 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useMediaQuery } from "@mantine/hooks";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -35,7 +35,7 @@ import PlayerSidebarCard, {
   type TimeControlFilter,
 } from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
 import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
-import { convertDateRangeToBackend } from "@/utils/playerStats";
+import { createSiteStatsSignature, convertDateRangeToBackend } from "@/utils/playerStats";
 import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels/PanelLoadGate";
 import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
@@ -45,6 +45,14 @@ import type { PawnStructureStat as PawnStructureStatBackend, PawnStructureGame a
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
+import {
+  buildSessionsSignature,
+  computePersonalInfoSignature,
+  fetchMergedPlayerInfo,
+  fetchPersonalInfoForProfile,
+  getMergedPlayerInfoQueryKey,
+  getPersonalInfoQueryKey,
+} from "@/features/profiles/components/PersonalCardPanels/Databases";
 
 type PawnStructuresPanelProps = {
   playerName: string;
@@ -118,13 +126,13 @@ function createPgnFromNormalizedGame(game: NormalizedGame): string {
 export default function PawnStructuresPanel({ playerName, databaseFile, profileId }: PawnStructuresPanelProps) {
   const { t } = useTranslation();
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
+  const queryClient = useQueryClient();
 
   const [pawnMoveFilter, setPawnMoveFilter] = useState(10);
   const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
   const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">("player");
   const [pawnMotifFilters, setPawnMotifFilters] = useState<string[]>([]);
   const [pawnNamedStructureFilters, setPawnNamedStructureFilters] = useState<string[]>([]);
-  const [pawnStructures, setPawnStructures] = useState<PawnStructureStat[]>([]);
   const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">("frequency");
   const [pawnLoading, setPawnLoading] = useState(false);
   const [pawnProgress, setPawnProgress] = useState<number | null>(null);
@@ -139,6 +147,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const sessions = useAtomValue(sessionsAtom);
+  const sessionsSignature = useMemo(() => buildSessionsSignature(sessions), [sessions]);
 
   const moveOptions = Array.from({ length: 50 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }));
 
@@ -177,9 +186,20 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     [t],
   );
 
-  const sortedStructures = [...pawnStructures].sort((a, b) =>
-    pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate,
-  );
+  const { data: resolvedDbPath } = useQuery<string | null>({
+    queryKey: ["pawnStructuresDbPath", profileId ?? "", databaseFile ?? ""],
+    queryFn: async () => {
+      if (profileId) return await getProfileDbPath(profileId);
+      return databaseFile ?? null;
+    },
+    enabled: !!profileId || !!databaseFile,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
 
   const playerSessions = useMemo(
     () =>
@@ -210,95 +230,111 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     return keys;
   }, [profileId, playerSessions, playerName]);
 
+  // Cached pawn structures result key (so tab switches don't recompute).
+  const pawnSearchKey = useMemo(() => {
+    const dbPath = resolvedDbPath ?? null;
+    if (!dbPath) return null;
+    const backendDateRange = convertDateRangeToBackend(dateRange) ?? "";
+    const motifs = [...pawnMotifFilters].sort().join(",");
+    const names = [...pawnNamedStructureFilters].sort().join(",");
+    const accounts = [...playerAccountKeys].map((k) => k.trim().toLowerCase()).sort().join("|");
+    return [
+      dbPath,
+      accounts,
+      pawnColorFilter,
+      platform,
+      timeControl,
+      opponentEloBucket,
+      backendDateRange,
+      String(pawnMoveFilter),
+      pawnStructureMode,
+      motifs,
+      names,
+    ].join("||");
+  }, [
+    resolvedDbPath,
+    playerAccountKeys,
+    pawnColorFilter,
+    platform,
+    timeControl,
+    opponentEloBucket,
+    dateRange,
+    pawnMoveFilter,
+    pawnStructureMode,
+    pawnMotifFilters,
+    pawnNamedStructureFilters,
+  ]);
+
+  const pawnResultQueryKey = pawnSearchKey
+    ? (["pawnStructuresResult", pawnSearchKey] as const)
+    : (["pawnStructuresResult", "disabled"] as const);
+
+  const { data: pawnStructures = [] } = useQuery<PawnStructureStat[]>({
+    queryKey: pawnResultQueryKey,
+    queryFn: async () => [],
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const sortedStructures = useMemo(() => {
+    const next = [...pawnStructures];
+    return next.sort((a, b) => (pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate));
+  }, [pawnStructures, pawnSortBy]);
+
+  // Reuse the same cached PersonalInfo/Merge pipeline used by the other profile tabs.
   const { data: personalInfo, isLoading: isLoadingPersonalInfo, isFetching: isFetchingPersonalInfo } = useQuery({
-    queryKey: [
-      "pawnStructuresInfo",
-      profileId,
-      playerSessions.map((session) => session.lichess?.username ?? session.chessCom?.username).join("|"),
-    ],
+    queryKey: getPersonalInfoQueryKey(profileId ?? "", sessionsSignature),
     queryFn: async () => {
-      if (!profileId || playerSessions.length === 0) return [];
-      const dbPath = await getProfileDbPath(profileId);
-      const results = await Promise.allSettled(
-        playerSessions.map(async (session) => {
-          const accountKey = session.lichess
-            ? getAccountKey("lichess", session.lichess.username)
-            : session.chessCom
-              ? getAccountKey("chesscom", session.chessCom.username)
-              : null;
-          if (!accountKey) throw new Error("Session does not have an account key");
-
-          const players = await query_players(dbPath, {
-            name: accountKey,
-            options: {
-              pageSize: 200,
-              direction: "asc",
-              sort: "id",
-              skipCount: false,
-            },
-          });
-          const normalizedAccountKey = accountKey.trim().toLowerCase();
-          const player =
-            players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
-          if (!player) throw new Error("Player not found in database");
-
-          const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
-          return info;
-        }),
-      );
-
-      return results
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => (r as PromiseFulfilledResult<PlayerGameInfo>).value);
+      if (!profileId) return [];
+      return fetchPersonalInfoForProfile({ effectiveProfileId: profileId, sessions });
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: false,
-    enabled: !!profileId && playerSessions.length > 0,
+    enabled: !!profileId && sessions.length > 0,
   });
 
-  const mergedInfo = useMemo<PlayerGameInfo | null>(() => {
-    if (!personalInfo || personalInfo.length === 0) return null;
-    const mergedSiteStatsData: SiteStatsData[] = [];
-    const byKey = new Map<string, SiteStatsData>();
+  const personalInfoSignature = useMemo(() => computePersonalInfoSignature(personalInfo), [personalInfo]);
 
-    for (const entry of personalInfo.flatMap((info) => info.site_stats_data)) {
-      const key = `${entry.site}:${entry.player}`;
-      const existing = byKey.get(key);
-      if (!existing) {
-        const next: SiteStatsData = { site: entry.site, player: entry.player, data: [...entry.data] };
-        byKey.set(key, next);
-        mergedSiteStatsData.push(next);
-        continue;
-      }
-      existing.data.push(...entry.data);
-    }
-
-    return { site_stats_data: mergedSiteStatsData };
-  }, [personalInfo]);
+  const { data: mergedInfo } = useQuery<PlayerGameInfo | null>({
+    queryKey: personalInfoSignature ? getMergedPlayerInfoQueryKey(personalInfoSignature) : ["mergedPlayerInfo", null],
+    queryFn: async () => {
+      if (!personalInfo || personalInfo.length === 0) return null;
+      return fetchMergedPlayerInfo(personalInfo);
+    },
+    enabled: !!personalInfo && personalInfo.length > 0 && personalInfoSignature !== null,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+  });
 
   const playerInfo = mergedInfo ?? { site_stats_data: [] };
 
-  const statsSignature = useMemo(() => {
-    const ssd = playerInfo.site_stats_data ?? [];
-    if (ssd.length === 0) return { sites: 0, games: 0, firstSite: "", lastSite: "" };
-    const sites = ssd.length;
-    const games = ssd.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
-    const firstSite = ssd[0]?.site ?? "";
-    const lastSite = ssd[ssd.length - 1]?.site ?? "";
-    return { sites, games, firstSite, lastSite };
-  }, [playerInfo.site_stats_data]);
+  const statsSig = useMemo(() => createSiteStatsSignature(playerInfo.site_stats_data), [playerInfo.site_stats_data]);
 
   const { data: sidebarModel } = useQuery({
-    queryKey: ["playerSidebarModel", statsSignature.sites, statsSignature.games, statsSignature.firstSite, statsSignature.lastSite],
+    queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(playerInfo.site_stats_data ?? []));
     },
     staleTime: Infinity,
+    gcTime: Infinity,
     retry: false,
-    enabled: statsSignature.games > 0,
+    enabled: statsSig.games > 0,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const opponentEloOptions = useMemo(() => {
@@ -320,7 +356,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const handleSearch = async () => {
     // Keep the source of truth consistent with the other profile tabs:
     // if we have a profileId, always use getProfileDbPath(profileId).
-    const dbPath = profileId ? await getProfileDbPath(profileId) : (databaseFile ?? null);
+    const dbPath = resolvedDbPath ?? (profileId ? await getProfileDbPath(profileId) : (databaseFile ?? null));
 
     if (!dbPath) {
       notifications.show({
@@ -342,7 +378,6 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
 
     setPawnLoading(true);
     setPawnProgress(10);
-    setPawnStructures([]);
 
     try {
       // Get player IDs from the database using account keys
@@ -421,24 +456,42 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         return;
       }
 
-      // Convert Rust types (snake_case) to frontend types (camelCase)
-      setPawnStructures(
-        structures.map((s: PawnStructureStatBackend): PawnStructureStat => ({
-          structure: s.structure,
-          frequency: s.frequency,
-          winRate: s.win_rate,
-          sampleFen: s.sample_fen ?? undefined,
-          games: (s.games || []).map((g: PawnStructureGameBackend): PawnStructureGame => ({
-            gameId: g.game_id,
-            white: g.white,
-            black: g.black,
-            whiteElo: g.white_elo ?? undefined,
-            blackElo: g.black_elo ?? undefined,
-            result: g.result,
-            fen: g.fen,
-          })),
-        }))
-      );
+      // Convert Rust types (snake_case) to frontend types (camelCase) and cache the result.
+      const converted = structures.map((s: PawnStructureStatBackend): PawnStructureStat => ({
+        structure: s.structure,
+        frequency: s.frequency,
+        winRate: s.win_rate,
+        sampleFen: s.sample_fen ?? undefined,
+        games: (s.games || []).map((g: PawnStructureGameBackend): PawnStructureGame => ({
+          gameId: g.game_id,
+          white: g.white,
+          black: g.black,
+          whiteElo: g.white_elo ?? undefined,
+          blackElo: g.black_elo ?? undefined,
+          result: g.result,
+          fen: g.fen,
+        })),
+      }));
+
+      // Compute a key from the *actual* dbPath used (resolvedDbPath may not be ready yet).
+      const cacheDateRange = convertDateRangeToBackend(dateRange) ?? "";
+      const motifs = [...pawnMotifFilters].sort().join(",");
+      const names = [...pawnNamedStructureFilters].sort().join(",");
+      const accounts = [...playerAccountKeys].map((k) => k.trim().toLowerCase()).sort().join("|");
+      const key = [
+        dbPath,
+        accounts,
+        pawnColorFilter,
+        platform,
+        timeControl,
+        opponentEloBucket,
+        cacheDateRange,
+        String(pawnMoveFilter),
+        pawnStructureMode,
+        motifs,
+        names,
+      ].join("||");
+      queryClient.setQueryData(["pawnStructuresResult", key], converted);
       
       setPawnProgress(100);
       // Small delay to show 100% before hiding

@@ -708,57 +708,57 @@ async buildVariantsTree(request: BuildVariantsTreeRequest) : Promise<Result<Buil
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbSetAnalyzedGame(gameId: string, analyzedPgn: string) : Promise<Result<null, string>> {
+async analysisDbSetAnalyzedGame(gameId: string, analyzedPgn: string, profileId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_analyzed_game", { gameId, analyzedPgn }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_analyzed_game", { gameId, analyzedPgn, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbGetAnalyzedGame(gameId: string) : Promise<Result<string | null, string>> {
+async analysisDbGetAnalyzedGame(gameId: string, profileId: string | null) : Promise<Result<string | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_analyzed_game", { gameId }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_analyzed_game", { gameId, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbGetAllAnalyzedGames() : Promise<Result<AnalyzedGameEntry[], string>> {
+async analysisDbGetAllAnalyzedGames(profileId: string | null) : Promise<Result<AnalyzedGameEntry[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_all_analyzed_games") };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_all_analyzed_games", { profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbSetGameStats(gameId: string, stats: StoredGameStats) : Promise<Result<null, string>> {
+async analysisDbSetGameStats(gameId: string, stats: StoredGameStats, profileId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_game_stats", { gameId, stats }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_game_stats", { gameId, stats, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbGetGameStats(gameId: string) : Promise<Result<StoredGameStats | null, string>> {
+async analysisDbGetGameStats(gameId: string, profileId: string | null) : Promise<Result<StoredGameStats | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_game_stats", { gameId }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_game_stats", { gameId, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbGetGameStatsBulk(gameIds: string[]) : Promise<Result<GameStatsEntry[], string>> {
+async analysisDbGetGameStatsBulk(gameIds: string[], profileId: string | null) : Promise<Result<GameStatsEntry[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_game_stats_bulk", { gameIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_game_stats_bulk", { gameIds, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbDeleteEntries(gameIds: string[]) : Promise<Result<null, string>> {
+async analysisDbDeleteEntries(gameIds: string[], profileId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_delete_entries", { gameIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_delete_entries", { gameIds, profileId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -772,9 +772,33 @@ async analysisDbClearAnalyzedPgns() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async analysisDbGetAnalyzedGamesBulk(gameIds: string[]) : Promise<Result<AnalyzedGameEntry[], string>> {
+async analysisDbGetAnalyzedGamesBulk(gameIds: string[], profileId: string | null) : Promise<Result<AnalyzedGameEntry[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_analyzed_games_bulk", { gameIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("analysis_db_get_analyzed_games_bulk", { gameIds, profileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<GamesHistoryResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_games_history_rows", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardSearchProfileOpponents(profileId: string, query: string, profileUsernames: string[]) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_search_profile_opponents", { profileId, query, profileUsernames }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardResolveProfileDbGameId(profileId: string, kind: GamesHistoryKind, gameKey: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_resolve_profile_db_game_id", { profileId, kind, gameKey }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1016,7 +1040,7 @@ export type AccountSyncState = { account_key: string; platform: string; cursor_u
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
-export type AnalyzedGameEntry = { game_id: string; analyzed_pgn: string }
+export type AnalyzedGameEntry = { profile_id: string; game_id: string; analyzed_pgn: string }
 /**
  * Best-move line from engine output, including PV, score, and stats.
  */
@@ -1071,7 +1095,37 @@ game_details_limit?: bigint | null; player1?: number | null; player2?: number | 
 time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
-export type GameStatsEntry = { gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
+export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
+export type GamesHistoryKind = "local" | "chesscom" | "lichess"
+export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
+export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
+export type GamesHistoryRow = { kind: GamesHistoryKind; 
+/**
+ * UI identifier (Chess.com URL, Lichess id, or local id).
+ * This is stable for rendering & actions like "open URL" or "favorite".
+ */
+gameKey: string; 
+/**
+ * Key used to LEFT JOIN with analysis.db3 (`game_analysis.game_id`).
+ * For profile DB games this is `Games.ID` (as string). For local games it's the local id.
+ */
+analysisGameId: string; 
+/**
+ * For online games: URL for chess.com, `https://lichess.org/<id>` for lichess. Null for local.
+ */
+externalUrl: string | null; opponent: string; color: string; 
+/**
+ * "win" | "loss" | "draw" | "unknown"
+ */
+outcome: string; 
+/**
+ * Original PGN if available (may be overwritten by analyzed PGN if present).
+ */
+pgn: string | null; accuracy: number | null; acpl: number | null; estimatedElo: bigint | null; 
+/**
+ * Approximate number of full moves.
+ */
+moves: number; timeControl: string | null; timeControlCategory: string | null; timestampMs: bigint; eventId: number | null; eventName: string | null; isAnalyzed: boolean }
 export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
 /**
  * Engine search mode (depth, time, nodes, etc).
@@ -1142,9 +1196,17 @@ export type PlatformInfo = { key: string; label: string; stroke: string }
 export type Player = { id: number; name: string | null; elo: number | null }
 export type PlayerGameInfo = { site_stats_data: SiteStatsData[] }
 export type PlayerQuery = { options: QueryOptions<PlayerSort>; name?: string | null; range?: [number, number] | null }
-export type PlayerSidebarEloSummary = { bullet: string; blitz: string; rapid: string }
-export type PlayerSidebarModel = { has_data: boolean; style: PlayerStyleLabel; elo: PlayerSidebarPlatformSummary }
-export type PlayerSidebarPlatformSummary = { all: PlayerSidebarEloSummary; lichess: PlayerSidebarEloSummary; chesscom: PlayerSidebarEloSummary }
+export type PlayerSidebarEloBlock = { 
+/**
+ * Display label (e.g. "Lichess", "Chess.com")
+ */
+platform: string; 
+/**
+ * One row per platform (when multiple platforms exist) OR one row per account (when a single platform has multiple accounts).
+ */
+rows: PlayerSidebarEloRow[] }
+export type PlayerSidebarEloRow = { label: string; bullet: string; blitz: string; rapid: string }
+export type PlayerSidebarModel = { has_data: boolean; style: PlayerStyleLabel; elo: PlayerSidebarEloBlock[] }
 export type PlayerSort = "id" | "name" | "elo"
 export type PlayerStatsFilters = { platform: PlatformFilter; time_control: TimeControlFilter; opponent_elo_bucket: string | null; date_range: DateRange | null }
 export type PlayerStyleLabel = { label: string; description: string; color: string }

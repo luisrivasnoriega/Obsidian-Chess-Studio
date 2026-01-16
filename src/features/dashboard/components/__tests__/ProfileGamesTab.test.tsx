@@ -3,6 +3,14 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { render, screen } from "./test-utils";
 import { ProfileGamesTab } from "../../components/ProfileGamesTab";
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async (cmd: string) => {
+    if (cmd === "dashboard_search_profile_opponents") return [];
+    if (cmd === "dashboard_get_games_history_rows") return { rows: [], totalCount: 0 };
+    return null;
+  }),
+}));
+
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
     globalThis.ResizeObserver = class ResizeObserver {
@@ -28,6 +36,9 @@ describe("ProfileGamesTab", () => {
   test("renders without crashing", () => {
     render(
       <ProfileGamesTab
+        profileId={"p1"}
+        selectedOpponentId={null}
+        gameHistoryLimit={100}
         localGames={[]}
         chessComGames={[]}
         lichessGames={[]}

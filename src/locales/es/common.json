@@ -462,6 +462,7 @@
       "moves": "Movimientos",
       "timeControl": "Control de tiempo",
       "date": "Fecha",
+      "dbId": "ID DB",
       "account": "Cuenta",
       "estimatedElo": "Elo Est."
     },
@@ -901,6 +902,7 @@
       "selectAnalysisDepth_other": "Selecciona la profundidad de análisis para {{count}} partidas. Esto analizará las partidas mostradas en el tablero usando el motor predeterminado.",
       "analyze": "Analizar",
       "onlyUnanalyzedGames": "Solo partidas sin analizar",
+      "onlyUnanalyzedGamesWithCounts": "Solo partidas sin analizar ({{unanalyzed}} por analizar, {{analyzed}} ya analizadas)",
       "allGamesReanalyze": "Todas las partidas (re-analizar)",
       "analysisDepth": "Profundidad de Análisis",
       "analyzingGames": "Analizando {{current}} de {{total}} partidas...",

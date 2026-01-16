@@ -9,6 +9,8 @@ import { ProfileGamesTab } from "./ProfileGamesTab";
 import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 
 interface GamesHistoryCardProps {
+  profileId: string | null;
+  selectedOpponentId: number | null;
   activeTab: string | null;
   onTabChange: (tab: string | null) => void;
   localGames: GameRecord[];
@@ -17,8 +19,8 @@ interface GamesHistoryCardProps {
   profileUsernames: string[];
   isLoadingOnlineGames?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGameWithEvent) => void;
-  onAnalyzeLichessGame: (game: DashboardLichessGame) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
   onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
@@ -40,6 +42,8 @@ interface GamesHistoryCardProps {
 }
 
 export function GamesHistoryCard({
+  profileId,
+  selectedOpponentId,
   activeTab,
   onTabChange,
   localGames,
@@ -201,6 +205,9 @@ export function GamesHistoryCard({
           style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}
         >
           <ProfileGamesTab
+            profileId={profileId}
+            selectedOpponentId={selectedOpponentId}
+            gameHistoryLimit={gameHistoryLimit}
             localGames={localGames}
             chessComGames={chessComGames}
             lichessGames={lichessGames}
