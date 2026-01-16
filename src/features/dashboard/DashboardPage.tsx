@@ -228,6 +228,11 @@ export default function DashboardPage() {
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
   const [analyzeAllGameType, setAnalyzeAllGameType] = useState<"local" | "chesscom" | "lichess" | "all" | null>(null);
   const [unanalyzedGameCount, setUnanalyzedGameCount] = useState<number | null>(null);
+  const [analyzeAllCounts, setAnalyzeAllCounts] = useState<{
+    type: "local" | "chesscom" | "lichess" | "all";
+    total: number;
+    unanalyzed: number;
+  } | null>(null);
   const [playerStatsModalOpened, setPlayerStatsModalOpened] = useState(false);
   const [playerStatsResult, setPlayerStatsResult] = useState<AnalysisResult | null>(null);
   const [playerStatsDebugPgns, setPlayerStatsDebugPgns] = useState<string | null>(null);
@@ -787,263 +792,35 @@ export default function DashboardPage() {
   }, []);
 
   const handleAnalyzeAll = useCallback(async (type: "local" | "chesscom" | "lichess" | "all") => {
-    // #region agent log (debug)
-    fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-        location: "src/features/dashboard/DashboardPage.tsx:handleAnalyzeAll:entry",
-        message: "AnalyzeAll opened",
-        data: {
-          type,
-          activeProfileIdEmpty: !(activeProfileId && activeProfileId.length > 0),
-          analyzeAllGameTypeBefore: analyzeAllGameType,
-          sizes: {
-            recentGames: recentGames.length,
-            chessComGames: chessComGames.length,
-            lichessGames: lichessGames.length,
-          },
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     setAnalyzeAllGameType(type);
     setUnanalyzedGameCount(null);
+    setAnalyzeAllCounts(null);
     setAnalyzeAllModalOpened(true);
-    
-    // Calculate unanalyzed game count asynchronously
-    try {
-      const analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
-      // #region agent log (debug)
-      fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: "debug-session",
-          runId: "run1",
-          hypothesisId: "H2",
-          location: "src/features/dashboard/DashboardPage.tsx:handleAnalyzeAll:afterGetAllAnalyzedGames",
-          message: "Analyzed games map loaded",
-          data: {
-            activeProfileIdEmpty: !(activeProfileId && activeProfileId.length > 0),
-            analyzedKeyCount: Object.keys(analyzedGames || {}).length,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
 
-      // Build external -> internal profile DB Games.ID map (same logic as the actual Analyze All run).
-      const internalIdByExternalKey = new Map<string, string>();
-      if (activeProfileId) {
-        try {
-          const idLookupLimit = Math.max(5000, gameHistoryLimit);
-          const res =
-            (await invoke<{ rows?: Array<{ kind: string; gameKey: string; analysisGameId: string }> }>(
-              "dashboard_get_games_history_rows",
-              {
-                req: {
-                  profileId: activeProfileId,
-                  profileUsernames,
-                  gameHistoryLimit: idLookupLimit,
-                  page: 1,
-                  pageSize: idLookupLimit,
-                  eventFilterId,
-                  selectedOpponentId,
-                  opponentContains: null,
-                  timeControlCategory,
-                  resultFilter: null,
-                  sortBy: "date",
-                  sortDirection: "desc",
-                },
-              },
-            )) ?? { rows: [] };
-          for (const r of res.rows ?? []) {
-            internalIdByExternalKey.set(`${String(r.kind).toLowerCase()}:${r.gameKey}`, r.analysisGameId);
-          }
-        } catch {
-          // ignore (best-effort)
-        }
-      }
-      
-      const getFilteredGames = (gameType: "local" | "chesscom" | "lichess") => {
-        if (gameType === "local") {
-          return recentGames.filter((g) => {
-            if (!g.moves || g.moves.length === 0) return false;
-            return g.moves.length >= 5;
-          });
-        } else if (gameType === "chesscom") {
-          return chessComGames.filter((g) => {
-            if (!g.pgn) return false;
-            try {
-              const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-              const cleanMoves = movesSection
-                .replace(/\[[^\]]*\]/g, "")
-                .replace(/\{[^}]*\}/g, "")
-                .replace(/\([^)]*\)/g, "");
-              const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-              const matches = cleanMoves.match(movePattern) || [];
-              return matches.length >= 5;
-            } catch {
-              return false;
-            }
-          });
-        } else {
-          // lichess
-          return lichessGames.filter((g) => {
-            if (!g.pgn) return false;
-            try {
-              const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-              const cleanMoves = movesSection
-                .replace(/\[[^\]]*\]/g, "")
-                .replace(/\{[^}]*\}/g, "")
-                .replace(/\([^)]*\)/g, "");
-              const movePattern =
-                /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-              const matches = cleanMoves.match(movePattern) || [];
-              return matches.length >= 5;
-            } catch {
-              return false;
-            }
-          });
-        }
-      };
-
-      const allGames =
-        type === "all"
-          ? [
-              ...getFilteredGames("local").map((g) => ({ type: "local" as const, game: g })),
-              ...getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g })),
-              ...getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g })),
-            ]
-          : type === "local"
-            ? getFilteredGames("local").map((g) => ({ type: "local" as const, game: g }))
-            : type === "chesscom"
-              ? getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g }))
-              : type === "lichess"
-                ? getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g }))
-                : [];
-
-      // #region agent log (debug)
+    // Fast counts computed on backend (profile-aware, uses analysis.db3).
+    if (activeProfileId) {
       try {
-        const markerRe = /\[%eval|\[%clk|\$[0-9]|!!|!\?|\?!/i;
-        let lichessCount = 0;
-        let lichessHasMarkers = 0;
-        let lichessExistsInDb = 0;
-        let chesscomCount = 0;
-        let chesscomHasMarkers = 0;
-        let chesscomExistsInDb = 0;
-        let localCount = 0;
-        let localHasMarkers = 0;
-        let localExistsInDb = 0;
-
-        for (const item of allGames) {
-          if (item.type === "lichess") {
-            lichessCount++;
-            const g = item.game as (typeof lichessGames)[0];
-            const internalId = internalIdByExternalKey.get(`lichess:${g.id}`) ?? null;
-            if (internalId && analyzedGames[internalId]) lichessExistsInDb++;
-            const pgn = g.pgn ?? "";
-            if (pgn && markerRe.test(pgn)) lichessHasMarkers++;
-          } else if (item.type === "chesscom") {
-            chesscomCount++;
-            const g = item.game as ChessComGameWithEvent;
-            const internalId = internalIdByExternalKey.get(`chesscom:${g.url}`) ?? null;
-            if (internalId && analyzedGames[internalId]) chesscomExistsInDb++;
-            const pgn = g.pgn ?? "";
-            if (pgn && markerRe.test(pgn)) chesscomHasMarkers++;
-          } else {
-            localCount++;
-            const g = item.game as GameRecord;
-            if (analyzedGames[g.id]) localExistsInDb++;
-            const pgn = g.pgn ?? "";
-            if (pgn && markerRe.test(pgn)) localHasMarkers++;
-          }
-        }
-
-        fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: "debug-session",
-            runId: "run2",
-            hypothesisId: "H5",
-            location: "src/features/dashboard/DashboardPage.tsx:handleAnalyzeAll:breakdown",
-            message: "AnalyzeAll breakdown (DB vs marker heuristic)",
-            data: {
-              type,
-              allGamesCount: allGames.length,
-              analyzedKeyCount: Object.keys(analyzedGames || {}).length,
-              internalIdMapSize: internalIdByExternalKey.size,
-              lichess: { count: lichessCount, existsInDb: lichessExistsInDb, hasMarkers: lichessHasMarkers },
-              chesscom: { count: chesscomCount, existsInDb: chesscomExistsInDb, hasMarkers: chesscomHasMarkers },
-              local: { count: localCount, existsInDb: localExistsInDb, hasMarkers: localHasMarkers },
+        const res =
+          (await invoke<{ total: number; analyzed: number; unanalyzed: number }>("dashboard_get_analyze_all_counts", {
+            req: {
+              profileId: activeProfileId,
+              profileUsernames,
+              gameHistoryLimit,
+              eventFilterId,
+              selectedOpponentId,
+              timeControlCategory,
+              target: type,
             },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-      } catch {}
-      // #endregion
-
-      // Count unanalyzed games
-      const unanalyzedCount = allGames.filter((item) => {
-        if (item.type === "local") {
-          const gameRecord = item.game as GameRecord;
-          const existsInDb = !!analyzedGames[gameRecord.id];
-          if (existsInDb) return false;
-          // Count is based strictly on analysis.db3 (profile-aware), not PGN tags/markers.
-          return true;
-        } else if (item.type === "chesscom") {
-          const chessComGame = item.game as ChessComGameWithEvent;
-          const internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`) ?? null;
-          const existsInDb = internalId ? !!analyzedGames[internalId] : false;
-          if (existsInDb) return false;
-          // Count is based strictly on analysis.db3 (profile-aware), not PGN tags/markers.
-          return true;
-        } else {
-          // lichess
-          const lichessGame = item.game as (typeof lichessGames)[0];
-          const internalId = internalIdByExternalKey.get(`lichess:${lichessGame.id}`) ?? null;
-          const existsInDb = internalId ? !!analyzedGames[internalId] : false;
-          if (existsInDb) return false;
-          // Count is based strictly on analysis.db3 (profile-aware), not PGN tags/markers.
-          return true;
+          })) ?? null;
+        if (res) {
+          setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
+          setUnanalyzedGameCount(res.unanalyzed);
         }
-      }).length;
-
-      // #region agent log (debug)
-      fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: "debug-session",
-          runId: "run1",
-          hypothesisId: "H3",
-          location: "src/features/dashboard/DashboardPage.tsx:handleAnalyzeAll:counts",
-          message: "Unanalyzed count computed",
-          data: {
-            type,
-            activeProfileIdEmpty: !(activeProfileId && activeProfileId.length > 0),
-            allGamesCount: allGames.length,
-            internalIdMapSize: internalIdByExternalKey.size,
-            unanalyzedCount,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      setUnanalyzedGameCount(unanalyzedCount);
-    } catch {
-      // If calculation fails, leave it as null (will fallback to gameCount)
+      } catch {
+        // best-effort: fallback to UI-only counts if backend fails
+      }
     }
   }, [
-    recentGames,
-    chessComGames,
-    lichessGames,
     activeProfileId,
     profileUsernames,
     gameHistoryLimit,
@@ -1587,6 +1364,7 @@ export default function DashboardPage() {
             setAnalyzeAllModalOpened(false);
             setAnalyzeAllGameType(null);
             setUnanalyzedGameCount(null);
+            setAnalyzeAllCounts(null);
           }}
           onAnalyze={async (config, onProgress, isCancelled) => {
             if (!defaultEngine) {
@@ -2201,81 +1979,23 @@ export default function DashboardPage() {
             return { stop: stopAllEngines };
           }}
           gameCount={
-            analyzeAllGameType === "all"
-              ? recentGames.filter((g) => {
-                  if (!g.moves || g.moves.length === 0) return false;
-                  return g.moves.length >= 5;
-                }).length +
-                chessComGames.filter((g) => {
-                  if (!g.pgn) return false;
-                  try {
-                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                    const cleanMoves = movesSection
-                      .replace(/\[[^\]]*\]/g, "")
-                      .replace(/\{[^}]*\}/g, "")
-                      .replace(/\([^)]*\)/g, "");
-                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                    const matches = cleanMoves.match(movePattern) || [];
-                    return matches.length >= 5;
-                  } catch {
-                    return false;
-                  }
-                }).length +
-                lichessGames.filter((g) => {
-                  if (!g.pgn) return false;
-                  try {
-                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                    const cleanMoves = movesSection
-                      .replace(/\[[^\]]*\]/g, "")
-                      .replace(/\{[^}]*\}/g, "")
-                      .replace(/\([^)]*\)/g, "");
-                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                    const matches = cleanMoves.match(movePattern) || [];
-                    return matches.length >= 5;
-                  } catch {
-                    return false;
-                  }
-                }).length
-              : analyzeAllGameType === "local"
-                ? recentGames.filter((g) => {
-                    if (!g.moves || g.moves.length === 0) return false;
-                    return g.moves.length >= 5;
-                  }).length
-                : analyzeAllGameType === "chesscom"
-                  ? chessComGames.filter((g) => {
-                      if (!g.pgn) return false;
-                      try {
-                        const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                        const cleanMoves = movesSection
-                          .replace(/\[[^\]]*\]/g, "")
-                          .replace(/\{[^}]*\}/g, "")
-                          .replace(/\([^)]*\)/g, "");
-                        const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                        const matches = cleanMoves.match(movePattern) || [];
-                        return matches.length >= 5;
-                      } catch {
-                        return false;
-                      }
-                    }).length
-                  : analyzeAllGameType === "lichess"
-                    ? lichessGames.filter((g) => {
-                        if (!g.pgn) return false;
-                        try {
-                          const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                          const cleanMoves = movesSection
-                            .replace(/\[[^\]]*\]/g, "")
-                            .replace(/\{[^}]*\}/g, "")
-                            .replace(/\([^)]*\)/g, "");
-                          const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                          const matches = cleanMoves.match(movePattern) || [];
-                          return matches.length >= 5;
-                        } catch {
-                          return false;
-                        }
-                      }).length
-                    : 0
+            analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
+              ? analyzeAllCounts.total
+              : analyzeAllGameType === "all"
+                ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length + chessComGames.length + lichessGames.length
+                : analyzeAllGameType === "local"
+                  ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length
+                  : analyzeAllGameType === "chesscom"
+                    ? chessComGames.length
+                    : analyzeAllGameType === "lichess"
+                      ? lichessGames.length
+                      : 0
           }
-          unanalyzedGameCount={unanalyzedGameCount ?? undefined}
+          unanalyzedGameCount={
+            analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
+              ? analyzeAllCounts.unanalyzed
+              : unanalyzedGameCount ?? undefined
+          }
         />
       </Stack>
     </Box>

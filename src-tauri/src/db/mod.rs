@@ -47,31 +47,6 @@ use tauri::{Emitter, State};
 
 use tauri_specta::Event as _;
 
-// #region agent log
-fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let line = serde_json::json!({
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": ts
-    });
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r#"d:\OCS\.cursor\debug.log"#)
-    {
-        let _ = writeln!(f, "{}", line.to_string());
-    }
-}
-// #endregion
-
 #[allow(unused_imports)]
 pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Outcome, Puzzle};
 #[allow(unused_imports)]
@@ -484,20 +459,6 @@ pub(crate) fn convert_pgn_impl<'a>(
     let description = description.unwrap_or_default();
     let extension = file.extension();
 
-    // #region agent log
-    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-    agent_log(
-        "H1",
-        "src-tauri/src/db/mod.rs:convert_pgn_impl",
-        "convert_pgn_impl:enter",
-        serde_json::json!({
-            "file_ext": extension.and_then(|e| e.to_str()).unwrap_or(""),
-            "file_size": file_size,
-            "has_timestamp_filter": timestamp.is_some()
-        }),
-    );
-    // #endregion
-
     let db_exists = db_path.exists();
 
     // create the database file
@@ -564,25 +525,7 @@ pub(crate) fn convert_pgn_impl<'a>(
     // and caches lookups for players/events/sites
     // Run the heavy insert portion inside Diesel's transaction manager.
     // This avoids nested-BEGIN issues because Diesel uses SAVEPOINTs for nested transactions.
-    // #region agent log
-    agent_log(
-        "H2",
-        "src-tauri/src/db/mod.rs:convert_pgn_impl",
-        "convert_pgn_impl:before_transaction",
-        serde_json::json!({}),
-    );
-    // #endregion
-
-    let txn_start = Instant::now();
     let txn_res = db.transaction::<_, Error, _>(|db| {
-        // #region agent log
-        agent_log(
-            "H2",
-            "src-tauri/src/db/mod.rs:convert_pgn_impl",
-            "convert_pgn_impl:transaction_enter",
-            serde_json::json!({}),
-        );
-        // #endregion
         let mut bulk_ctx = bulk_insert::BulkInsertContext::new(db)?;
 
         // OPTIMIZED: Batch inserts for better performance
@@ -599,19 +542,7 @@ pub(crate) fn convert_pgn_impl<'a>(
             batch.push(game);
 
             if batch.len() >= BATCH_SIZE {
-                let insert_start = Instant::now();
                 bulk_ctx.insert_games_batch(batch.drain(..).collect())?;
-                // #region agent log
-                agent_log(
-                    "H3",
-                    "src-tauri/src/db/mod.rs:convert_pgn_impl",
-                    "bulk_insert:batch_inserted",
-                    serde_json::json!({
-                        "batch_size": BATCH_SIZE,
-                        "insert_ms": insert_start.elapsed().as_millis()
-                    }),
-                );
-                // #endregion
 
                 total_processed += BATCH_SIZE;
                 let elapsed = start.elapsed().as_millis() as u32;
@@ -622,19 +553,7 @@ pub(crate) fn convert_pgn_impl<'a>(
 
         if !batch.is_empty() {
             let batch_len = batch.len();
-            let insert_start = Instant::now();
             bulk_ctx.insert_games_batch(batch.drain(..).collect())?;
-            // #region agent log
-            agent_log(
-                "H3",
-                "src-tauri/src/db/mod.rs:convert_pgn_impl",
-                "bulk_insert:final_batch_inserted",
-                serde_json::json!({
-                    "batch_size": batch_len,
-                    "insert_ms": insert_start.elapsed().as_millis()
-                }),
-            );
-            // #endregion
 
             total_processed += batch_len;
             let elapsed = start.elapsed().as_millis() as u32;
@@ -647,19 +566,6 @@ pub(crate) fn convert_pgn_impl<'a>(
         bulk_ctx.finalize()?;
         Ok(())
     });
-
-    // #region agent log
-    agent_log(
-        "H2",
-        "src-tauri/src/db/mod.rs:convert_pgn_impl",
-        "convert_pgn_impl:transaction_exit",
-        serde_json::json!({
-            "txn_ms": txn_start.elapsed().as_millis(),
-            "ok": txn_res.is_ok(),
-            "err": txn_res.as_ref().err().map(|e| e.to_string())
-        }),
-    );
-    // #endregion
 
     txn_res?;
 
@@ -695,17 +601,6 @@ pub(crate) fn convert_pgn_impl<'a>(
             .set(info::value.eq(c.1.to_string()))
             .execute(db)?;
     }
-
-    // #region agent log
-    agent_log(
-        "H4",
-        "src-tauri/src/db/mod.rs:convert_pgn_impl",
-        "convert_pgn_impl:exit_ok",
-        serde_json::json!({
-            "total_ms": start.elapsed().as_millis()
-        }),
-    );
-    // #endregion
 
     Ok(())
 }

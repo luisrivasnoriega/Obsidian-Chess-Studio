@@ -76,6 +76,35 @@ pub struct GamesHistoryRequest {
     pub profile_usernames: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AnalyzeAllTarget {
+    Local,
+    Chesscom,
+    Lichess,
+    All,
+}
+
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeAllCountsRequest {
+    pub profile_id: String,
+    pub game_history_limit: i32,
+    pub event_filter_id: Option<i32>,
+    pub selected_opponent_id: Option<i32>,
+    pub time_control_category: Option<String>,
+    pub profile_usernames: Vec<String>,
+    pub target: AnalyzeAllTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeAllCountsResponse {
+    pub total: i32,
+    pub analyzed: i32,
+    pub unanalyzed: i32,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LocalGameStats {
@@ -598,6 +627,228 @@ pub async fn dashboard_get_games_history_rows(
     Ok(GamesHistoryResponse {
         rows: page_rows,
         total_count: total,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dashboard_get_analyze_all_counts(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: AnalyzeAllCountsRequest,
+) -> Result<AnalyzeAllCountsResponse> {
+    let profile_id = req.profile_id.trim().to_string();
+    if profile_id.is_empty() {
+        return Ok(AnalyzeAllCountsResponse {
+            total: 0,
+            analyzed: 0,
+            unanalyzed: 0,
+        });
+    }
+
+    let usernames_lower = usernames_lower_set(&req.profile_usernames);
+
+    // 1) Load local games if needed.
+    let mut rows: Vec<GamesHistoryRow> = Vec::new();
+    let local_limit = req.game_history_limit.max(0) as usize;
+    let include_local = matches!(req.target, AnalyzeAllTarget::Local | AnalyzeAllTarget::All);
+    if include_local {
+        let local_games = load_local_games(&app, &profile_id, local_limit)?;
+        for g in local_games {
+            let is_user_white = g.white.side_type == "human";
+            let user_color = if is_user_white { "white" } else { "black" };
+            let opponent_side = if is_user_white { &g.black } else { &g.white };
+            let opponent = opponent_side
+                .name
+                .clone()
+                .or_else(|| opponent_side.engine.clone().map(|e| format!("Engine ({})", e)))
+                .unwrap_or_else(|| "?".to_string());
+
+            let outcome = outcome_from_result(user_color, &g.result);
+            let tc = g.time_control.clone().unwrap_or_default();
+            let tc_cat = if tc.trim().is_empty() {
+                None
+            } else {
+                time_control_category(GamesHistoryKind::Local, &tc)
+            };
+
+            rows.push(GamesHistoryRow {
+                kind: GamesHistoryKind::Local,
+                analysis_game_id: g.id.clone(),
+                game_key: g.id,
+                external_url: None,
+                opponent,
+                color: user_color.to_string(),
+                outcome,
+                pgn: None,
+                accuracy: None,
+                acpl: None,
+                estimated_elo: None,
+                moves: g.moves.len().saturating_div(2).max(1) as i32,
+                time_control: if tc.trim().is_empty() { None } else { Some(tc) },
+                time_control_category: tc_cat,
+                timestamp_ms: g.timestamp,
+                event_id: None,
+                event_name: None,
+                is_analyzed: false,
+            });
+        }
+    }
+
+    // 2) Load online games if needed (single query; later split by platform).
+    let include_online = matches!(
+        req.target,
+        AnalyzeAllTarget::Chesscom | AnalyzeAllTarget::Lichess | AnalyzeAllTarget::All
+    );
+    if include_online {
+        let db_path = parse_profile_db_path(&app, &profile_id)?;
+        let mut q = GameQueryJs::default();
+        q.options = Some(QueryOptions {
+            skip_count: true,
+            page: Some(1),
+            page_size: Some(req.game_history_limit.max(0) as i32),
+            sort: GameSort::Date,
+            direction: SortDirection::Desc,
+        });
+        q.tournament_id = req.event_filter_id;
+        q.time_control_category = req.time_control_category.clone();
+        if let Some(pid) = req.selected_opponent_id {
+            q.player1 = Some(pid);
+            q.sides = Some(Sides::Any);
+        }
+
+        let online = get_games(db_path, q, state).await?.data;
+        for g in online {
+            // Identify platform and extract external key (same as dashboard_get_games_history_rows).
+            let site_tag = parse_site_tag(&g.moves);
+            let mut kind: Option<GamesHistoryKind> = None;
+            let mut external_key = g.id.to_string();
+            let mut external_url: Option<String> = None;
+
+            if let Some(site) = site_tag.as_deref() {
+                if let Some(id) = extract_lichess_id_from_site(site) {
+                    kind = Some(GamesHistoryKind::Lichess);
+                    external_key = id.clone();
+                    external_url = Some(format!("https://lichess.org/{}", id));
+                } else if let Some(url) = extract_chesscom_url(site) {
+                    kind = Some(GamesHistoryKind::Chesscom);
+                    external_key = url.clone();
+                    external_url = Some(url);
+                }
+            }
+
+            if kind.is_none() {
+                let site_lower = g.site.to_lowercase();
+                if site_lower.contains("lichess.org") {
+                    kind = Some(GamesHistoryKind::Lichess);
+                    if let Some(id) = extract_lichess_id_from_site(&g.site) {
+                        external_key = id.clone();
+                        external_url = Some(format!("https://lichess.org/{}", id));
+                    } else {
+                        external_url = Some(format!("https://lichess.org/{}", external_key));
+                    }
+                } else if site_lower.contains("chess.com") {
+                    kind = Some(GamesHistoryKind::Chesscom);
+                    if let Some(url) = extract_chesscom_url(&g.site) {
+                        external_key = url.clone();
+                        external_url = Some(url);
+                    } else {
+                        external_key = format!("https://www.chess.com/game/live/{}", g.id);
+                        external_url = Some(external_key.clone());
+                    }
+                }
+            }
+
+            let Some(kind) = kind else {
+                continue;
+            };
+
+            let white_raw = g.white.clone();
+            let black_raw = g.black.clone();
+            let white_name = strip_account_key(&white_raw).to_string();
+            let black_name = strip_account_key(&black_raw).to_string();
+            let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
+                || usernames_lower.contains(&white_name.to_lowercase());
+            let is_user_black = usernames_lower.contains(&black_raw.to_lowercase())
+                || usernames_lower.contains(&black_name.to_lowercase());
+            let user_is_white = is_user_white || (!is_user_black);
+            let user_color = if user_is_white { "white" } else { "black" };
+            let opponent = if user_is_white { black_name } else { white_name };
+
+            let result_str = g.result.to_string();
+            let outcome = outcome_from_result(user_color, &result_str);
+            let timestamp_ms = parse_timestamp_ms(g.date.as_deref(), g.time.as_deref());
+            let ply = g.ply_count.unwrap_or(0);
+            let full_moves = ((ply as f64) / 2.0).ceil().max(1.0) as i32;
+            let tc = g.time_control.clone().unwrap_or_default();
+            let tc_cat = if tc.trim().is_empty() {
+                None
+            } else {
+                time_control_category(kind.clone(), &tc)
+            };
+
+            rows.push(GamesHistoryRow {
+                kind,
+                analysis_game_id: g.id.to_string(),
+                game_key: external_key,
+                external_url,
+                opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
+                color: user_color.to_string(),
+                outcome,
+                pgn: None,
+                accuracy: None,
+                acpl: None,
+                estimated_elo: None,
+                moves: full_moves,
+                time_control: if tc.trim().is_empty() { None } else { Some(tc) },
+                time_control_category: tc_cat,
+                timestamp_ms,
+                event_id: Some(g.event_id),
+                event_name: Some(g.event),
+                is_analyzed: false,
+            });
+        }
+    }
+
+    // 3) Apply filters + target selection + minimum move threshold.
+    if let Some(event_id) = req.event_filter_id {
+        rows.retain(|r| r.event_id == Some(event_id));
+    }
+    if let Some(ref want_tc) = req.time_control_category {
+        let want_tc = want_tc.trim().to_lowercase();
+        if !want_tc.is_empty() {
+            rows.retain(|r| r.time_control_category.as_deref().unwrap_or("") == want_tc);
+        }
+    }
+
+    rows.retain(|r| r.moves >= 5);
+
+    rows.retain(|r| match req.target {
+        AnalyzeAllTarget::All => true,
+        AnalyzeAllTarget::Local => matches!(r.kind, GamesHistoryKind::Local),
+        AnalyzeAllTarget::Chesscom => matches!(r.kind, GamesHistoryKind::Chesscom),
+        AnalyzeAllTarget::Lichess => matches!(r.kind, GamesHistoryKind::Lichess),
+    });
+
+    let total = rows.len() as i32;
+    if total == 0 {
+        return Ok(AnalyzeAllCountsResponse {
+            total: 0,
+            analyzed: 0,
+            unanalyzed: 0,
+        });
+    }
+
+    // 4) Count analyzed strictly from analysis.db3 (profile-aware).
+    let ids: Vec<String> = rows.iter().map(|r| r.analysis_game_id.clone()).collect();
+    let analyzed_rows = analysis_db_get_analyzed_games_bulk(app.clone(), ids, Some(profile_id.clone()))?;
+    let analyzed = analyzed_rows.len() as i32;
+    let unanalyzed = (total - analyzed).max(0);
+
+    Ok(AnalyzeAllCountsResponse {
+        total,
+        analyzed,
+        unanalyzed,
     })
 }
 

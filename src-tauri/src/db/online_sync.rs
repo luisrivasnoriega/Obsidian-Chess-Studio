@@ -18,31 +18,6 @@ use tauri_specta::Event;
 use tokio::io::{AsyncWriteExt, BufWriter as TokioBufWriter};
 use tokio::sync::Mutex;
 
-// #region agent log
-fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let line = serde_json::json!({
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": ts
-    });
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r#"d:\OCS\.cursor\debug.log"#)
-    {
-        let _ = writeln!(f, "{}", line.to_string());
-    }
-}
-// #endregion
-
 use crate::{
     error::{Error, Result},
     AppState,
@@ -583,16 +558,6 @@ async fn lichess_download_batch_pgn_to_pgn_file(
     until_ms: i64,
     dest: &PathBuf,
 ) -> Result<(Option<i64>, Option<i64>, i64)> {
-    // #region agent log
-    let t0 = std::time::Instant::now();
-    agent_log(
-        "H6",
-        "src-tauri/src/db/online_sync.rs:lichess_download_batch_ndjson_to_pgn_file",
-        "lichess_ndjson:enter",
-        serde_json::json!({ "since_ms": since_ms, "until_ms": until_ms }),
-    );
-    // #endregion
-
     let mut url = format!(
         "https://lichess.org/api/games/user/{username}?max={max}&until={until_ms}\
 &clocks=true&moves=true&tags=true&opening=true&finished=true",
@@ -613,14 +578,7 @@ async fn lichess_download_batch_pgn_to_pgn_file(
     let auth_token = token.unwrap_or(DEFAULT_LICHESS_DOWNLOAD_TOKEN);
     req = req.bearer_auth(auth_token);
 
-    // #region agent log
-    let t_send = std::time::Instant::now();
-    // #endregion
     let res = req.send().await?;
-    // #region agent log
-    let send_ms = t_send.elapsed().as_millis();
-    let status_u16 = res.status().as_u16();
-    // #endregion
 
     if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         let wait = retry_after_seconds(res.headers()).unwrap_or(30);
@@ -649,30 +607,10 @@ async fn lichess_download_batch_pgn_to_pgn_file(
     let mut oldest: Option<i64> = None;
     let mut newest: Option<i64> = None;
     let mut game_count: i64 = 0;
-    let mut bytes_total: u64 = 0;
-    let mut chunk_count: u64 = 0;
-    let mut line_count: u64 = 0;
-    let mut json_ok: u64 = 0;
-    let mut json_err: u64 = 0;
-    let mut parse_us_total: u128 = 0;
-    let mut write_us_total: u128 = 0;
-    let mut wait_us_total: u128 = 0;
-    let mut proc_us_total: u128 = 0;
 
     // Stream PGN and normalize line-by-line using a rolling buffer (no extra crates).
     let mut buffer: Vec<u8> = Vec::with_capacity(128 * 1024);
-    let content_encoding = res
-        .headers()
-        .get(reqwest::header::CONTENT_ENCODING)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let content_length = res.content_length();
-    let http_version = format!("{:?}", res.version());
     let mut response = res;
-    // #region agent log
-    let t_stream = std::time::Instant::now();
-    // #endregion
 
     let username_lc = username.to_ascii_lowercase();
     let key = account_key("lichess", username);
@@ -680,21 +618,10 @@ async fn lichess_download_batch_pgn_to_pgn_file(
     let mut pending_utc_time: Option<String> = None;
 
     loop {
-        // #region agent log
-        let t_wait = std::time::Instant::now();
-        // #endregion
         let maybe_chunk = response.chunk().await?;
-        // #region agent log
-        wait_us_total += t_wait.elapsed().as_micros();
-        // #endregion
 
         let Some(chunk) = maybe_chunk else { break; };
-        // #region agent log
-        let t_proc = std::time::Instant::now();
-        // #endregion
 
-        bytes_total += chunk.len() as u64;
-        chunk_count += 1;
         buffer.extend_from_slice(&chunk);
 
         let mut start = 0usize;
@@ -707,11 +634,6 @@ async fn lichess_download_batch_pgn_to_pgn_file(
                 if line.is_empty() {
                     continue;
                 }
-                line_count += 1;
-
-                // #region agent log
-                let t_parse = std::time::Instant::now();
-                // #endregion
                 let s = std::str::from_utf8(line).unwrap_or("");
                 // Track game count and timestamps via tags.
                 if s.starts_with("[Event \"") {
@@ -751,14 +673,8 @@ async fn lichess_download_batch_pgn_to_pgn_file(
                         }
                     }
                 }
-                // #region agent log
-                parse_us_total += t_parse.elapsed().as_micros();
-                // #endregion
 
                 // Normalize White/Black to account key and stream out.
-                // #region agent log
-                let t_write = std::time::Instant::now();
-                // #endregion
                 if let Some(rewritten) = normalize_pgn_line(s, &username_lc, &key) {
                     writer.write_all(rewritten.as_bytes()).await?;
                     writer.write_all(b"\n").await?;
@@ -766,9 +682,6 @@ async fn lichess_download_batch_pgn_to_pgn_file(
                     writer.write_all(s.as_bytes()).await?;
                     writer.write_all(b"\n").await?;
                 }
-                // #region agent log
-                write_us_total += t_write.elapsed().as_micros();
-                // #endregion
             }
         }
 
@@ -776,28 +689,15 @@ async fn lichess_download_batch_pgn_to_pgn_file(
             buffer.drain(0..start);
         }
 
-        // #region agent log
-        proc_us_total += t_proc.elapsed().as_micros();
-        // #endregion
     }
 
     // Process trailing line without newline
     let tail = trim_ascii_whitespace(&buffer);
     if !tail.is_empty() {
-        line_count += 1;
-        // #region agent log
-        let t_parse = std::time::Instant::now();
-        // #endregion
         let s = std::str::from_utf8(tail).unwrap_or("");
         if s.starts_with("[Event \"") {
             game_count += 1;
         }
-        // #region agent log
-        parse_us_total += t_parse.elapsed().as_micros();
-        // #endregion
-        // #region agent log
-        let t_write = std::time::Instant::now();
-        // #endregion
         if let Some(rewritten) = normalize_pgn_line(s, &username_lc, &key) {
             writer.write_all(rewritten.as_bytes()).await?;
             writer.write_all(b"\n").await?;
@@ -805,9 +705,6 @@ async fn lichess_download_batch_pgn_to_pgn_file(
             writer.write_all(s.as_bytes()).await?;
             writer.write_all(b"\n").await?;
         }
-        // #region agent log
-        write_us_total += t_write.elapsed().as_micros();
-        // #endregion
     }
 
     // Ensure a blank line between games (matches prior behavior).
@@ -818,36 +715,6 @@ async fn lichess_download_batch_pgn_to_pgn_file(
 
     let _ = tokio::fs::remove_file(dest).await;
     tokio::fs::rename(&part, dest).await?;
-
-    // #region agent log
-    let dest_size = tokio::fs::metadata(dest).await.map(|m| m.len()).unwrap_or(0);
-    agent_log(
-        "H6",
-        "src-tauri/src/db/online_sync.rs:lichess_download_batch_ndjson_to_pgn_file",
-        "lichess_ndjson:exit_ok",
-        serde_json::json!({
-            "ms": t0.elapsed().as_millis(),
-            "send_ms": send_ms,
-            "status": status_u16,
-            "http_version": http_version,
-            "content_encoding": content_encoding,
-            "content_length": content_length,
-            "stream_ms": t_stream.elapsed().as_millis(),
-            "wait_ms_total": (wait_us_total / 1000),
-            "proc_ms_total": (proc_us_total / 1000),
-            "parse_ms_total": (parse_us_total / 1000),
-            "write_ms_total": (write_us_total / 1000),
-            "chunk_count": chunk_count,
-            "avg_chunk_bytes": if chunk_count > 0 { (bytes_total / chunk_count) } else { 0 },
-            "line_count": line_count,
-            "json_ok": json_ok,
-            "json_err": json_err,
-            "bytes_total": bytes_total,
-            "dest_size": dest_size,
-            "game_count": game_count
-        }),
-    );
-    // #endregion
 
     Ok((oldest, newest, game_count))
 }
@@ -1116,14 +983,6 @@ pub async fn sync_account_games_to_profile_db(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<AccountSyncResult> {
-    // #region agent log
-    agent_log(
-        "H7",
-        "src-tauri/src/db/online_sync.rs:sync_account_games_to_profile_db",
-        "sync:enter",
-        serde_json::json!({ "profile_id": profile_id, "platform": platform, "username": username }),
-    );
-    // #endregion
     // Prevent concurrent sync sessions backend-side.
     let _guard = GLOBAL_PROFILE_SYNC_LOCK.lock().await;
 
@@ -1506,9 +1365,6 @@ pub async fn sync_account_games_to_profile_db(
             let _ = append_file(&account_pgn_path, &temp_file);
 
             // Import
-            // #region agent log
-            let t_import = std::time::Instant::now();
-            // #endregion
             convert_pgn_impl(
                 temp_file.clone(),
                 db_path.clone(),
@@ -1518,14 +1374,6 @@ pub async fn sync_account_games_to_profile_db(
                 None,
                 &state,
             )?;
-            // #region agent log
-            agent_log(
-                "H8",
-                "src-tauri/src/db/online_sync.rs:sync_account_games_to_profile_db",
-                "sync:convert_pgn_impl_ok",
-                serde_json::json!({ "ms": t_import.elapsed().as_millis() }),
-            );
-            // #endregion
 
             completed_batches += 1;
             cursor_until_ms = oldest_ms.map(|o| (o - 1).max(0)).unwrap_or(0);

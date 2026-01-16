@@ -780,6 +780,14 @@ async analysisDbGetAnalyzedGamesBulk(gameIds: string[], profileId: string | null
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardGetAnalyzeAllCounts(req: AnalyzeAllCountsRequest) : Promise<Result<AnalyzeAllCountsResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_analyze_all_counts", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<GamesHistoryResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_get_games_history_rows", { req }) };
@@ -1040,6 +1048,9 @@ export type AccountSyncState = { account_key: string; platform: string; cursor_u
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
+export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[]; target: AnalyzeAllTarget }
+export type AnalyzeAllCountsResponse = { total: number; analyzed: number; unanalyzed: number }
+export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "all"
 export type AnalyzedGameEntry = { profile_id: string; game_id: string; analyzed_pgn: string }
 /**
  * Best-move line from engine output, including PV, score, and stats.

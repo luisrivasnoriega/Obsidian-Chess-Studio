@@ -56,26 +56,6 @@ export function AnalyzeAllModal({
     return { total, unanalyzed, analyzed };
   }, [gameCount, unanalyzedGameCount]);
 
-  useEffect(() => {
-    if (!opened) return;
-    // #region agent log (debug)
-    fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-        location: "src/features/dashboard/components/AnalyzeAllModal.tsx:opened",
-        message: "AnalyzeAllModal opened with counts",
-        data: { gameCount, unanalyzedGameCount, analyzeMode, counts },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened]);
-
   const form = useForm<AnalyzeAllConfig>({
     initialValues: {
       speed: "t1000",

@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write;
-
 use diesel::{connection::SimpleConnection, prelude::*, SqliteConnection};
 use shakmaty::Position;
 
@@ -8,31 +6,6 @@ use crate::db::{models::NewGame, ops::{create_event, create_player, create_site}
 use crate::error::Result;
 
 use super::get_pawn_home;
-
-// #region agent log
-fn agent_log(hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let line = serde_json::json!({
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": ts
-    });
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r#"d:\OCS\.cursor\debug.log"#)
-    {
-        let _ = writeln!(f, "{}", line.to_string());
-    }
-}
-// #endregion
 
 /// Cache for lookups during bulk insert to avoid repeated queries (case-sensitive, like DB UNIQUE constraints).
 struct BatchCache {
@@ -83,15 +56,6 @@ pub struct BulkInsertContext<'a> {
 
 impl<'a> BulkInsertContext<'a> {
     pub fn new(conn: &'a mut SqliteConnection) -> Result<Self> {
-        // #region agent log
-        agent_log(
-            "H5",
-            "src-tauri/src/db/bulk_insert.rs:BulkInsertContext::new",
-            "bulk_insert:new_enter",
-            serde_json::json!({}),
-        );
-        // #endregion
-
         // Apply bulk pragmas (best-effort if we are inside an outer txn).
         if let Err(e) = conn.batch_execute(super::PRAGMA_BULK_INSERT) {
             let msg = e.to_string().to_ascii_lowercase();
@@ -112,15 +76,6 @@ impl<'a> BulkInsertContext<'a> {
         // Drop non-dedupe indexes to speed inserts (best-effort).
         let _ = conn.batch_execute(super::DROP_INDEXES_FOR_BULK_SQL);
 
-        // #region agent log
-        agent_log(
-            "H5",
-            "src-tauri/src/db/bulk_insert.rs:BulkInsertContext::new",
-            "bulk_insert:new_exit_ok",
-            serde_json::json!({}),
-        );
-        // #endregion
-
         Ok(Self { conn, cache: BatchCache::new(), pragmas_applied: true, indexes_dropped: true })
     }
 
@@ -130,17 +85,6 @@ impl<'a> BulkInsertContext<'a> {
         if games.is_empty() {
             return Ok(());
         }
-
-        // #region agent log
-        agent_log(
-            "H3",
-            "src-tauri/src/db/bulk_insert.rs:BulkInsertContext::insert_games_batch",
-            "bulk_insert:insert_games_batch_enter",
-            serde_json::json!({ "games": games.len() }),
-        );
-        // #endregion
-
-        let batch_start = std::time::Instant::now();
 
         // Avoid SQLite bind limits. Keep conservative.
         let mut sub_batch_size: usize = 300;
@@ -236,15 +180,6 @@ impl<'a> BulkInsertContext<'a> {
                 }
             }
         }
-
-        // #region agent log
-        agent_log(
-            "H3",
-            "src-tauri/src/db/bulk_insert.rs:BulkInsertContext::insert_games_batch",
-            "bulk_insert:insert_games_batch_exit_ok",
-            serde_json::json!({ "ms": batch_start.elapsed().as_millis() }),
-        );
-        // #endregion
 
         Ok(())
     }
