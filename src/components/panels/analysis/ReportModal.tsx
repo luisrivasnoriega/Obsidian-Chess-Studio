@@ -1,22 +1,15 @@
 import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useAtom, useAtomValue } from "jotai";
-import { atomWithStorage } from "jotai/utils";
 import { memo, useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { commands, type GoMode } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
+import { reportSettingsAtom } from "@/state/reportSettings";
 import type { LocalEngine } from "@/utils/engines";
 import { unwrap } from "@/utils/unwrap";
-
-const reportSettingsAtom = atomWithStorage("report-settings", {
-  novelty: true,
-  reversed: true,
-  goMode: { t: "Time", c: 500 } as Exclude<GoMode, { t: "Infinite" }>,
-  engine: "",
-});
 
 function ReportModal({
   tab,

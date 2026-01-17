@@ -91,6 +91,7 @@ pub fn setup_tauri_plugins(
                 // Users can still explicitly enable them via environment configuration if needed.
                 .level_for("h2", LevelFilter::Info)
                 .level_for("hyper", LevelFilter::Info)
+                .level_for("hyper_util", LevelFilter::Info)
                 .level_for("reqwest", LevelFilter::Info)
                 .build(),
         );

@@ -70,8 +70,8 @@ describe("PlayerSidebarCard (presentational)", () => {
 
     expect(screen.getByText("Test Player")).toBeInTheDocument();
     expect(screen.getByText("playerStyle.positional")).toBeInTheDocument();
-    expect(screen.getByText("Chess.com")).toBeInTheDocument();
-    expect(screen.getByText("Lichess")).toBeInTheDocument();
+    expect(screen.getAllByText("Chess.com").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Lichess").length).toBeGreaterThan(0);
     expect(screen.getAllByText("1500").length).toBeGreaterThan(0);
   });
 

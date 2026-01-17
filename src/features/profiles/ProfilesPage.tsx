@@ -413,11 +413,19 @@ export default function ProfilesPage() {
                           total: u.totalBatches,
                         })}`
                       : u.batchLabel || `${profile.name} - ${username} (${u.platform})`;
+                  
+                  // Determine if this is an optimization-related message
+                  const isOptimization = u.batchLabel?.toLowerCase().includes("optimiz") || 
+                                         u.batchLabel?.toLowerCase().includes("cleaning") ||
+                                         u.batchLabel?.toLowerCase().includes("deleted");
+                  const isComplete = u.batchLabel?.toLowerCase().includes("complete") ||
+                                    u.batchLabel?.toLowerCase().includes("downloaded");
+                  
                   notifications.update({
                     id,
                     message,
-                    loading: u.batchLabel?.toLowerCase().includes("optimiz") ? true : u.totalBatches > 0,
-                    autoClose: u.batchLabel?.toLowerCase().includes("complete") ? 3000 : false,
+                    loading: isOptimization || (u.totalBatches > 0),
+                    autoClose: isComplete ? 3000 : false,
                   });
                 }
               : undefined,

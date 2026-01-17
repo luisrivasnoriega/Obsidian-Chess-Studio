@@ -25,6 +25,13 @@ export function isFailedToFetchError(err: unknown): boolean {
         ? err
         : JSON.stringify(err, null, 2) ?? String(err);
 
+  // Do NOT retry auth failures.
+  // These are permanent until the user fixes credentials/token.
+  if (/\b(401|403)\b/i.test(msg)) return false;
+
+  // Do NOT treat generic 4xx as a network failure (except 429).
+  if (/\b4\d\d\b/i.test(msg) && !/\b429\b/i.test(msg)) return false;
+
   // Covers browser fetch + Tauri plugin-http failures.
   return (
     /failed to fetch|fetch failed|networkerror|load failed/i.test(msg) ||

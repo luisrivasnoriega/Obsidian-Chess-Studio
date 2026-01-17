@@ -1,6 +1,5 @@
-import { ActionIcon, Box, Group, Stack, Tabs, Title } from "@mantine/core";
-import { IconArrowBackUp, IconChess, IconTrophy, IconUser } from "@tabler/icons-react";
-import { Link } from "@tanstack/react-router";
+import { Box, Group, Stack, Tabs, Title } from "@mantine/core";
+import { IconChess, IconTrophy, IconUser } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import GameTable from "@/features/databases/components/views/GameTable";
 import PlayerTable from "@/features/databases/components/views/PlayerTable";
@@ -22,11 +21,6 @@ function DatabaseView() {
         <DatabaseViewStateContext.Provider value={activeDatabaseViewStore}>
           <Stack h="100%" style={{ overflow: "hidden" }}>
             <Group align="center">
-              <Link onClick={() => clearDatabase()} to={"/databases"}>
-                <ActionIcon variant="default">
-                  <IconArrowBackUp size="1rem" />
-                </ActionIcon>
-              </Link>
               <Title>{databaseTitle}</Title>
             </Group>
             <Tabs

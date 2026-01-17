@@ -382,8 +382,44 @@
                      "deleted":  "Profile deleted.",
                      "activeSet":  "Active profile updated.",
                      "tabs":  {
-                                  "selectSection":  "Section"
+                                  "selectSection":  "Section",
+                                  "simulate":  "Simulate"
                               },
+                     "simulate":  {
+                                      "desc":  "Build a personalized plan against a specific opponent using your analyzed games and Stockfish.",
+                                      "engine":  "Engine",
+                                      "enginePlaceholder":  "Select a local engine in Analysis first.",
+                                      "opponent":  "Opponent",
+                                      "opponentPlaceholder":  "Select a profile...",
+                                      "timeControl":  "Time control",
+                                      "ourElo":  "Our Elo",
+                                      "ourEloPlaceholder":  "Not available",
+                                      "startFen":  "Start FEN",
+                                      "plannerSettings":  "Planner settings",
+                                      "engineSettings":  "Engine settings",
+                                      "modelSettings":  "Model settings",
+                                      "horizonPlies":  "Horizon (plies)",
+                                      "opponentTopK":  "Opponent top-K",
+                                      "maxNodes":  "Max nodes",
+                                      "minBranchProb":  "Min branch probability",
+                                      "ourMultiPv":  "Our MultiPV",
+                                      "candidateDepth":  "Candidate depth",
+                                      "quickDepth":  "Quick eval depth",
+                                      "backoffK":  "Backoff K",
+                                      "smoothingAlpha":  "Smoothing α",
+                                      "run":  "Build plan",
+                                      "result":  "Result",
+                                      "resultSummary":  "Nodes: {{nodes}}, Edges: {{edges}}",
+                                      "topLines":  "Top lines",
+                                      "bestLine":  "Best line (copy)",
+                                      "bestLinePlaceholder":  "Run simulate to generate a line.",
+                                      "emptyLine":  "(empty)",
+                                      "errors":  {
+                                                    "noEngine":  "Select a local engine in Analysis first.",
+                                                    "noOpponentProfile":  "Select an opponent profile.",
+                                                    "noOpponentResolved":  "Could not resolve the opponent in that profile database."
+                                                }
+                                  },
                      "errors":  {
                                     "missingName":  "Profile name is required.",
                                     "duplicateName":  "A profile with this name already exists.",

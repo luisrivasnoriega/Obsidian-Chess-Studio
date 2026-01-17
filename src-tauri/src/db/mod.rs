@@ -12,7 +12,7 @@ mod search;
 mod sync_state;
 mod online_sync;
 pub use sync_state::*;
-pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress};
+pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress, update_lichess_tournament_events_standalone};
 
 use crate::{
     db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
@@ -1581,6 +1581,10 @@ pub enum TournamentSort {
     Id,
     #[serde(rename = "name")]
     Name,
+    #[serde(rename = "start_date")]
+    StartDate,
+    #[serde(rename = "end_date")]
+    EndDate,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -1630,6 +1634,14 @@ pub async fn get_tournaments(
         TournamentSort::Name => match query.options.direction {
             SortDirection::Asc => sql_query.order(events::name.asc()),
             SortDirection::Desc => sql_query.order(events::name.desc()),
+        },
+        TournamentSort::StartDate => match query.options.direction {
+            SortDirection::Asc => sql_query.order(events::start_date.asc()),
+            SortDirection::Desc => sql_query.order(events::start_date.desc()),
+        },
+        TournamentSort::EndDate => match query.options.direction {
+            SortDirection::Asc => sql_query.order(events::end_date.asc()),
+            SortDirection::Desc => sql_query.order(events::end_date.desc()),
         },
     };
 
@@ -2135,6 +2147,48 @@ pub async fn get_players_game_info(
     // Player stats computed
 
     Ok(game_info)
+}
+
+/// Optimize a database: create indexes, run ANALYZE, apply pragmas, and update Lichess tournament events.
+#[tauri::command]
+#[specta::specta]
+pub async fn optimize_database(
+    file: PathBuf,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    use diesel::connection::SimpleConnection;
+    use online_sync::update_lichess_tournament_events_standalone;
+    
+    let db = &mut get_db_or_create(
+        &state,
+        file.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    
+    // Step 1: Create additional indexes
+    if let Err(e) = db.batch_execute(crate::db::ADDITIONAL_INDEXES_SQL) {
+        // Log but don't fail - indexes are best-effort
+        eprintln!("Database optimization warning (indexes): {}", e);
+    }
+    
+    // Step 2: Update query planner statistics
+    if let Err(e) = db.batch_execute("ANALYZE Games; ANALYZE Players; ANALYZE Events; ANALYZE Sites;") {
+        eprintln!("ANALYZE warning: {}", e);
+    }
+    
+    // Step 3: Apply performance pragmas
+    if let Err(e) = db.batch_execute(crate::db::PRAGMA_PERFORMANCE) {
+        eprintln!("Performance pragmas warning: {}", e);
+    }
+    
+    // Step 4: Update Lichess tournament events if any exist
+    if let Err(e) = update_lichess_tournament_events_standalone(db, &app, false).await {
+        eprintln!("Error updating Lichess tournament events: {}", e);
+        // Don't fail the entire optimization if this fails
+    }
+    
+    Ok(())
 }
 
 /// Delete a database file and cleanup resources

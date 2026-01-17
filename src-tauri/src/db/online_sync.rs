@@ -11,6 +11,7 @@ use diesel::connection::SimpleConnection;
 use diesel::sql_query;
 use diesel::RunQueryDsl;
 use once_cell::sync::Lazy;
+use regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{path::BaseDirectory, AppHandle, Manager, State};
@@ -28,14 +29,17 @@ use super::{
     list_account_sync_completed_batches, mark_account_sync_batch_complete, upsert_account_sync_state,
     ConnectionOptions, JournalMode, ADDITIONAL_INDEXES_SQL, PRAGMA_PERFORMANCE,
 };
+use super::schema::{events, games};
+use diesel::prelude::*;
+use diesel::sql_types::Integer;
 
 static GLOBAL_PROFILE_SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 const LICHESS_MAX_PER_BATCH: i64 = 500;
 
-/// Default token used ONLY for Lichess game downloads when the profile/session doesn't provide one.
-/// User requested: hardcoded fallback (no env vars).
-const DEFAULT_LICHESS_DOWNLOAD_TOKEN: &str = "lip_sgpY5HeSSnLJtFs9DSF2";
+// NOTE: We no longer force a fallback token for game downloads, because:
+// - Game export is public for most accounts
+// - An invalid fallback token causes 401 loops and noisy retries
 
 // Retry tuning
 const MAX_RETRIES_NETWORK: u32 = 8; // for timeouts, 5xx, connection issues
@@ -541,12 +545,27 @@ async fn lichess_download_batch_pgn_to_pgn_file(
         // Ask explicitly; server may omit compression otherwise.
         .header(reqwest::header::ACCEPT_ENCODING, "gzip");
 
-    // Use profile/session token if provided; otherwise fallback to default download token.
-    // IMPORTANT: never log tokens.
-    let auth_token = token.unwrap_or(DEFAULT_LICHESS_DOWNLOAD_TOKEN);
-    req = req.bearer_auth(auth_token);
+    // Auth is optional for Lichess game downloads.
+    // If a token is provided, use it. If it fails (401/403), retry once WITHOUT auth
+    // so public game downloads still work and we don't spin in retries.
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
 
-    let res = req.send().await?;
+    let mut res = req.send().await?;
+
+    if matches!(
+        res.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) && token.is_some()
+    {
+        // Retry once without auth.
+        let retry_req = client
+            .get(res.url().clone())
+            .header(reqwest::header::ACCEPT, "application/x-chess-pgn")
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip");
+        res = retry_req.send().await?;
+    }
 
     if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         let wait = retry_after_seconds(res.headers()).unwrap_or(30);
@@ -557,6 +576,16 @@ async fn lichess_download_batch_pgn_to_pgn_file(
         return Err(Error::PackageManager(format!(
             "RETRYABLE_HTTP:{}",
             res.status().as_u16()
+        )));
+    }
+
+    if matches!(
+        res.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Err(Error::PackageManager(format!(
+            "Lichess authorization failed ({})",
+            res.status()
         )));
     }
 
@@ -829,6 +858,636 @@ fn ensure_db_dir(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Extract Lichess tournament ID from event name, game PGN, Round field, or Site field.
+/// Tournament IDs in Lichess are typically alphanumeric strings (8-12 chars).
+fn extract_lichess_tournament_id(event_name: &str, game_pgn: Option<&str>, round: Option<&str>, site: Option<&str>) -> Option<String> {
+    // First, try to extract from Site field (Lichess often puts tournament URL here)
+    if let Some(site_val) = site {
+        // Check for URL pattern in Site: https://lichess.org/tournament/ID
+        if let Some(start) = site_val.find("lichess.org/tournament/") {
+            let rest = &site_val[start + 23..];
+            let end = rest.find(|c: char| c == ' ' || c == '\n' || c == '"' || c == ']' || c == '}' || c == '/').unwrap_or(rest.len());
+            let id = &rest[..end];
+            if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && id.len() >= 8 && id.len() <= 12 {
+                return Some(id.to_string());
+            }
+        }
+    }
+    
+    // Second, try to extract from Round field (Lichess often puts tournament ID here)
+    if let Some(round_val) = round {
+        // Check for URL pattern in Round: https://lichess.org/tournament/ID
+        if let Some(start) = round_val.find("lichess.org/tournament/") {
+            let rest = &round_val[start + 23..];
+            let end = rest.find(|c: char| c == ' ' || c == '\n' || c == '"' || c == ']' || c == '}' || c == '/').unwrap_or(rest.len());
+            let id = &rest[..end];
+            if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && id.len() >= 8 && id.len() <= 12 {
+                return Some(id.to_string());
+            }
+        }
+        // Check for tournament ID pattern in Round (8-12 alphanumeric chars)
+        let re = regex::Regex::new(r"\b([a-z0-9]{8,12})\b").ok()?;
+        if let Some(cap) = re.find(&round_val.to_lowercase()) {
+            let id = cap.as_str();
+            if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                return Some(id.to_string());
+            }
+        }
+    }
+    // Try to extract from game PGN first (more reliable)
+    if let Some(pgn) = game_pgn {
+        // Look for tournament ID in PGN comments or tags
+        // Sometimes tournament info is in comments like [%tournament "id"]
+        if let Some(start) = pgn.find("[%tournament") {
+            let rest = &pgn[start + 13..];
+            if let Some(end) = rest.find('"') {
+                let id = &rest[..end];
+                if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && id.len() >= 8 {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        
+        // Check for URL pattern in PGN: https://lichess.org/tournament/ID
+        if let Some(start) = pgn.find("lichess.org/tournament/") {
+            let rest = &pgn[start + 23..];
+            let end = rest.find(|c: char| c == ' ' || c == '\n' || c == '"' || c == ']' || c == '}' || c == '/').unwrap_or(rest.len());
+            let id = &rest[..end];
+            if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && id.len() >= 8 && id.len() <= 12 {
+                return Some(id.to_string());
+            }
+        }
+        
+        // Also check Event tag for tournament reference
+        if let Some(start) = pgn.find("[Event \"") {
+            let rest = &pgn[start + 8..];
+            if let Some(end) = rest.find('"') {
+                let event = &rest[..end];
+                // If event contains a tournament ID pattern
+                let re = regex::Regex::new(r"\b([a-z0-9]{8,12})\b").ok()?;
+                if let Some(cap) = re.find(event) {
+                    let id = cap.as_str();
+                    if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                        return Some(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Try to extract from event name
+    // Lichess tournament names often contain the tournament ID
+    // Pattern: "Arena Tournament" or tournament name with ID
+    let name_lower = event_name.to_lowercase();
+    
+    // Check for URL pattern in event name: https://lichess.org/tournament/ID
+    if let Some(start) = name_lower.find("lichess.org/tournament/") {
+        let rest = &name_lower[start + 23..];
+        let end = rest.find(|c: char| c == ' ' || c == '\n' || c == '"' || c == ']' || c == '}').unwrap_or(rest.len());
+        let id = &rest[..end];
+        if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && id.len() >= 8 && id.len() <= 12 {
+            return Some(id.to_string());
+        }
+    }
+    
+    // Check if event name looks like a tournament (contains "tournament", "arena", "swiss", etc.)
+    if name_lower.contains("tournament") || name_lower.contains("arena") || name_lower.contains("swiss") || name_lower.contains("marathon") {
+        // Try to find alphanumeric ID in the name (8-12 chars, typical Lichess tournament ID length)
+        let re = regex::Regex::new(r"\b([a-z0-9]{8,12})\b").ok()?;
+        if let Some(cap) = re.find(&name_lower) {
+            let id = cap.as_str();
+            // Lichess tournament IDs are typically lowercase alphanumeric
+            if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+                return Some(id.to_string());
+            }
+        }
+    }
+    
+    // Last resort: try to find any 8-12 char alphanumeric string that could be a tournament ID
+    let re = regex::Regex::new(r"\b([a-z0-9]{8,12})\b").ok()?;
+    if let Some(cap) = re.find(&name_lower) {
+        let id = cap.as_str();
+        if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Some(id.to_string());
+        }
+    }
+    
+    None
+}
+
+/// Fetch tournament details from Lichess API.
+async fn fetch_lichess_tournament(tournament_id: &str) -> Result<Option<LichessTournamentInfo>> {
+    let client = reqwest_client_lichess().await?;
+    let url = format!("https://lichess.org/api/tournament/{}", tournament_id);
+    
+    let response = client.get(&url).send().await?;
+    
+    if response.status() == 404 {
+        // Tournament not found
+        return Ok(None);
+    }
+    
+    if !response.status().is_success() {
+        return Err(Error::InvalidInput(format!(
+            "Failed to fetch tournament: {}",
+            response.status()
+        )));
+    }
+    
+    let tournament: LichessTournamentInfo = response.json().await?;
+    Ok(Some(tournament))
+}
+
+#[derive(Debug, Deserialize)]
+struct LichessTournamentInfo {
+    #[serde(rename = "id")]
+    id: String,
+    #[serde(rename = "name")]
+    name: Option<String>,
+    #[serde(rename = "createdBy")]
+    created_by: Option<String>,
+    #[serde(rename = "startsAt")]
+    starts_at: Option<i64>,
+    #[serde(rename = "finishesAt")]
+    finishes_at: Option<i64>,
+    #[serde(rename = "status")]
+    status: Option<i32>,
+    #[serde(rename = "fullName")]
+    full_name: Option<String>,
+    #[serde(rename = "description")]
+    description: Option<String>,
+    #[serde(rename = "variant")]
+    variant: Option<serde_json::Value>,
+    #[serde(rename = "clock")]
+    clock: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LichessTournamentPlayedResponse {
+    #[serde(rename = "tournament")]
+    tournament: LichessTournamentPlayed,
+    #[serde(rename = "player")]
+    player: serde_json::Value, // Ignore player data
+}
+
+#[derive(Debug, Deserialize)]
+struct LichessTournamentPlayed {
+    #[serde(rename = "id")]
+    id: String,
+    #[serde(rename = "name")]
+    name: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: Option<i64>,
+    #[serde(rename = "startsAt")]
+    starts_at: Option<i64>,
+    #[serde(rename = "finishesAt")]
+    finishes_at: Option<i64>,
+    #[serde(rename = "status")]
+    status: Option<i32>,
+    #[serde(rename = "fullName")]
+    full_name: Option<String>,
+    #[serde(rename = "location")]
+    location: Option<String>,
+}
+
+async fn fetch_lichess_user_tournaments_played(username: &str) -> Result<Vec<LichessTournamentPlayed>> {
+    let client = reqwest_client_lichess().await?;
+    let url = format!("https://lichess.org/api/user/{}/tournament/played", username);
+    
+    let response = client.get(&url).send().await?;
+    
+    if !response.status().is_success() {
+        if response.status() == 404 {
+            // User not found or no tournaments
+            return Ok(Vec::new());
+        }
+        return Err(Error::InvalidInput(format!(
+            "Failed to fetch tournaments for user {}: {}",
+            username,
+            response.status()
+        )));
+    }
+    
+    // The API returns NDJSON (newline-delimited JSON) - one JSON object per line
+    let response_text = response.text().await?;
+    
+    // Parse NDJSON - each line is a separate JSON object
+    let mut tournaments = Vec::new();
+    for line in response_text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        
+        match serde_json::from_str::<LichessTournamentPlayedResponse>(line) {
+            Ok(response) => {
+                tournaments.push(response.tournament);
+            }
+            Err(e) => {
+                eprintln!("Failed to parse tournament line for user {}: {} (line: {})", username, e, if line.len() > 200 { &line[..200] } else { line });
+                // Continue parsing other lines even if one fails
+            }
+        }
+    }
+    
+    eprintln!("Parsed {} tournaments from NDJSON response", tournaments.len());
+    
+    Ok(tournaments)
+}
+
+/// Update Lichess tournament events with metadata from API.
+/// This version can be called without profile_id/account_key/platform - it detects Lichess events automatically.
+pub async fn update_lichess_tournament_events_standalone(
+    db: &mut diesel::SqliteConnection,
+    app: &AppHandle,
+    suppress_events: bool,
+) -> Result<()> {
+    use diesel::sql_query;
+    use diesel::sql_types::{Integer, Nullable, Text};
+    
+    #[derive(QueryableByName)]
+    struct EventRow {
+        #[diesel(sql_type = Integer, column_name = "ID")]
+        id: i32,
+        #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
+        name: Option<String>,
+        #[diesel(sql_type = Nullable<Text>, column_name = "StartDate")]
+        start_date: Option<String>,
+        #[diesel(sql_type = Nullable<Text>, column_name = "EndDate")]
+        end_date: Option<String>,
+    }
+    
+    // Find events that:
+    // 1. Have games from Lichess (site contains "lichess.org")
+    // 2. Don't have start_date or end_date (or have empty strings)
+    // 3. Have a name (we'll try to extract tournament ID from any Lichess event)
+    let events_to_update: Vec<EventRow> = match sql_query(
+        r#"
+        SELECT DISTINCT e.ID, e.Name, e.StartDate, e.EndDate
+        FROM Events e
+        INNER JOIN Games g ON g.EventID = e.ID
+        INNER JOIN Sites s ON g.SiteID = s.ID
+        WHERE (s.Name LIKE '%lichess.org%' OR s.Name LIKE '%lichess%')
+          AND (e.StartDate IS NULL OR e.StartDate = '' OR e.EndDate IS NULL OR e.EndDate = '')
+          AND e.Name IS NOT NULL
+          AND e.Name != ''
+        LIMIT 100
+        "#,
+    )
+    .load(db) {
+        Ok(events) => events,
+        Err(e) => {
+            return Err(Error::InvalidInput(format!("Failed to query events: {}", e)));
+        }
+    };
+    
+    eprintln!("Found {} Lichess events to potentially update", events_to_update.len());
+    
+    if events_to_update.is_empty() {
+        eprintln!("No Lichess events found to update");
+        return Ok(());
+    }
+    
+    // Get Lichess usernames from players with account key format "lichess:username"
+    // These are the profile's own accounts, not opponents
+    // Use the player with the most games as the primary account
+    #[derive(QueryableByName)]
+    struct PlayerUsernameRow {
+        #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
+        name: Option<String>,
+        #[diesel(sql_type = Integer, column_name = "GameCount")]
+        game_count: i32,
+    }
+    
+    let usernames: Vec<String> = match sql_query(
+        r#"
+        SELECT p.Name, COUNT(g.ID) as GameCount
+        FROM Players p
+        INNER JOIN Games g ON (g.WhiteID = p.ID OR g.BlackID = p.ID)
+        INNER JOIN Events e ON g.EventID = e.ID
+        INNER JOIN Sites s ON g.SiteID = s.ID
+        WHERE (s.Name LIKE '%lichess.org%' OR s.Name LIKE '%lichess%')
+          AND e.ID IN (SELECT ID FROM (SELECT DISTINCT e2.ID FROM Events e2 INNER JOIN Games g2 ON g2.EventID = e2.ID INNER JOIN Sites s2 ON g2.SiteID = s2.ID WHERE (s2.Name LIKE '%lichess.org%' OR s2.Name LIKE '%lichess%') AND (e2.StartDate IS NULL OR e2.StartDate = '' OR e2.EndDate IS NULL OR e2.EndDate = '') AND e2.Name IS NOT NULL AND e2.Name != '' LIMIT 100))
+          AND p.Name IS NOT NULL
+          AND p.Name != ''
+          AND p.Name LIKE 'lichess:%'
+        GROUP BY p.Name
+        ORDER BY GameCount DESC
+        LIMIT 10
+        "#,
+    )
+    .load::<PlayerUsernameRow>(db) {
+        Ok(rows) => rows
+            .into_iter()
+            .filter_map(|row| {
+                row.name.and_then(|name| {
+                    // Extract username from "lichess:username" format
+                    if let Some(username) = name.strip_prefix("lichess:") {
+                        let username = username.trim();
+                        // Only include if it looks like a valid username (not empty, reasonable length)
+                        if !username.is_empty() && username.len() <= 50 {
+                            Some(username.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect(),
+        Err(e) => {
+            eprintln!("Failed to query profile usernames: {}", e);
+            Vec::new()
+        }
+    };
+    
+    eprintln!("Found {} unique Lichess usernames to query", usernames.len());
+    
+    // Fetch tournaments for each username and build a map of tournament ID -> tournament info
+    let mut tournament_map: std::collections::HashMap<String, LichessTournamentPlayed> = std::collections::HashMap::new();
+    
+    for (idx, username) in usernames.iter().enumerate() {
+        eprintln!("Fetching tournaments for user {} ({}/{})", username, idx + 1, usernames.len());
+        
+        match fetch_lichess_user_tournaments_played(username).await {
+            Ok(tournaments) => {
+                eprintln!("  Found {} tournaments for user {}", tournaments.len(), username);
+                for tournament in tournaments {
+                    tournament_map.insert(tournament.id.clone(), tournament);
+                }
+            }
+            Err(e) => {
+                eprintln!("  Failed to fetch tournaments for user {}: {}", username, e);
+            }
+        }
+        
+        // Rate limiting: don't hammer Lichess API
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    
+    eprintln!("Collected {} unique tournaments from all users", tournament_map.len());
+    
+    if !suppress_events {
+        let _ = AccountSyncProgress {
+            profile_id: "standalone".to_string(),
+            account_key: "standalone".to_string(),
+            platform: "lichess".to_string(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: format!("Updating {} tournament events...", events_to_update.len()),
+            cooldown_seconds: None,
+        }
+        .emit(app);
+    }
+    
+    let mut updated_count = 0;
+    
+    for event in events_to_update {
+        let Some(event_name) = event.name.as_deref() else {
+            eprintln!("Skipping event {}: no name", event.id);
+            continue;
+        };
+        
+        eprintln!("Processing event {}: '{}'", event.id, event_name);
+        
+        // Try to find matching tournament in the map by name
+        // First try exact match, then try partial match
+        let matching_tournament = tournament_map.values().find(|t| {
+            let tournament_name = t.name.as_deref().unwrap_or("");
+            let tournament_full_name = t.full_name.as_deref().unwrap_or("");
+            event_name == tournament_name || event_name == tournament_full_name
+        }).or_else(|| {
+            // Try partial match (event name contains tournament name or vice versa)
+            tournament_map.values().find(|t| {
+                let tournament_name = t.name.as_deref().unwrap_or("").to_lowercase();
+                let tournament_full_name = t.full_name.as_deref().unwrap_or("").to_lowercase();
+                let event_name_lower = event_name.to_lowercase();
+                tournament_name.contains(&event_name_lower) 
+                    || event_name_lower.contains(&tournament_name)
+                    || tournament_full_name.contains(&event_name_lower)
+                    || event_name_lower.contains(&tournament_full_name)
+            })
+        });
+        
+        let Some(tournament) = matching_tournament else {
+            eprintln!("  No matching tournament found for event '{}'", event_name);
+            continue;
+        };
+        
+        eprintln!("  Found matching tournament: {} (ID: {})", tournament.full_name.as_deref().or(tournament.name.as_deref()).unwrap_or("Unknown"), tournament.id);
+        
+        // Update event with tournament information from the map
+        let start_date = tournament.starts_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts / 1000, 0)
+                .map(|dt| dt.format("%Y.%m.%d").to_string())
+        });
+        
+        let end_date = tournament.finishes_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts / 1000, 0)
+                .map(|dt| dt.format("%Y.%m.%d").to_string())
+        });
+        
+        eprintln!("  Start date: {:?}, End date: {:?}, Location: {:?}", start_date, end_date, tournament.location);
+        
+        // Update event name if we got a better one from API
+        let updated_name = tournament.full_name
+            .clone()
+            .or(tournament.name.clone())
+            .or_else(|| event.name.clone());
+        
+        // Update location if available
+        let updated_location = tournament.location.clone();
+        
+        match diesel::update(events::table.filter(events::id.eq(event.id)))
+            .set((
+                events::name.eq(&updated_name),
+                events::start_date.eq(&start_date),
+                events::end_date.eq(&end_date),
+                events::location.eq(&updated_location),
+            ))
+            .execute(db)
+        {
+            Ok(rows) => {
+                eprintln!("  Updated {} rows for event {}", rows, event.id);
+                updated_count += 1;
+            }
+            Err(e) => {
+                eprintln!("  Error updating event {}: {}", event.id, e);
+            }
+        }
+        
+        // Rate limiting: don't hammer Lichess API
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    
+    eprintln!("Total updated: {} events", updated_count);
+    
+    if !suppress_events && updated_count > 0 {
+        let _ = AccountSyncProgress {
+            profile_id: "standalone".to_string(),
+            account_key: "standalone".to_string(),
+            platform: "lichess".to_string(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: format!("Updated {} tournament events", updated_count),
+            cooldown_seconds: None,
+        }
+        .emit(app);
+    }
+    
+    Ok(())
+}
+
+/// Update Lichess tournament events with metadata from API.
+async fn update_lichess_tournament_events(
+    db: &mut diesel::SqliteConnection,
+    app: &AppHandle,
+    suppress_events: bool,
+    profile_id: &str,
+    account_key: &str,
+    platform: &str,
+) -> Result<()> {
+    use diesel::sql_query;
+    use diesel::sql_types::{Integer, Nullable, Text};
+    
+    #[derive(QueryableByName)]
+    struct EventRow {
+        #[diesel(sql_type = Integer, column_name = "ID")]
+        id: i32,
+        #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
+        name: Option<String>,
+        #[diesel(sql_type = Nullable<Text>, column_name = "StartDate")]
+        start_date: Option<String>,
+        #[diesel(sql_type = Nullable<Text>, column_name = "EndDate")]
+        end_date: Option<String>,
+    }
+    
+    // Find events that:
+    // 1. Have games from Lichess (site contains "lichess.org")
+    // 2. Don't have start_date or end_date
+    // 3. Have a name that might be a tournament
+    let events_to_update: Vec<EventRow> = sql_query(
+        r#"
+        SELECT DISTINCT e.ID, e.Name, e.StartDate, e.EndDate
+        FROM Events e
+        INNER JOIN Games g ON g.EventID = e.ID
+        INNER JOIN Sites s ON g.SiteID = s.ID
+        WHERE (s.Name LIKE '%lichess.org%' OR s.Name LIKE '%lichess%')
+          AND (e.StartDate IS NULL OR e.EndDate IS NULL)
+          AND e.Name IS NOT NULL
+          AND (e.Name LIKE '%tournament%' OR e.Name LIKE '%arena%' OR e.Name LIKE '%swiss%' OR e.Name LIKE '%marathon%')
+        LIMIT 50
+        "#,
+    )
+    .load(db)?;
+    
+    if events_to_update.is_empty() {
+        return Ok(());
+    }
+    
+    if !suppress_events {
+        let _ = AccountSyncProgress {
+            profile_id: profile_id.to_string(),
+            account_key: account_key.to_string(),
+            platform: platform.to_string(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: format!("Updating {} tournament events...", events_to_update.len()),
+            cooldown_seconds: None,
+        }
+        .emit(app);
+    }
+    
+    let mut updated_count = 0;
+    
+    for event in events_to_update {
+        let Some(event_name) = event.name.as_deref() else {
+            continue;
+        };
+        
+        // Get a sample game PGN to help extract tournament ID
+        #[derive(QueryableByName)]
+        struct GameMovesRow {
+            #[diesel(sql_type = diesel::sql_types::Binary, column_name = "Moves")]
+            moves: Vec<u8>,
+        }
+        
+        let sample_pgn: Option<String> = sql_query(
+            r#"
+            SELECT g.Moves
+            FROM Games g
+            INNER JOIN Sites s ON g.SiteID = s.ID
+            WHERE g.EventID = ?1
+              AND (s.Name LIKE '%lichess.org%' OR s.Name LIKE '%lichess%')
+            LIMIT 1
+            "#,
+        )
+        .bind::<diesel::sql_types::Integer, _>(event.id)
+        .get_result::<GameMovesRow>(db)
+        .ok()
+        .map(|row| String::from_utf8_lossy(&row.moves).to_string());
+        
+        // Try to extract tournament ID
+        let Some(tournament_id) = extract_lichess_tournament_id(event_name, sample_pgn.as_deref(), None, None) else {
+            continue;
+        };
+        
+        // Fetch tournament details from Lichess API
+        let Some(tournament_info) = fetch_lichess_tournament(&tournament_id).await? else {
+            continue;
+        };
+        
+        // Update event with tournament information
+        let start_date = tournament_info.starts_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts / 1000, 0)
+                .map(|dt| dt.format("%Y.%m.%d").to_string())
+        });
+        
+        let end_date = tournament_info.finishes_at.and_then(|ts| {
+            chrono::DateTime::from_timestamp(ts / 1000, 0)
+                .map(|dt| dt.format("%Y.%m.%d").to_string())
+        });
+        
+        // Update event name if we got a better one from API
+        let updated_name = tournament_info.full_name
+            .or(tournament_info.name)
+            .or_else(|| event.name.clone());
+        
+        diesel::update(events::table.filter(events::id.eq(event.id)))
+            .set((
+                events::name.eq(updated_name),
+                events::start_date.eq(start_date),
+                events::end_date.eq(end_date),
+            ))
+            .execute(db)?;
+        
+        updated_count += 1;
+        
+        // Rate limiting: don't hammer Lichess API
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    
+    if !suppress_events && updated_count > 0 {
+        let _ = AccountSyncProgress {
+            profile_id: profile_id.to_string(),
+            account_key: account_key.to_string(),
+            platform: platform.to_string(),
+            total_batches: 0,
+            completed_batches: 0,
+            current_batch: 0,
+            batch_label: format!("Updated {} tournament events", updated_count),
+            cooldown_seconds: None,
+        }
+        .emit(app);
+    }
+    
+    Ok(())
+}
+
 /// Optimize profile database after sync completes:
 /// - Create additional indexes (TimeControl, ECO, opponent level, etc.)
 /// - Run ANALYZE to update query planner statistics
@@ -920,6 +1579,155 @@ async fn optimize_profile_db_after_sync(
             }
             .emit(&app);
         }
+    }
+
+    // Step 3: Update Lichess tournament events with additional metadata
+    if platform == "lichess" {
+        if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: "Downloading tournament data...".to_string(),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+        
+        if let Err(e) = update_lichess_tournament_events_standalone(db, &app, suppress_events).await {
+            // Log but don't fail - this is best-effort
+            if !suppress_events {
+                let _ = AccountSyncProgress {
+                    profile_id: profile_id.clone(),
+                    account_key: account_key.clone(),
+                    platform: platform.clone(),
+                    total_batches: 0,
+                    completed_batches: 0,
+                    current_batch: 0,
+                    batch_label: format!("Tournament events update warning: {}", e),
+                    cooldown_seconds: None,
+                }
+                .emit(&app);
+            }
+        } else if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: "Tournament data downloaded".to_string(),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+        
+        // COMMENTED: After downloading tournament data, delete all events without dates
+        // This was deleting both events and games, which is too aggressive
+        // TODO: Revisit this logic - maybe only delete events that have no games, or use a different approach
+        /*
+        if !suppress_events {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: "Cleaning up events without dates...".to_string(),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+        
+        // Delete events that don't have start_date or end_date
+        // These are likely recurring events or events that couldn't be matched to tournaments
+        // First, get the event IDs to delete
+        #[derive(QueryableByName)]
+        struct EventIdRow {
+            #[diesel(sql_type = Integer, column_name = "ID")]
+            id: i32,
+        }
+        
+        let events_to_delete: Vec<i32> = match sql_query(
+            r#"
+            SELECT DISTINCT e.ID
+            FROM Events e
+            INNER JOIN Games g ON g.EventID = e.ID
+            INNER JOIN Sites s ON g.SiteID = s.ID
+            WHERE (s.Name LIKE '%lichess.org%' OR s.Name LIKE '%lichess%')
+              AND (e.StartDate IS NULL OR e.StartDate = '' OR e.EndDate IS NULL OR e.EndDate = '')
+            "#
+        ).load::<EventIdRow>(db) {
+            Ok(rows) => rows.into_iter().map(|r| r.id).collect(),
+            Err(e) => {
+                eprintln!("Error querying events to delete: {}", e);
+                Vec::new()
+            }
+        };
+        
+        let deleted_count = if !events_to_delete.is_empty() {
+            // Delete games associated with these events first (to maintain referential integrity)
+            let games_deleted = match diesel::delete(
+                games::table.filter(
+                    games::event_id.eq_any(&events_to_delete)
+                )
+            ).execute(db) {
+                Ok(count) => count,
+                Err(e) => {
+                    eprintln!("Error deleting games for events without dates: {}", e);
+                    0
+                }
+            };
+            
+            // Then delete the events
+            match diesel::delete(
+                events::table.filter(events::id.eq_any(&events_to_delete))
+            ).execute(db) {
+                Ok(count) => {
+                    eprintln!("Deleted {} events and {} games without dates", count, games_deleted);
+                    count
+                },
+                Err(e) => {
+                    eprintln!("Error deleting events without dates: {}", e);
+                    if !suppress_events {
+                        let _ = AccountSyncProgress {
+                            profile_id: profile_id.clone(),
+                            account_key: account_key.clone(),
+                            platform: platform.clone(),
+                            total_batches: 0,
+                            completed_batches: 0,
+                            current_batch: 0,
+                            batch_label: format!("Warning: Failed to clean up events: {}", e),
+                            cooldown_seconds: None,
+                        }
+                        .emit(&app);
+                    }
+                    0
+                }
+            }
+        } else {
+            0
+        };
+        
+        if !suppress_events && deleted_count > 0 {
+            let _ = AccountSyncProgress {
+                profile_id: profile_id.clone(),
+                account_key: account_key.clone(),
+                platform: platform.clone(),
+                total_batches: 0,
+                completed_batches: 0,
+                current_batch: 0,
+                batch_label: format!("Deleted {} events without dates", deleted_count),
+                cooldown_seconds: None,
+            }
+            .emit(&app);
+        }
+        */
     }
 
     // Emit completion event
@@ -1378,8 +2186,23 @@ pub async fn sync_account_games_to_profile_db(
 
         let is_complete = sync_error.is_none();
         
-        // Optimize database after sync completes (indexes, ANALYZE, VACUUM)
-        if is_complete {
+        // Calculate imported games count
+        let stats_after = get_account_import_stats(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            state.clone(),
+            app.clone(),
+        )
+        .await
+        .unwrap_or(AccountImportStats {
+            last_game_utc_ms: None,
+            count: before_count,
+        });
+        let imported_games = (stats_after.count - before_count).max(0);
+        
+        // Only run optimization/tournament updates if new games were imported
+        if is_complete && imported_games > 0 {
             let _ = optimize_profile_db_after_sync(
                 db_path.clone(),
                 profile_id.clone(),
@@ -1413,20 +2236,6 @@ pub async fn sync_account_games_to_profile_db(
         if let Some(err) = sync_error {
             return Err(Error::PackageManager(err));
         }
-
-        let stats_after = get_account_import_stats(
-            profile_id.clone(),
-            platform.clone(),
-            username.clone(),
-            state.clone(),
-            app.clone(),
-        )
-        .await
-        .unwrap_or(AccountImportStats {
-            last_game_utc_ms: None,
-            count: before_count,
-        });
-        let imported_games = (stats_after.count - before_count).max(0);
 
         return Ok(AccountSyncResult { imported_games });
     }
@@ -1698,8 +2507,23 @@ pub async fn sync_account_games_to_profile_db(
         // Best-effort dedupe once at the end
         let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
 
-        // Optimize database after sync completes (indexes, ANALYZE, VACUUM)
-        if completed_batches >= total_batches {
+        // Calculate imported games count
+        let stats_after = get_account_import_stats(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            state.clone(),
+            app.clone(),
+        )
+        .await
+        .unwrap_or(AccountImportStats {
+            last_game_utc_ms: None,
+            count: before_count,
+        });
+        let imported_games = (stats_after.count - before_count).max(0);
+
+        // Only run optimization if sync completed and new games were imported
+        if completed_batches >= total_batches && imported_games > 0 {
             let _ = optimize_profile_db_after_sync(
                 db_path.clone(),
                 profile_id.clone(),
@@ -1737,20 +2561,6 @@ pub async fn sync_account_games_to_profile_db(
         if let Some(err) = sync_error {
             return Err(Error::PackageManager(err));
         }
-
-        let stats_after = get_account_import_stats(
-            profile_id.clone(),
-            platform.clone(),
-            username.clone(),
-            state.clone(),
-            app.clone(),
-        )
-        .await
-        .unwrap_or(AccountImportStats {
-            last_game_utc_ms: None,
-            count: before_count,
-        });
-        let imported_games = (stats_after.count - before_count).max(0);
 
         return Ok(AccountSyncResult { imported_games });
     }

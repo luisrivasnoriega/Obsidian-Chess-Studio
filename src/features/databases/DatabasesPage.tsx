@@ -20,7 +20,8 @@ import {
 } from "@mantine/core";
 import { useDebouncedValue, useToggle } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconArrowRight, IconDatabase, IconPlus, IconPuzzle, IconStar } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
+import { IconArrowRight, IconDatabase, IconPlus, IconPuzzle, IconStar, IconRefresh } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
@@ -714,6 +715,7 @@ export function DatabaseDetails({
             <>
               <Divider variant="dashed" label={t("features.databases.settings.advancedTools")} />
               <AdvancedSettings selectedDatabase={selectedDatabase} reload={mutate} />
+              <OptimizeButton database={selectedDatabase} mutate={mutate} />
             </>
           )}
 
@@ -1136,4 +1138,42 @@ function getDetailedDatabaseStats(database: UnifiedDatabase, t: any) {
       value: t("units.count", { count: database.event_count }),
     },
   ];
+}
+
+function OptimizeButton({ database, mutate }: { database: UnifiedDatabase & { type: "success" }; mutate: () => void }) {
+  const { t } = useTranslation();
+  const [loading, setLoading] = useState(false);
+
+  const handleOptimize = useCallback(async () => {
+    setLoading(true);
+    try {
+      await commands.optimizeDatabase(database.file);
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("features.databases.settings.optimizeSuccess", { defaultValue: "Database optimized successfully" }),
+        color: "green",
+      });
+      mutate();
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: error instanceof Error ? error.message : String(error),
+        color: "red",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [database.file, mutate, t]);
+
+  return (
+    <Button
+      onClick={handleOptimize}
+      loading={loading}
+      leftSection={<IconRefresh size="1rem" />}
+      fullWidth
+      variant="light"
+    >
+      {t("features.databases.settings.optimize", { defaultValue: "Optimize" })}
+    </Button>
+  );
 }

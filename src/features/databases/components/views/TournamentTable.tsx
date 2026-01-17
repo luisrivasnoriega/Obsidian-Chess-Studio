@@ -4,6 +4,7 @@ import { IconSearch } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { DataTable } from "mantine-datatable";
 import { useContext } from "react";
+import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { commands, type Event, type TournamentSort } from "@/bindings";
 import { useLanguageChangeListener } from "@/hooks/useLanguageChangeListener";
@@ -17,6 +18,7 @@ import GridLayout from "./GridLayout";
 function TournamentTable() {
   const store = useContext(DatabaseViewStateContext)!;
   const { layout } = useResponsiveLayout();
+  const { t } = useTranslation();
   const file = useStore(store, (s) => s.database?.file)!;
   const query = useStore(store, (s) => s.tournaments.query);
   const selected = useStore(store, (s) => s.tournaments.selectedTournamet);
@@ -86,7 +88,29 @@ function TournamentTable() {
           fetching={isLoading}
           columns={[
             { accessor: "id", sortable: true },
-            { accessor: "name", sortable: true },
+            {
+              accessor: "name",
+              sortable: true,
+              render: (event) => event.name || "-",
+            },
+            {
+              accessor: "location",
+              sortable: false,
+              title: t("features.databases.managedEvents.location", { defaultValue: "Location" }),
+              render: (event) => event.location || "-",
+            },
+            {
+              accessor: "start_date",
+              sortable: true,
+              title: t("features.databases.managedEvents.startDate", { defaultValue: "Start Date" }),
+              render: (event) => event.start_date || "-",
+            },
+            {
+              accessor: "end_date",
+              sortable: true,
+              title: t("features.databases.managedEvents.endDate", { defaultValue: "End Date" }),
+              render: (event) => event.end_date || "-",
+            },
           ]}
           rowClassName={(t) => (t.id === selected ? classes.selected : "")}
           noRecordsText="No tournaments found"

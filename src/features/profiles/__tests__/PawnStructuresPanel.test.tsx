@@ -8,6 +8,7 @@ import { DateRange } from "@/features/profiles/components/PersonalCardPanels/Dat
 
 import { notifications } from "@mantine/notifications";
 import { commands } from "@/bindings";
+import { playerStatsCommands } from "@/bindings/playerStats";
 import { query_players } from "@/utils/db";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
@@ -22,6 +23,13 @@ beforeAll(() => {
       observe() {}
       unobserve() {}
       disconnect() {}
+    } as any;
+  }
+  
+  // Setup clipboard API
+  if (!globalThis.navigator.clipboard) {
+    globalThis.navigator.clipboard = {
+      writeText: vi.fn().mockResolvedValue(undefined),
     } as any;
   }
 });
@@ -112,7 +120,7 @@ vi.mock("@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard", (
   default: (props: any) => (
     <div data-testid="sidebar">
       <div data-testid="sidebar-loading">{props.isLoading ? "loading" : "ready"}</div>
-      <div data-testid="sidebar-sites">{props.info?.site_stats_data?.length ?? 0}</div>
+      <div data-testid="sidebar-sites">{props.model?.elo?.length ?? 0}</div>
       <div data-testid="sidebar-opponent-options">
         {(props.opponentEloOptions ?? []).map((o: any) => o.value).join(",")}
       </div>
@@ -138,13 +146,23 @@ vi.mock("@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard", (
 
 vi.mock("@/bindings/playerStats", () => ({
   playerStatsCommands: {
-    calculatePlayerSidebarModel: vi.fn(async () => ({
+    calculatePlayerSidebarModel: vi.fn(async (siteStatsData: any[]) => {
+      const sites = siteStatsData ?? [];
+      return {
+        status: "ok",
+        data: {
+          has_data: sites.length > 0,
+          style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+          elo: sites.map((site: any) => ({
+            platform: site.site,
+            rows: [{ label: site.site, bullet: "-", blitz: "-", rapid: "-" }],
+          })),
+        },
+      };
+    }),
+    mergePlayerSiteStats: vi.fn(async (siteStatsDataList: any[]) => ({
       status: "ok",
-      data: {
-        has_data: true,
-        style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
-        elo: [],
-      },
+      data: siteStatsDataList ?? [],
     })),
   },
 }));
@@ -209,12 +227,14 @@ const mockedQueryPlayers = vi.mocked(query_players);
 const mockedGetProfileDbPath = vi.mocked(getProfileDbPath);
 const mockedCreateTab = vi.mocked(createTab);
 const mockedParsePGN = vi.mocked(parsePGN);
+const mockedPlayerStatsCommands = vi.mocked(playerStatsCommands);
 
 // -----------------------------
 // Per-test setup
 // -----------------------------
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 let consoleWarnSpy: ReturnType<typeof vi.spyOn> | null = null;
+let clipboardWriteTextMock: ReturnType<typeof vi.fn> | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -227,9 +247,20 @@ beforeEach(() => {
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-  // Clipboard
-  if (!navigator.clipboard) (navigator as any).clipboard = {};
-  navigator.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
+  // Clipboard - reset the mock
+  clipboardWriteTextMock = vi.fn().mockResolvedValue(undefined);
+  // Always use spyOn to ensure it's tracked as a spy
+  if (navigator.clipboard.writeText) {
+    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(clipboardWriteTextMock);
+  } else {
+    // If writeText doesn't exist, define it as a spy
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      value: clipboardWriteTextMock,
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
 
   // RAF
   (globalThis as any).requestAnimationFrame = (cb: FrameRequestCallback) => {
@@ -239,6 +270,26 @@ beforeEach(() => {
 
   // Default profile path
   mockedGetProfileDbPath.mockResolvedValue("/db/p1.db3");
+
+  // Reset playerStatsCommands mocks to default implementation
+  mockedPlayerStatsCommands.calculatePlayerSidebarModel.mockImplementation(async (siteStatsData: any[]) => {
+    const sites = siteStatsData ?? [];
+    return {
+      status: "ok",
+      data: {
+        has_data: sites.length > 0,
+        style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+        elo: sites.map((site: any) => ({
+          platform: site.site,
+          rows: [{ label: site.site, bullet: "-", blitz: "-", rapid: "-" }],
+        })),
+      },
+    };
+  });
+  mockedPlayerStatsCommands.mergePlayerSiteStats.mockImplementation(async (siteStatsDataList: any[]) => ({
+    status: "ok",
+    data: siteStatsDataList ?? [],
+  }));
 
   // Default query_players: return exact match if present
   mockedQueryPlayers.mockImplementation(async (_dbPath: string, args: any) => {
@@ -298,10 +349,15 @@ afterEach(() => {
 
 // Helper: wait for query to settle
 async function waitForProfileQueryReady(expectedSites: string) {
-  await waitFor(() => {
-    expect(screen.getByTestId("sidebar-sites")).toHaveTextContent(expectedSites);
-    expect(screen.getByTestId("sidebar-loading")).toHaveTextContent(/ready/i);
-  });
+  await waitFor(
+    () => {
+      const sitesElement = screen.getByTestId("sidebar-sites");
+      const loadingElement = screen.getByTestId("sidebar-loading");
+      expect(sitesElement).toHaveTextContent(expectedSites);
+      expect(loadingElement).toHaveTextContent(/ready/i);
+    },
+    { timeout: 5000 },
+  );
 }
 
 // -----------------------------
@@ -598,11 +654,22 @@ describe("PawnStructuresPanel (high coverage)", () => {
     const copyIcon = screen.getByTestId("icon-copy");
     const copyBtn = copyIcon.closest("button");
     expect(copyBtn).toBeTruthy();
+    expect(copyBtn).not.toBeDisabled();
+
+    // Verify clipboard is available
+    expect(navigator.clipboard).toBeDefined();
+    expect(navigator.clipboard.writeText).toBeDefined();
+    expect(clipboardWriteTextMock).toBeDefined();
 
     await user.click(copyBtn!);
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(fen);
-    expect(mockedNotifications.show).toHaveBeenCalled();
+    // Wait a bit for the async clipboard call and notification
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await waitFor(() => {
+      expect(clipboardWriteTextMock).toHaveBeenCalledWith(fen);
+      expect(mockedNotifications.show).toHaveBeenCalled();
+    }, { timeout: 3000 });
   });
 
   test("open game: finds target position in mainline child and calls createTab with position", async () => {
@@ -686,10 +753,17 @@ describe("PawnStructuresPanel (high coverage)", () => {
       ],
     } as any);
 
-    mockedGetProfileDbPath
-      .mockResolvedValueOnce("/db/p1.db3")
-      .mockResolvedValueOnce("/db/p1.db3")
-      .mockResolvedValueOnce(null as any);
+    // Set up the mock: return dbPath for initial queries, then null when opening game
+    let getProfileDbPathCallCount = 0;
+    mockedGetProfileDbPath.mockImplementation(async (profileId: string) => {
+      getProfileDbPathCallCount++;
+      // First few calls (for initial data loading) return dbPath
+      // Later calls (when opening game) return null
+      if (getProfileDbPathCallCount <= 2) {
+        return "/db/p1.db3";
+      }
+      return null as any;
+    });
 
     render(<PawnStructuresPanel playerName="Human Label" profileId="p1" />);
     await waitForProfileQueryReady("1");

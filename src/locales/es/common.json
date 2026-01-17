@@ -2042,7 +2042,43 @@
     "deleted": "Perfil eliminado.",
     "activeSet": "Perfil activo actualizado.",
     "tabs": {
-      "selectSection": "Sección"
+      "selectSection": "Sección",
+      "simulate": "Simular"
+    },
+    "simulate": {
+      "desc": "Crea un plan personalizado contra un oponente específico usando tus partidas analizadas y Stockfish.",
+      "engine": "Motor",
+      "enginePlaceholder": "Primero selecciona un motor local en Analysis.",
+      "opponent": "Oponente",
+      "opponentPlaceholder": "Selecciona un perfil...",
+      "timeControl": "Control de tiempo",
+      "ourElo": "Nuestro Elo",
+      "ourEloPlaceholder": "No disponible",
+      "startFen": "FEN inicial",
+      "plannerSettings": "Ajustes del planificador",
+      "engineSettings": "Ajustes del motor",
+      "modelSettings": "Ajustes del modelo",
+      "horizonPlies": "Horizonte (plies)",
+      "opponentTopK": "Top-K del oponente",
+      "maxNodes": "Máx. nodos",
+      "minBranchProb": "Probabilidad mínima de rama",
+      "ourMultiPv": "Nuestro MultiPV",
+      "candidateDepth": "Profundidad de candidatos",
+      "quickDepth": "Profundidad rápida (eval)",
+      "backoffK": "Backoff K",
+      "smoothingAlpha": "Suavizado α",
+      "run": "Crear plan",
+      "result": "Resultado",
+      "resultSummary": "Nodos: {{nodes}}, Aristas: {{edges}}",
+      "topLines": "Líneas principales",
+      "bestLine": "Mejor línea (copiar)",
+      "bestLinePlaceholder": "Ejecuta Simular para generar una línea.",
+      "emptyLine": "(vacío)",
+      "errors": {
+        "noEngine": "Primero selecciona un motor local en Analysis.",
+        "noOpponentProfile": "Selecciona un perfil del oponente.",
+        "noOpponentResolved": "No se pudo resolver el oponente en la base de datos de ese perfil."
+      }
     },
     "errors": {
       "missingName": "El nombre del perfil es obligatorio.",

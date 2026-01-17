@@ -363,6 +363,17 @@ async deleteDatabase(file: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Optimize a database: create indexes, run ANALYZE, apply pragmas, and update Lichess tournament events.
+ */
+async optimizeDatabase(file: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("optimize_database", { file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async exportToPgn(file: string, destFile: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("export_to_pgn", { file, destFile }) };
@@ -812,6 +823,14 @@ async dashboardResolveProfileDbGameId(profileId: string, kind: GamesHistoryKind,
     else return { status: "error", error: e  as any };
 }
 },
+async plannerBuildVariantBook(req: PlannerBuildBookRequest) : Promise<Result<VariantBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("planner_build_variant_book", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async openExternalLink(url: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_external_link", { url }) };
@@ -1060,6 +1079,8 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
  * Event payload for best-move updates (emitted to frontend).
  */
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
+export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; kind: EdgeKind; evCpFromOurPerspective: number | null; predictedProb: number | null }
+export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
 export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
@@ -1068,12 +1089,17 @@ export type DatabaseInfo = { title: string; description: string; player_count: n
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
 export type DownloadProgress = { progress: number; id: string; finished: boolean }
+export type EdgeKind = "ourMove" | "opponentMove"
 export type EloBucket = { value: string; label: string }
 export type EloDomain = { min: number; max: number }
 /**
  * UCI engine configuration (name and available options).
  */
 export type EngineConfig = { name: string; options: UciOptionConfig[] }
+/**
+ * Limits passed to the engine. Use either depth or time (or both).
+ */
+export type EngineLimits = { depth: number | null; timeMs: number | null }
 /**
  * Log entry for engine GUI or engine output.
  */
@@ -1155,6 +1181,34 @@ form: ([string, string])[] }
 export type LineDto = { moves: MoveSpecDto[] }
 export type ManagedEventType = "otb_tournament"
 export type MasterGamesOptionsDto = { since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null }
+/**
+ * Match inputs we care about: when, time-control, colors, and starting position.
+ */
+export type MatchContext = { 
+/**
+ * Match start datetime (UTC) as milliseconds since epoch.
+ */
+matchStartUtcMs: bigint; 
+/**
+ * Time control string (e.g. "300+0", "180+2").
+ */
+timeControl: string; 
+/**
+ * Our Elo (used to bucket the opponent model context).
+ */
+ourElo: number; 
+/**
+ * Target player id (from profile DB Players.ID).
+ */
+targetPlayerId: bigint; 
+/**
+ * Our color for the match.
+ */
+ourColor: PlayerColor; 
+/**
+ * Starting position (FEN) or "startpos".
+ */
+startFen: string }
 export type MonthData = { name: string; count: bigint }
 /**
  * Analysis result for a single move/position.
@@ -1202,9 +1256,19 @@ structureFilters?: string[];
  */
 structureNameFilters?: string[] }
 export type PawnStructureStat = { structure: string; frequency: number; win_rate: number; sample_fen: string | null; games: PawnStructureGame[] }
+/**
+ * Planning controls and safety bounds.
+ */
+export type PlanOptions = { horizonPlies: bigint; opponentTopK: bigint; minBranchProb: number; maxNodes: bigint; ourMultipv: bigint; quickEvalLimits: EngineLimits; candidateLimits: EngineLimits; backoffK: number; smoothingAlpha: number }
+export type PlannerBuildBookRequest = { profileId: string; enginePath: string; 
+/**
+ * Extra UCI options to apply (e.g. Hash, SyzygyPath). MultiPV is managed by the planner.
+ */
+uciOptions: EngineOption[]; ctx: MatchContext; opts: PlanOptions }
 export type PlatformFilter = "All" | "Lichess" | "ChessCom"
 export type PlatformInfo = { key: string; label: string; stroke: string }
 export type Player = { id: number; name: string | null; elo: number | null }
+export type PlayerColor = "white" | "black"
 export type PlayerGameInfo = { site_stats_data: SiteStatsData[] }
 export type PlayerQuery = { options: QueryOptions<PlayerSort>; name?: string | null; range?: [number, number] | null }
 export type PlayerSidebarEloBlock = { 
@@ -1286,7 +1350,7 @@ export type ThemeOption = { value: string; label: string }
 export type TimeControlFilter = "Any" | "Bullet" | "Blitz" | "Rapid" | "Classical"
 export type Token = { type: "ParenOpen" } | { type: "ParenClose" } | { type: "Comment"; value: string } | { type: "San"; value: string } | { type: "Header"; value: { tag: string; value: string } } | { type: "Nag"; value: string } | { type: "Outcome"; value: string }
 export type TournamentQuery = { options: QueryOptions<TournamentSort>; name: string | null }
-export type TournamentSort = "id" | "name"
+export type TournamentSort = "id" | "name" | "start_date" | "end_date"
 /**
  * Represents a UCI option definition.
  */
@@ -1312,6 +1376,7 @@ export type UciOptionConfig =
  */
 { type: "string"; value: { name: string; default: string | null } }
 export type UpdateGame = { fen: string; event: string; site: string; date?: string | null; time?: string | null; round?: string | null; white: string; white_elo?: number | null; black: string; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
+export type VariantBook = { rootNodeId: bigint; nodes: BookNode[]; edges: BookEdge[] }
 export type VariantPosition = { fen: string; engine: string; recommended_move: string; ms: bigint }
 export type VariantsTreeNodeDto = { fen: string; san?: string | null; children?: VariantsTreeNodeDto[] }
 

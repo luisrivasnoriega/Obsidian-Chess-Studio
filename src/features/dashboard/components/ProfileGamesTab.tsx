@@ -386,10 +386,33 @@ export function ProfileGamesTab({
           placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
           value={eventFilterId != null ? String(eventFilterId) : undefined}
           onChange={(value) => onEventFilterChange(value ? Number(value) : null)}
-          data={[...eventOptions].sort((a, b) => a.id - b.id).map((event) => ({
-            value: String(event.id),
-            label: `#${event.id} - ${(event.name ?? "").trim() || t("features.dashboard.unnamedEvent", "Unnamed event")}`,
-          }))}
+          data={[...eventOptions]
+            .sort((a, b) => {
+              // Sort by date (most recent first)
+              // Use end_date if available, otherwise start_date
+              const getDate = (event: Event): string | null => {
+                return event.end_date || event.start_date || null;
+              };
+              
+              const dateA = getDate(a);
+              const dateB = getDate(b);
+              
+              // Events with dates come first
+              if (dateA && !dateB) return -1;
+              if (!dateA && dateB) return 1;
+              
+              // Both have dates: compare (descending - most recent first)
+              if (dateA && dateB) {
+                return dateB.localeCompare(dateA);
+              }
+              
+              // Neither has date: sort by ID (descending - most recent first)
+              return b.id - a.id;
+            })
+            .map((event) => ({
+              value: String(event.id),
+              label: `#${event.id} - ${(event.name ?? "").trim() || t("features.dashboard.unnamedEvent", "Unnamed event")}`,
+            }))}
           searchable
           clearable
           size="sm"
@@ -472,7 +495,6 @@ export function ProfileGamesTab({
         <Table striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th style={{ width: 70 }}>{t("dashboard.tableHeaders.dbId", "DB ID")}</Table.Th>
               <Table.Th style={{ width: 105 }}>Source</Table.Th>
               <Table.Th style={{ width: 180 }}>Opponent</Table.Th>
               <Table.Th style={{ width: 70 }}>Color</Table.Th>
@@ -523,7 +545,7 @@ export function ProfileGamesTab({
           <Table.Tbody>
             {rows.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={13} style={{ textAlign: "center", padding: "2rem" }}>
+                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
                   <Text c="dimmed">{t("features.dashboard.noGamesMatchFilters", "No games match the filters")}</Text>
                 </Table.Td>
               </Table.Tr>
@@ -544,7 +566,6 @@ export function ProfileGamesTab({
 
               return (
                 <Table.Tr key={`${row.kind}:${row.gameKey}`}>
-                  <Table.Td>{row.analysisGameId || "-"}</Table.Td>
                   <Table.Td>
                     <Badge variant="light" color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}>
                       {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}

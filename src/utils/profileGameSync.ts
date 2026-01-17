@@ -79,7 +79,7 @@ export async function syncSessionGamesToProfileDb(input: {
 
   if (input.session.lichess) {
     const username = input.session.lichess.username;
-    const token = input.session.lichess.accessToken;
+    const token = input.session.lichess.accessToken ?? input.profile.lichessToken ?? null;
     const accountKey = getAccountKey("lichess", username);
     let unlisten: (() => void) | null = null;
     let result: BackendAccountSyncResult | null = null;
@@ -102,13 +102,13 @@ export async function syncSessionGamesToProfileDb(input: {
         profileTitle,
         platform: "lichess",
         username,
-        token: token ?? null,
+        token,
       });
     } finally {
       unlisten?.();
     }
 
-    const updatedAccount = await getLichessAccount({ token, username });
+    const updatedAccount = await getLichessAccount({ token: token ?? undefined, username });
 
     const updatedSession: Session = {
       ...input.session,

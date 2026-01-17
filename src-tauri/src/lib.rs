@@ -16,6 +16,7 @@ mod oauth;
 mod online;
 mod opening;
 mod package_manager;
+mod player_match_planner;
 mod pawn_structures;
 mod pgn;
 mod puzzle;
@@ -45,6 +46,7 @@ use crate::dashboard_games_history::{
     dashboard_get_analyze_all_counts, dashboard_get_games_history_rows, dashboard_resolve_profile_db_game_id,
     dashboard_search_profile_opponents,
 };
+use crate::player_match_planner::planner_build_variant_book;
 use crate::chess::{
     analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
     stop_engine,
@@ -53,7 +55,7 @@ use crate::db::{
     calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
     calculate_player_game_stats, calculate_player_openings_stats, calculate_player_rating_timeline,
     calculate_player_sidebar_model,
-    clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games,
+    clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games, optimize_database,
     delete_indexes, download_position_cache, export_position_games_to_pgn,
     export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
     get_players_game_info, get_tournaments, init_profile_db, merge_player_site_stats,
@@ -172,8 +174,9 @@ pub async fn run() {
             edit_db_info,
             set_profile_metadata,
             delete_db_game,
-            delete_database,
-            export_to_pgn,
+    delete_database,
+    optimize_database,
+    export_to_pgn,
             export_position_games_to_pgn,
             export_selected_games_to_pgn,
             authenticate,
@@ -217,6 +220,7 @@ pub async fn run() {
             dashboard_get_games_history_rows,
             dashboard_search_profile_opponents,
             dashboard_resolve_profile_db_game_id,
+            planner_build_variant_book,
             open_external_link,
             compute_pawn_structures,
             calculate_player_game_stats,
