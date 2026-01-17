@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import EngineForm from "../../components/EngineForm";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -63,4 +62,3 @@ describe("EngineForm", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

@@ -92,12 +92,7 @@ export const PuzzleSettings = ({
           onChange={handleSelectChange}
         />
         {selectedDb && selectedDb !== "add" && (
-          <ActionIcon
-            color="red"
-            variant="subtle"
-            onClick={handleDelete}
-            title={t("common.delete")}
-          >
+          <ActionIcon color="red" variant="subtle" onClick={handleDelete} title={t("common.delete")}>
             <IconX size={16} />
           </ActionIcon>
         )}

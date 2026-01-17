@@ -5,4 +5,3 @@ export const Route = createFileRoute("/play")({
   component: () => <BoardsRouteEntry mode="play" />,
   loader: ({ context: { loadDirs } }) => loadDirs(),
 });
-

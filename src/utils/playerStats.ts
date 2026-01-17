@@ -1,12 +1,12 @@
 // Utility functions for converting between frontend and backend types for player statistics
 
+import type { SiteStatsData } from "@/bindings";
 import type {
   DateRange as BackendDateRange,
   PlatformFilter as BackendPlatformFilter,
   TimeControlFilter as BackendTimeControlFilter,
   PlayerStatsFilters,
 } from "@/bindings/playerStats";
-import type { SiteStatsData } from "@/bindings";
 import type { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
 import type {
   PlatformFilter,
@@ -16,9 +16,7 @@ import type {
 /**
  * Convert frontend DateRange to backend DateRange
  */
-export function convertDateRangeToBackend(
-  dateRange: DateRange | null,
-): BackendDateRange | null {
+export function convertDateRangeToBackend(dateRange: DateRange | null): BackendDateRange | null {
   if (!dateRange) return null;
 
   switch (dateRange) {
@@ -40,9 +38,7 @@ export function convertDateRangeToBackend(
 /**
  * Convert frontend PlatformFilter to backend PlatformFilter
  */
-export function convertPlatformFilterToBackend(
-  platform: PlatformFilter,
-): BackendPlatformFilter {
+export function convertPlatformFilterToBackend(platform: PlatformFilter): BackendPlatformFilter {
   switch (platform) {
     case "all":
       return "All";
@@ -58,9 +54,7 @@ export function convertPlatformFilterToBackend(
 /**
  * Convert frontend TimeControlFilter to backend TimeControlFilter
  */
-export function convertTimeControlFilterToBackend(
-  timeControl: TimeControlFilter,
-): BackendTimeControlFilter {
+export function convertTimeControlFilterToBackend(timeControl: TimeControlFilter): BackendTimeControlFilter {
   switch (timeControl) {
     case "any":
       return "Any";
@@ -111,10 +105,7 @@ export function createSiteStatsSignature(siteStatsData: SiteStatsData[] | null |
   if (ssd.length === 0) return { key: "0|0|", games: 0 };
 
   const games = ssd.reduce((acc, s) => acc + (s.data?.length ?? 0), 0);
-  const parts = ssd
-    .map((s) => `${s.site ?? ""}:${s.player ?? ""}:${s.data?.length ?? 0}`)
-    .sort();
+  const parts = ssd.map((s) => `${s.site ?? ""}:${s.player ?? ""}:${s.data?.length ?? 0}`).sort();
 
   return { key: `${ssd.length}|${games}|${parts.join(",")}`, games };
 }
-

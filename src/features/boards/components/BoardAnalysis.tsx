@@ -94,7 +94,7 @@ function BoardAnalysis() {
             color: "green",
           });
         }
-      } catch (error) {
+      } catch (_error) {
         notifications.show({
           title: t("common.error"),
           message: t("common.failedToSaveFile"),
@@ -147,7 +147,7 @@ function BoardAnalysis() {
     writeTextFile(filePath, `\n\n${defaultPGN()}\n\n`, {
       append: true,
     });
-  }, [setCurrentTab, reset, filePath]);
+  }, [setCurrentTab, reset, filePath, t]);
 
   const [, enable] = useAtom(enableAllAtom);
   const allEnabledLoader = useAtomValue(allEnabledAtom);
@@ -353,7 +353,7 @@ function BoardAnalysis() {
               sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
             }
           }
-        } catch (e) {
+        } catch (_e) {
           // Ignore parsing errors
         }
       }
@@ -369,16 +369,16 @@ function BoardAnalysis() {
         <EvalListener />
         <ScrollArea h="100%">
           <Stack gap="md">
-          <ResponsiveBoard
-            practicing={practicing}
-            dirty={dirty}
-            editingMode={editingMode}
-            toggleEditingMode={toggleEditingMode}
-            boardRef={boardRef}
-            saveFile={saveFile}
-            copyPgn={copyPgn}
-            reload={reloadBoard}
-            addGame={addGame}
+            <ResponsiveBoard
+              practicing={practicing}
+              dirty={dirty}
+              editingMode={editingMode}
+              toggleEditingMode={toggleEditingMode}
+              boardRef={boardRef}
+              saveFile={saveFile}
+              copyPgn={copyPgn}
+              reload={reloadBoard}
+              addGame={addGame}
               topBar={false}
               editingCard={
                 editingMode ? (

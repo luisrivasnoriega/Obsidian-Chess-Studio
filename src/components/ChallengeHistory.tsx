@@ -25,9 +25,10 @@ function ChallengeHistory({
     <Group>
       {challenges.map((p, i) => {
         const isCurrent = i === current;
+        const uniqueKey = `${i}-${p.label ?? ""}-${p.completion}`;
         return match(p.completion)
           .with("correct", () => (
-            <Stack key={i} gap={0}>
+            <Stack key={uniqueKey} gap={0}>
               <ActionIcon
                 onClick={() => {
                   select(i);
@@ -44,11 +45,10 @@ function ChallengeHistory({
             </Stack>
           ))
           .with("incorrect", () => (
-            <Stack key={i} gap={0}>
+            <Stack key={uniqueKey} gap={0}>
               <ActionIcon
                 onClick={() => select(i)}
                 variant="light"
-                key={i}
                 color="red"
                 style={{ border: isCurrent ? "2px solid red" : "none" }}
               >
@@ -60,11 +60,10 @@ function ChallengeHistory({
             </Stack>
           ))
           .with("incomplete", () => (
-            <Stack key={i} gap={0}>
+            <Stack key={uniqueKey} gap={0}>
               <ActionIcon
                 onClick={() => select(i)}
                 variant="light"
-                key={i}
                 color="yellow"
                 style={{ border: isCurrent ? "2px solid yellow" : "none" }}
               >

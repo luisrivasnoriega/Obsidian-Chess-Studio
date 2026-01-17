@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import BoardsPage from "../BoardsPage";
+import { render } from "./test-utils";
 
 // -----------------------------
 // Mocks
@@ -32,7 +32,7 @@ vi.mock("jotai/utils", async (importOriginal) => {
   const { atom } = await import("jotai");
   return {
     ...actual,
-    atomWithStorage: <T,>(key: string, initialValue: T) => atom(initialValue),
+    atomWithStorage: <T,>(_key: string, initialValue: T) => atom(initialValue),
   };
 });
 
@@ -113,4 +113,3 @@ describe("BoardsPage", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

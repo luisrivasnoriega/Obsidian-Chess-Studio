@@ -1,8 +1,8 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import type React from "react";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { PuzzleStatsCard } from "../../components/PuzzleStatsCard";
+import { render, screen } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -60,4 +60,3 @@ describe("PuzzleStatsCard", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

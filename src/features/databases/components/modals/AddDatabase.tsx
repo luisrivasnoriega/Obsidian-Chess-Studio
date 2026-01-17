@@ -16,18 +16,17 @@ import {
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { remove } from "@tauri-apps/plugin-fs";
-import { listen } from "@tauri-apps/api/event";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type DatabaseInfo, events, type PuzzleDatabaseInfo } from "@/bindings";
 import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
-import { getDatabases, type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
+import { type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
 import { capitalize } from "@/utils/format";
 import { getPuzzleDatabases } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
@@ -40,7 +39,6 @@ interface DatabaseFormValues extends Partial<Extract<DatabaseInfo, { type: "succ
   file: string;
   filename: string;
 }
-
 
 interface AddDatabaseProps {
   databases: DatabaseInfo[];
@@ -76,7 +74,7 @@ const generateTitleFromFilename = (filename: string): string => {
   return capitalize(nameWithoutExt.replaceAll(/[_-]/g, " "));
 };
 
-const useFormValidation = (databases: DatabaseInfo[], puzzleDbs: PuzzleDatabaseInfo[] = []) => {
+const useFormValidation = (databases: DatabaseInfo[], _puzzleDbs: PuzzleDatabaseInfo[] = []) => {
   const { t } = useTranslation();
 
   const validateDatabaseTitle = useCallback(
@@ -89,7 +87,6 @@ const useFormValidation = (databases: DatabaseInfo[], puzzleDbs: PuzzleDatabaseI
     },
     [databases, t],
   );
-
 
   const validateFile = useCallback(
     (value: string | undefined) => {
@@ -105,7 +102,7 @@ const useFormValidation = (databases: DatabaseInfo[], puzzleDbs: PuzzleDatabaseI
 const useDatabaseOperations = (
   setLoading: Dispatch<SetStateAction<boolean>>,
   setDatabases: () => void,
-  setPuzzleDbs?: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>,
+  _setPuzzleDbs?: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>,
 ) => {
   const convertDatabase = useCallback(
     async (path: string, title: string, description?: string) => {
@@ -114,8 +111,6 @@ const useDatabaseOperations = (
         const dbPath = await resolve(await appDataDir(), "db", `${title}.db3`);
         unwrap(await commands.convertPgn(path, dbPath, null, title, description ?? null));
         setDatabases();
-      } catch (error) {
-        throw error;
       } finally {
         setLoading(false);
       }
@@ -138,15 +133,14 @@ function AddDatabase({
 }: AddDatabaseProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  
+
   const { validateDatabaseTitle, validateFile } = useFormValidation(databases, []);
   const { convertDatabase } = useDatabaseOperations(setLoading, setDatabases, setPuzzleDbs);
 
   const { defaultDatabases, error, isLoading } = useDefaultDatabases(opened);
 
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-
+  const [_importing, _setImporting] = useState(false);
+  const [_importError, setImportError] = useState<string | null>(null);
 
   const databaseForm = useForm<DatabaseFormValues>({
     initialValues: {
@@ -161,7 +155,6 @@ function AddDatabase({
       file: validateFile,
     },
   });
-
 
   const handleDatabaseSubmit = useCallback(
     async (values: DatabaseFormValues) => {
@@ -186,7 +179,6 @@ function AddDatabase({
     [convertDatabase, setOpened, databaseForm, redirectTo, navigate, t],
   );
 
-
   const handleDatabaseFileSelect = useCallback(async () => {
     const selected = await open({
       multiple: false,
@@ -209,9 +201,8 @@ function AddDatabase({
     }
   }, [databaseForm]);
 
-
   const [positionCacheInstalled, setPositionCacheInstalled] = useState(false);
-  
+
   // Check if position cache was installed (not just generated on-the-fly)
   // Position Cache is stored in AppData root, NOT in the db folder
   // We check for a marker file that is only created when the pre-calculated cache is downloaded
@@ -233,7 +224,7 @@ function AddDatabase({
         setPositionCacheInstalled(false);
       }
     };
-    
+
     if (opened) {
       checkPositionCache();
     }
@@ -248,7 +239,6 @@ function AddDatabase({
       ),
     [databases],
   );
-
 
   const handleModalClose = useCallback(() => {
     setOpened(false);
@@ -282,9 +272,7 @@ function AddDatabase({
                       initInstalled={
                         // Position Cache is stored in AppData root, NOT in db folder
                         // So it should be checked separately, not via installedDatabaseTitles
-                        db.title === "Position Cache"
-                          ? positionCacheInstalled
-                          : installedDatabaseTitles.has(db.title)
+                        db.title === "Position Cache" ? positionCacheInstalled : installedDatabaseTitles.has(db.title)
                       }
                     />
                   ))}
@@ -329,7 +317,7 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
   const { t } = useTranslation();
   const [inProgress, setInProgress] = useState<boolean>(false);
   const [isInstalled, setIsInstalled] = useState(initInstalled);
-  
+
   // Update installed state when initInstalled changes
   useEffect(() => {
     setIsInstalled(initInstalled);
@@ -364,7 +352,7 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
         setInProgress(false);
       }
     },
-    [setDatabases],
+    [setDatabases, t],
   );
 
   const handleDownload = useCallback(() => {
@@ -425,7 +413,7 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
   );
 }
 
-function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: PuzzleDbCardProps) {
+function _PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: PuzzleDbCardProps) {
   const { t } = useTranslation();
   const [inProgress, setInProgress] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -440,7 +428,7 @@ function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Puz
 
     const unlistenPromise = listen<[number, number]>("import_puzzle_progress", (event) => {
       const [processed, total] = event.payload;
-      
+
       // If total is 0, we're still processing (unknown total)
       // If processed === total and total > 0, import is complete
       if (total > 0 && processed === total) {
@@ -466,20 +454,24 @@ function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Puz
         setInProgress(true);
         setIsImporting(false);
         setWillImport(isCsvFile); // Set flag early for CSV files
-        
+
         if (isCsvFile) {
           // For CSV files, download to a temp location first, then import
-          const tempPath = await resolve(await appDataDir(), "puzzles", `${name}_temp${url.endsWith(".zst") ? ".csv.zst" : ".csv"}`);
+          const tempPath = await resolve(
+            await appDataDir(),
+            "puzzles",
+            `${name}_temp${url.endsWith(".zst") ? ".csv.zst" : ".csv"}`,
+          );
           const dbPath = await resolve(await appDataDir(), "puzzles", `${name}.db3`);
-          
+
           try {
             await commands.downloadFile(`puzzle_db_${id}`, url, tempPath, null, null, null);
-            
+
             // Set importing state BEFORE starting import to prevent ProgressButton from
             // setting inProgress to false when download finishes
             setWillImport(false); // Clear flag, now we're actually importing
             setIsImporting(true);
-            
+
             // Import the downloaded CSV file
             await commands.importPuzzleFile(tempPath, dbPath, name, puzzleDb.description || null);
           } catch (error) {
@@ -506,26 +498,18 @@ function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Puz
           if (result.status === "error") {
             throw new Error(result.error);
           }
-          
-          // Validate the downloaded file is a valid SQLite database
-          try {
-            const validationResult = await commands.validatePuzzleDatabase(path);
-            if (validationResult.status === "error") {
-              // Remove the invalid file
-              try {
-                const { remove: removeFile } = await import("@tauri-apps/plugin-fs");
-                await removeFile(path);
-              } catch {}
-              throw new Error(validationResult.error);
-            }
-          } catch (error) {
-            throw error;
+          const validationResult = await commands.validatePuzzleDatabase(path);
+          if (validationResult.status === "error") {
+            // Remove the invalid file
+            try {
+              const { remove: removeFile } = await import("@tauri-apps/plugin-fs");
+              await removeFile(path);
+            } catch {}
+            throw new Error(validationResult.error);
           }
         }
-        
+
         await setPuzzleDbs(await getPuzzleDatabases());
-      } catch (error) {
-        throw error;
       } finally {
         // Ensure all states are cleared when everything is done
         setInProgress(false);

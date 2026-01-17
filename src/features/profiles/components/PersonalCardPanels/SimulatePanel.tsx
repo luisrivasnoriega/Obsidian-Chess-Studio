@@ -7,8 +7,8 @@ import {
   Divider,
   Group,
   NumberInput,
-  Select,
   SegmentedControl,
+  Select,
   Slider,
   Stack,
   Text,
@@ -17,26 +17,25 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
-import { useAtomValue } from "jotai";
-import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { makeSan } from "chessops/san";
+import { useAtomValue } from "jotai";
+import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
-  commands,
   type BookEdge,
   type BookNode,
-  type EdgeKind,
+  commands,
   type EngineOption,
   type PlayerQuery,
   type VariantBook,
 } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
-import { enginesAtom, type Profile, profilesAtom } from "@/state/atoms";
+import { enginesAtom, type Profile, profilesAtom, sessionsAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
 import { getAccountKey } from "@/utils/accountKeys";
-import { getProfileDbPath } from "@/utils/profileDb";
+import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { createSiteStatsSignature } from "@/utils/playerStats";
+import { getProfileDbPath } from "@/utils/profileDb";
 import { unwrap } from "@/utils/unwrap";
 import {
   buildSessionsSignature,
@@ -46,7 +45,6 @@ import {
   getMergedPlayerInfoQueryKey,
   getPersonalInfoQueryKey,
 } from "./Databases";
-import { sessionsAtom } from "@/state/atoms";
 
 type Props = {
   profileId?: string;
@@ -66,10 +64,10 @@ export default function SimulatePanel({ profileId }: Props) {
       localEngines.length === 0
         ? null
         : !reportSettings.engine || !localEngines.some((l) => l.path === reportSettings.engine)
-          ? localEngines[0]!.path
+          ? localEngines[0]?.path
           : reportSettings.engine;
 
-    const engine = desiredPath ? localEngines.find((e) => e.path === desiredPath) ?? null : null;
+    const engine = desiredPath ? (localEngines.find((e) => e.path === desiredPath) ?? null) : null;
     return { selectedEngine: engine, selectedEnginePath: desiredPath };
   }, [engines, reportSettings.engine]);
 
@@ -194,7 +192,7 @@ export default function SimulatePanel({ profileId }: Props) {
 
     // Tree view (recursive render data)
     type TreeEdge = { to: bigint; label: string; meta: string };
-    const tree = (nodeId: bigint, depth: number): { id: bigint; edges: TreeEdge[] } => {
+    const tree = (nodeId: bigint, _depth: number): { id: bigint; edges: TreeEdge[] } => {
       const outgoing = edgesByFrom.get(nodeId) ?? [];
       const edgesView: TreeEdge[] = outgoing.map((e) => {
         const label = edgeSan(e);
@@ -470,7 +468,8 @@ export default function SimulatePanel({ profileId }: Props) {
         <Text fw={700}>{t("profiles.tabs.simulate", { defaultValue: "Simulate" })}</Text>
         <Text size="sm" c="dimmed">
           {t("profiles.simulate.desc", {
-            defaultValue: "Build a personalized plan against a specific opponent using your analyzed games and Stockfish.",
+            defaultValue:
+              "Build a personalized plan against a specific opponent using your analyzed games and Stockfish.",
           })}
         </Text>
 
@@ -478,8 +477,12 @@ export default function SimulatePanel({ profileId }: Props) {
 
         <TextInput
           label={t("profiles.simulate.engine", { defaultValue: "Engine" })}
-          value={selectedEngine?.name ? `${selectedEngine.name} (${selectedEnginePath ?? ""})` : selectedEnginePath ?? ""}
-          placeholder={t("profiles.simulate.enginePlaceholder", { defaultValue: "Select a local engine in Analysis first." })}
+          value={
+            selectedEngine?.name ? `${selectedEngine.name} (${selectedEnginePath ?? ""})` : (selectedEnginePath ?? "")
+          }
+          placeholder={t("profiles.simulate.enginePlaceholder", {
+            defaultValue: "Select a local engine in Analysis first.",
+          })}
           readOnly
         />
 
@@ -529,7 +532,9 @@ export default function SimulatePanel({ profileId }: Props) {
 
         <Accordion variant="contained">
           <Accordion.Item value="planner">
-            <Accordion.Control>{t("profiles.simulate.plannerSettings", { defaultValue: "Planner settings" })}</Accordion.Control>
+            <Accordion.Control>
+              {t("profiles.simulate.plannerSettings", { defaultValue: "Planner settings" })}
+            </Accordion.Control>
             <Accordion.Panel>
               <Stack gap="sm">
                 <Text size="sm" fw={600}>
@@ -568,7 +573,9 @@ export default function SimulatePanel({ profileId }: Props) {
           </Accordion.Item>
 
           <Accordion.Item value="engine">
-            <Accordion.Control>{t("profiles.simulate.engineSettings", { defaultValue: "Engine settings" })}</Accordion.Control>
+            <Accordion.Control>
+              {t("profiles.simulate.engineSettings", { defaultValue: "Engine settings" })}
+            </Accordion.Control>
             <Accordion.Panel>
               <Stack gap="sm">
                 <Group grow>
@@ -599,7 +606,9 @@ export default function SimulatePanel({ profileId }: Props) {
           </Accordion.Item>
 
           <Accordion.Item value="model">
-            <Accordion.Control>{t("profiles.simulate.modelSettings", { defaultValue: "Model settings" })}</Accordion.Control>
+            <Accordion.Control>
+              {t("profiles.simulate.modelSettings", { defaultValue: "Model settings" })}
+            </Accordion.Control>
             <Accordion.Panel>
               <Stack gap="sm">
                 <NumberInput
@@ -654,14 +663,18 @@ export default function SimulatePanel({ profileId }: Props) {
                     <CopyButton value={(bookView.lines?.[0]?.sanLine ?? "").trim()} timeout={1200}>
                       {({ copied, copy }) => (
                         <Button size="xs" variant="light" onClick={copy} disabled={!bookView.lines?.[0]?.sanLine}>
-                          {copied ? t("common.copied", { defaultValue: "Copied" }) : t("common.copy", { defaultValue: "Copy" })}
+                          {copied
+                            ? t("common.copied", { defaultValue: "Copied" })
+                            : t("common.copy", { defaultValue: "Copy" })}
                         </Button>
                       )}
                     </CopyButton>
                   </Group>
                   <Textarea
                     value={(bookView.lines?.[0]?.sanLine ?? "").trim()}
-                    placeholder={t("profiles.simulate.bestLinePlaceholder", { defaultValue: "Run simulate to generate a line." })}
+                    placeholder={t("profiles.simulate.bestLinePlaceholder", {
+                      defaultValue: "Run simulate to generate a line.",
+                    })}
                     autosize
                     minRows={2}
                     maxRows={6}
@@ -673,9 +686,7 @@ export default function SimulatePanel({ profileId }: Props) {
                   </Text>
                   {(bookView.lines ?? []).slice(0, 10).map((l, idx) => (
                     <Text key={`${idx}-${l.sanLine}`} size="sm">
-                      <Code>
-                        {l.sanLine || t("profiles.simulate.emptyLine", { defaultValue: "(empty)" })}
-                      </Code>{" "}
+                      <Code>{l.sanLine || t("profiles.simulate.emptyLine", { defaultValue: "(empty)" })}</Code>{" "}
                       <Text span c="dimmed">
                         p={l.reachProb.toFixed(3)}
                         {l.ev != null ? ` · ev≈${Math.round(l.ev)}cp` : ""}
@@ -691,4 +702,3 @@ export default function SimulatePanel({ profileId }: Props) {
     </Card>
   );
 }
-

@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { EnginesGrid } from "../../views/EnginesGrid";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -45,4 +44,3 @@ describe("EnginesGrid", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

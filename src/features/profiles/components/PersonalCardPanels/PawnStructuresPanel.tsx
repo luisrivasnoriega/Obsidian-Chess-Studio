@@ -19,32 +19,22 @@ import {
   Table,
   Text,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { useMediaQuery } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { NormalizedGame, PlayerGameInfo, SiteStatsData } from "@/bindings";
+import type {
+  NormalizedGame,
+  PawnStructureGame as PawnStructureGameBackend,
+  PawnStructureStat as PawnStructureStatBackend,
+  PlayerGameInfo,
+} from "@/bindings";
 import { commands } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { Chessground } from "@/components/Chessground";
-import PlayerSidebarCard, {
-  type PlatformFilter,
-  type TimeControlFilter,
-} from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
-import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
-import { createSiteStatsSignature, convertDateRangeToBackend } from "@/utils/playerStats";
-import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels/PanelLoadGate";
-import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
-import { getAccountKey } from "@/utils/accountKeys";
-import { parsePGN } from "@/utils/chess";
-import { query_players } from "@/utils/db";
-import type { PawnStructureStat as PawnStructureStatBackend, PawnStructureGame as PawnStructureGameBackend } from "@/bindings";
-import { getProfileDbPath } from "@/utils/profileDb";
-import { createTab } from "@/utils/tabs";
-import { unwrap } from "@/utils/unwrap";
 import {
   buildSessionsSignature,
   computePersonalInfoSignature,
@@ -53,6 +43,20 @@ import {
   getMergedPlayerInfoQueryKey,
   getPersonalInfoQueryKey,
 } from "@/features/profiles/components/PersonalCardPanels/Databases";
+import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
+import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels/PanelLoadGate";
+import PlayerSidebarCard, {
+  type PlatformFilter,
+  type TimeControlFilter,
+} from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
+import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import { getAccountKey } from "@/utils/accountKeys";
+import { parsePGN } from "@/utils/chess";
+import { query_players } from "@/utils/db";
+import { convertDateRangeToBackend, createSiteStatsSignature } from "@/utils/playerStats";
+import { getProfileDbPath } from "@/utils/profileDb";
+import { createTab } from "@/utils/tabs";
+import { unwrap } from "@/utils/unwrap";
 
 type PawnStructuresPanelProps = {
   playerName: string;
@@ -159,10 +163,19 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       { value: "passed", label: t("features.dashboard.pawnMotif.passed", { defaultValue: "Passed pawn" }) },
       { value: "hanging", label: t("features.dashboard.pawnMotif.hanging", { defaultValue: "Hanging pawns" }) },
       { value: "backward", label: t("features.dashboard.pawnMotif.backward", { defaultValue: "Backward pawn" }) },
-      { value: "minority_attack", label: t("features.dashboard.pawnMotif.minorityAttack", { defaultValue: "Minority attack" }) },
+      {
+        value: "minority_attack",
+        label: t("features.dashboard.pawnMotif.minorityAttack", { defaultValue: "Minority attack" }),
+      },
       { value: "iqp", label: t("features.dashboard.pawnMotif.iqp", { defaultValue: "Isolated Queen’s Pawn (IQP)" }) },
-      { value: "connected_passed", label: t("features.dashboard.pawnMotif.connectedPassed", { defaultValue: "Connected passed pawns" }) },
-      { value: "fianchetto", label: t("features.dashboard.pawnMotif.fianchetto", { defaultValue: "Fianchetto pawn structure" }) },
+      {
+        value: "connected_passed",
+        label: t("features.dashboard.pawnMotif.connectedPassed", { defaultValue: "Connected passed pawns" }),
+      },
+      {
+        value: "fianchetto",
+        label: t("features.dashboard.pawnMotif.fianchetto", { defaultValue: "Fianchetto pawn structure" }),
+      },
     ],
     [t],
   );
@@ -170,18 +183,33 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const namedStructureOptions = useMemo(
     () => [
       { value: "carlsbad", label: t("features.dashboard.pawnStructure.carlsbad", { defaultValue: "Carlsbad" }) },
-      { value: "maroczy_bind", label: t("features.dashboard.pawnStructure.maroczyBind", { defaultValue: "Maróczy Bind" }) },
+      {
+        value: "maroczy_bind",
+        label: t("features.dashboard.pawnStructure.maroczyBind", { defaultValue: "Maróczy Bind" }),
+      },
       { value: "hedgehog", label: t("features.dashboard.pawnStructure.hedgehog", { defaultValue: "Hedgehog" }) },
       { value: "stonewall", label: t("features.dashboard.pawnStructure.stonewall", { defaultValue: "Stonewall" }) },
-      { value: "scheveningen", label: t("features.dashboard.pawnStructure.scheveningen", { defaultValue: "Scheveningen" }) },
+      {
+        value: "scheveningen",
+        label: t("features.dashboard.pawnStructure.scheveningen", { defaultValue: "Scheveningen" }),
+      },
       { value: "najdorf", label: t("features.dashboard.pawnStructure.najdorf", { defaultValue: "Najdorf" }) },
       { value: "dragon", label: t("features.dashboard.pawnStructure.dragon", { defaultValue: "Dragon" }) },
       { value: "benoni", label: t("features.dashboard.pawnStructure.benoni", { defaultValue: "Benoni" }) },
-      { value: "benko", label: t("features.dashboard.pawnStructure.benko", { defaultValue: "Benko Gambit Structure" }) },
+      {
+        value: "benko",
+        label: t("features.dashboard.pawnStructure.benko", { defaultValue: "Benko Gambit Structure" }),
+      },
       { value: "french", label: t("features.dashboard.pawnStructure.french", { defaultValue: "French Structure" }) },
       { value: "slav", label: t("features.dashboard.pawnStructure.slav", { defaultValue: "Slav Structure" }) },
-      { value: "semi_slav_triangle", label: t("features.dashboard.pawnStructure.semiSlavTriangle", { defaultValue: "Semi-Slav Triangle" }) },
-      { value: "kings_indian", label: t("features.dashboard.pawnStructure.kingsIndian", { defaultValue: "King’s Indian Structure" }) },
+      {
+        value: "semi_slav_triangle",
+        label: t("features.dashboard.pawnStructure.semiSlavTriangle", { defaultValue: "Semi-Slav Triangle" }),
+      },
+      {
+        value: "kings_indian",
+        label: t("features.dashboard.pawnStructure.kingsIndian", { defaultValue: "King’s Indian Structure" }),
+      },
     ],
     [t],
   );
@@ -237,7 +265,10 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     const backendDateRange = convertDateRangeToBackend(dateRange) ?? "";
     const motifs = [...pawnMotifFilters].sort().join(",");
     const names = [...pawnNamedStructureFilters].sort().join(",");
-    const accounts = [...playerAccountKeys].map((k) => k.trim().toLowerCase()).sort().join("|");
+    const accounts = [...playerAccountKeys]
+      .map((k) => k.trim().toLowerCase())
+      .sort()
+      .join("|");
     return [
       dbPath,
       accounts,
@@ -287,7 +318,11 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   }, [pawnStructures, pawnSortBy]);
 
   // Reuse the same cached PersonalInfo/Merge pipeline used by the other profile tabs.
-  const { data: personalInfo, isLoading: isLoadingPersonalInfo, isFetching: isFetchingPersonalInfo } = useQuery({
+  const {
+    data: personalInfo,
+    isLoading: isLoadingPersonalInfo,
+    isFetching: isFetchingPersonalInfo,
+  } = useQuery({
     queryKey: getPersonalInfoQueryKey(profileId ?? "", sessionsSignature),
     queryFn: async () => {
       if (!profileId) return [];
@@ -352,7 +387,6 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     ];
   }, [playerInfo.site_stats_data, t]);
 
-
   const handleSearch = async () => {
     // Keep the source of truth consistent with the other profile tabs:
     // if we have a profileId, always use getProfileDbPath(profileId).
@@ -416,10 +450,10 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       }
 
       setPawnProgress(40);
-      
+
       // Convert dateRange to backend format (all filtering happens in backend)
       const backendDateRange = convertDateRangeToBackend(dateRange);
-      
+
       // Prepare parameters for the command
       const params: any = {
         playerIds: Array.from(playerIds),
@@ -437,10 +471,10 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
 
       // Simulate progress during computation
       setPawnProgress(60);
-      
+
       // Call Rust backend to compute pawn structures
       const result = await commands.computePawnStructures(dbPath, params);
-      
+
       setPawnProgress(90);
 
       const structures = unwrap(result);
@@ -457,27 +491,34 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       }
 
       // Convert Rust types (snake_case) to frontend types (camelCase) and cache the result.
-      const converted = structures.map((s: PawnStructureStatBackend): PawnStructureStat => ({
-        structure: s.structure,
-        frequency: s.frequency,
-        winRate: s.win_rate,
-        sampleFen: s.sample_fen ?? undefined,
-        games: (s.games || []).map((g: PawnStructureGameBackend): PawnStructureGame => ({
-          gameId: g.game_id,
-          white: g.white,
-          black: g.black,
-          whiteElo: g.white_elo ?? undefined,
-          blackElo: g.black_elo ?? undefined,
-          result: g.result,
-          fen: g.fen,
-        })),
-      }));
+      const converted = structures.map(
+        (s: PawnStructureStatBackend): PawnStructureStat => ({
+          structure: s.structure,
+          frequency: s.frequency,
+          winRate: s.win_rate,
+          sampleFen: s.sample_fen ?? undefined,
+          games: (s.games || []).map(
+            (g: PawnStructureGameBackend): PawnStructureGame => ({
+              gameId: g.game_id,
+              white: g.white,
+              black: g.black,
+              whiteElo: g.white_elo ?? undefined,
+              blackElo: g.black_elo ?? undefined,
+              result: g.result,
+              fen: g.fen,
+            }),
+          ),
+        }),
+      );
 
       // Compute a key from the *actual* dbPath used (resolvedDbPath may not be ready yet).
       const cacheDateRange = convertDateRangeToBackend(dateRange) ?? "";
       const motifs = [...pawnMotifFilters].sort().join(",");
       const names = [...pawnNamedStructureFilters].sort().join(",");
-      const accounts = [...playerAccountKeys].map((k) => k.trim().toLowerCase()).sort().join("|");
+      const accounts = [...playerAccountKeys]
+        .map((k) => k.trim().toLowerCase())
+        .sort()
+        .join("|");
       const key = [
         dbPath,
         accounts,
@@ -492,7 +533,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         names,
       ].join("||");
       queryClient.setQueryData(["pawnStructuresResult", key], converted);
-      
+
       setPawnProgress(100);
       // Small delay to show 100% before hiding
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -558,11 +599,11 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       const game = unwrap(await commands.getGame(dbPath, gameId));
       const pgn = createPgnFromNormalizedGame(game);
       const tree = await parsePGN(pgn);
-      
+
       // Normalize FEN for comparison (remove move counters)
       const normalizeFen = (f: string) => f.split(" ").slice(0, 4).join(" ");
       const targetFen = normalizeFen(fen);
-      
+
       // Find the position in the game (only mainline)
       let targetPosition: number[] = [];
       const findPosition = (node: typeof tree.root, path: number[] = []): void => {
@@ -599,7 +640,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           setActiveTab(currentActiveTab);
         });
       }
-      
+
       notifications.show({
         title: t("features.dashboard.gameOpened"),
         message: t("features.dashboard.gameOpenedMessage"),
@@ -696,46 +737,45 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                           {t("common.elo", { defaultValue: "Elo" })})
                         </Table.Th>
                         <Table.Th>
-                          {t("common.opponent", { defaultValue: "Opponent" })} ({t("common.elo", { defaultValue: "Elo" })}
-                          )
+                          {t("common.opponent", { defaultValue: "Opponent" })} (
+                          {t("common.elo", { defaultValue: "Elo" })})
                         </Table.Th>
                         <Table.Th>{t("features.dashboard.actions", { defaultValue: "Actions" })}</Table.Th>
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                      {mobileViewedStructure.games
-                        .slice((gamesPage - 1) * 5, gamesPage * 5)
-                        .map((game, idx) => {
-                          const isPlayerWhite = matchesName(game.white, playerAccountKeys);
-                          const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
-                          const opponentElo = isPlayerWhite ? game.blackElo : game.whiteElo;
-                          const opponentName = isPlayerWhite ? game.black : game.white;
+                      {mobileViewedStructure.games.slice((gamesPage - 1) * 5, gamesPage * 5).map((game, idx) => {
+                        const isPlayerWhite = matchesName(game.white, playerAccountKeys);
+                        const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
+                        const opponentElo = isPlayerWhite ? game.blackElo : game.whiteElo;
+                        const opponentName = isPlayerWhite ? game.black : game.white;
 
-                          return (
-                            <Table.Tr key={idx}>
-                              <Table.Td>
-                                <Text size="xs">
-                                  {isPlayerWhite ? t("features.dashboard.white") : t("features.dashboard.black")} ({playerElo || "-"})
-                                </Text>
-                              </Table.Td>
-                              <Table.Td>
-                                <Text size="xs">
-                                  {opponentName || "-"} ({opponentElo || "-"})
-                                </Text>
-                              </Table.Td>
-                              <Table.Td>
-                                <Button
-                                  size="xs"
-                                  variant="light"
-                                  onClick={() => openGameInNewTab(game.gameId ?? 0, game.fen)}
-                                  disabled={!game.gameId}
-                                >
-                                  {t("features.dashboard.openGame", { defaultValue: "Open Game" })}
-                                </Button>
-                              </Table.Td>
-                            </Table.Tr>
-                          );
-                        })}
+                        return (
+                          <Table.Tr key={idx}>
+                            <Table.Td>
+                              <Text size="xs">
+                                {isPlayerWhite ? t("features.dashboard.white") : t("features.dashboard.black")} (
+                                {playerElo || "-"})
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Text size="xs">
+                                {opponentName || "-"} ({opponentElo || "-"})
+                              </Text>
+                            </Table.Td>
+                            <Table.Td>
+                              <Button
+                                size="xs"
+                                variant="light"
+                                onClick={() => openGameInNewTab(game.gameId ?? 0, game.fen)}
+                                disabled={!game.gameId}
+                              >
+                                {t("features.dashboard.openGame", { defaultValue: "Open Game" })}
+                              </Button>
+                            </Table.Td>
+                          </Table.Tr>
+                        );
+                      })}
                     </Table.Tbody>
                   </Table>
                 </ScrollArea>
@@ -844,7 +884,9 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
 
                 <MultiSelect
                   label={t("features.dashboard.pawnStructures", { defaultValue: "Pawn structures" })}
-                  placeholder={t("features.dashboard.pawnStructuresPlaceholder", { defaultValue: "Select structures..." })}
+                  placeholder={t("features.dashboard.pawnStructuresPlaceholder", {
+                    defaultValue: "Select structures...",
+                  })}
                   data={namedStructureOptions}
                   value={pawnNamedStructureFilters}
                   onChange={setPawnNamedStructureFilters}
@@ -868,13 +910,19 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
                   <Stack gap="xs">
                     <Group justify="space-between" align="center">
                       <Text size="xs" c="dimmed">
-                        {t("features.dashboard.analyzingPawnStructures", { defaultValue: "Analyzing pawn structures..." })}
+                        {t("features.dashboard.analyzingPawnStructures", {
+                          defaultValue: "Analyzing pawn structures...",
+                        })}
                       </Text>
                       <Text size="xs" c="dimmed" fw={500}>
                         {pawnProgress !== null ? `${pawnProgress}%` : "0%"}
                       </Text>
                     </Group>
-                    <Progress value={pawnProgress ?? 0} size="md" animated={pawnProgress !== null && pawnProgress < 100} />
+                    <Progress
+                      value={pawnProgress ?? 0}
+                      size="md"
+                      animated={pawnProgress !== null && pawnProgress < 100}
+                    />
                   </Stack>
                 )}
               </Stack>
@@ -908,179 +956,218 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           >
             <Stack gap="md" p="md" style={{ minHeight: 0 }}>
               {sortedStructures.length > 0 ? (
-              <Box>
-                <ScrollArea type="auto" offsetScrollbars>
-                  <Table>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>{t("features.dashboard.structure")}</Table.Th>
-                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("frequency")}>
-                        {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
-                      </Table.Th>
-                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
-                        {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
-                      </Table.Th>
-                      <Table.Th>{t("features.dashboard.actions")}</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {sortedStructures.map((structure) => {
-                      const displayFen = expandedFen ?? structure.sampleFen ?? fallbackFen;
-                      return (
-                        <Fragment key={structure.structure}>
-                          <Table.Tr>
-                            <Table.Td>
-                              <Text fw={600}>{structure.structure}</Text>
-                            </Table.Td>
-                            <Table.Td>{structure.frequency}</Table.Td>
-                            <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
-                            <Table.Td>
-                              <Button
-                                size="xs"
-                                variant="light"
-                                onClick={() => {
-                                  if (isStackedLayout) {
-                                    setGamesPage(1);
-                                    setMobileViewedStructure(structure);
-                                  } else {
-                                    toggleStructureDetails(structure);
-                                  }
-                                }}
-                              >
-                                {expandedStructure === structure.structure ? t("features.dashboard.hide") : t("features.dashboard.view")}
-                              </Button>
-                            </Table.Td>
-                          </Table.Tr>
-                          {!isStackedLayout && expandedStructure === structure.structure && (
-                            <Table.Tr>
-                              <Table.Td colSpan={4}>
-                                <Flex
-                                  align="flex-start"
-                                  direction={isStackedLayout ? "column" : "row"}
-                                  gap="md"
-                                  style={{ minWidth: 0 }}
-                                >
-                                  {/* Board Preview */}
-                                  <Box
-                                    style={{
-                                      flex: isStackedLayout ? "0 0 auto" : "0 0 38.2%",
-                                      width: isStackedLayout ? "100%" : undefined,
-                                      minWidth: 0,
+                <Box>
+                  <ScrollArea type="auto" offsetScrollbars>
+                    <Table>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>{t("features.dashboard.structure")}</Table.Th>
+                          <Table.Th
+                            style={{ width: 120, cursor: "pointer" }}
+                            onClick={() => setPawnSortBy("frequency")}
+                          >
+                            {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
+                          </Table.Th>
+                          <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
+                            {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
+                          </Table.Th>
+                          <Table.Th>{t("features.dashboard.actions")}</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {sortedStructures.map((structure) => {
+                          const displayFen = expandedFen ?? structure.sampleFen ?? fallbackFen;
+                          return (
+                            <Fragment key={structure.structure}>
+                              <Table.Tr>
+                                <Table.Td>
+                                  <Text fw={600}>{structure.structure}</Text>
+                                </Table.Td>
+                                <Table.Td>{structure.frequency}</Table.Td>
+                                <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
+                                <Table.Td>
+                                  <Button
+                                    size="xs"
+                                    variant="light"
+                                    onClick={() => {
+                                      if (isStackedLayout) {
+                                        setGamesPage(1);
+                                        setMobileViewedStructure(structure);
+                                      } else {
+                                        toggleStructureDetails(structure);
+                                      }
                                     }}
                                   >
-                                    <Chessground
-                                      fen={displayFen}
-                                      coordinates={false}
-                                      viewOnly
-                                      orientation={pawnColorFilter === "black" ? "black" : "white"}
-                                    />
-                                  </Box>
-                                  
-                                  {/* Right Section */}
-                                  <Box style={{ flex: 1, minWidth: 0, width: isStackedLayout ? "100%" : undefined }}>
-                                    <Stack gap="md">
-                                      {/* Structure Info with FEN */}
-                                      <Box>
-                                        <Group gap="xs" mb="xs">
-                                          <Badge size="sm" variant="light">
-                                            {t("features.dashboard.structure")}:
-                                          </Badge>
-                                          <Text size="sm" fw={500}>{structure.structure}</Text>
-                                        </Group>
-                                        <Group gap="xs">
-                                          <Text size="xs" c="dimmed">FEN:</Text>
-                                          <Text size="xs" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
-                                            {displayFen}
-                                          </Text>
-                                          <ActionIcon
-                                            size="sm"
-                                            variant="subtle"
-                                            onClick={() => copyFenToClipboard(displayFen)}
-                                          >
-                                            <IconCopy size={14} />
-                                          </ActionIcon>
-                                        </Group>
+                                    {expandedStructure === structure.structure
+                                      ? t("features.dashboard.hide")
+                                      : t("features.dashboard.view")}
+                                  </Button>
+                                </Table.Td>
+                              </Table.Tr>
+                              {!isStackedLayout && expandedStructure === structure.structure && (
+                                <Table.Tr>
+                                  <Table.Td colSpan={4}>
+                                    <Flex
+                                      align="flex-start"
+                                      direction={isStackedLayout ? "column" : "row"}
+                                      gap="md"
+                                      style={{ minWidth: 0 }}
+                                    >
+                                      {/* Board Preview */}
+                                      <Box
+                                        style={{
+                                          flex: isStackedLayout ? "0 0 auto" : "0 0 38.2%",
+                                          width: isStackedLayout ? "100%" : undefined,
+                                          minWidth: 0,
+                                        }}
+                                      >
+                                        <Chessground
+                                          fen={displayFen}
+                                          coordinates={false}
+                                          viewOnly
+                                          orientation={pawnColorFilter === "black" ? "black" : "white"}
+                                        />
                                       </Box>
 
-                                      {/* Games Table */}
-                                      {structure.games && structure.games.length > 0 && (
-                                        <Box style={{ minWidth: 0 }}>
-                                          <Text size="sm" fw={600} mb="xs">
-                                            {t("features.dashboard.games", { defaultValue: "Games" })} ({structure.games.length})
-                                          </Text>
-                                          <ScrollArea type="auto" offsetScrollbars>
-                                            <Table striped highlightOnHover>
-                                            <Table.Thead>
-                                              <Table.Tr>
-                                                <Table.Th>{t("features.dashboard.playerColor", { defaultValue: "Player color" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>
-                                                <Table.Th>{t("common.opponent", { defaultValue: "Opponent" })} ({t("common.elo", { defaultValue: "Elo" })})</Table.Th>
-                                                <Table.Th>{t("features.dashboard.actions", { defaultValue: "Actions" })}</Table.Th>
-                                              </Table.Tr>
-                                            </Table.Thead>
-                                            <Table.Tbody>
-                                              {structure.games
-                                                .slice((gamesPage - 1) * 5, gamesPage * 5)
-                                                .map((game, idx) => {
-                                                  const isPlayerWhite = matchesName(game.white, playerAccountKeys);
-                                                  const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
-                                                  const opponentElo = isPlayerWhite ? game.blackElo : game.whiteElo;
-                                                  const opponentName = isPlayerWhite ? game.black : game.white;
-                                                  
-                                                  return (
-                                                    <Table.Tr key={idx}>
-                                                      <Table.Td>
-                                                        <Text size="xs">
-                                                          {isPlayerWhite ? t("features.dashboard.white") : t("features.dashboard.black")} ({playerElo || "-"})
-                                                        </Text>
-                                                      </Table.Td>
-                                                      <Table.Td>
-                                                        <Text size="xs">{opponentName || "-"} ({opponentElo || "-"})</Text>
-                                                      </Table.Td>
-                                                      <Table.Td>
-                                                        <Button
-                                                          size="xs"
-                                                          variant="light"
-                                                          onClick={() => openGameInNewTab(game.gameId ?? 0, game.fen)}
-                                                          disabled={!game.gameId}
-                                                        >
-                                                          {t("features.dashboard.openGame", { defaultValue: "Open Game" })}
-                                                        </Button>
-                                                      </Table.Td>
-                                                    </Table.Tr>
-                                                  );
-                                                })}
-                                            </Table.Tbody>
-                                            </Table>
-                                          </ScrollArea>
-                                          {structure.games.length > 5 && (
-                                            <Group justify="center" mt="md">
-                                              <Pagination
-                                                value={gamesPage}
-                                                onChange={setGamesPage}
-                                                total={Math.ceil(structure.games.length / 5)}
-                                                size="sm"
-                                              />
+                                      {/* Right Section */}
+                                      <Box
+                                        style={{ flex: 1, minWidth: 0, width: isStackedLayout ? "100%" : undefined }}
+                                      >
+                                        <Stack gap="md">
+                                          {/* Structure Info with FEN */}
+                                          <Box>
+                                            <Group gap="xs" mb="xs">
+                                              <Badge size="sm" variant="light">
+                                                {t("features.dashboard.structure")}:
+                                              </Badge>
+                                              <Text size="sm" fw={500}>
+                                                {structure.structure}
+                                              </Text>
                                             </Group>
+                                            <Group gap="xs">
+                                              <Text size="xs" c="dimmed">
+                                                FEN:
+                                              </Text>
+                                              <Text
+                                                size="xs"
+                                                style={{ fontFamily: "monospace", wordBreak: "break-all" }}
+                                              >
+                                                {displayFen}
+                                              </Text>
+                                              <ActionIcon
+                                                size="sm"
+                                                variant="subtle"
+                                                onClick={() => copyFenToClipboard(displayFen)}
+                                              >
+                                                <IconCopy size={14} />
+                                              </ActionIcon>
+                                            </Group>
+                                          </Box>
+
+                                          {/* Games Table */}
+                                          {structure.games && structure.games.length > 0 && (
+                                            <Box style={{ minWidth: 0 }}>
+                                              <Text size="sm" fw={600} mb="xs">
+                                                {t("features.dashboard.games", { defaultValue: "Games" })} (
+                                                {structure.games.length})
+                                              </Text>
+                                              <ScrollArea type="auto" offsetScrollbars>
+                                                <Table striped highlightOnHover>
+                                                  <Table.Thead>
+                                                    <Table.Tr>
+                                                      <Table.Th>
+                                                        {t("features.dashboard.playerColor", {
+                                                          defaultValue: "Player color",
+                                                        })}{" "}
+                                                        ({t("common.elo", { defaultValue: "Elo" })})
+                                                      </Table.Th>
+                                                      <Table.Th>
+                                                        {t("common.opponent", { defaultValue: "Opponent" })} (
+                                                        {t("common.elo", { defaultValue: "Elo" })})
+                                                      </Table.Th>
+                                                      <Table.Th>
+                                                        {t("features.dashboard.actions", { defaultValue: "Actions" })}
+                                                      </Table.Th>
+                                                    </Table.Tr>
+                                                  </Table.Thead>
+                                                  <Table.Tbody>
+                                                    {structure.games
+                                                      .slice((gamesPage - 1) * 5, gamesPage * 5)
+                                                      .map((game, idx) => {
+                                                        const isPlayerWhite = matchesName(
+                                                          game.white,
+                                                          playerAccountKeys,
+                                                        );
+                                                        const playerElo = isPlayerWhite ? game.whiteElo : game.blackElo;
+                                                        const opponentElo = isPlayerWhite
+                                                          ? game.blackElo
+                                                          : game.whiteElo;
+                                                        const opponentName = isPlayerWhite ? game.black : game.white;
+
+                                                        return (
+                                                          <Table.Tr key={idx}>
+                                                            <Table.Td>
+                                                              <Text size="xs">
+                                                                {isPlayerWhite
+                                                                  ? t("features.dashboard.white")
+                                                                  : t("features.dashboard.black")}{" "}
+                                                                ({playerElo || "-"})
+                                                              </Text>
+                                                            </Table.Td>
+                                                            <Table.Td>
+                                                              <Text size="xs">
+                                                                {opponentName || "-"} ({opponentElo || "-"})
+                                                              </Text>
+                                                            </Table.Td>
+                                                            <Table.Td>
+                                                              <Button
+                                                                size="xs"
+                                                                variant="light"
+                                                                onClick={() =>
+                                                                  openGameInNewTab(game.gameId ?? 0, game.fen)
+                                                                }
+                                                                disabled={!game.gameId}
+                                                              >
+                                                                {t("features.dashboard.openGame", {
+                                                                  defaultValue: "Open Game",
+                                                                })}
+                                                              </Button>
+                                                            </Table.Td>
+                                                          </Table.Tr>
+                                                        );
+                                                      })}
+                                                  </Table.Tbody>
+                                                </Table>
+                                              </ScrollArea>
+                                              {structure.games.length > 5 && (
+                                                <Group justify="center" mt="md">
+                                                  <Pagination
+                                                    value={gamesPage}
+                                                    onChange={setGamesPage}
+                                                    total={Math.ceil(structure.games.length / 5)}
+                                                    size="sm"
+                                                  />
+                                                </Group>
+                                              )}
+                                            </Box>
                                           )}
-                                        </Box>
-                                      )}
-                                    </Stack>
-                                  </Box>
-                                </Flex>
-                              </Table.Td>
-                            </Table.Tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </Table.Tbody>
-                  </Table>
-                </ScrollArea>
-              </Box>
-            ) : (
-              <Text size="sm" c="dimmed" p="md">
-                {t("features.dashboard.noPawnStructuresHint")}
-              </Text>
+                                        </Stack>
+                                      </Box>
+                                    </Flex>
+                                  </Table.Td>
+                                </Table.Tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </Table.Tbody>
+                    </Table>
+                  </ScrollArea>
+                </Box>
+              ) : (
+                <Text size="sm" c="dimmed" p="md">
+                  {t("features.dashboard.noPawnStructuresHint")}
+                </Text>
               )}
             </Stack>
           </PanelLoadGate>

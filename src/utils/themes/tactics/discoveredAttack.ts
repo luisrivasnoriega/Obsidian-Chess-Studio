@@ -3,7 +3,7 @@
  * line attack on a high-value target, we tag it as a discovered attack.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { hasLineAttack, isImmediatePunishCapture, parseFenBoard } from "./utils";
 
 export function detectDiscoveredAttack(ctx: ThemeContext): ThemeId[] {

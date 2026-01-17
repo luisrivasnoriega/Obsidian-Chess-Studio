@@ -7,9 +7,9 @@
  */
 
 import { Chess } from "chessops/chess";
-import { parseSan } from "chessops/san";
 import { makeFen } from "chessops/fen";
-import type { Color } from "chessops/types";
+import { parseSan } from "chessops/san";
+import type { Color, Role, Square } from "chessops/types";
 import { squareFile } from "chessops/util";
 import type { MoveEvent } from "./types";
 
@@ -70,10 +70,10 @@ export function playMovesWithEvents(
     }
 
     const mover: Color = clone.turn;
-    let movedRole = undefined;
-    let from = undefined;
-    let to = undefined;
-    let promotion = undefined;
+    let movedRole: Role | undefined;
+    let from: Square | undefined;
+    let to: Square | undefined;
+    let promotion: Role | undefined;
     let capture: MoveEvent["capture"] | undefined;
 
     if ("from" in mv) {
@@ -138,7 +138,7 @@ export function materialFromFen(fen: string, color: Color): number {
   const [boardStr] = fen.split(" ");
   let total = 0;
   for (const char of boardStr) {
-    if (char === "/" || !isNaN(parseInt(char))) continue;
+    if (char === "/" || !Number.isNaN(parseInt(char, 10))) continue;
     const isWhite = char === char.toUpperCase();
     if ((color === "white" && isWhite) || (color === "black" && !isWhite)) {
       const piece = char.toLowerCase();
@@ -179,7 +179,7 @@ export function isEndgameFen(fen: string): boolean {
   let bishops = 0;
   let knights = 0;
   for (const char of boardStr) {
-    if (char === "/" || !isNaN(parseInt(char))) continue;
+    if (char === "/" || !Number.isNaN(parseInt(char, 10))) continue;
     const p = char.toLowerCase();
     if (p === "q") queens++;
     else if (p === "r") rooks++;

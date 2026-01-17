@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { PanelLoadingState } from "../components/PersonalCardPanels/PanelLoadingState";
+import { render, screen } from "./test-utils";
 
 // Keep translations stable
 vi.mock("react-i18next", () => ({
@@ -35,5 +35,3 @@ describe("PanelLoadingState", () => {
     expect(screen.getByTestId("content")).toBeInTheDocument();
   });
 });
-
-

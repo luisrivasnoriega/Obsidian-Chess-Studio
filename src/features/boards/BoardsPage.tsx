@@ -5,8 +5,8 @@ import { atomWithStorage } from "jotai/utils";
 import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
-import type { Tab } from "@/utils/tabs";
 import { debugNavLog } from "@/utils/debugNav";
+import type { Tab } from "@/utils/tabs";
 
 import "react-mosaic-component/react-mosaic-component.css";
 import "@/styles/react-mosaic.css";
@@ -36,11 +36,7 @@ const ProfilesPage = lazy(() => import("@/features/profiles/ProfilesPage"));
 export default function BoardsPage() {
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
-  const {
-    tabs,
-    activeTab,
-    setActiveTab,
-  } = useTabManagement({ enableHotkeys: false });
+  const { tabs, activeTab, setActiveTab } = useTabManagement({ enableHotkeys: false });
 
   const resolvedActiveTab = useMemo(() => {
     if (activeTab && tabs.some((tab) => tab.value === activeTab)) {

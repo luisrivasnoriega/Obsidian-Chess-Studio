@@ -219,23 +219,23 @@ export const maxPuzzlePlayerRatingAtom = atomWithStorage<number>("puzzle-max-pla
 
 export const reportTypeAtom = atom<"CP" | "WDL">("CP");
 
-export const scoreTypeFamily = atomFamily((engine: string) => atom<"cp" | "wdl">("cp"));
+export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
 // Per tab settings
 
-const threatFamily = atomFamily((tab: string) => atom(false));
+const threatFamily = atomFamily((_tab: string) => atom(false));
 export const currentThreatAtom = tabValue(threatFamily);
 
-const evalOpenFamily = atomFamily((tab: string) => atom(true));
+const evalOpenFamily = atomFamily((_tab: string) => atom(true));
 export const currentEvalOpenAtom = tabValue(evalOpenFamily);
 
-const invisibleFamily = atomFamily((tab: string) => atom(false));
+const invisibleFamily = atomFamily((_tab: string) => atom(false));
 export const currentInvisibleAtom = tabValue(invisibleFamily);
 
-const tabFamily = atomFamily((tab: string) => atom("info"));
+const tabFamily = atomFamily((_tab: string) => atom("info"));
 export const currentTabSelectedAtom = tabValue(tabFamily);
 
-const localOptionsFamily = atomFamily((tab: string) =>
+const localOptionsFamily = atomFamily((_tab: string) =>
   atom<LocalOptions>({
     path: null,
     type: "exact",
@@ -269,24 +269,24 @@ export const masterOptionsAtom = atomWithStorage<MasterGamesOptions>(
   },
 );
 
-const dbTypeFamily = atomFamily((tab: string) => atom<"local" | "lch_all" | "lch_master">("local"));
+const dbTypeFamily = atomFamily((_tab: string) => atom<"local" | "lch_all" | "lch_master">("local"));
 export const currentDbTypeAtom = tabValue(dbTypeFamily);
 
-const dbTabFamily = atomFamily((tab: string) => atom("stats"));
+const dbTabFamily = atomFamily((_tab: string) => atom("stats"));
 export const currentDbTabAtom = tabValue(dbTabFamily);
 
 // Default analysis sub-tab inside AnalysisPanel.
 // Previously this was "engines", but UX-wise it's more useful to start on the Report view.
-const analysisTabFamily = atomFamily((tab: string) => atom("report"));
+const analysisTabFamily = atomFamily((_tab: string) => atom("report"));
 export const currentAnalysisTabAtom = tabValue(analysisTabFamily);
 
-const practiceTabFamily = atomFamily((tab: string) => atom("train"));
+const practiceTabFamily = atomFamily((_tab: string) => atom("train"));
 export const currentPracticeTabAtom = tabValue(practiceTabFamily);
 
-const expandedEnginesFamily = atomFamily((tab: string) => atom<string[] | undefined>(undefined));
+const expandedEnginesFamily = atomFamily((_tab: string) => atom<string[] | undefined>(undefined));
 export const currentExpandedEnginesAtom = tabValue(expandedEnginesFamily);
 
-const pgnOptionsFamily = atomFamily((tab: string) =>
+const pgnOptionsFamily = atomFamily((_tab: string) =>
   atom({
     comments: true,
     glyphs: true,
@@ -296,16 +296,16 @@ const pgnOptionsFamily = atomFamily((tab: string) =>
 );
 export const currentPgnOptionsAtom = tabValue(pgnOptionsFamily);
 
-const currentPuzzleFamily = atomFamily((tab: string) => atom(0));
+const currentPuzzleFamily = atomFamily((_tab: string) => atom(0));
 export const currentPuzzleAtom = tabValue(currentPuzzleFamily);
 
 // Game
 
 export type GameState = "settingUp" | "playing" | "gameOver";
-const gameStateFamily = atomFamily((tab: string) => atom<GameState>("settingUp"));
+const gameStateFamily = atomFamily((_tab: string) => atom<GameState>("settingUp"));
 export const currentGameStateAtom = tabValue(gameStateFamily);
 
-const playersFamily = atomFamily((tab: string) =>
+const playersFamily = atomFamily((_tab: string) =>
   atom<{
     white: OpponentSettings;
     black: OpponentSettings;

@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import ResultsChart from "../components/PersonalCardPanels/ResultsChart";
+import { render, screen } from "./test-utils";
 
 // ✅ Mock Mantine Tooltip so its `label` is always in the DOM for tests.
 // This avoids portal/hover behavior and makes assertions deterministic.

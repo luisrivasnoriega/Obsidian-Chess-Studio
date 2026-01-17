@@ -1,5 +1,5 @@
 import { ActionIcon, Button, Menu, useMantineColorScheme } from "@mantine/core";
-import { useClickOutside, useHotkeys, useToggle, useColorScheme } from "@mantine/hooks";
+import { useClickOutside, useColorScheme, useHotkeys, useToggle } from "@mantine/hooks";
 import { IconCopy, IconEdit, IconWindowMaximize, IconX } from "@tabler/icons-react";
 import cx from "clsx";
 import { useEffect, useState } from "react";
@@ -40,7 +40,7 @@ export function BoardTab({
   const isCompact = layout.chessBoard.layoutType === "mobile";
   const { colorScheme } = useMantineColorScheme();
   const osColorScheme = useColorScheme();
-  
+
   // Determine if we're in dark mode
   const isDark = colorScheme === "dark" || (osColorScheme === "dark" && colorScheme === "auto");
 
@@ -74,8 +74,8 @@ export function BoardTab({
       <Menu.Target>
         <Button
           component="div"
-          className={cx(classes.tab, { 
-            [classes.selected]: selected, 
+          className={cx(classes.tab, {
+            [classes.selected]: selected,
             [classes.flash]: isFlashing && !isDark,
             [classes.flashDark]: isFlashing && isDark,
           })}
@@ -83,18 +83,24 @@ export function BoardTab({
           size={isCompact ? "xs" : "sm"}
           fw="normal"
           data-tauri-drag-region={false}
-          styles={isFlashing ? {
-            root: {
-              backgroundColor: isDark ? "rgba(255, 255, 255, 1) !important" : "rgba(255, 0, 150, 1) !important",
-              border: isDark ? "4px solid rgba(255, 255, 255, 1) !important" : "4px solid rgba(255, 0, 150, 1) !important",
-              boxShadow: isDark 
-                ? "0 0 40px rgba(255, 255, 255, 1), 0 0 60px rgba(255, 255, 255, 0.9) !important"
-                : "0 0 40px rgba(255, 0, 150, 1), 0 0 60px rgba(255, 100, 200, 0.8) !important",
-              transform: "scale(1.15)",
-              zIndex: 1000,
-              position: "relative",
-            },
-          } : undefined}
+          styles={
+            isFlashing
+              ? {
+                  root: {
+                    backgroundColor: isDark ? "rgba(255, 255, 255, 1) !important" : "rgba(255, 0, 150, 1) !important",
+                    border: isDark
+                      ? "4px solid rgba(255, 255, 255, 1) !important"
+                      : "4px solid rgba(255, 0, 150, 1) !important",
+                    boxShadow: isDark
+                      ? "0 0 40px rgba(255, 255, 255, 1), 0 0 60px rgba(255, 255, 255, 0.9) !important"
+                      : "0 0 40px rgba(255, 0, 150, 1), 0 0 60px rgba(255, 100, 200, 0.8) !important",
+                    transform: "scale(1.15)",
+                    zIndex: 1000,
+                    position: "relative",
+                  },
+                }
+              : undefined
+          }
           rightSection={
             <ActionIcon
               component="div"

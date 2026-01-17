@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { ScheduleTournamentModal } from "../../components/ScheduleTournamentModal";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -56,15 +55,7 @@ describe("ScheduleTournamentModal", () => {
   };
 
   test("renders when opened", () => {
-    render(
-      <ScheduleTournamentModal
-        opened={true}
-        onClose={mockOnClose}
-        template={mockTemplate}
-        lichessToken={null}
-      />
-    );
+    render(<ScheduleTournamentModal opened={true} onClose={mockOnClose} template={mockTemplate} lichessToken={null} />);
     expect(document.body).toBeTruthy();
   });
 });
-

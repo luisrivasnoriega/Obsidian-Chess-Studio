@@ -7,7 +7,7 @@
  * equality, queenside attack) can be implemented later.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 
 export function detectStrategy(ctx: ThemeContext): ThemeId[] {
   const tags: ThemeId[] = [];

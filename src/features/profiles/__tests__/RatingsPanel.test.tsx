@@ -1,8 +1,8 @@
-import React from "react";
+import type React from "react";
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
-import RatingsPanel from "../components/PersonalCardPanels/RatingsPanel";
 import type { PlayerGameInfo } from "@/bindings";
+import RatingsPanel from "../components/PersonalCardPanels/RatingsPanel";
+import { render, screen } from "./test-utils";
 
 vi.mock("@/components/ChartSizeGuard", () => ({
   ChartSizeGuard: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -84,5 +84,3 @@ describe("RatingsPanel", () => {
     expect(await screen.findByTestId("results-chart")).toBeInTheDocument();
   });
 });
-
-

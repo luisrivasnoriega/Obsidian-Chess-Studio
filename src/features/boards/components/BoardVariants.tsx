@@ -1,5 +1,4 @@
 import type { Piece } from "@lichess-org/chessground/types";
-import { makeSan } from "chessops/san";
 import { Box, Portal, ScrollArea, Stack } from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -7,51 +6,52 @@ import { useQuery } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import type { Platform } from "@tauri-apps/plugin-os";
+import { makeSan } from "chessops/san";
 import { useAtom, useAtomValue } from "jotai";
 import { Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { loadDirectories } from "@/App";
+import { commands } from "@/bindings/generated";
 import MoveControls from "@/components/MoveControls";
+import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useDebouncedAutoSave } from "@/features/boards/hooks/useDebouncedAutoSave";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import type { Platform } from "@tauri-apps/plugin-os";
 import {
   activeTabAtom,
   autoSaveAtom,
-  currentPracticeTabAtom,
   currentDbTypeAtom,
   currentLocalOptionsAtom,
+  currentPracticeTabAtom,
   currentTabAtom,
   currentTabSelectedAtom,
   enginesAtom,
   lichessOptionsAtom,
   masterOptionsAtom,
   referenceDbAtom,
-  tabsAtom,
   tabEngineSettingsFamily,
+  tabsAtom,
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
-import { commands } from "@/bindings/generated";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { createFile, isTempImportFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
-import { reloadTab, saveTab, saveToFile, type Tab } from "@/utils/tabs";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
-import { buildVariantsTree as buildVariantsTreeBackend } from "@/utils/variantsBuilder";
+import { reloadTab, saveTab, saveToFile, type Tab } from "@/utils/tabs";
 import { getNodeAtPath, type TreeNode } from "@/utils/treeReducer";
+import { buildVariantsTree as buildVariantsTreeBackend } from "@/utils/variantsBuilder";
 import EditingCard from "./EditingCard";
 import EvalListener from "./EvalListener";
 import GameNotationWrapper from "./GameNotationWrapper";
+import { PuzzleVariantsModal } from "./PuzzleVariantsModal";
 import ResponsiveAnalysisPanels from "./ResponsiveAnalysisPanels";
 import ResponsiveBoard from "./ResponsiveBoard";
-import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
-import { PuzzleVariantsModal } from "./PuzzleVariantsModal";
 import { VariantsActions } from "./VariantsActions";
-import { VariantsTreeBuilderModal } from "./VariantsTreeBuilderModal";
 import VariantsNotation from "./VariantsNotation";
+import { VariantsTreeBuilderModal } from "./VariantsTreeBuilderModal";
 
 function BoardVariants() {
   const { t } = useTranslation();
@@ -63,7 +63,7 @@ function BoardVariants() {
     return /Android/i.test(navigator.userAgent) ? "android" : null;
   });
   const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
-  const [tabs, setTabs] = useAtom(tabsAtom);
+  const [_tabs, setTabs] = useAtom(tabsAtom);
   const autoSave = useAtomValue(autoSaveAtom);
   const { data: dirs } = useQuery({ queryKey: ["dirs"], queryFn: loadDirectories, staleTime: Infinity });
   const documentDir = dirs?.documentDir ?? null;
@@ -155,7 +155,7 @@ function BoardVariants() {
             });
           }
         }
-      } catch (error) {
+      } catch (_error) {
         // Only show error if not during build variants
         if (!treeBuilderRunning && showNotification) {
           notifications.show({
@@ -203,7 +203,11 @@ function BoardVariants() {
 
         if (!filePath) return;
 
-        const fileName = filePath.replace(/\.pgn$/, "").split(/[/\\]/).pop() || baseName;
+        const fileName =
+          filePath
+            .replace(/\.pgn$/, "")
+            .split(/[/\\]/)
+            .pop() || baseName;
         const tags = ["puzzle-variants", `variant:${variantName}`, `depth:${selectedDepth}`];
 
         const mainlineNodes: TreeNode[] = [];
@@ -464,18 +468,20 @@ function BoardVariants() {
       // Store the start node info for metadata update at the end
       const startFenForMetadata = startNode.fen;
 
-      const attachDbCommentsForLine = async (lineMoves: Array<{
-        value: string;
-        source?: "db" | "engine";
-        white?: number;
-        black?: number;
-        draws?: number;
-        total?: number;
-      }>) => {
+      const attachDbCommentsForLine = async (
+        lineMoves: Array<{
+          value: string;
+          source?: "db" | "engine";
+          white?: number;
+          black?: number;
+          draws?: number;
+          total?: number;
+        }>,
+      ) => {
         // Attach opening names to each created node as a comment.
         try {
           let path = [...startPath];
-          
+
           // Get opening from start position if it exists
           let lastKnownOpening: string | null = null;
           try {
@@ -492,7 +498,11 @@ function BoardVariants() {
                 }
               }
               // Filter out empty/invalid openings
-              if (lastKnownOpening === "" || lastKnownOpening === "Empty Board" || lastKnownOpening === "Starting Position") {
+              if (
+                lastKnownOpening === "" ||
+                lastKnownOpening === "Empty Board" ||
+                lastKnownOpening === "Starting Position"
+              ) {
                 lastKnownOpening = null;
               }
             }
@@ -555,7 +565,12 @@ function BoardVariants() {
 
             let comment: string | null = null;
 
-            if (currentOpening && currentOpening !== "" && currentOpening !== "Empty Board" && currentOpening !== "Starting Position") {
+            if (
+              currentOpening &&
+              currentOpening !== "" &&
+              currentOpening !== "Empty Board" &&
+              currentOpening !== "Starting Position"
+            ) {
               // Current position has an opening name
               comment = `[${currentOpening}]`;
               lastKnownOpening = currentOpening;
@@ -623,7 +638,8 @@ function BoardVariants() {
         const payload = event?.payload as { startPath?: number[]; moves?: Array<{ value: string }> } | undefined;
         const payloadStartPath = payload?.startPath;
         const payloadMoves = payload?.moves;
-        if (!payloadStartPath || !Array.isArray(payloadStartPath) || !payloadMoves || !Array.isArray(payloadMoves)) return;
+        if (!payloadStartPath || !Array.isArray(payloadStartPath) || !payloadMoves || !Array.isArray(payloadMoves))
+          return;
 
         const state = store.getState();
         state.goToMove([...payloadStartPath]);
@@ -761,16 +777,18 @@ function BoardVariants() {
                   const parsed = JSON.parse(existingContent) as any;
                   metadata = {
                     type: typeof parsed?.type === "string" ? parsed.type : "variants",
-                    tags: Array.isArray(parsed?.tags) ? parsed.tags.filter((t: unknown): t is string => typeof t === "string") : [],
+                    tags: Array.isArray(parsed?.tags)
+                      ? parsed.tags.filter((t: unknown): t is string => typeof t === "string")
+                      : [],
                   };
-                } catch (parseError) {
+                } catch (_parseError) {
                   // If parsing fails, use default
                 }
               }
 
               // Use the requested depth from the modal (not the calculated tree depth)
               const requestedDepth = treeBuilderDepth;
-              
+
               // Use the start FEN and opening (where build variants started)
               // Use the stored startFenForMetadata from when build started
               const startFen = startFenForMetadata;
@@ -781,9 +799,19 @@ function BoardVariants() {
               // Get database info - format: "local -nombre-" or "lichess"
               const databaseName =
                 dbType === "local" && localOptions.path
-                  ? `local -${localOptions.path.split(/[/\\]/).pop()?.replace(/\.db3?$/i, "") || "unknown"}`
+                  ? `local -${
+                      localOptions.path
+                        .split(/[/\\]/)
+                        .pop()
+                        ?.replace(/\.db3?$/i, "") || "unknown"
+                    }`
                   : dbType === "local" && referenceDatabase
-                    ? `local -${referenceDatabase.split(/[/\\]/).pop()?.replace(/\.db3?$/i, "") || "unknown"}`
+                    ? `local -${
+                        referenceDatabase
+                          .split(/[/\\]/)
+                          .pop()
+                          ?.replace(/\.db3?$/i, "") || "unknown"
+                      }`
                     : dbType === "lch_all" || dbType === "lch_master"
                       ? "lichess"
                       : null;
@@ -835,8 +863,7 @@ function BoardVariants() {
 
               const metadataJson = JSON.stringify(metadata, null, 2);
               await writeTextFile(infoPath, metadataJson);
-            } catch (error) {
-            }
+            } catch (_error) {}
           }
         }
 
@@ -894,31 +921,29 @@ function BoardVariants() {
         {!treeBuilderRunning && <EvalListener />}
         <Box
           style={{
-            paddingBottom: isAndroid
-              ? "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px))"
-              : undefined,
+            paddingBottom: isAndroid ? "calc(var(--mantine-spacing-md) + env(safe-area-inset-bottom, 0px))" : undefined,
             minHeight: "100%",
             maxHeight: "100%",
             overflowY: "auto",
             WebkitOverflowScrolling: "touch",
           }}
         >
-            <Stack gap="md" style={{ minHeight: 0 }}>
-              <Box style={{ zIndex: 3 }}>
-                <Suspense fallback={<ResponsiveSkeleton type="default" />}>
-                  <ResponsiveAnalysisPanels
-                    currentTab={currentTabSelected}
-                    onTabChange={(v) => setCurrentTabSelected(v || "info")}
-                    isRepertoire={showRepertoirePanels}
-                    isPuzzle={isPuzzle}
-                    disableCollapse
-                    renderAsSelect
-                    unstyledContainer
-                  />
-                </Suspense>
-              </Box>
+          <Stack gap="md" style={{ minHeight: 0 }}>
+            <Box style={{ zIndex: 3 }}>
+              <Suspense fallback={<ResponsiveSkeleton type="default" />}>
+                <ResponsiveAnalysisPanels
+                  currentTab={currentTabSelected}
+                  onTabChange={(v) => setCurrentTabSelected(v || "info")}
+                  isRepertoire={showRepertoirePanels}
+                  isPuzzle={isPuzzle}
+                  disableCollapse
+                  renderAsSelect
+                  unstyledContainer
+                />
+              </Suspense>
+            </Box>
 
-              <Box style={{ position: "relative", zIndex: 2, minHeight: 0 }}>
+            <Box style={{ position: "relative", zIndex: 2, minHeight: 0 }}>
               <ResponsiveBoard
                 practicing={practicing}
                 dirty={dirty}
@@ -929,72 +954,70 @@ function BoardVariants() {
                 copyPgn={copyPgn}
                 reload={reloadBoard}
                 addGame={addGame}
-                  topBar={topBar}
-                  editingCard={
-                    editingMode ? (
-                      <EditingCard
-                        boardRef={boardRef}
-                        setEditingMode={toggleEditingMode}
-                        selectedPiece={selectedPiece}
-                        setSelectedPiece={setSelectedPiece}
-                      />
-                    ) : undefined
-                  }
-                  viewPawnStructure={viewPawnStructure}
-                  setViewPawnStructure={setViewPawnStructure}
-                  selectedPiece={selectedPiece}
-                  setSelectedPiece={setSelectedPiece}
-                  canTakeBack={false}
-                  changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
-                  currentTabType="analysis"
-                  clearShapes={clearShapes}
-                  toggleOrientation={flipBoard}
-                  disableVariations={false}
-                  currentTabSourceType={currentTab?.source?.type || undefined}
-                  hideMobileAnalysisPanel
-                />
-              </Box>
-
-              <ScrollArea style={{ flex: 1 }} h="100%" offsetScrollbars>
-                <GameNotationWrapper
-                  topBar
-                  editingMode={editingMode}
-                  editingCard={
+                topBar={topBar}
+                editingCard={
+                  editingMode ? (
                     <EditingCard
                       boardRef={boardRef}
                       setEditingMode={toggleEditingMode}
                       selectedPiece={selectedPiece}
                       setSelectedPiece={setSelectedPiece}
                     />
-                  }
-                >
-                  <>
-                    <VariantsNotation topBar={topBar} editingMode={editingMode} />
-                    <VariantsActions
-                      treeBuilderRunning={treeBuilderRunning}
-                      onOpenPuzzle={() => {
-                        // Use treeBuilderDepth as the maximum depth for puzzles
-                        // This ensures the puzzle depth matches the depth configured in build variants
-                        const maxDepth = treeBuilderDepth;
-                        if (maxDepth < 1) {
-                          notifications.show({
-                            title: t("common.error"),
-                            message: t("errors.puzzleVariantsNeedSystemMove"),
-                            color: "red",
-                          });
-                          return;
-                        }
-                        setMaxPuzzleDepth(maxDepth);
-                        setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
-                        setPuzzleModalOpened(true);
-                      }}
-                      onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
-                      onCancelTreeBuilder={cancelTreeBuilder}
-                    />
-                  </>
-                </GameNotationWrapper>
-              </ScrollArea>
-            </Stack>
+                  ) : undefined
+                }
+                viewPawnStructure={viewPawnStructure}
+                setViewPawnStructure={setViewPawnStructure}
+                selectedPiece={selectedPiece}
+                setSelectedPiece={setSelectedPiece}
+                canTakeBack={false}
+                changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
+                currentTabType="analysis"
+                clearShapes={clearShapes}
+                toggleOrientation={flipBoard}
+                disableVariations={false}
+                currentTabSourceType={currentTab?.source?.type || undefined}
+                hideMobileAnalysisPanel
+              />
+            </Box>
+
+            <ScrollArea style={{ flex: 1 }} h="100%" offsetScrollbars>
+              <GameNotationWrapper
+                topBar
+                editingMode={editingMode}
+                editingCard={
+                  <EditingCard
+                    boardRef={boardRef}
+                    setEditingMode={toggleEditingMode}
+                    selectedPiece={selectedPiece}
+                    setSelectedPiece={setSelectedPiece}
+                  />
+                }
+              >
+                <VariantsNotation topBar={topBar} editingMode={editingMode} />
+                <VariantsActions
+                  treeBuilderRunning={treeBuilderRunning}
+                  onOpenPuzzle={() => {
+                    // Use treeBuilderDepth as the maximum depth for puzzles
+                    // This ensures the puzzle depth matches the depth configured in build variants
+                    const maxDepth = treeBuilderDepth;
+                    if (maxDepth < 1) {
+                      notifications.show({
+                        title: t("common.error"),
+                        message: t("errors.puzzleVariantsNeedSystemMove"),
+                        color: "red",
+                      });
+                      return;
+                    }
+                    setMaxPuzzleDepth(maxDepth);
+                    setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
+                    setPuzzleModalOpened(true);
+                  }}
+                  onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
+                  onCancelTreeBuilder={cancelTreeBuilder}
+                />
+              </GameNotationWrapper>
+            </ScrollArea>
+          </Stack>
         </Box>
 
         <PuzzleVariantsModal
@@ -1077,12 +1100,12 @@ function BoardVariants() {
       </Portal>
 
       <Portal target="#topRight" style={{ height: "100%" }}>
-          <ResponsiveAnalysisPanels
-            currentTab={currentTabSelected}
-            onTabChange={(v) => setCurrentTabSelected(v || "info")}
-            isRepertoire={showRepertoirePanels}
-            isPuzzle={isPuzzle}
-          />
+        <ResponsiveAnalysisPanels
+          currentTab={currentTabSelected}
+          onTabChange={(v) => setCurrentTabSelected(v || "info")}
+          isRepertoire={showRepertoirePanels}
+          isPuzzle={isPuzzle}
+        />
       </Portal>
 
       <GameNotationWrapper
@@ -1097,31 +1120,29 @@ function BoardVariants() {
           />
         }
       >
-        <>
-          <VariantsNotation topBar={topBar} editingMode={editingMode} />
-          <MoveControls readOnly />
-          <VariantsActions
-            treeBuilderRunning={treeBuilderRunning}
-            onOpenPuzzle={() => {
-              // Use treeBuilderDepth as the maximum depth for puzzles
-              // This ensures the puzzle depth matches the depth configured in build variants
-              const maxDepth = treeBuilderDepth;
-              if (maxDepth < 1) {
-                notifications.show({
-                  title: t("common.error"),
-                  message: t("errors.puzzleVariantsNeedSystemMove"),
-                  color: "red",
-                });
-                return;
-              }
-              setMaxPuzzleDepth(maxDepth);
-              setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
-              setPuzzleModalOpened(true);
-            }}
-            onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
-            onCancelTreeBuilder={cancelTreeBuilder}
-          />
-        </>
+        <VariantsNotation topBar={topBar} editingMode={editingMode} />
+        <MoveControls readOnly />
+        <VariantsActions
+          treeBuilderRunning={treeBuilderRunning}
+          onOpenPuzzle={() => {
+            // Use treeBuilderDepth as the maximum depth for puzzles
+            // This ensures the puzzle depth matches the depth configured in build variants
+            const maxDepth = treeBuilderDepth;
+            if (maxDepth < 1) {
+              notifications.show({
+                title: t("common.error"),
+                message: t("errors.puzzleVariantsNeedSystemMove"),
+                color: "red",
+              });
+              return;
+            }
+            setMaxPuzzleDepth(maxDepth);
+            setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
+            setPuzzleModalOpened(true);
+          }}
+          onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
+          onCancelTreeBuilder={cancelTreeBuilder}
+        />
       </GameNotationWrapper>
 
       <PuzzleVariantsModal

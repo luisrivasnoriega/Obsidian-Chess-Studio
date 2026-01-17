@@ -7,20 +7,31 @@ import EvalChart from "@/components/EvalChart";
 import { TreeStateProvider } from "@/components/TreeStateContext";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, parsePGN } from "@/utils/chess";
+import type { GameHeaders } from "@/utils/treeReducer";
 
 interface AnalysisPreviewProps {
   pgn: string | null;
   children: React.ReactNode;
 }
 
+type AnnotationCounts = {
+  "??": number;
+  "?": number;
+  "?!": number;
+  "!!": number;
+  "!": number;
+  "!?": number;
+  Best: number;
+};
+
 function GameStatsPreview({
   whiteAnnotations,
   blackAnnotations,
   headers,
 }: {
-  whiteAnnotations: any;
-  blackAnnotations: any;
-  headers?: any;
+  whiteAnnotations: AnnotationCounts;
+  blackAnnotations: AnnotationCounts;
+  headers?: GameHeaders | Record<string, string>;
 }) {
   const { t } = useTranslation();
 
@@ -153,7 +164,13 @@ function GameStatsPreview({
                     <Box style={{ color: hasAny ? r.color : undefined }}>
                       <Center>
                         {r.annotation === "Best" ? (
-                          <svg viewBox="0 0 100 100" style={{ width: "1em", height: "1em", display: "block" }}>
+                          <svg
+                            viewBox="0 0 100 100"
+                            style={{ width: "1em", height: "1em", display: "block" }}
+                            role="img"
+                            aria-label="Best move"
+                          >
+                            <title>Best move</title>
                             <path
                               fill="currentColor"
                               d="M 50 15 L 55.9 38.1 L 80 38.1 L 60.5 52.4 L 66.4 75.5 L 50 61.2 L 33.6 75.5 L 39.5 52.4 L 20 38.1 L 44.1 38.1 Z"
@@ -261,7 +278,7 @@ function GameStatsPreview({
 }
 
 function AnalysisPreviewContent({ pgn }: { pgn: string }) {
-  const theme = useMantineTheme();
+  const _theme = useMantineTheme();
 
   const { data: parsedGame, isLoading } = useQuery({
     queryKey: ["analysis-preview", pgn],

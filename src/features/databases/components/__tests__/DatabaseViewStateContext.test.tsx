@@ -1,4 +1,3 @@
-import React from "react";
 import { describe, expect, test } from "vitest";
 import { DatabaseViewStateContext } from "../../components/DatabaseViewStateContext";
 
@@ -12,4 +11,3 @@ describe("DatabaseViewStateContext", () => {
     expect(DatabaseViewStateContext).toBeDefined();
   });
 });
-

@@ -65,4 +65,3 @@ export type BuildVariantsTreeResponse = {
 export async function buildVariantsTree(request: BuildVariantsTreeRequest): Promise<BuildVariantsTreeResponse> {
   return await invoke<BuildVariantsTreeResponse>("build_variants_tree", { request });
 }
-

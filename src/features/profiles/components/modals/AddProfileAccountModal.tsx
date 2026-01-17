@@ -42,10 +42,7 @@ export function AddProfileAccountModal({
     setWithLogin(false);
   }, [opened, defaultProfileId]);
 
-  const profileOptions = useMemo(
-    () => profiles.map((p) => ({ value: p.id, label: p.name })),
-    [profiles],
-  );
+  const profileOptions = useMemo(() => profiles.map((p) => ({ value: p.id, label: p.name })), [profiles]);
 
   const canSubmit = !!profileId && username.trim().length > 0;
 
@@ -119,8 +116,8 @@ export function AddProfileAccountModal({
             {website === "chesscom" && (
               <Alert mt="xs" color="yellow" icon={<IconInfoCircle size={16} />}>
                 Due to limitations of the Chess.com Public API, the total games count may not include all game types. In
-                particular, bot games are excluded from the downloadable archives and won&apos;t be reflected in the total
-                count.
+                particular, bot games are excluded from the downloadable archives and won&apos;t be reflected in the
+                total count.
               </Alert>
             )}
           </InputWrapper>

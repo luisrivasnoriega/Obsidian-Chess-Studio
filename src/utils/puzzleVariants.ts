@@ -23,4 +23,3 @@ export async function generatePuzzleVariantsFromTree(params: {
     selectedDepth,
   });
 }
-

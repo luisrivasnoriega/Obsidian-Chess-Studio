@@ -4,4 +4,3 @@ import ProfilesRouteEntry from "@/features/profiles/ProfilesRouteEntry";
 export const Route = createFileRoute("/profiles")({
   component: () => <ProfilesRouteEntry />,
 });
-

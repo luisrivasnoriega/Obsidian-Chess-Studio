@@ -1,6 +1,5 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import i18n from "@/i18n";
 import { pieceSetAtom, primaryColorAtom } from "@/state/atoms";
 import { genID } from "@/utils/tabs";
 import { builtInThemes, getBuiltInThemeById } from "../data/builtInThemes";

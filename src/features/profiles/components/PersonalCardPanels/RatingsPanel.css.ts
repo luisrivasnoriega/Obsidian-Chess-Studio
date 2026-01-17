@@ -1,5 +1,3 @@
-import { style } from "@vanilla-extract/css";
-
 export const linearGradientProps = {
   id: "ratings-gradient",
   x1: 0,

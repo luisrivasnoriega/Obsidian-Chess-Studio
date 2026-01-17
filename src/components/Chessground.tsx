@@ -4,7 +4,7 @@ import type { Config } from "@lichess-org/chessground/config";
 import type { Key, Piece } from "@lichess-org/chessground/types";
 import { Box } from "@mantine/core";
 import { useAtomValue } from "jotai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { boardImageAtom, moveMethodAtom } from "@/state/atoms";
 import "@lichess-org/chessground/assets/chessground.base.css";
 
@@ -14,7 +14,12 @@ export interface ChessgroundProps extends Config {
   setSelectedPiece?: (piece: Piece | null) => void;
 }
 
-export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...chessgroundConfig }: ChessgroundProps) {
+export function Chessground({
+  setBoardFen,
+  selectedPiece,
+  setSelectedPiece,
+  ...chessgroundConfigProps
+}: ChessgroundProps) {
   const [api, setApi] = useState<Api | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const moveMethod = useAtomValue(moveMethodAtom);
@@ -27,6 +32,31 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
     setBoardFenRef.current = setBoardFen;
     setSelectedPieceRef.current = setSelectedPiece;
   });
+
+  // Memoize chessgroundConfig to avoid recreating it on every render
+  const chessgroundConfig = useMemo(
+    () => chessgroundConfigProps,
+    // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfigProps is a spread object, we track its key properties
+    [
+      chessgroundConfigProps.fen,
+      chessgroundConfigProps.orientation,
+      chessgroundConfigProps.turnColor,
+      chessgroundConfigProps.movable,
+      chessgroundConfigProps.premovable,
+      chessgroundConfigProps.predroppable,
+      chessgroundConfigProps.drawable,
+      chessgroundConfigProps.lastMove,
+      chessgroundConfigProps.check,
+      chessgroundConfigProps.coordinates,
+      chessgroundConfigProps.coordinatesOnSquares,
+      chessgroundConfigProps.draggable,
+      chessgroundConfigProps.selectable,
+      chessgroundConfigProps.highlight,
+      chessgroundConfigProps.animation,
+      chessgroundConfigProps.events,
+      chessgroundConfigProps,
+    ],
+  );
 
   const handleChange = useCallback(() => {
     if (setBoardFenRef.current && api) {
@@ -74,7 +104,7 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
       chessgroundApi.destroy?.();
       setApi(null);
     };
-  }, []);
+  }, [api, chessgroundConfig, handleChange, handleSelect, moveMethod]);
 
   // Android WebView can treat drag gestures as scroll even if the board uses `touch-action: none`,
   // especially when the board is adjacent to or nested near scroll containers.
@@ -120,30 +150,8 @@ export function Chessground({ setBoardFen, selectedPiece, setSelectedPiece, ...c
     };
 
     api.set(config);
-  }, [
-    api,
-    handleChange,
-    handleSelect,
-    moveMethod,
-    chessgroundConfig.fen,
-    chessgroundConfig.orientation,
-    chessgroundConfig.turnColor,
-    chessgroundConfig.movable,
-    chessgroundConfig.premovable,
-    chessgroundConfig.predroppable,
-    // Important: engine-driven arrows / shapes update asynchronously without changing the FEN.
-    // If we don't include drawable/visual config here, users will only see updates after another prop
-    // changes (e.g. flipping the board).
-    chessgroundConfig.drawable,
-    chessgroundConfig.lastMove,
-    chessgroundConfig.check,
-    chessgroundConfig.coordinates,
-    chessgroundConfig.coordinatesOnSquares,
-    chessgroundConfig.draggable?.showGhost,
-    chessgroundConfig.selectable?.enabled,
-    chessgroundConfig.highlight,
-    chessgroundConfig.animation,
-  ]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfig is memoized and contains all necessary dependencies
+  }, [api, handleChange, handleSelect, moveMethod, chessgroundConfig]);
 
   useEffect(() => {
     if (!chessgroundConfig.movable?.free && selectedPiece && setSelectedPieceRef.current) {

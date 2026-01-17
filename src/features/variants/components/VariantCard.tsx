@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Card,
-  Code,
-  Group,
-  Stack,
-  Text,
-  Tooltip,
-} from "@mantine/core";
+import { ActionIcon, Badge, Card, Code, Group, Stack, Text, Tooltip } from "@mantine/core";
 import { IconEdit, IconEye, IconGitBranch, IconTrash } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { VariantInfo } from "../types";
@@ -45,32 +36,17 @@ export function VariantCard({ variant, isSelected, onEdit, onDelete, onEditComme
           </Group>
           <Group gap="xs" onClick={(e) => e.stopPropagation()}>
             <Tooltip label={t("common.view", { defaultValue: "View" })}>
-              <ActionIcon
-                variant="subtle"
-                color="blue"
-                size="sm"
-                onClick={() => onEdit(variant)}
-              >
+              <ActionIcon variant="subtle" color="blue" size="sm" onClick={() => onEdit(variant)}>
                 <IconEye size={16} />
               </ActionIcon>
             </Tooltip>
             <Tooltip label={t("features.variants.editComments", { defaultValue: "Edit Comments / References" })}>
-              <ActionIcon
-                variant="subtle"
-                color="grape"
-                size="sm"
-                onClick={() => onEditComments(variant)}
-              >
+              <ActionIcon variant="subtle" color="grape" size="sm" onClick={() => onEditComments(variant)}>
                 <IconEdit size={16} />
               </ActionIcon>
             </Tooltip>
             <Tooltip label={t("common.delete", { defaultValue: "Delete" })}>
-              <ActionIcon
-                variant="subtle"
-                color="red"
-                size="sm"
-                onClick={() => onDelete(variant)}
-              >
+              <ActionIcon variant="subtle" color="red" size="sm" onClick={() => onDelete(variant)}>
                 <IconTrash size={16} />
               </ActionIcon>
             </Tooltip>

@@ -4,7 +4,7 @@
  * piece, suggesting a defender was removed first.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherCaptures, isImmediatePunishCapture, pieceValue } from "./utils";
 
 export function detectCapturingDefender(ctx: ThemeContext): ThemeId[] {

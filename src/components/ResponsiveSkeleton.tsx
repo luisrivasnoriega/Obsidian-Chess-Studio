@@ -1,5 +1,4 @@
 import { Skeleton, Stack } from "@mantine/core";
-import React from "react";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 interface ResponsiveSkeletonProps {

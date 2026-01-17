@@ -1,7 +1,6 @@
 import type { SpotlightActionData, SpotlightActionGroupData } from "@mantine/spotlight";
 import { IconSettings } from "@tabler/icons-react";
 import type { useNavigate } from "@tanstack/react-router";
-import React from "react";
 import { linksdata } from "@/components/Sidebar";
 
 export function getSpotlightActions(
@@ -44,4 +43,3 @@ export function getSpotlightActions(
     },
   ];
 }
-

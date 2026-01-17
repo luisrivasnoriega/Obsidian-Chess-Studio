@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { FilenameInput } from "../../components/FilenameInput";
+import { render, screen } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -36,4 +35,3 @@ describe("FilenameInput", () => {
     expect(mockOnChange).toHaveBeenCalled();
   });
 });
-

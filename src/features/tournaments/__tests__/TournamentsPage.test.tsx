@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import TournamentsPage from "../TournamentsPage";
+import { render } from "./test-utils";
 
 // -----------------------------
 // Mocks
@@ -44,4 +43,3 @@ describe("TournamentsPage", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

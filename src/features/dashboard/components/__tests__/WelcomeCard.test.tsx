@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { WelcomeCard } from "../../components/WelcomeCard";
+import { render, screen } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -16,7 +15,16 @@ beforeAll(() => {
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
+    t: (key: string, options?: { defaultValue?: string; [key: string]: unknown }) => {
+      if (options?.defaultValue) {
+        return options.defaultValue;
+      }
+      // Handle interpolation for welcome messages
+      if (key.includes("backWithName") && options?.name) {
+        return `Welcome back, ${options.name}!`;
+      }
+      return key;
+    },
   }),
 }));
 
@@ -37,25 +45,13 @@ describe("WelcomeCard", () => {
   const mockOnImportGame = vi.fn();
 
   test("renders without crashing", () => {
-    render(
-      <WelcomeCard
-        isFirstOpen={false}
-        onPlayChess={mockOnPlayChess}
-        onImportGame={mockOnImportGame}
-      />
-    );
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
     expect(document.body).toBeTruthy();
   });
 
   test("calls onPlayChess when play button is clicked", async () => {
     const user = userEvent.setup();
-    render(
-      <WelcomeCard
-        isFirstOpen={false}
-        onPlayChess={mockOnPlayChess}
-        onImportGame={mockOnImportGame}
-      />
-    );
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
     const playButton = screen.getByRole("button", { name: /play/i });
     await user.click(playButton);
     expect(mockOnPlayChess).toHaveBeenCalled();
@@ -63,13 +59,7 @@ describe("WelcomeCard", () => {
 
   test("calls onImportGame when import button is clicked", async () => {
     const user = userEvent.setup();
-    render(
-      <WelcomeCard
-        isFirstOpen={false}
-        onPlayChess={mockOnPlayChess}
-        onImportGame={mockOnImportGame}
-      />
-    );
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
     const importButton = screen.getByRole("button", { name: /import/i });
     await user.click(importButton);
     expect(mockOnImportGame).toHaveBeenCalled();
@@ -82,7 +72,7 @@ describe("WelcomeCard", () => {
         onPlayChess={mockOnPlayChess}
         onImportGame={mockOnImportGame}
         playerFirstName="John"
-      />
+      />,
     );
     expect(screen.getByText(/john/i)).toBeInTheDocument();
   });
@@ -94,9 +84,8 @@ describe("WelcomeCard", () => {
         onPlayChess={mockOnPlayChess}
         onImportGame={mockOnImportGame}
         fideInfo={{ title: "GM", standardRating: 2500 }}
-      />
+      />,
     );
     expect(screen.getByText(/gm/i)).toBeInTheDocument();
   });
 });
-

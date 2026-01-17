@@ -2,11 +2,11 @@ import { Card, Group, Select, Tabs } from "@mantine/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Event } from "@/bindings";
-import type { GameRecord } from "@/utils/gameRecords";
 import type { FavoriteGame } from "@/utils/favoriteGames";
+import type { GameRecord } from "@/utils/gameRecords";
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 import { FavoriteGamesTab } from "./FavoriteGamesTab";
 import { ProfileGamesTab } from "./ProfileGamesTab";
-import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 
 interface GamesHistoryCardProps {
   profileId: string | null;
@@ -155,7 +155,8 @@ export function GamesHistoryCard({
       }}
     >
       {/* Resize handle at the top */}
-      <div
+      <button
+        type="button"
         onMouseDown={handleMouseDown}
         style={{
           position: "absolute",
@@ -166,8 +167,11 @@ export function GamesHistoryCard({
           cursor: "row-resize",
           zIndex: 10,
           backgroundColor: "transparent",
+          border: "none",
+          padding: 0,
         }}
         title="Drag to resize"
+        aria-label="Resize card"
       />
       <Tabs
         value={activeTab}
@@ -258,7 +262,8 @@ export function GamesHistoryCard({
       </Tabs>
 
       {/* Resize handle at the bottom */}
-      <div
+      <button
+        type="button"
         onMouseDown={handleMouseDown}
         style={{
           position: "absolute",
@@ -269,8 +274,11 @@ export function GamesHistoryCard({
           cursor: "row-resize",
           zIndex: 10,
           backgroundColor: "transparent",
+          border: "none",
+          padding: 0,
         }}
         title="Drag to resize"
+        aria-label="Resize card"
       />
     </Card>
   );

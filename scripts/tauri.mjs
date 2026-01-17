@@ -31,13 +31,7 @@ const args = process.argv.slice(2);
 const isAndroidCommand = args[0] === "android";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const tauriBin = path.resolve(
-  here,
-  "..",
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "tauri.cmd" : "tauri",
-);
+const tauriBin = path.resolve(here, "..", "node_modules", ".bin", process.platform === "win32" ? "tauri.cmd" : "tauri");
 
 const spawnCommand =
   process.platform === "win32"

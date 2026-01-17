@@ -1,20 +1,20 @@
-import { Box, Center, Group, Paper, ScrollArea, Stack, Table, Text, UnstyledButton } from "@mantine/core";
+import { Box, Center, Group, Paper, ScrollArea, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
-import { IconStarFilled, IconZoomCheck } from "@tabler/icons-react";
+import { IconZoomCheck } from "@tabler/icons-react";
+import { invoke } from "@tauri-apps/api/core";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtomValue } from "jotai";
-import React, { memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
 import EvalChart from "@/components/EvalChart";
 import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { activeTabAtom } from "@/state/atoms";
 import { saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
-import { getGameStats, getMainLine, getPGN, getPGNFromReportView } from "@/utils/chess";
+import { getGameStats, getMainLine, getPGNFromReportView } from "@/utils/chess";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import { type GameStats, getGameRecordById, updateGameRecord } from "@/utils/gameRecords";
 import { label } from "./AnalysisPanel.css";
@@ -153,7 +153,7 @@ function ReportPanel() {
           if (!hasResultInHeaders && !hasResultAtEnd) {
             // If result is missing, add it from headers or use "*"
             const result = finalHeaders?.result || "*";
-            pgnWithEvals = pgnWithEvals.trim() + ` ${result}`;
+            pgnWithEvals = `${pgnWithEvals.trim()} ${result}`;
           } else if (!hasResultInHeaders && finalHeaders?.result) {
             // If result is at the end but not in headers, ensure headers have it
             // The getPGN function should already include it, but double-check
@@ -163,7 +163,7 @@ function ReportPanel() {
               if (headerEnd > 0) {
                 const beforeHeaders = pgnWithEvals.substring(0, headerEnd + 2);
                 const afterHeaders = pgnWithEvals.substring(headerEnd + 2);
-                pgnWithEvals = beforeHeaders + `[Result "${finalHeaders.result}"]\n` + afterHeaders;
+                pgnWithEvals = `${beforeHeaders}[Result "${finalHeaders.result}"]\n${afterHeaders}`;
               }
             }
           }
@@ -245,7 +245,8 @@ function ReportPanel() {
               typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_lichessGameId`) : null;
             const profileDbGameId =
               typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileDbGameId`) : null;
-            const profileIdFromTab = typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
+            const profileIdFromTab =
+              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
 
             // If this analysis tab was opened from a profile DB game, we always persist using (profileId, Games.ID)
             // so the dashboard LEFT JOIN can match exactly.
@@ -294,7 +295,7 @@ function ReportPanel() {
                   const whiteMatch = pgnWithEvals.match(/\[White\s+"([^"]+)"/);
                   const blackMatch = pgnWithEvals.match(/\[Black\s+"([^"]+)"/);
                   const whiteName = whiteMatch ? whiteMatch[1] : "";
-                  const blackName = blackMatch ? blackMatch[1] : "";
+                  const _blackName = blackMatch ? blackMatch[1] : "";
 
                   const isUserWhite = whiteName.toLowerCase() === chessComUsername.toLowerCase();
                   const userColor = isUserWhite ? "white" : "black";
@@ -335,7 +336,7 @@ function ReportPanel() {
                   const whiteMatch = pgnWithEvals.match(/\[White\s+"([^"]+)"/);
                   const blackMatch = pgnWithEvals.match(/\[Black\s+"([^"]+)"/);
                   const whiteName = whiteMatch ? whiteMatch[1] : "";
-                  const blackName = blackMatch ? blackMatch[1] : "";
+                  const _blackName = blackMatch ? blackMatch[1] : "";
 
                   const isUserWhite = whiteName.toLowerCase() === lichessUsername.toLowerCase();
                   const userColor = isUserWhite ? "white" : "black";
@@ -423,7 +424,7 @@ function ReportPanel() {
           <Paper withBorder p="md">
             <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
           </Paper>
-          <GameStats {...stats} />
+          <ReportGameStats {...stats} />
         </Stack>
       </ScrollArea>
     </Box>
@@ -486,7 +487,13 @@ function TagGlyph({ annotation }: { annotation: string }) {
   return (
     <Center>
       {annotation === "Best" ? (
-        <svg viewBox="0 0 100 100" style={{ width: "1em", height: "1em", display: "block" }}>
+        <svg
+          viewBox="0 0 100 100"
+          style={{ width: "1em", height: "1em", display: "block" }}
+          role="img"
+          aria-label="Best move"
+        >
+          <title>Best move</title>
           <path
             fill="currentColor"
             d="M 50 15 L 55.9 38.1 L 80 38.1 L 60.5 52.4 L 66.4 75.5 L 50 61.2 L 33.6 75.5 L 39.5 52.4 L 20 38.1 L 44.1 38.1 Z"
@@ -501,8 +508,8 @@ function TagGlyph({ annotation }: { annotation: string }) {
   );
 }
 
-const GameStats = memo(
-  function GameStats({ whiteAnnotations, blackAnnotations }: Stats) {
+const ReportGameStats = memo(
+  function ReportGameStats({ whiteAnnotations, blackAnnotations }: Stats) {
     const { t } = useTranslation();
 
     const store = useContext(TreeStateContext)!;
@@ -597,122 +604,122 @@ const GameStats = memo(
         >
           <Stack gap="sm">
             {rows.map((r) => {
-            const total = r.w + r.b;
-            const wPct = total > 0 ? (r.w / total) * 100 : 0;
-            const bPct = total > 0 ? (r.b / total) * 100 : 0;
+              const total = r.w + r.b;
+              const wPct = total > 0 ? (r.w / total) * 100 : 0;
+              const bPct = total > 0 ? (r.b / total) * 100 : 0;
 
-            const hasAny = total > 0;
+              const hasAny = total > 0;
 
-            return (
-              <Paper
-                key={r.annotation}
-                withBorder
-                radius="md"
-                p="sm"
-                style={{
-                  background: "var(--mantine-color-dark-7)",
-                  borderColor: "var(--mantine-color-dark-4)",
-                }}
-              >
-                <Box
+              return (
+                <Paper
+                  key={r.annotation}
+                  withBorder
+                  radius="md"
+                  p="sm"
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "auto 1fr auto",
-                    alignItems: "center",
-                    gap: "1rem",
+                    background: "var(--mantine-color-dark-7)",
+                    borderColor: "var(--mantine-color-dark-4)",
                   }}
                 >
-                  {/* WHITE */}
-                  <Center
+                  <Box
                     style={{
-                      textAlign: "center",
-                      color: r.w > 0 ? r.color : undefined,
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr auto",
+                      alignItems: "center",
+                      gap: "1rem",
                     }}
                   >
-                    <CountPill
-                      value={r.w}
-                      color={r.color}
-                      className={cx(r.w > 0 && label)}
-                      onClick={() => goToAnnotation(r.s, "white")}
-                    />
-                  </Center>
-
-                  {/* CENTER */}
-                  <Box style={{ minWidth: 0, color: hasAny ? r.color : undefined }}>
-                    <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, marginBottom: "0.45rem" }}>
-                      <Box style={{ color: hasAny ? r.color : undefined }}>
-                        <TagGlyph annotation={r.annotation} />
-                      </Box>
-
-                      <Box
-                        style={{
-                          width: "0.45rem",
-                          height: "1.1rem",
-                          borderRadius: 999,
-                          backgroundColor: hasAny ? r.color : "var(--mantine-color-gray-7)",
-                          opacity: hasAny ? 0.95 : 0.35,
-                          flex: "0 0 auto",
-                        }}
-                      />
-
-                      <Text size="sm" truncate style={{ width: "100%" }}>
-                        {r.title}
-                      </Text>
-                    </Group>
-
-                    <Box
+                    {/* WHITE */}
+                    <Center
                       style={{
-                        position: "relative",
-                        height: "0.6rem",
-                        borderRadius: 999,
-                        overflow: "hidden",
-                        background: "var(--mantine-color-dark-6)",
-                        border: "1px solid var(--mantine-color-dark-4)",
+                        textAlign: "center",
+                        color: r.w > 0 ? r.color : undefined,
                       }}
                     >
-                      <Box
-                        style={{
-                          position: "absolute",
-                          insetInlineStart: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: `${wPct}%`,
-                          background: hasAny ? r.color : "transparent",
-                          opacity: 0.55,
-                        }}
+                      <CountPill
+                        value={r.w}
+                        color={r.color}
+                        className={cx(r.w > 0 && label)}
+                        onClick={() => goToAnnotation(r.s, "white")}
                       />
-                      <Box
-                        style={{
-                          position: "absolute",
-                          insetInlineEnd: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: `${bPct}%`,
-                          background: hasAny ? r.color : "transparent",
-                          opacity: 0.25,
-                        }}
-                      />
-                    </Box>
-                  </Box>
+                    </Center>
 
-                  {/* BLACK */}
-                  <Center
-                    style={{
-                      textAlign: "center",
-                      color: r.b > 0 ? r.color : undefined,
-                    }}
-                  >
-                    <CountPill
-                      value={r.b}
-                      color={r.color}
-                      className={cx(r.b > 0 && label)}
-                      onClick={() => goToAnnotation(r.s, "black")}
-                    />
-                  </Center>
-                </Box>
-              </Paper>
-            );
-          })}
+                    {/* CENTER */}
+                    <Box style={{ minWidth: 0, color: hasAny ? r.color : undefined }}>
+                      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0, marginBottom: "0.45rem" }}>
+                        <Box style={{ color: hasAny ? r.color : undefined }}>
+                          <TagGlyph annotation={r.annotation} />
+                        </Box>
+
+                        <Box
+                          style={{
+                            width: "0.45rem",
+                            height: "1.1rem",
+                            borderRadius: 999,
+                            backgroundColor: hasAny ? r.color : "var(--mantine-color-gray-7)",
+                            opacity: hasAny ? 0.95 : 0.35,
+                            flex: "0 0 auto",
+                          }}
+                        />
+
+                        <Text size="sm" truncate style={{ width: "100%" }}>
+                          {r.title}
+                        </Text>
+                      </Group>
+
+                      <Box
+                        style={{
+                          position: "relative",
+                          height: "0.6rem",
+                          borderRadius: 999,
+                          overflow: "hidden",
+                          background: "var(--mantine-color-dark-6)",
+                          border: "1px solid var(--mantine-color-dark-4)",
+                        }}
+                      >
+                        <Box
+                          style={{
+                            position: "absolute",
+                            insetInlineStart: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: `${wPct}%`,
+                            background: hasAny ? r.color : "transparent",
+                            opacity: 0.55,
+                          }}
+                        />
+                        <Box
+                          style={{
+                            position: "absolute",
+                            insetInlineEnd: 0,
+                            top: 0,
+                            bottom: 0,
+                            width: `${bPct}%`,
+                            background: hasAny ? r.color : "transparent",
+                            opacity: 0.25,
+                          }}
+                        />
+                      </Box>
+                    </Box>
+
+                    {/* BLACK */}
+                    <Center
+                      style={{
+                        textAlign: "center",
+                        color: r.b > 0 ? r.color : undefined,
+                      }}
+                    >
+                      <CountPill
+                        value={r.b}
+                        color={r.color}
+                        className={cx(r.b > 0 && label)}
+                        onClick={() => goToAnnotation(r.s, "black")}
+                      />
+                    </Center>
+                  </Box>
+                </Paper>
+              );
+            })}
           </Stack>
         </ScrollArea>
       </Paper>

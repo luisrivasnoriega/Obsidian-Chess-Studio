@@ -1,4 +1,4 @@
-import { ActionIcon, Avatar, Badge, Box, Card, Divider, Group, Image, rem, Stack, Text } from "@mantine/core";
+import { ActionIcon, Badge, Box, Card, Divider, Group, Image, rem, Stack, Text } from "@mantine/core";
 import { IconEdit } from "@tabler/icons-react";
 import { useState } from "react";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
@@ -70,7 +70,7 @@ export function UserProfileCard({
   };
 
   // If there's a custom name, use it; otherwise use the original name
-  const displayName = customName && customName.trim() ? customName : name;
+  const displayName = customName?.trim() ? customName : name;
 
   // Determine which title to display (FIDE title has priority if it exists)
   const displayTitle = fidePlayer?.title || title;

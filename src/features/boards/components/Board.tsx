@@ -218,7 +218,7 @@ function Board({
   const arrowMoves = useMemo(() => {
     if (!showArrows || !evalOpen) return emptyMoves;
     return getVariationLine(store.getState().root, position, headers.variant === "Chess960");
-  }, [emptyMoves, evalOpen, headers.variant, position, rootFen, showArrows, store]);
+  }, [emptyMoves, evalOpen, headers.variant, position, showArrows, store]);
 
   const arrows = useAtomValue(
     bestMovesFamily({
@@ -274,18 +274,7 @@ function Board({
         setPendingMove(null);
       }
     },
-    [
-      blackTime,
-      currentNode.fen,
-      deck.positions,
-      goToNext,
-      pos,
-      practicing,
-      setDeck,
-      storeMakeMove,
-      t,
-      whiteTime,
-    ],
+    [blackTime, currentNode.fen, deck.positions, goToNext, pos, practicing, setDeck, storeMakeMove, t, whiteTime],
   );
 
   const shapes = useMemo(() => {
@@ -389,7 +378,7 @@ function Board({
             .exhaustive();
   }, [practiceLock, editingMode, movable, turn]);
 
-  const theme = useMantineTheme();
+  const _theme = useMantineTheme();
   const annotationColor = annotationColors[currentNode.annotations[0]] || "#6B7280";
   // Use the hex color directly for both light and dark variants
   const lightColor = annotationColor;
@@ -530,17 +519,22 @@ function Board({
       free: editingMode,
       color: movableColor,
       dests:
-        editingMode || viewOnly
-          ? undefined
-          : disableVariations && currentNode.children.length > 0
-            ? undefined
-            : dests,
+        editingMode || viewOnly ? undefined : disableVariations && currentNode.children.length > 0 ? undefined : dests,
       showDests,
       events: {
         after: onAfterMove,
       },
     }),
-    [currentNode.children.length, dests, disableVariations, editingMode, movableColor, onAfterMove, showDests, viewOnly],
+    [
+      currentNode.children.length,
+      dests,
+      disableVariations,
+      editingMode,
+      movableColor,
+      onAfterMove,
+      showDests,
+      viewOnly,
+    ],
   );
 
   const draggableConfig = useMemo(

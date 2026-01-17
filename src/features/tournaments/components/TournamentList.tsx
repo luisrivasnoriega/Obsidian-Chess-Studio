@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, Button, Card, Group, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconCalendar, IconTrash } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { deleteTournamentTemplate, getTournamentTemplates, type TournamentTemplate } from "@/utils/tournamentTemplates";
 import { ScheduleTournamentModal } from "./ScheduleTournamentModal";
@@ -19,7 +19,7 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<TournamentTemplate | null>(null);
 
-  const loadTemplates = async () => {
+  const loadTemplates = useCallback(async () => {
     if (!accountName) {
       setTemplates([]);
       return;
@@ -38,18 +38,18 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
     } finally {
       setLoading(false);
     }
-  };
+  }, [accountName, t]);
 
   useEffect(() => {
     loadTemplates();
-  }, [accountName]);
+  }, [loadTemplates]);
 
   useEffect(() => {
     if (onRefresh) {
       // Reload when refresh is triggered
       loadTemplates();
     }
-  }, [onRefresh]);
+  }, [onRefresh, loadTemplates]);
 
   const handleDelete = async (id: string) => {
     if (!accountName) {

@@ -36,4 +36,3 @@ describe("getChessTitle", () => {
     expect(getChessTitle(2000)).toBe("Club Master");
   });
 });
-

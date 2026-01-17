@@ -5,12 +5,11 @@
  */
 
 import type { ThemeContext, ThemeId } from "../types";
-import { Theme } from "../types";
 
 /**
  * Detect miscellaneous patterns in the given context.
  */
-export function detectOther(ctx: ThemeContext): ThemeId[] {
+export function detectOther(_ctx: ThemeContext): ThemeId[] {
   const tags: ThemeId[] = [];
 
   // TODO: Implement detection for:

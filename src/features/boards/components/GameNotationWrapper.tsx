@@ -1,7 +1,7 @@
 import { Portal, Stack } from "@mantine/core";
+import { useAtomValue } from "jotai";
 import React, { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useAtomValue } from "jotai";
 import GameNotation from "@/components/GameNotation";
 import MoveControls from "@/components/MoveControls";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
@@ -53,7 +53,7 @@ function GameNotationWrapper({
               sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
             }
           }
-        } catch (e) {
+        } catch (_e) {
           // Ignore parsing errors
         }
       }
@@ -109,7 +109,11 @@ function GameNotationWrapper({
   );
 
   const analysisContent = (
-    <Stack h={renderInline ? "auto" : "100%"} gap={positioning.gap} style={{ flexDirection: positioning.stackDirection }}>
+    <Stack
+      h={renderInline ? "auto" : "100%"}
+      gap={positioning.gap}
+      style={{ flexDirection: positioning.stackDirection }}
+    >
       {editingMode && editingCard ? (
         editingCard
       ) : hasCustomNotation ? (
@@ -129,8 +133,7 @@ function GameNotationWrapper({
     return analysisContent;
   }
 
-  const portalTarget =
-    typeof document !== "undefined" ? document.querySelector(positioning.portalTarget) : null;
+  const portalTarget = typeof document !== "undefined" ? document.querySelector(positioning.portalTarget) : null;
 
   if (!portalTarget) {
     return analysisContent;

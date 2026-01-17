@@ -1,8 +1,7 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "./test-utils";
-import WebsiteAccountSelector from "../components/PersonalCardPanels/WebsiteAccountSelector";
 import type { Session } from "@/utils/session";
+import WebsiteAccountSelector from "../components/PersonalCardPanels/WebsiteAccountSelector";
+import { render, screen, waitFor } from "./test-utils";
 
 // Mantine Select / Popover can rely on ResizeObserver in JSDOM
 beforeAll(() => {
@@ -22,7 +21,7 @@ vi.mock("jotai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("jotai")>();
   return {
     ...actual,
-    useAtomValue: (atom: any) => {
+    useAtomValue: (_atom: any) => {
       // This component only uses sessionsAtom, so we can safely return mockSessions
       // If we need to support other atoms in the future, we can add identification logic
       return mockSessions;
@@ -62,16 +61,20 @@ describe("WebsiteAccountSelector", () => {
     );
 
     expect(screen.getAllByText(/website/i).length).toBeGreaterThan(0);
-    
+
     // Wait for effects to fire (they run after render)
-    await waitFor(() => {
-      expect(onWebsiteChange).toHaveBeenCalled();
-    }, { timeout: 1000 });
-    
-    await waitFor(() => {
-      expect(onAccountChange).toHaveBeenCalled();
-    }, { timeout: 1000 });
+    await waitFor(
+      () => {
+        expect(onWebsiteChange).toHaveBeenCalled();
+      },
+      { timeout: 1000 },
+    );
+
+    await waitFor(
+      () => {
+        expect(onAccountChange).toHaveBeenCalled();
+      },
+      { timeout: 1000 },
+    );
   });
 });
-
-

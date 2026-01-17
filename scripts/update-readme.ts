@@ -1,6 +1,6 @@
 // @ts-nocheck
-import fs, { readFileSync } from "fs";
-import { join } from "path";
+import fs, { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const BASE_PATH = "./src/locales/en-US";
 
@@ -89,7 +89,7 @@ function calculateTranslationProgress(basePath: string, translatedPath: string):
     if (Object.keys(missingKeys).length > 0) {
       try {
         const outPath = join(translatedPath, "missing.json");
-        fs.writeFileSync(outPath, JSON.stringify(missingKeys, null, 2) + '\n', "utf-8");
+        fs.writeFileSync(outPath, `${JSON.stringify(missingKeys, null, 2)}\n`, "utf-8");
         console.log(`Missing keys written to ${outPath}`);
       } catch (err) {
         console.error("Error writing missing keys file:", err);

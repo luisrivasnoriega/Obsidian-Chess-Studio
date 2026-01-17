@@ -1,8 +1,8 @@
 import type { AppShellProps } from "@mantine/core";
+import { DEFAULT_THEME } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { type } from "@tauri-apps/plugin-os";
 import { useMemo } from "react";
-import { DEFAULT_THEME } from "@mantine/core";
 
 // Platform types
 export type Platform = "desktop" | "mobile" | "web";
@@ -142,7 +142,9 @@ export const useResponsiveLayout: () => {
 
     const safeTop = "max(env(safe-area-inset-top, 0px), 24px)";
     const headerHeight =
-      !isHeaderCollapsed && isTabletLayout && hasCoarsePointer ? `calc(${baseHeaderHeight} + ${safeTop})` : baseHeaderHeight;
+      !isHeaderCollapsed && isTabletLayout && hasCoarsePointer
+        ? `calc(${baseHeaderHeight} + ${safeTop})`
+        : baseHeaderHeight;
     const navbarWidth = isNavbarCollapsed ? "0rem" : "3rem";
     const footerHeight = isFooterCollapsed ? "0rem" : isPhoneLayout ? "3.75rem" : "3.25rem";
     const marginTop = isHeaderCollapsed && isPhoneLayout ? "3rem" : "0rem";
@@ -238,5 +240,5 @@ export const useResponsiveLayout: () => {
       mainContentHeight,
       performanceMetrics,
     };
-  }, [platform, smallScreenMax, mediumScreenMax, extraLargeScreenMax, largeScreenMax]);
+  }, [platform, smallScreenMax, mediumScreenMax, extraLargeScreenMax, largeScreenMax, hasCoarsePointer]);
 };

@@ -114,7 +114,7 @@ export function createPGNFromMoves(moves: string[], result: string, initialFen?:
       movesPairs.push(`${moveNumber}. ${whiteMove}`);
     }
   }
-  pgn += movesPairs.join(" ") + " " + result;
+  pgn += `${movesPairs.join(" ")} ${result}`;
   return pgn;
 }
 
@@ -156,7 +156,7 @@ export function createPgnFromLocalGame(game: GameRecord): string {
       movesPairs.push(`${moveNumber}. ${whiteMove}`);
     }
   }
-  pgn += movesPairs.join(" ") + " " + headers.result;
+  pgn += `${movesPairs.join(" ")} ${headers.result}`;
   return pgn;
 }
 
@@ -180,11 +180,11 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
   // Extract game ID from site or PGN (usually contains the game ID for Lichess)
   // Format: "https://lichess.org/{gameId}" or "https://lichess.org/game/{gameId}"
   let gameId = game.id.toString();
-  
+
   // First, try to extract from PGN Site header (most reliable)
   if (game.moves) {
     const siteMatch = game.moves.match(/\[Site\s+"([^"]+)"/);
-    if (siteMatch && siteMatch[1].includes("lichess.org")) {
+    if (siteMatch?.[1].includes("lichess.org")) {
       // Match: https://lichess.org/{gameId} or https://lichess.org/game/{gameId}
       // Lichess game IDs are alphanumeric, may contain underscores or hyphens
       const match = siteMatch[1].match(/lichess\.org\/(?:game\/)?([a-zA-Z0-9_-]+)/);
@@ -193,7 +193,7 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
       }
     }
   }
-  
+
   // Fallback to site field if PGN didn't have it
   if (gameId === game.id.toString() && game.site && game.site.includes("lichess.org/")) {
     const match = game.site.match(/lichess\.org\/(?:game\/)?([a-zA-Z0-9_-]+)/);
@@ -256,15 +256,15 @@ export function convertNormalizedToChessComGame(game: NormalizedGame): ChessComG
   // Extract game URL from site or PGN (usually contains the game URL for Chess.com)
   // Format: "https://www.chess.com/game/live/{gameId}" or similar
   let url = `https://www.chess.com/game/live/${game.id}`;
-  
+
   // First, try to extract from PGN Site header (most reliable)
   if (game.moves) {
     const siteMatch = game.moves.match(/\[Site\s+"([^"]+)"/);
-    if (siteMatch && siteMatch[1].includes("chess.com")) {
+    if (siteMatch?.[1].includes("chess.com")) {
       url = siteMatch[1];
     }
   }
-  
+
   // Fallback to site field if PGN didn't have it
   // Note: In our profile DB, `Sites.Name` can be a label like "Chess.com" (not a URL).
   // Only treat it as a URL if it actually looks like one.

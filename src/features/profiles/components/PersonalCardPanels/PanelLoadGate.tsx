@@ -14,7 +14,13 @@ type PanelLoadGateProps = {
  * - While loading with NO data: show a centered loader (blocking).
  * - While fetching WITH data: show a small banner but keep rendering the content (non-blocking).
  */
-export function PanelLoadGate({ isLoading = false, isFetching = false, hasData, message, children }: PanelLoadGateProps) {
+export function PanelLoadGate({
+  isLoading = false,
+  isFetching = false,
+  hasData,
+  message,
+  children,
+}: PanelLoadGateProps) {
   const visible = isLoading || isFetching;
 
   if (visible && !hasData) {
@@ -28,5 +34,3 @@ export function PanelLoadGate({ isLoading = false, isFetching = false, hasData, 
     </>
   );
 }
-
-

@@ -5,14 +5,12 @@
 
 import { Chess } from "chessops/chess";
 import { parseFen } from "chessops/fen";
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherCaptures } from "./utils";
 
 export function detectTrappedPiece(ctx: ThemeContext): ThemeId[] {
   const tags: ThemeId[] = [];
-  const captures = getPunisherCaptures(ctx).filter(
-    (event) => event.capture && event.capture.color === ctx.playerColor,
-  );
+  const captures = getPunisherCaptures(ctx).filter((event) => event.capture && event.capture.color === ctx.playerColor);
   for (const event of captures) {
     let pos: any;
     try {

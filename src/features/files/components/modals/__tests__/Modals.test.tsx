@@ -1,6 +1,4 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import * as Modals from "../../modals/Modals";
 
 beforeAll(() => {
@@ -24,4 +22,3 @@ describe("Modals", () => {
     expect(Modals).toBeDefined();
   });
 });
-

@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { act, render, screen } from "./test-utils";
 import DashboardPage from "../DashboardPage";
+import { act, render } from "./test-utils";
 
 // -----------------------------
 // Mocks
@@ -176,19 +175,19 @@ describe("DashboardPage", () => {
   test("renders without crashing", async () => {
     // Use fake timers to control setTimeout calls in the component
     vi.useFakeTimers();
-    
+
     try {
       let container: HTMLElement;
-      
+
       // Wrap render in act() to handle async state updates
       await act(async () => {
         const result = render(<DashboardPage />);
         container = result.container;
-        
+
         // Fast-forward through any setTimeout calls (e.g., the 50ms delay in loadGamesFromProfileDatabase)
         await vi.advanceTimersByTimeAsync(100);
       });
-      
+
       // Basic smoke test - component should render
       expect(container!).toBeTruthy();
       expect(document.body).toBeTruthy();
@@ -197,4 +196,3 @@ describe("DashboardPage", () => {
     }
   });
 });
-

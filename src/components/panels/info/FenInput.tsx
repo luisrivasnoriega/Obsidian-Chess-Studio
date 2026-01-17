@@ -44,7 +44,10 @@ function getCastlingRights(setup: Setup) {
 
 function FenInput({ currentFen }: { currentFen: string }) {
   const { t } = useTranslation();
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("FenInput must be used within TreeStateProvider");
+  }
   const setFen = useStore(store, (s) => s.setFen);
 
   const [setup, error] = useMemo(
@@ -56,29 +59,31 @@ function FenInput({ currentFen }: { currentFen: string }) {
     [currentFen],
   );
 
-  if (!setup) {
-    return <Text>{error.message}</Text>;
-  }
-
-  const { whiteCastling, blackCastling } = useMemo(() => getCastlingRights(setup), [setup]);
+  const { whiteCastling, blackCastling } = useMemo(() => {
+    if (!setup) return { whiteCastling: { q: false, k: false }, blackCastling: { q: false, k: false } };
+    return getCastlingRights(setup);
+  }, [setup]);
 
   const setCastlingRights = useCallback(
     (color: "w" | "b", side: "q" | "k", value: boolean) => {
-      if (setup) {
-        const castlingSquare = getCastlingSquare(setup, color, side);
-        const kingPos = setup.board[color === "w" ? "white" : "black"].intersect(setup.board.king).singleSquare();
-        const initialKingPos = color === "w" ? 4 : 60;
+      if (!setup) return;
+      const castlingSquare = getCastlingSquare(setup, color, side);
+      const kingPos = setup.board[color === "w" ? "white" : "black"].intersect(setup.board.king).singleSquare();
+      const initialKingPos = color === "w" ? 4 : 60;
 
-        if (castlingSquare !== undefined && kingPos === initialKingPos) {
-          const newCastlingRights = value
-            ? setup.castlingRights.with(castlingSquare)
-            : setup.castlingRights.without(castlingSquare);
-          setFen(makeFen({ ...setup, castlingRights: newCastlingRights }));
-        }
+      if (castlingSquare !== undefined && kingPos === initialKingPos) {
+        const newCastlingRights = value
+          ? setup.castlingRights.with(castlingSquare)
+          : setup.castlingRights.without(castlingSquare);
+        setFen(makeFen({ ...setup, castlingRights: newCastlingRights }));
       }
     },
     [setup, setFen],
   );
+
+  if (!setup) {
+    return <Text>{error.message}</Text>;
+  }
 
   return (
     <Stack gap="sm">

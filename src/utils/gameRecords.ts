@@ -2,7 +2,6 @@ import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { error, info } from "@tauri-apps/plugin-log";
 import { getGameStats, parsePGN } from "@/utils/chess";
-import { calculateEstimatedElo } from "@/utils/eloEstimation";
 
 export interface GameRecord {
   id: string;

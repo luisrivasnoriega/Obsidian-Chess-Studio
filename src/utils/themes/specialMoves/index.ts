@@ -5,7 +5,7 @@
  * variation can produce multiple special move tags.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 
 export function detectSpecialMoves(ctx: ThemeContext): ThemeId[] {
   const tags: ThemeId[] = [];

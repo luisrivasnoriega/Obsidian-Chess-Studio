@@ -10,4 +10,3 @@ export type VariantInfo = {
   variantsCount: number | null;
   comments: string | null;
 };
-

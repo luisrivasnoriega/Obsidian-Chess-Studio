@@ -6,7 +6,7 @@
  * focuses on material swing alone.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherCaptures, getPunisherMoves, isImmediatePunishCapture } from "./utils";
 
 export function detectHangingPiece(ctx: ThemeContext): ThemeId[] {
@@ -15,9 +15,7 @@ export function detectHangingPiece(ctx: ThemeContext): ThemeId[] {
   if (materialGain <= 0) return tags;
 
   const punisherMoves = getPunisherMoves(ctx);
-  const captures = getPunisherCaptures(ctx).filter(
-    (event) => event.capture && event.capture.color === ctx.playerColor,
-  );
+  const captures = getPunisherCaptures(ctx).filter((event) => event.capture && event.capture.color === ctx.playerColor);
   if (!punisherMoves.length || !captures.length) return tags;
 
   if (isImmediatePunishCapture(ctx)) {

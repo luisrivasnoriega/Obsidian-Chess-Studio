@@ -1,6 +1,6 @@
 import { useEffect } from "react";
-import { IS_DEV } from "@/config";
 import { events } from "@/bindings";
+import { IS_DEV } from "@/config";
 import { logger } from "@/utils/logger";
 
 type Unlisten = () => void;

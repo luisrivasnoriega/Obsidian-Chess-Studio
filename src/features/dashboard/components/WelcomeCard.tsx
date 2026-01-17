@@ -212,12 +212,7 @@ export function WelcomeCard({
 
             {/* Action buttons */}
             <Group gap="xs" mt="xs" wrap={isCompact ? "wrap" : "nowrap"}>
-              <Button
-                radius="md"
-                onClick={onPlayChess}
-                leftSection={<IconChess size={18} />}
-                fullWidth={isCompact}
-              >
+              <Button radius="md" onClick={onPlayChess} leftSection={<IconChess size={18} />} fullWidth={isCompact}>
                 {t("features.dashboard.cards.playChess.button")}
               </Button>
               <Button

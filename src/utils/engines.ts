@@ -409,57 +409,57 @@ const ENGINES = [
     path: "koivisto/Koivisto_8.0-x64-windows-sse2.exe",
     elo: 3500,
   },
-// Koivisto (Linux AVX2)
-{
-  name: "Koivisto",
-  version: "8.0",
-  os: "linux",
-  bmi2: true,
-  image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
-  installMethod: "download" as const,
-  downloadLink: "https://github.com/Luecx/Koivisto/releases/download/v8.0/Koivisto_8.0-x64-linux-avx2",
-  path: "koivisto/Koivisto_8.0-x64-linux-avx2",
-  elo: 3500,
-},
+  // Koivisto (Linux AVX2)
+  {
+    name: "Koivisto",
+    version: "8.0",
+    os: "linux",
+    bmi2: true,
+    image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
+    installMethod: "download" as const,
+    downloadLink: "https://github.com/Luecx/Koivisto/releases/download/v8.0/Koivisto_8.0-x64-linux-avx2",
+    path: "koivisto/Koivisto_8.0-x64-linux-avx2",
+    elo: 3500,
+  },
 
-// Clover (Windows-only release binary)
-{
-  name: "Clover",
-  version: "9.1",
-  os: "windows",
-  bmi2: true,
-  image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
-  installMethod: "download" as const,
-  downloadLink: "https://github.com/lucametehau/CloverEngine/releases/download/v9.1/Clover.9.1-avx2.exe",
-  path: "clover/Clover.9.1-avx2.exe",
-  elo: 0,
-},
+  // Clover (Windows-only release binary)
+  {
+    name: "Clover",
+    version: "9.1",
+    os: "windows",
+    bmi2: true,
+    image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
+    installMethod: "download" as const,
+    downloadLink: "https://github.com/lucametehau/CloverEngine/releases/download/v9.1/Clover.9.1-avx2.exe",
+    path: "clover/Clover.9.1-avx2.exe",
+    elo: 0,
+  },
 
-// Obsidian (Windows-only release binary)
-{
-  name: "Obsidian",
-  version: "16.0",
-  os: "windows",
-  bmi2: true,
-  image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
-  installMethod: "download" as const,
-  downloadLink: "https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian_16.0_avx2.exe",
-  path: "obsidian/Obsidian_16.0_avx2.exe",
-  elo: 0,
-},
+  // Obsidian (Windows-only release binary)
+  {
+    name: "Obsidian",
+    version: "16.0",
+    os: "windows",
+    bmi2: true,
+    image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
+    installMethod: "download" as const,
+    downloadLink: "https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian_16.0_avx2.exe",
+    path: "obsidian/Obsidian_16.0_avx2.exe",
+    elo: 0,
+  },
 
-// Berserk (Windows-only release binary)
-{
-  name: "Berserk",
-  version: "13",
-  os: "windows",
-  bmi2: true,
-  image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
-  installMethod: "download" as const,
-  downloadLink: "https://github.com/jhonnold/berserk/releases/download/13/berserk-13-avx2.exe",
-  path: "berserk/berserk-13-avx2.exe",
-  elo: 0,
-},
+  // Berserk (Windows-only release binary)
+  {
+    name: "Berserk",
+    version: "13",
+    os: "windows",
+    bmi2: true,
+    image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
+    installMethod: "download" as const,
+    downloadLink: "https://github.com/jhonnold/berserk/releases/download/13/berserk-13-avx2.exe",
+    path: "berserk/berserk-13-avx2.exe",
+    elo: 0,
+  },
 
   {
     name: "Koivisto",
@@ -603,15 +603,12 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
     queryFn: async () => {
       const bmi2: boolean = await commands.isBmi2Compatible();
       const normalizedOs = normalizeEngineOs(os);
-      const shouldFilterByBmi2 =
-        normalizedOs === "windows" || normalizedOs === "macos" || normalizedOs === "linux";
+      const shouldFilterByBmi2 = normalizedOs === "windows" || normalizedOs === "macos" || normalizedOs === "linux";
       const osMatches = normalizedOs
         ? ENGINES.filter((e) => e.os === normalizedOs && (!shouldFilterByBmi2 || e.bmi2 === bmi2))
         : [];
       const androidDefault =
-        normalizedOs === "android"
-          ? osMatches.find((engine) => engine.bmi2 === false) ?? osMatches[0]
-          : null;
+        normalizedOs === "android" ? (osMatches.find((engine) => engine.bmi2 === false) ?? osMatches[0]) : null;
       const availableEngines =
         osMatches.length > 0 || normalizedOs !== null
           ? androidDefault

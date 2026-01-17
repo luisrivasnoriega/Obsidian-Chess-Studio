@@ -12,7 +12,7 @@ type Options = {
 export function useSimulatedInit(options: Options = {}) {
   const { delayMs = 50, onRetry } = options;
 
-  const [runId, setRunId] = useState(0);
+  const [_runId, setRunId] = useState(0);
   const [isInitializing, setIsInitializing] = useState(true);
   const [initializationError, setInitializationError] = useState<Error | null>(null);
 
@@ -31,7 +31,7 @@ export function useSimulatedInit(options: Options = {}) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [delayMs, runId]);
+  }, [delayMs]);
 
   const retry = useCallback(() => {
     setInitializationError(null);
@@ -41,4 +41,3 @@ export function useSimulatedInit(options: Options = {}) {
 
   return { isInitializing, initializationError, retry, setInitializationError };
 }
-

@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Box, Divider, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
+import { ActionIcon, Badge, Box, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { IconEdit, IconEye, IconTrash } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";

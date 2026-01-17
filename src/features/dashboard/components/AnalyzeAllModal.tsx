@@ -136,7 +136,11 @@ export function AnalyzeAllModal({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, analyzeMode]);
+  }, [
+    opened,
+    analyzeMode, // Reset form to initial values when modal opens
+    form.setValues,
+  ]);
 
   return (
     <Modal opened={opened} onClose={onClose} title={t("features.dashboard.analyzeAllGames")} size="md">

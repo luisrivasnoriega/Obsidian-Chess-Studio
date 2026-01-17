@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import TimeControlSelector from "../components/PersonalCardPanels/TimeControlSelector";
+import { render, screen } from "./test-utils";
 
 // Mantine Select / Popover can rely on ResizeObserver in JSDOM
 beforeAll(() => {
@@ -28,5 +27,3 @@ describe("TimeControlSelector", () => {
     expect(screen.getAllByText(/time control/i).length).toBeGreaterThan(0);
   });
 });
-
-

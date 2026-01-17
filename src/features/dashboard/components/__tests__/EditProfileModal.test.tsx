@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { EditProfileModal } from "../../components/EditProfileModal";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -32,7 +31,7 @@ describe("EditProfileModal", () => {
         currentFideId=""
         currentDisplayName=""
         currentLichessToken=""
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
@@ -46,9 +45,8 @@ describe("EditProfileModal", () => {
         currentFideId=""
         currentDisplayName=""
         currentLichessToken=""
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

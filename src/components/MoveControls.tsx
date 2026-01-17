@@ -144,23 +144,23 @@ function MoveControls({
     if (nextIntervalRef.current !== null) {
       return;
     }
-    
+
     // First call: execute immediately with sound
     nextRaw(true); // Play sound on first call
-    
+
     // Start interval for subsequent calls (key held down)
     // Use requestAnimationFrame with progressive acceleration for smoother experience
     let lastTime = performance.now();
     let interval = 50; // Start with 50ms interval
     let moveCount = 0;
-    
-    const animate = (timestamp: number) => {
+
+    const animate = (_timestamp: number) => {
       const now = performance.now();
       if (now - lastTime >= interval) {
         nextRaw(false); // No sound during rapid navigation
         lastTime = now;
         moveCount++;
-        
+
         // Progressive acceleration: speed up after initial moves
         // Start at 50ms, accelerate to 25ms after 5 moves, then to 20ms after 10 moves
         if (moveCount === 5) {
@@ -171,12 +171,12 @@ function MoveControls({
           interval = 20; // Maximum speed
         }
       }
-      
+
       if (nextIntervalRef.current !== null) {
         nextIntervalRef.current = requestAnimationFrame(animate);
       }
     };
-    
+
     // Small delay before starting rapid navigation to distinguish single click from hold
     // Only start rapid navigation if the key is still held (timeout not cleared means key was released)
     nextTimeoutRef.current = window.setTimeout(() => {
@@ -194,23 +194,23 @@ function MoveControls({
     if (previousIntervalRef.current !== null) {
       return;
     }
-    
+
     // First call: execute immediately
     previousRaw();
-    
+
     // Start interval for subsequent calls (key held down)
     // Use requestAnimationFrame with progressive acceleration for smoother experience
     let lastTime = performance.now();
     let interval = 50; // Start with 50ms interval
     let moveCount = 0;
-    
-    const animate = (timestamp: number) => {
+
+    const animate = (_timestamp: number) => {
       const now = performance.now();
       if (now - lastTime >= interval) {
         previousRaw();
         lastTime = now;
         moveCount++;
-        
+
         // Progressive acceleration: speed up after initial moves
         // Start at 50ms, accelerate to 30ms after 5 moves, then to 25ms after 10 moves
         if (moveCount === 5) {
@@ -221,12 +221,12 @@ function MoveControls({
           interval = 20; // Maximum speed
         }
       }
-      
+
       if (previousIntervalRef.current !== null) {
         previousIntervalRef.current = requestAnimationFrame(animate);
       }
     };
-    
+
     // Small delay before starting rapid navigation to distinguish single click from hold
     // Only start rapid navigation if the key is still held (timeout not cleared means key was released)
     previousTimeoutRef.current = window.setTimeout(() => {
@@ -265,14 +265,14 @@ function MoveControls({
     // Use capture phase to catch events early
     window.addEventListener("keyup", handleKeyUp, true);
     window.addEventListener("keydown", handleKeyDown, true);
-    
+
     // Also listen for blur events (when window loses focus) to stop navigation
     const handleBlur = () => {
       stopNextNavigation();
       stopPreviousNavigation();
     };
     window.addEventListener("blur", handleBlur);
-    
+
     return () => {
       window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("keydown", handleKeyDown, true);

@@ -35,7 +35,10 @@ type DataPoint = {
 function EvalChart(props: EvalChartProps) {
   const { t } = useTranslation();
 
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("EvalChart must be used within TreeStateProvider");
+  }
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
   const goToMove = useStore(store, (s) => s.goToMove);
@@ -125,11 +128,16 @@ function EvalChart(props: EvalChartProps) {
     return dataMax / (dataMax - dataMin);
   }
 
-  const data = [...getData()];
+  const [chartType, setChartType] = useAtom(reportTypeAtom);
+  const reportType = chartType;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: getData is a generator function that depends on root, position, reportType, and theme internally
+  const data = useMemo(() => [...getData()], [root, position, reportType, theme]);
 
   const onChartClick: CategoricalChartFunc = useCallback(
+    // biome-ignore lint/suspicious/noExplicitAny: Recharts event type is complex and not fully typed
     (event: any) => {
-      if (event.activeLabel) {
+      if (event?.activeLabel) {
         const match = data.find((d) => d.name === event.activeLabel);
         if (match) goToMove(match.movePath);
       }
@@ -139,8 +147,6 @@ function EvalChart(props: EvalChartProps) {
 
   const currentPositionName = data.find((point) => equal(point.movePath, position))?.name;
   const colouroffset = gradientOffset(data);
-
-  const [chartType, setChartType] = useAtom(reportTypeAtom);
 
   const isWDLDisabled = useMemo(() => {
     return !data.some((point) => point.White !== 0 || point.Black !== 0 || point.Draw !== 0);
@@ -242,7 +248,16 @@ function EvalChart(props: EvalChartProps) {
   );
 }
 
-function CustomTooltip({ active, payload, type }: { active?: boolean; payload: any; type: "cp" | "wdl" }) {
+function CustomTooltip({
+  active,
+  payload,
+  type,
+}: {
+  active?: boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: Recharts payload type is complex and not fully typed
+  payload: any;
+  type: "cp" | "wdl";
+}) {
   if (active && payload && payload.length && payload[0].payload) {
     const dataPoint: DataPoint = payload[0].payload;
     return (

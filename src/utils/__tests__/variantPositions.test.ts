@@ -1,5 +1,5 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { getVariantPosition, upsertVariantPosition, type VariantPosition } from "@/utils/variantPositions";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { getVariantPosition, upsertVariantPosition } from "@/utils/variantPositions";
 
 // Mock Tauri invoke
 vi.mock("@tauri-apps/api/core", () => ({
@@ -104,12 +104,7 @@ describe("variantPositions", () => {
   describe("upsertVariantPosition", () => {
     test("should call invoke with correct parameters using number", async () => {
       vi.mocked(invoke).mockResolvedValue(undefined);
-      await upsertVariantPosition(
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "engine1",
-        "e2e4",
-        1000,
-      );
+      await upsertVariantPosition("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "engine1", "e2e4", 1000);
       expect(invoke).toHaveBeenCalledWith("upsert_variant_position", {
         fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
         engine: "engine1",
@@ -138,12 +133,7 @@ describe("variantPositions", () => {
     test("should not pass BigInt to avoid serialization error", async () => {
       vi.mocked(invoke).mockResolvedValue(undefined);
       const ms = 1000;
-      await upsertVariantPosition(
-        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        "engine1",
-        "e2e4",
-        ms,
-      );
+      await upsertVariantPosition("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "engine1", "e2e4", ms);
       const callArgs = vi.mocked(invoke).mock.calls[0];
       const msValue = (callArgs[1] as any).ms;
       // Verify it's a number, not BigInt
@@ -159,7 +149,7 @@ describe("variantPositions", () => {
       const trimmedFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
       const engineKey = "/path/to/engine";
       const cachedMove = "e2e4";
-      const cachedMs = 800; // This is a number from getVariantPosition
+      const _cachedMs = 800; // This is a number from getVariantPosition
 
       // First, mock getVariantPosition returning a cached result
       vi.mocked(invoke).mockResolvedValueOnce({
@@ -181,11 +171,9 @@ describe("variantPositions", () => {
       if (cached) {
         await upsertVariantPosition(trimmedFen, engineKey, cached.recommended_move, cached.ms);
         // Verify the upsert was called with a number, not BigInt
-        const upsertCall = vi.mocked(invoke).mock.calls.find(
-          (call) => call[0] === "upsert_variant_position",
-        );
+        const upsertCall = vi.mocked(invoke).mock.calls.find((call) => call[0] === "upsert_variant_position");
         expect(upsertCall).toBeDefined();
-        const msValue = (upsertCall![1] as any).ms;
+        const msValue = (upsertCall?.[1] as any).ms;
         expect(typeof msValue).toBe("number");
         expect(msValue).toBe(800);
       }
@@ -212,10 +200,3 @@ describe("variantPositions", () => {
     });
   });
 });
-
-
-
-
-
-
-

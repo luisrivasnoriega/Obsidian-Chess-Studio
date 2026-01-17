@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import TimeRangeSlider from "../components/PersonalCardPanels/TimeRangeSlider";
+import { render, screen } from "./test-utils";
 
 // Mock RangeSlider to make interaction deterministic in JSDOM
 vi.mock("@mantine/core", async (importOriginal) => {
@@ -11,7 +11,18 @@ vi.mock("@mantine/core", async (importOriginal) => {
     RangeSlider: (props: any) => (
       <div
         data-testid="range-slider"
+        role="slider"
+        tabIndex={0}
+        aria-valuenow={0}
+        aria-valuemin={0}
+        aria-valuemax={props.max ?? 0}
         onClick={() => props.onChange?.([0, Math.min(2, props.max ?? 0)])}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            props.onChange?.([0, Math.min(2, props.max ?? 0)]);
+          }
+        }}
       >
         RangeSlider
       </div>
@@ -39,5 +50,3 @@ describe("TimeRangeSlider", () => {
     expect(onDateRangeChange).toHaveBeenCalledWith({ start: 0, end: 2 });
   });
 });
-
-

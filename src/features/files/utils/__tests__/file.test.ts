@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from "vitest";
-import { FILE_TYPES, FILE_TYPE_LABELS, type FileType } from "../file";
+import { describe, expect, test } from "vitest";
+import { FILE_TYPE_LABELS, FILE_TYPES } from "../file";
 
 describe("file utils", () => {
   describe("FILE_TYPE_LABELS", () => {
@@ -26,4 +26,3 @@ describe("file utils", () => {
     });
   });
 });
-

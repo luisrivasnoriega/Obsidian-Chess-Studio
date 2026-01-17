@@ -59,7 +59,7 @@ export function ensurePieceSetCss(pieceSet: string, options: ApplyOptions = {}):
     // If it's already active and caller wants it applied, we are done.
     if (!preloadOnly) {
       const activeHref = getActiveHref();
-      if (activeHref && activeHref.endsWith(href)) {
+      if (activeHref?.endsWith(href)) {
         resolve();
         return;
       }

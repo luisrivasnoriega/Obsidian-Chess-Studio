@@ -1,5 +1,5 @@
-import { style } from "@vanilla-extract/css";
 import { DEFAULT_THEME } from "@mantine/core";
+import { style } from "@vanilla-extract/css";
 import { vars } from "@/styles/theme";
 
 export const link = style({

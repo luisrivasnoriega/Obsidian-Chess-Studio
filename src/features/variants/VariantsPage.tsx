@@ -7,17 +7,17 @@ import {
   Center,
   Code,
   Group,
-  Loader,
   Modal,
   Stack,
   Text,
-  TextInput,
   Textarea,
+  TextInput,
   Tooltip,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useDisclosure } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
+import { notifications } from "@mantine/notifications";
 import { IconEdit, IconEye, IconGitBranch, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -27,14 +27,12 @@ import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { loadDirectories } from "@/App";
-import GenericHeader, { type SortState } from "@/components/GenericHeader";
+import GenericHeader from "@/components/GenericHeader";
+import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { processEntriesRecursively, type FileMetadata } from "@/features/files/utils/file";
-import { createTab } from "@/utils/tabs";
-import { createFile, openFile } from "@/utils/files";
-import { notifications } from "@mantine/notifications";
 import { defaultPGN, parsePGN } from "@/utils/chess";
+import { createFile, openFile } from "@/utils/files";
 import { VariantGridView } from "./components/VariantGridView";
 import type { VariantInfo } from "./types";
 
@@ -67,17 +65,51 @@ async function loadVariants(): Promise<VariantInfo[]> {
       const gameTree = await parsePGN(firstGame);
 
       const tags = file.metadata.tags || [];
-      
+
       // Priority: metadata tags > PGN headers
-      const openingTag = tags.find((tag) => tag.startsWith("opening:"))?.slice("opening:".length).trim();
-      const fenTag = tags.find((tag) => tag.startsWith("fen:"))?.slice("fen:".length).trim();
-      const depth = tags.find((tag) => tag.startsWith("depth:"))?.slice("depth:".length).trim() || null;
-      const database = tags.find((tag) => tag.startsWith("database:"))?.slice("database:".length).trim() || null;
-      const engine = tags.find((tag) => tag.startsWith("engine:"))?.slice("engine:".length).trim() || null;
-      const engineMs = tags.find((tag) => tag.startsWith("engineMs:"))?.slice("engineMs:".length).trim() || null;
-      const variantsCount = tags.find((tag) => tag.startsWith("variantsCount:"))?.slice("variantsCount:".length).trim() || null;
-      const commentsTag = tags.find((tag) => tag.startsWith("comments:"))?.slice("comments:".length).trim() || null;
-      const referencesTag = tags.find((tag) => tag.startsWith("references:"))?.slice("references:".length).trim() || null;
+      const openingTag = tags
+        .find((tag) => tag.startsWith("opening:"))
+        ?.slice("opening:".length)
+        .trim();
+      const fenTag = tags
+        .find((tag) => tag.startsWith("fen:"))
+        ?.slice("fen:".length)
+        .trim();
+      const depth =
+        tags
+          .find((tag) => tag.startsWith("depth:"))
+          ?.slice("depth:".length)
+          .trim() || null;
+      const database =
+        tags
+          .find((tag) => tag.startsWith("database:"))
+          ?.slice("database:".length)
+          .trim() || null;
+      const engine =
+        tags
+          .find((tag) => tag.startsWith("engine:"))
+          ?.slice("engine:".length)
+          .trim() || null;
+      const engineMs =
+        tags
+          .find((tag) => tag.startsWith("engineMs:"))
+          ?.slice("engineMs:".length)
+          .trim() || null;
+      const variantsCount =
+        tags
+          .find((tag) => tag.startsWith("variantsCount:"))
+          ?.slice("variantsCount:".length)
+          .trim() || null;
+      const commentsTag =
+        tags
+          .find((tag) => tag.startsWith("comments:"))
+          ?.slice("comments:".length)
+          .trim() || null;
+      const referencesTag =
+        tags
+          .find((tag) => tag.startsWith("references:"))
+          ?.slice("references:".length)
+          .trim() || null;
       const comments = commentsTag || referencesTag || null;
 
       // Fallback to PGN-derived headers if metadata tags don't exist
@@ -107,7 +139,7 @@ async function loadVariants(): Promise<VariantInfo[]> {
 export default function VariantsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [tabs, setTabs] = useAtom(tabsAtom);
+  const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
   const { layout } = useResponsiveLayout();
 
@@ -143,7 +175,8 @@ export default function VariantsPage() {
       name: "",
     },
     validate: {
-      name: (value) => (value.trim().length === 0 ? t("features.variants.nameRequired", { defaultValue: "Name is required" }) : null),
+      name: (value) =>
+        value.trim().length === 0 ? t("features.variants.nameRequired", { defaultValue: "Name is required" }) : null,
     },
   });
 
@@ -159,7 +192,7 @@ export default function VariantsPage() {
       const documentsDir = dirs.documentDir;
 
       let filename = createNewForm.values.name.trim();
-      
+
       if (!filename) {
         notifications.show({
           title: t("common.error"),
@@ -171,11 +204,13 @@ export default function VariantsPage() {
 
       // Sanitize filename: remove invalid characters for file names
       filename = filename.replace(/[<>:"/\\|?*]/g, "").trim();
-      
+
       if (!filename) {
         notifications.show({
           title: t("common.error"),
-          message: t("features.variants.invalidName", { defaultValue: "Invalid file name. Please use only valid characters." }),
+          message: t("features.variants.invalidName", {
+            defaultValue: "Invalid file name. Please use only valid characters.",
+          }),
           color: "red",
         });
         return;
@@ -201,7 +236,7 @@ export default function VariantsPage() {
       } else {
         const error = result.error;
         console.error("Create file error details:", { error, type: typeof error, isError: error instanceof Error });
-        
+
         let errorMessage: string;
         if (error instanceof Error) {
           errorMessage = error.message || error.toString();
@@ -219,9 +254,10 @@ export default function VariantsPage() {
       }
     } catch (error) {
       console.error("Unexpected error creating variant:", error);
-      const errorMessage = error instanceof Error 
-        ? error.message 
-        : String(error) || t("features.variants.createError", { defaultValue: "Failed to create variant" });
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : String(error) || t("features.variants.createError", { defaultValue: "Failed to create variant" });
       notifications.show({
         title: t("common.error"),
         message: errorMessage,
@@ -253,7 +289,7 @@ export default function VariantsPage() {
     try {
       const infoPath = selectedVariantForComments.path.replace(".pgn", ".info");
       const metadata = JSON.parse(await readTextFile(infoPath));
-      
+
       // Remove old comments/references tags
       metadata.tags = (metadata.tags || []).filter(
         (tag: string) => !tag.startsWith("comments:") && !tag.startsWith("references:"),
@@ -273,7 +309,7 @@ export default function VariantsPage() {
       });
       await refetch();
       closeEditCommentsModal();
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error"),
         message: t("features.variants.commentsSaveError", { defaultValue: "Failed to save comments" }),
@@ -311,7 +347,7 @@ export default function VariantsPage() {
               color: "green",
             });
             await refetch();
-          } catch (error) {
+          } catch (_error) {
             notifications.show({
               title: t("common.error"),
               message: t("features.variants.deleteError", { defaultValue: "Failed to delete variant" }),
@@ -332,10 +368,10 @@ export default function VariantsPage() {
       filtered = filtered.filter(
         (v) =>
           v.name.toLowerCase().includes(searchLower) ||
-          (v.opening && v.opening.toLowerCase().includes(searchLower)) ||
-          (v.database && v.database.toLowerCase().includes(searchLower)) ||
-          (v.engine && v.engine.toLowerCase().includes(searchLower)) ||
-          (v.comments && v.comments.toLowerCase().includes(searchLower)) ||
+          v.opening?.toLowerCase().includes(searchLower) ||
+          v.database?.toLowerCase().includes(searchLower) ||
+          v.engine?.toLowerCase().includes(searchLower) ||
+          v.comments?.toLowerCase().includes(searchLower) ||
           (v.engineMs !== null && String(v.engineMs).includes(searchLower)) ||
           (v.variantsCount !== null && String(v.variantsCount).includes(searchLower)),
       );
@@ -410,7 +446,13 @@ export default function VariantsPage() {
         variant.fen ? (
           <Code
             fz="xs"
-            style={{ maxWidth: 300, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            style={{
+              maxWidth: 300,
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
           >
             {variant.fen}
           </Code>
@@ -471,9 +513,7 @@ export default function VariantsPage() {
       sortable: true,
       render: (variant: VariantInfo) =>
         variant.engineMs !== null ? (
-          <Text size="sm">
-            {variant.engineMs}
-          </Text>
+          <Text size="sm">{variant.engineMs}</Text>
         ) : (
           <Text size="sm" c="dimmed" fs="italic">
             -
@@ -567,11 +607,7 @@ export default function VariantsPage() {
         setViewMode={setViewMode}
         pageKey="variants"
         actions={
-          <Button
-            size="xs"
-            leftSection={<IconPlus size="1rem" />}
-            onClick={openCreateNewModal}
-          >
+          <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateNewModal}>
             {t("features.variants.createNew", { defaultValue: "Create New" })}
           </Button>
         }

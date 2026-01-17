@@ -547,7 +547,7 @@ function BoardGame() {
           },
         };
       }
-    } catch (e) {
+    } catch (_e) {
       // Failed to load game settings
     }
     return {
@@ -578,7 +578,7 @@ function BoardGame() {
     }) => {
       try {
         localStorage.setItem("boardGameSettings", JSON.stringify(settings));
-      } catch (e) {
+      } catch (_e) {
         // Failed to save game settings
       }
     },
@@ -677,7 +677,7 @@ function BoardGame() {
   const setFen = useStore(store, (s) => s.setFen);
   const setHeaders = useStore(store, (s) => s.setHeaders);
   const setResult = useStore(store, (s) => s.setResult);
-  const appendMove = useStore(store, (s) => s.appendMove);
+  const _appendMove = useStore(store, (s) => s.appendMove);
 
   const [tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
@@ -718,7 +718,7 @@ function BoardGame() {
   // Memoize expensive calculations based on stable primitive values (root.fen, variant)
   // This prevents recalculation during engine analysis when only scores/annotations change
   // Extract primitive values for stable dependency tracking
-  const rootFen = root.fen;
+  const _rootFen = root.fen;
   const variant = headers.variant;
 
   // Use rootFen as dependency instead of entire root object to avoid recalculation
@@ -727,20 +727,20 @@ function BoardGame() {
   // React optimize by providing a stable primitive value to compare
   const mainLine = useMemo(() => {
     return Array.from(treeIteratorMainLine(root));
-  }, [root, rootFen]); // Recalculate when root.fen changes (new position), not on every tree mutation
+  }, [root]); // Recalculate when root.fen changes (new position), not on every tree mutation
 
   const lastNode = useMemo(() => mainLine[mainLine.length - 1]?.node, [mainLine]);
-  const moves = useMemo(() => {
+  const _moves = useMemo(() => {
     return getMainLine(root, variant === "Chess960");
-  }, [root, rootFen, variant]); // Recalculate only when root.fen or variant changes
+  }, [root, variant]); // Recalculate only when root.fen or variant changes
 
   // Use root and position to ensure pos updates when moves are made
-  const position = useStore(store, (s) => s.position);
+  const _position = useStore(store, (s) => s.position);
   // Memoize position calculation - only recalculate when lastNode.fen changes
   const [pos, error] = useMemo(() => {
     if (!lastNode) return [null, null];
     return positionFromFen(lastNode.fen);
-  }, [lastNode?.fen]);
+  }, [lastNode?.fen, lastNode]);
 
   const activeTabData = tabs?.find((tab) => tab.value === activeTab);
 
@@ -850,8 +850,8 @@ function BoardGame() {
     if (activeTab) {
       // Kill engines asynchronously without blocking
       Promise.all([
-        commands.killEngines(activeTab + "white").catch(() => {}),
-        commands.killEngines(activeTab + "black").catch(() => {}),
+        commands.killEngines(`${activeTab}white`).catch(() => {}),
+        commands.killEngines(`${activeTab}black`).catch(() => {}),
         commands.killEngines(activeTab).catch(() => {}),
       ]).catch(() => {});
     }
@@ -937,6 +937,8 @@ function BoardGame() {
     setHeaders,
     setPlayers,
     setTabs,
+    setBlackTime,
+    setWhiteTime,
   ]);
 
   const handleNewGame = useCallback(() => {
@@ -998,6 +1000,7 @@ function BoardGame() {
     setHeaders,
     setWhiteTime,
     t,
+    setBlackTime,
   ]);
 
   const endGame = useCallback(async () => {
@@ -1013,16 +1016,16 @@ function BoardGame() {
 
         // Strategy 2: Explicitly kill engines for known tab variants
         await Promise.all([
-          commands.killEngines(activeTab + "white").catch(() => {}),
-          commands.killEngines(activeTab + "black").catch(() => {}),
+          commands.killEngines(`${activeTab}white`).catch(() => {}),
+          commands.killEngines(`${activeTab}black`).catch(() => {}),
         ]);
 
         // Strategy 3: Kill engines individually by path for each known engine
         // This ensures we kill specific engine instances that might not match the pattern
         if (engines.length > 0) {
           const killPromises = engines.flatMap((engine) => [
-            commands.killEngine(engine.path, activeTab + "white").catch(() => {}),
-            commands.killEngine(engine.path, activeTab + "black").catch(() => {}),
+            commands.killEngine(engine.path, `${activeTab}white`).catch(() => {}),
+            commands.killEngine(engine.path, `${activeTab}black`).catch(() => {}),
             commands.killEngine(engine.path, activeTab).catch(() => {}),
           ]);
           await Promise.all(killPromises);
@@ -1032,17 +1035,17 @@ function BoardGame() {
         const currentPlayers = getPlayers();
         if (currentPlayers.white.type === "engine" && currentPlayers.white.engine) {
           await Promise.all([
-            commands.killEngine(currentPlayers.white.engine.path, activeTab + "white").catch(() => {}),
+            commands.killEngine(currentPlayers.white.engine.path, `${activeTab}white`).catch(() => {}),
             commands.killEngine(currentPlayers.white.engine.path, activeTab).catch(() => {}),
           ]);
         }
         if (currentPlayers.black.type === "engine" && currentPlayers.black.engine) {
           await Promise.all([
-            commands.killEngine(currentPlayers.black.engine.path, activeTab + "black").catch(() => {}),
+            commands.killEngine(currentPlayers.black.engine.path, `${activeTab}black`).catch(() => {}),
             commands.killEngine(currentPlayers.black.engine.path, activeTab).catch(() => {}),
           ]);
         }
-      } catch (e) {
+      } catch (_e) {
         // Failed to kill engines
       }
     }
@@ -1089,7 +1092,7 @@ function BoardGame() {
                 // Don't break - continue to next move
                 moveCount++;
               }
-            } catch (e) {
+            } catch (_e) {
               // Don't break - continue to next move
               moveCount++;
             }
@@ -1107,7 +1110,7 @@ function BoardGame() {
 
       // Get the last node for final FEN
       const mainLine = Array.from(treeIteratorMainLine(root));
-      const lastNode = mainLine[mainLine.length - 1].node;
+      const _lastNode = mainLine[mainLine.length - 1].node;
 
       // Use current result or "*" if game was stopped early
       const gameResult = headers.result && headers.result !== "*" ? headers.result : "*";
@@ -1148,7 +1151,7 @@ function BoardGame() {
             movePairs.push(`${moveNumber}. ${whiteMove}`);
           }
         }
-        pgn += movePairs.join(" ") + " " + gameResult;
+        pgn += `${movePairs.join(" ")} ${gameResult}`;
       } else {
         pgn += gameResult;
       }
@@ -1245,7 +1248,7 @@ function BoardGame() {
             await saveGameRecord(record);
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Failed to get data from tab, skip saving
       }
     }
@@ -1338,7 +1341,7 @@ function BoardGame() {
                 extraMarkups: false,
                 isFirst: false,
               }).trim();
-              solutionMoves += " " + nextMove;
+              solutionMoves += ` ${nextMove}`;
             }
           }
 
@@ -1418,7 +1421,7 @@ function BoardGame() {
         message: t("common.puzzlesGeneratedSuccessfully"),
         color: "green",
       });
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error"),
         message: t("common.failedToGeneratePuzzles"),

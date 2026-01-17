@@ -3,7 +3,7 @@
  * piece pinned to the king by a punisher line piece.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherMoves, hasPin, isImmediatePunishCapture, parseFenBoard } from "./utils";
 
 export function detectPin(ctx: ThemeContext): ThemeId[] {

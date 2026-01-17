@@ -1,7 +1,7 @@
 import { Input } from "@mantine/core";
 import { useContext, useState } from "react";
-import { useStore } from "zustand";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { parseKeyboardMove } from "@/utils/chess";
 import type { TreeNode } from "@/utils/treeReducer";

@@ -112,7 +112,7 @@ function sameMove(a: string | undefined, b: string | undefined): boolean {
 function sanDestSquare(s: string | undefined | null): string | null {
   const x = normalizeSan(s);
   const matches = x.match(/[a-h][1-8]/g);
-  return matches && matches.length ? matches[matches.length - 1] : null;
+  return matches?.length ? matches[matches.length - 1] : null;
 }
 
 function hasClearlyBetterAlternative(prevMoves: BestMoves[], playedScore: ScoreValue, color: Color): boolean {
@@ -158,7 +158,7 @@ function forcedRecaptureSignal(
   if (!mySq) return false;
 
   const bestReplySan = currentBestMoves[0]?.sanMoves?.[0] ?? "";
-  const secondReplySan = currentBestMoves[1]?.sanMoves?.[0] ?? "";
+  const _secondReplySan = currentBestMoves[1]?.sanMoves?.[0] ?? "";
 
   const bestReplySq = sanDestSquare(bestReplySan);
   const isCaptureToSame = bestReplySan.includes("x") && bestReplySq === mySq;

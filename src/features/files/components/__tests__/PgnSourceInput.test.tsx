@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { PgnSourceInput } from "../../components/PgnSourceInput";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -28,4 +27,3 @@ describe("PgnSourceInput", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

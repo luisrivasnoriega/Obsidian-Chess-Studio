@@ -1,6 +1,6 @@
 import { ActionIcon, Center, Group } from "@mantine/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import React, { type JSX, type SVGProps, useEffect, useState } from "react";
+import { type JSX, type SVGProps, useEffect, useState } from "react";
 import { env } from "@/utils/detectEnvironment";
 import * as classes from "./WindowControls.css";
 

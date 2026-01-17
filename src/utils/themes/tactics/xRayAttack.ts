@@ -3,7 +3,7 @@
  * high-value target but a piece blocks the line, we tag it as an x-ray.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherMoves, hasXRay, isImmediatePunishCapture, parseFenBoard } from "./utils";
 
 export function detectXRayAttack(ctx: ThemeContext): ThemeId[] {

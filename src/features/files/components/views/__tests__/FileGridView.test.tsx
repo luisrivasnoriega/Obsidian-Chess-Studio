@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import FileGridView from "../../views/FileGridView";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -60,9 +59,8 @@ describe("FileGridView", () => {
         search=""
         filter=""
         gridCols={3}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import GameCard from "../../drawers/GameCard";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -69,4 +69,3 @@ describe("GameCard", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

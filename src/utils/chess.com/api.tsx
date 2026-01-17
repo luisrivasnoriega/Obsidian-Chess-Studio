@@ -1,7 +1,7 @@
 import { notifications } from "@mantine/notifications";
 import { IconX } from "@tabler/icons-react";
-import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { fetch } from "@tauri-apps/plugin-http";
 import { error, info } from "@tauri-apps/plugin-log";
@@ -184,7 +184,12 @@ export async function fetchLastChessComGames(
   }
 }
 
-export async function downloadChessCom(player: string, timestamp: number | null, outputPath?: string, downloadId?: string) {
+export async function downloadChessCom(
+  player: string,
+  timestamp: number | null,
+  outputPath?: string,
+  downloadId?: string,
+) {
   const timestampDate = new Date(timestamp ?? 0);
   const approximateDate = new Date(timestampDate.getFullYear(), timestampDate.getMonth(), 1);
   const archives = await getGameArchives(player);
@@ -261,7 +266,7 @@ export async function downloadChessCom(player: string, timestamp: number | null,
   });
 }
 
-const chessComGameSchema = z.object({
+const _chessComGameSchema = z.object({
   moveList: z.string(),
   pgnHeaders: z.record(z.string(), z.string()),
 });

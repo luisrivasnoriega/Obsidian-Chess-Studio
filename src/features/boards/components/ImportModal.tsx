@@ -119,7 +119,7 @@ export default function ImportModal({ context, id }: ContextModalProps<{ modalBo
               gameCount: trees.length,
             });
             await openFile(newFile.value.path, setTabs, setActiveTab);
-    } else {
+          } else {
             return {
               successCount: 0,
               totalGames: resolvedTarget.count,
@@ -172,16 +172,16 @@ export default function ImportModal({ context, id }: ContextModalProps<{ modalBo
             });
           });
 
-        if (trees.length > 0) {
-          if (save) {
-            const baseFileName = fileName.replace(/\.pgn$/i, "");
-            const finalFileName = `${filename}_${baseFileName}`;
-            const newFile = await createFile({
-              filename: finalFileName,
-              filetype,
-              pgn: singleFileTarget.content,
-              dir,
-            });
+          if (trees.length > 0) {
+            if (save) {
+              const baseFileName = fileName.replace(/\.pgn$/i, "");
+              const finalFileName = `${filename}_${baseFileName}`;
+              const newFile = await createFile({
+                filename: finalFileName,
+                filetype,
+                pgn: singleFileTarget.content,
+                dir,
+              });
 
               if (newFile.isOk) {
                 importedFiles.push({

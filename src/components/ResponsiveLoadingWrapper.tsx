@@ -1,4 +1,4 @@
-import React, { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { ResponsiveSkeleton } from "./ResponsiveSkeleton";
 
@@ -25,7 +25,7 @@ export function ResponsiveLoadingWrapper({
     }, 50); // Minimal delay for smooth transitions
 
     return () => clearTimeout(timer);
-  }, [layout]);
+  }, []);
 
   if (isLoading || isLayoutCalculating) {
     return loadingComponent || <ResponsiveSkeleton />;

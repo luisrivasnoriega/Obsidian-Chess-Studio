@@ -2,13 +2,13 @@ import { ActionIcon, Button, Checkbox, Group, Stack, Text, useMantineTheme } fro
 import { useForceUpdate } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconDownload, IconEye } from "@tabler/icons-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable } from "mantine-datatable";
 import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { save } from "@tauri-apps/plugin-dialog";
-import { commands } from "@/bindings";
 import type { NormalizedGame } from "@/bindings";
+import { commands } from "@/bindings";
 import { useLanguageChangeListener } from "@/hooks/useLanguageChangeListener";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parseDate } from "@/utils/format";
@@ -16,13 +16,13 @@ import { createTab } from "@/utils/tabs";
 
 type GameWithAverageElo = NormalizedGame & { averageElo: number | null };
 
-function GamesTable({ 
-  games, 
+function GamesTable({
+  games,
   loading,
   fen,
   databasePath,
-}: { 
-  games: NormalizedGame[]; 
+}: {
+  games: NormalizedGame[];
   loading: boolean;
   fen?: string;
   databasePath?: string;
@@ -83,12 +83,16 @@ function GamesTable({
     if (allVisibleSelected) {
       // Deselect all visible games
       const newSelected = new Set(selectedGameIds);
-      paginatedGames.forEach((game) => newSelected.delete(game.id));
+      for (const game of paginatedGames) {
+        newSelected.delete(game.id);
+      }
       setSelectedGameIds(newSelected);
     } else {
       // Select all visible games
       const newSelected = new Set(selectedGameIds);
-      paginatedGames.forEach((game) => newSelected.add(game.id));
+      for (const game of paginatedGames) {
+        newSelected.add(game.id);
+      }
       setSelectedGameIds(newSelected);
     }
   };
@@ -106,7 +110,7 @@ function GamesTable({
   const handleOpenSelected = async () => {
     const selectedGames = games.filter((game) => selectedGameIds.has(game.id));
     const savedActiveTab = currentActiveTab;
-    
+
     // Create all tabs (they will change active tab, but we'll restore it)
     for (const game of selectedGames) {
       await createTab({
@@ -120,7 +124,7 @@ function GamesTable({
         headers: game,
       });
     }
-    
+
     // Restore the original active tab after all tabs are created
     if (savedActiveTab) {
       // Use requestAnimationFrame to ensure all state updates are complete
@@ -132,7 +136,7 @@ function GamesTable({
 
   const handleExportPGN = async () => {
     if (!fen || !databasePath || games.length === 0) return;
-    
+
     setExporting(true);
     try {
       // Create filename from FEN (replace spaces and special chars, limit length)
@@ -140,17 +144,17 @@ function GamesTable({
         .replace(/\s+/g, "-")
         .replace(/[^a-zA-Z0-9-]/g, "")
         .substring(0, 50);
-      
+
       const destFile = await save({
         filters: [{ name: "PGN", extensions: ["pgn"] }],
         defaultPath: `${fenFilename}.pgn`,
       });
-      
+
       if (!destFile) {
         setExporting(false);
         return;
       }
-      
+
       const result = await commands.exportPositionGamesToPgn(databasePath, fen, destFile);
       if (result.status === "error") {
         notifications.show({
@@ -172,19 +176,19 @@ function GamesTable({
 
   const handleExportSelected = async () => {
     if (!databasePath || selectedGameIds.size === 0) return;
-    
+
     setExporting(true);
     try {
       const destFile = await save({
         filters: [{ name: "PGN", extensions: ["pgn"] }],
         defaultPath: `selected-games-${selectedGameIds.size}.pgn`,
       });
-      
+
       if (!destFile) {
         setExporting(false);
         return;
       }
-      
+
       const gameIdsArray = Array.from(selectedGameIds);
       const result = await commands.exportSelectedGamesToPgn(databasePath, gameIdsArray, destFile);
       if (result.status === "error") {
@@ -321,20 +325,23 @@ function GamesTable({
         />
       </div>
       {showExportButton && (
-        <Group justify="flex-end" p="xs" style={{ borderTop: "1px solid var(--mantine-color-gray-3)", flexShrink: 0 }} gap="xs">
+        <Group
+          justify="flex-end"
+          p="xs"
+          style={{ borderTop: "1px solid var(--mantine-color-gray-3)", flexShrink: 0 }}
+          gap="xs"
+        >
           {selectedCount > 0 && (
-            <>
-              <Button
-                leftSection={<IconDownload size={16} />}
-                size="xs"
-                variant="light"
-                onClick={handleExportSelected}
-                loading={exporting}
-                disabled={exporting}
-              >
-                {t("features.databases.settings.exportPGN")} ({selectedCount} {t("features.databases.settings.selected")})
-              </Button>
-            </>
+            <Button
+              leftSection={<IconDownload size={16} />}
+              size="xs"
+              variant="light"
+              onClick={handleExportSelected}
+              loading={exporting}
+              disabled={exporting}
+            >
+              {t("features.databases.settings.exportPGN")} ({selectedCount} {t("features.databases.settings.selected")})
+            </Button>
           )}
           <Button
             leftSection={<IconDownload size={16} />}

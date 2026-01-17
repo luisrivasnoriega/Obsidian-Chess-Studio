@@ -3,7 +3,7 @@
  * high-value piece with a lower-value piece behind it on the same line.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherMoves, hasSkewer, isImmediatePunishCapture, parseFenBoard } from "./utils";
 
 export function detectSkewer(ctx: ThemeContext): ThemeId[] {

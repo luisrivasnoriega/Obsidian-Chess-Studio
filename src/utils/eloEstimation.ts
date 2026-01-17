@@ -11,7 +11,7 @@
  * @returns Estimated Elo rating
  */
 export function calculateEstimatedElo(acpl: number): number {
-  if (acpl <= 0 || !isFinite(acpl)) {
+  if (acpl <= 0 || !Number.isFinite(acpl)) {
     return 0;
   }
 
@@ -34,7 +34,7 @@ export function calculateEstimatedElo(acpl: number): number {
  * @returns Estimated Accuracy percentage
  */
 export function calculateEstimatedAccuracy(acpl: number): number {
-  if (acpl <= 0 || !isFinite(acpl)) {
+  if (acpl <= 0 || !Number.isFinite(acpl)) {
     return 0;
   }
 

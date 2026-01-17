@@ -123,7 +123,7 @@ export default function LogsPanel() {
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              <LogLine log={filteredData![virtualRow.index] as Log} />
+              <LogLine log={filteredData?.[virtualRow.index] as Log} />
             </Table.Tr>
           ))}
         </Table>

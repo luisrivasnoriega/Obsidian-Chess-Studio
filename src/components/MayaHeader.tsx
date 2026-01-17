@@ -7,15 +7,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useAtomValue } from "jotai";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { WindowControls } from "@/components/WindowControls";
+import { getRouteForTab } from "@/features/boards/BoardsRouteEntry";
 import { BoardTab } from "@/features/boards/components/BoardTab";
 import { DROPPABLE_IDS, SCROLL_AREA_CONFIG } from "@/features/boards/constants";
 import { useTabManagement } from "@/features/boards/hooks/useTabManagement";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { currentGameStateAtom } from "@/state/atoms";
-import { getRouteForTab } from "@/features/boards/BoardsRouteEntry";
-import { WindowControls } from "@/components/WindowControls";
-import type { Tab } from "@/utils/tabs";
 import { env } from "@/utils/detectEnvironment";
+import type { Tab } from "@/utils/tabs";
 
 type MenuAction = {
   id?: string;
@@ -38,19 +38,13 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const safeTop = "max(env(safe-area-inset-top, 0px), 24px)";
   const headerPaddingTop = isCompactHeader && hasCoarsePointer ? safeTop : undefined;
 
-  const {
-    tabs,
-    activeTab,
-    setActiveTab,
-    setTabs,
-    closeTab,
-    renameTab,
-    duplicateTab,
-  } = useTabManagement({ enableHotkeys: false });
+  const { tabs, activeTab, setActiveTab, setTabs, closeTab, renameTab, duplicateTab } = useTabManagement({
+    enableHotkeys: false,
+  });
 
   const activeTabData = useMemo(() => tabs.find((tab) => tab.value === activeTab) ?? null, [activeTab, tabs]);
   const shouldHideTabs = activeTabData?.type === "play" && (gameState === "playing" || gameState === "gameOver");
-  
+
   // Track tabs that should flash when opened or created
   const previousActiveTab = useRef<string | null>(activeTab);
   const previousTabsLength = useRef(tabs.length);
@@ -71,7 +65,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
         return () => clearTimeout(timer);
       }
     }
-    
+
     // Detect when a tab is opened (becomes active)
     if (activeTab && activeTab !== previousActiveTab.current) {
       // Only flash if it's not already flashing (to avoid double flash)
@@ -84,15 +78,15 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
         return () => clearTimeout(timer);
       }
     }
-    
+
     previousActiveTab.current = activeTab;
     previousTabsLength.current = tabs.length;
     previousTabValues.current = new Set(tabs.map((t) => t.value));
-  }, [activeTab, tabs]);
+  }, [activeTab, tabs, flashingTab]);
 
   const openBoards = useCallback(
     (tabValue?: string) => {
-      const tab = tabValue ? tabs.find((t) => t.value === tabValue) ?? null : activeTabData;
+      const tab = tabValue ? (tabs.find((t) => t.value === tabValue) ?? null) : activeTabData;
       navigate({ to: getRouteForTab(tab) });
     },
     [activeTabData, navigate, tabs],
@@ -148,10 +142,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
         try {
           localStorage.removeItem(payloadKey);
         } catch {}
-        const payload =
-          e && typeof e === "object" && "payload" in e
-            ? (e as { payload?: unknown }).payload
-            : e;
+        const payload = e && typeof e === "object" && "payload" in e ? (e as { payload?: unknown }).payload : e;
         const details =
           typeof payload === "string"
             ? payload
@@ -213,9 +204,20 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   }, [isCompactHeader, menuActions]);
 
   return (
-    <Box h="100%" style={{ display: "flex", alignItems: "center", paddingTop: headerPaddingTop }} data-tauri-drag-region>
+    <Box
+      h="100%"
+      style={{ display: "flex", alignItems: "center", paddingTop: headerPaddingTop }}
+      data-tauri-drag-region
+    >
       <DragDropContext onDragEnd={onDragEnd}>
-        <Group h="100%" px={headerPadding} gap={headerGap} wrap="nowrap" style={{ flex: 1, minWidth: 0 }} data-tauri-drag-region>
+        <Group
+          h="100%"
+          px={headerPadding}
+          gap={headerGap}
+          wrap="nowrap"
+          style={{ flex: 1, minWidth: 0 }}
+          data-tauri-drag-region
+        >
           <Menu shadow="md" position="bottom-start" transitionProps={{ duration: 0 }}>
             <Menu.Target>
               <ActionIcon variant="subtle" size="lg" aria-label="Menu" data-tauri-drag-region={false}>
@@ -278,14 +280,14 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
               style={{ flex: 1, minWidth: 0 }}
               data-tauri-drag-region
             >
-                <Droppable droppableId={DROPPABLE_IDS.TABS} direction="horizontal">
-                  {(provided) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      style={{ display: "flex", minHeight: "100%" }}
-                      data-tauri-drag-region
-                    >
+              <Droppable droppableId={DROPPABLE_IDS.TABS} direction="horizontal">
+                {(provided) => (
+                  <div
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    style={{ display: "flex", minHeight: "100%" }}
+                    data-tauri-drag-region
+                  >
                     {tabs.map((tab, i) => (
                       <Draggable key={tab.value} draggableId={tab.value} index={i}>
                         {(provided) => (

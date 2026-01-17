@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { render, screen } from "./test-utils";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { AddProfileAccountModal } from "../components/modals/AddProfileAccountModal";
+import { render, screen } from "./test-utils";
 
 // Mantine Modal / Select can rely on ResizeObserver in JSDOM
 beforeAll(() => {
@@ -87,5 +86,3 @@ describe("AddProfileAccountModal", () => {
     });
   });
 });
-
-

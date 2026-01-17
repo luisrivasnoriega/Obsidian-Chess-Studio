@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { ProfileGamesTab } from "../../components/ProfileGamesTab";
+import { render } from "./test-utils";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string) => {
@@ -57,9 +56,8 @@ describe("ProfileGamesTab", () => {
         onOpponentSelected={() => {}}
         timeControlCategory={null}
         onTimeControlCategoryChange={() => {}}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

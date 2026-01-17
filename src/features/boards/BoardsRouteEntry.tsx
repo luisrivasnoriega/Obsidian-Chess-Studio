@@ -1,10 +1,10 @@
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { createTab, type Tab } from "@/utils/tabs";
 import { debugNavLog } from "@/utils/debugNav";
+import { createTab, type Tab } from "@/utils/tabs";
 import BoardsPage from "./BoardsPage";
 
 type EntryMode = "play" | "analysis" | "puzzles";
@@ -43,9 +43,9 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
     // This allows tabs created from profiles (like analysis tabs from openings) to remain active
     // without forcing navigation away from /profiles
     if (currentPath === "/profiles" && active && !isTabMode(active, mode)) {
-      debugNavLog("route-entry: skipping navigation - on /profiles with different tab type", { 
-        activeType: active.type, 
-        mode 
+      debugNavLog("route-entry: skipping navigation - on /profiles with different tab type", {
+        activeType: active.type,
+        mode,
       });
       return;
     }
@@ -94,8 +94,8 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
         if (active) {
           // Don't navigate if we're on /profiles - allow the user to stay there
           if (currentPath === "/profiles") {
-            debugNavLog("route-entry: skipping navigation after tab close - on /profiles", { 
-              activeType: active.type 
+            debugNavLog("route-entry: skipping navigation after tab close - on /profiles", {
+              activeType: active.type,
             });
             return;
           }
@@ -109,9 +109,9 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
     if (existing) {
       // Don't switch tabs if we're on /profiles - allow the user to stay there
       if (currentPath === "/profiles") {
-        debugNavLog("route-entry: skipping tab switch - on /profiles", { 
-          existingTab: existing.value, 
-          activeTab: active?.value 
+        debugNavLog("route-entry: skipping tab switch - on /profiles", {
+          existingTab: existing.value,
+          activeTab: active?.value,
         });
         return;
       }
@@ -138,7 +138,7 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
           }
         : {}),
     });
-  }, [active, ensureKey, mode, navigate, setActiveTab, setTabs, tabs, t]);
+  }, [active, ensureKey, mode, navigate, setActiveTab, setTabs, tabs, t, activeTab, currentPath]);
 
   return <BoardsPage />;
 }

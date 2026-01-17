@@ -164,8 +164,8 @@ function ResponsiveAnalysisPanels({
             marginRight: "0.5rem",
             overflow: "hidden",
           }}
-          />
-        )}
+        />
+      )}
 
       <Tabs
         w="100%"

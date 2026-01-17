@@ -99,4 +99,3 @@ describe("calculateOnlineRating", () => {
     expect(calculateOnlineRating(session)).toBe(0);
   });
 });
-

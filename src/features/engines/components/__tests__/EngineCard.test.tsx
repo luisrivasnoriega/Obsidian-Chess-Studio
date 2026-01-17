@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { EngineCard } from "../../components/EngineCard";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -32,4 +31,3 @@ describe("EngineCard", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

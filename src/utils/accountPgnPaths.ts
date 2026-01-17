@@ -31,4 +31,3 @@ export async function getAccountPgnPath(input: {
 }) {
   return await resolve(input.appDataDir, "db", accountPgnFilename(input));
 }
-

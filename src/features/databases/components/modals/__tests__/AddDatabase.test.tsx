@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import AddDatabase from "../../modals/AddDatabase";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -43,26 +42,26 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-vi.mock("@tauri-apps/api/path", () => ({
-  appDataDir: vi.fn(),
-  resolve: vi.fn(),
-}));
+// Note: @tauri-apps/api/path is already mocked globally in vitest.setup.ts
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tauri-apps/plugin-fs")>();
-  return {
-    ...actual,
-    remove: vi.fn(),
-    exists: vi.fn().mockResolvedValue(false),
-  };
-});
+// Note: @tauri-apps/plugin-fs is already mocked globally in vitest.setup.ts
 
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+// Note: @tauri-apps/api/event is already mocked globally in vitest.setup.ts
+
+vi.mock("@/utils/puzzles", () => ({
+  getPuzzleDatabases: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("@/utils/db", () => ({
+  useDefaultDatabases: vi.fn(() => ({
+    defaultDatabases: [],
+    error: null,
+    isLoading: false,
+  })),
 }));
 
 vi.mock("@/components/FileInput", () => ({
@@ -76,6 +75,11 @@ vi.mock("@/components/ProgressButton", () => ({
 vi.mock("@/bindings", () => ({
   commands: {
     addDatabase: vi.fn(),
+    convertPgn: vi.fn().mockResolvedValue({ status: "ok" }),
+    downloadPositionCache: vi.fn().mockResolvedValue({ status: "ok" }),
+    downloadFile: vi.fn().mockResolvedValue({ status: "ok" }),
+    importPuzzleFile: vi.fn().mockResolvedValue({ status: "ok" }),
+    validatePuzzleDatabase: vi.fn().mockResolvedValue({ status: "ok", data: true }),
   },
   events: {
     databaseAdded: vi.fn(),
@@ -96,7 +100,7 @@ describe("AddDatabase", () => {
         setDatabases={mockSetDatabases}
         setLoading={mockSetLoading}
         databases={mockDatabases}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
@@ -109,9 +113,8 @@ describe("AddDatabase", () => {
         setDatabases={mockSetDatabases}
         setLoading={mockSetLoading}
         databases={mockDatabases}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

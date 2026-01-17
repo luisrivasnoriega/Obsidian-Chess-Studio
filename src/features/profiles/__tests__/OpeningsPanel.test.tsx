@@ -1,9 +1,9 @@
-import React from "react";
-import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "./test-utils";
 import userEvent from "@testing-library/user-event";
-import OpeningsPanel from "../components/PersonalCardPanels/OpeningsPanel";
+import type React from "react";
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { PlayerGameInfo } from "@/bindings";
+import OpeningsPanel from "../components/PersonalCardPanels/OpeningsPanel";
+import { render, screen, waitFor } from "./test-utils";
 
 // -----------------------------
 // Polyfills / globals
@@ -74,10 +74,18 @@ vi.mock("../components/PersonalCardPanels/PlayerSidebarCard", () => ({
       <div data-testid="sidebar-loading">{String(!!isLoading)}</div>
       <div data-testid="sidebar-has-model">{String(!!model)}</div>
 
-      <button onClick={() => onPlatformChange?.("Lichess")}>Change Platform</button>
-      <button onClick={() => onTimeControlChange?.("blitz")}>Change Time Control</button>
-      <button onClick={() => onOpponentEloChange?.("1200")}>Change Opponent Elo</button>
-      <button onClick={() => onDateRangeChange?.(null)}>Change Date Range</button>
+      <button type="button" onClick={() => onPlatformChange?.("Lichess")}>
+        Change Platform
+      </button>
+      <button type="button" onClick={() => onTimeControlChange?.("blitz")}>
+        Change Time Control
+      </button>
+      <button type="button" onClick={() => onOpponentEloChange?.("1200")}>
+        Change Opponent Elo
+      </button>
+      <button type="button" onClick={() => onDateRangeChange?.(null)}>
+        Change Date Range
+      </button>
     </div>
   ),
 }));
@@ -190,7 +198,7 @@ function findByTextContent(text: string) {
     const hasText = (el.textContent ?? "").includes(text);
     if (!hasText) return false;
     // Avoid matching a parent element when a child already matches.
-    return Array.from(el.children).every((child) => !((child.textContent ?? "").includes(text)));
+    return Array.from(el.children).every((child) => !(child.textContent ?? "").includes(text));
   });
 }
 
@@ -201,7 +209,7 @@ function findByTextContentNormalized(text: string) {
     const normalized = (el.textContent ?? "").replace(/\s/g, "");
     const hasText = normalized.includes(needle);
     if (!hasText) return false;
-    return Array.from(el.children).every((child) => !(((child.textContent ?? "").replace(/\s/g, "")).includes(needle)));
+    return Array.from(el.children).every((child) => !(child.textContent ?? "").replace(/\s/g, "").includes(needle));
   });
 }
 
@@ -215,10 +223,13 @@ beforeEach(async () => {
   // Important: restore default implementations every test, because some tests override them.
   const { playerStatsCommands } = await import("@/bindings/playerStats");
 
-  vi.mocked(playerStatsCommands.calculatePlayerEloBuckets).mockImplementation(async () => ({
-    status: "ok",
-    data: [{ value: "1200", label: "1200-1399" }],
-  }) as any);
+  vi.mocked(playerStatsCommands.calculatePlayerEloBuckets).mockImplementation(
+    async () =>
+      ({
+        status: "ok",
+        data: [{ value: "1200", label: "1200-1399" }],
+      }) as any,
+  );
 
   vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mockImplementation(
     async (_ssd: any, _filters: any, isWhite: boolean) =>
@@ -256,7 +267,7 @@ describe("OpeningsPanel", () => {
     // Mantine Select may render multiple instances (label and dropdown), so use getAllBy
     const sortLabels = await screen.findAllByText("Sort");
     expect(sortLabels.length).toBeGreaterThan(0);
-    
+
     // Also verify the input exists by label (may be multiple, so use getAllByLabelText)
     const sortInputs = await screen.findAllByLabelText("Sort");
     expect(sortInputs.length).toBeGreaterThan(0);
@@ -265,10 +276,13 @@ describe("OpeningsPanel", () => {
   test("displays no data message when backend returns no openings", async () => {
     const { playerStatsCommands } = await import("@/bindings/playerStats");
 
-    vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mockImplementation(async () => ({
-      status: "ok",
-      data: [],
-    }) as any);
+    vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mockImplementation(
+      async () =>
+        ({
+          status: "ok",
+          data: [],
+        }) as any,
+    );
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
@@ -412,7 +426,7 @@ describe("OpeningsPanel", () => {
       () => {
         expect(mockSetActiveTab).toHaveBeenCalledWith("profiles-tab");
       },
-      { timeout: 200 }
+      { timeout: 200 },
     );
   });
 
@@ -483,7 +497,9 @@ describe("OpeningsPanel", () => {
     await user.click(screen.getByText("Change Date Range"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.length).toBeGreaterThan(beforeCalls);
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.length).toBeGreaterThan(
+        beforeCalls,
+      );
     });
 
     const last = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);

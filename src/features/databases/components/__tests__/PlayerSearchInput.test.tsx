@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { PlayerSearchInput } from "../../components/PlayerSearchInput";
+import { render, screen, waitFor } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -71,4 +70,3 @@ describe("PlayerSearchInput", () => {
     });
   });
 });
-

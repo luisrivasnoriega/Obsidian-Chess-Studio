@@ -60,7 +60,7 @@ export default function PracticePage() {
     resetExercise,
   } = useExerciseState<PracticeExercise, PracticeCategory>({
     initialFen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    onExerciseComplete: (practiceId, exerciseId, evaluation) => {
+    onExerciseComplete: (practiceId, exerciseId, _evaluation) => {
       const prevCompleted = userStats.completedPractice?.[practiceId] || [];
       if (!prevCompleted.includes(exerciseId)) {
         const updatedCompleted = {

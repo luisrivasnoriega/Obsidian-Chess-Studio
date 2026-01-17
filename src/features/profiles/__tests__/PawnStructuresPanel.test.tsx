@@ -1,18 +1,15 @@
-import React from "react";
-import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { render, screen, waitFor } from "./test-utils";
-import userEvent from "@testing-library/user-event";
-
-import PawnStructuresPanel from "../components/PersonalCardPanels/PawnStructuresPanel";
-import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
-
 import { notifications } from "@mantine/notifications";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { commands } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
+import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
+import { parsePGN } from "@/utils/chess";
 import { query_players } from "@/utils/db";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
-import { parsePGN } from "@/utils/chess";
+import PawnStructuresPanel from "../components/PersonalCardPanels/PawnStructuresPanel";
+import { render, screen, waitFor } from "./test-utils";
 
 // -----------------------------
 // Polyfills / globals
@@ -25,7 +22,7 @@ beforeAll(() => {
       disconnect() {}
     } as any;
   }
-  
+
   // Setup clipboard API - use Object.defineProperty for read-only property
   if (!globalThis.navigator.clipboard) {
     Object.defineProperty(globalThis.navigator, "clipboard", {
@@ -131,20 +128,42 @@ vi.mock("@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard", (
       </div>
 
       {/* Controls to change filters */}
-      <button onClick={() => props.onPlatformChange("all")}>platform-all</button>
-      <button onClick={() => props.onPlatformChange("Lichess")}>platform-lichess</button>
-      <button onClick={() => props.onPlatformChange("Chess.com")}>platform-chess</button>
+      <button type="button" onClick={() => props.onPlatformChange("all")}>
+        platform-all
+      </button>
+      <button type="button" onClick={() => props.onPlatformChange("Lichess")}>
+        platform-lichess
+      </button>
+      <button type="button" onClick={() => props.onPlatformChange("Chess.com")}>
+        platform-chess
+      </button>
 
-      <button onClick={() => props.onTimeControlChange("any")}>tc-any</button>
-      <button onClick={() => props.onTimeControlChange("blitz")}>tc-blitz</button>
-      <button onClick={() => props.onTimeControlChange("bullet")}>tc-bullet</button>
+      <button type="button" onClick={() => props.onTimeControlChange("any")}>
+        tc-any
+      </button>
+      <button type="button" onClick={() => props.onTimeControlChange("blitz")}>
+        tc-blitz
+      </button>
+      <button type="button" onClick={() => props.onTimeControlChange("bullet")}>
+        tc-bullet
+      </button>
 
-      <button onClick={() => props.onDateRangeChange(null)}>dr-all</button>
-      <button onClick={() => props.onDateRangeChange(DateRange.SevenDays)}>dr-7</button>
-      <button onClick={() => props.onDateRangeChange(DateRange.OneYear)}>dr-1y</button>
+      <button type="button" onClick={() => props.onDateRangeChange(null)}>
+        dr-all
+      </button>
+      <button type="button" onClick={() => props.onDateRangeChange(DateRange.SevenDays)}>
+        dr-7
+      </button>
+      <button type="button" onClick={() => props.onDateRangeChange(DateRange.OneYear)}>
+        dr-1y
+      </button>
 
-      <button onClick={() => props.onOpponentEloChange("1400")}>opp-1400</button>
-      <button onClick={() => props.onOpponentEloChange("all")}>opp-all</button>
+      <button type="button" onClick={() => props.onOpponentEloChange("1400")}>
+        opp-1400
+      </button>
+      <button type="button" onClick={() => props.onOpponentEloChange("all")}>
+        opp-all
+      </button>
     </div>
   ),
 }));
@@ -174,7 +193,11 @@ vi.mock("@/bindings/playerStats", () => ({
 
 // Chessground
 vi.mock("@/components/Chessground", () => ({
-  Chessground: ({ fen, orientation }: any) => <div data-testid="board">{orientation}:{fen}</div>,
+  Chessground: ({ fen, orientation }: any) => (
+    <div data-testid="board">
+      {orientation}:{fen}
+    </div>
+  ),
 }));
 
 // Load gate -> render children
@@ -254,7 +277,7 @@ beforeEach(() => {
 
   // Clipboard - reset the mock with proper typing
   clipboardWriteTextMock = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
-  
+
   // Use Object.defineProperty to ensure it's configurable
   // Since we set it up in beforeAll, it should always exist, but we handle both cases
   const clipboard = navigator.clipboard as { writeText?: (text: string) => Promise<void> };
@@ -464,38 +487,37 @@ describe("PawnStructuresPanel (high coverage)", () => {
       { profileId: "p1", player: "Player1", lichess: { username: "player1" } },
       { profileId: "p1", player: "Player1", chessCom: { username: "player1" } },
     ];
-  
+
     mockedCommands.computePawnStructures.mockResolvedValue({
       status: "ok",
       data: [{ structure: "S-date", frequency: 1, win_rate: 0.5, sample_fen: null, games: [] }],
     } as any);
-  
+
     render(<PawnStructuresPanel playerName="Human Label" profileId="p1" />);
     await waitForProfileQueryReady("2");
-  
+
     // Apply filters
     await user.click(screen.getByText("platform-lichess"));
     await user.click(screen.getByText("tc-blitz"));
     await user.click(screen.getByText("dr-1y"));
-  
+
     await user.click(screen.getByRole("button", { name: /search/i }));
-  
+
     await waitFor(() => {
       expect(mockedCommands.computePawnStructures).toHaveBeenCalled();
     });
-  
+
     const call = mockedCommands.computePawnStructures.mock.calls.at(-1);
     const params = call?.[1];
-  
+
     // Filters are applied
     expect(params?.platformFilter).toBe("Lichess");
     expect(params?.timeControlFilter).toBe("blitz");
-  
+
     // Component now passes dateRange to backend (backend calculates earliestDate)
     // dateRange is converted to backend format: "OneYear" -> "OneYear"
     expect(params?.dateRange).toBe("OneYear");
   });
-  
 
   test("handleSearch: shows noPawnStructures when backend returns empty structures", async () => {
     const user = userEvent.setup();
@@ -674,10 +696,13 @@ describe("PawnStructuresPanel (high coverage)", () => {
     // Wait a bit for the async clipboard call and notification
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    await waitFor(() => {
-      expect(clipboardWriteTextMock).toHaveBeenCalledWith(fen);
-      expect(mockedNotifications.show).toHaveBeenCalled();
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(clipboardWriteTextMock).toHaveBeenCalledWith(fen);
+        expect(mockedNotifications.show).toHaveBeenCalled();
+      },
+      { timeout: 3000 },
+    );
   });
 
   test("open game: finds target position in mainline child and calls createTab with position", async () => {
@@ -763,7 +788,7 @@ describe("PawnStructuresPanel (high coverage)", () => {
 
     // Set up the mock: return dbPath for initial queries, then null when opening game
     let getProfileDbPathCallCount = 0;
-    mockedGetProfileDbPath.mockImplementation(async (profileId: string) => {
+    mockedGetProfileDbPath.mockImplementation(async (_profileId: string) => {
       getProfileDbPathCallCount++;
       // First few calls (for initial data loading) return dbPath
       // Later calls (when opening game) return null
@@ -858,7 +883,9 @@ describe("PawnStructuresPanel (high coverage)", () => {
     mockSessions = [{ profileId: "p1", player: "Player1", lichess: { username: "player1" } }];
 
     let resolveCompute: (v: any) => void = () => {};
-    const computePromise = new Promise((res) => (resolveCompute = res));
+    const computePromise = new Promise((res) => {
+      resolveCompute = res;
+    });
 
     mockedCommands.computePawnStructures.mockReturnValueOnce(computePromise as any);
 

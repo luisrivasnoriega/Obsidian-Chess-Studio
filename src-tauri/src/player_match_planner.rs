@@ -936,6 +936,7 @@ fn san_to_move(pos: &Chess, san: &str) -> Result<shakmaty::Move> {
     Ok(sp.san.to_move(pos)?)
 }
 
+#[allow(dead_code)]
 fn san_to_uci(pos: &Chess, san: &str) -> Result<String> {
     let mv = san_to_move(pos, san)?;
     Ok(mv.to_uci(CastlingMode::Standard).to_string())

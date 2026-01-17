@@ -34,7 +34,7 @@ export function styleFromEcoList(
 
     const letter = code[0];
     const num = parseInt(code.slice(1), 10);
-    if (isNaN(num)) continue;
+    if (Number.isNaN(num)) continue;
 
     const lowerOpening = openingName.toLowerCase();
     const characteristics = analyzeOpeningCharacteristics(openingName);

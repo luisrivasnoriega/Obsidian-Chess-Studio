@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import GameTable from "../../views/GameTable";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -66,7 +65,7 @@ vi.mock("zustand", async (importOriginal) => {
   const actual = await importOriginal<typeof import("zustand")>();
   return {
     ...actual,
-    useStore: (store: any, selector: any) => {
+    useStore: (_store: any, selector: any) => {
       if (selector) {
         return selector({
           database: { file: "/test.db" },
@@ -124,4 +123,3 @@ describe("GameTable", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

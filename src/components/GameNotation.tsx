@@ -41,7 +41,6 @@ import { keyMapAtom } from "@/state/keybindings";
 import type { TreeNode } from "@/utils/treeReducer";
 import CompleteMoveCell from "./CompleteMoveCell";
 import * as styles from "./GameNotation.css";
-import * as moveStyles from "./MoveCell.css";
 import OpeningName from "./OpeningName";
 
 type VariationState = "variations" | "repertoire" | "report";
@@ -904,14 +903,14 @@ function ReportRootAlternatives({
   const { t } = useTranslation();
 
   const children = tree.children || [];
-  if (children.length <= 1) return null;
-
   const isInAlt = isPositionInAltChild(position, path);
   const [expanded, setExpanded] = useState(() => isInAlt);
 
   useEffect(() => {
     if (!expanded && variationState === "report" && isInAlt) setExpanded(true);
   }, [expanded, variationState, isInAlt]);
+
+  if (children.length <= 1) return null;
 
   return (
     <Box>
@@ -1066,9 +1065,7 @@ function ReportRowLine({
 
   const zebra = moveNo % 2 === 0;
 
-  const baseBg = zebra
-    ? rgba(theme.colors.gray[6], colorScheme === "dark" ? 0.08 : 0.06)
-    : "transparent";
+  const baseBg = zebra ? rgba(theme.colors.gray[6], colorScheme === "dark" ? 0.08 : 0.06) : "transparent";
 
   const activeBg = rgba(theme.colors[theme.primaryColor][6], colorScheme === "dark" ? 0.22 : 0.14);
 
@@ -1143,7 +1140,7 @@ function ReportRowLine({
       {/* Variations branching from WHITE */}
       {whiteHasVars && whiteExpanded && white && (
         <Box mt={6} style={{ marginLeft: "4ch", paddingLeft: "0.9rem" }}>
-          {white.node.children!.slice(1).map((child, idx) => {
+          {white.node.children?.slice(1).map((child, idx) => {
             const childIndex = idx + 1;
             return (
               <Box
@@ -1178,7 +1175,7 @@ function ReportRowLine({
       {/* Variations branching from BLACK */}
       {blackHasVars && blackExpanded && black && (
         <Box mt={6} style={{ marginLeft: "4ch", paddingLeft: "0.9rem" }}>
-          {black.node.children!.slice(1).map((child, idx) => {
+          {black.node.children?.slice(1).map((child, idx) => {
             const childIndex = idx + 1;
             return (
               <Box

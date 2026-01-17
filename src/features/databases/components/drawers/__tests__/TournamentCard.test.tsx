@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import TournamentCard from "../../drawers/TournamentCard";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -33,7 +32,7 @@ vi.mock("jotai", async (importOriginal) => {
 });
 
 vi.mock("@/utils/db", () => ({
-  getTournamentGames: vi.fn().mockResolvedValue([]),
+  getTournamentGames: vi.fn().mockResolvedValue({ data: [], count: 0 }),
 }));
 
 vi.mock("@/utils/format", async (importOriginal) => {
@@ -44,9 +43,13 @@ vi.mock("@/utils/format", async (importOriginal) => {
   };
 });
 
-vi.mock("@/utils/tabs", () => ({
-  createTab: vi.fn(),
-}));
+vi.mock("@/utils/tabs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/tabs")>();
+  return {
+    ...actual,
+    createTab: vi.fn(),
+  };
+});
 
 vi.mock("zustand", async (importOriginal) => {
   const actual = await importOriginal<typeof import("zustand")>();
@@ -57,6 +60,15 @@ vi.mock("zustand", async (importOriginal) => {
   };
 });
 
+vi.mock("../../DatabaseViewStateContext", async () => {
+  const React = await import("react");
+  const { activeDatabaseViewStore } = await import("@/state/store/database");
+  const DatabaseViewStateContext = React.createContext(activeDatabaseViewStore);
+  return {
+    DatabaseViewStateContext,
+  };
+});
+
 describe("TournamentCard", () => {
   test("renders without crashing", () => {
     const tournament = { id: 1, name: "Test Tournament" };
@@ -64,4 +76,3 @@ describe("TournamentCard", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import GridLayout from "../../views/GridLayout";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -31,9 +31,8 @@ describe("GridLayout", () => {
         table={<div>Table</div>}
         preview={<div>Preview</div>}
         layoutType="desktop"
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

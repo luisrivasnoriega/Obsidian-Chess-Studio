@@ -1,8 +1,8 @@
-import React from "react";
+import type React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
-import PlayerSidebarCard from "../components/PersonalCardPanels/PlayerSidebarCard";
 import type { PlayerSidebarModel } from "@/bindings/playerStats";
+import PlayerSidebarCard from "../components/PersonalCardPanels/PlayerSidebarCard";
+import { render, screen } from "./test-utils";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -91,4 +91,3 @@ describe("PlayerSidebarCard (presentational)", () => {
     expect(screen.getByText("Loading games...")).toBeInTheDocument();
   });
 });
-

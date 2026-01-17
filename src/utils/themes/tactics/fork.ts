@@ -8,7 +8,7 @@
  * future.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherCaptures, getPunisherMoves, isImmediatePunishCapture } from "./utils";
 
 export function detectFork(ctx: ThemeContext): ThemeId[] {
@@ -16,9 +16,7 @@ export function detectFork(ctx: ThemeContext): ThemeId[] {
   if (isImmediatePunishCapture(ctx)) return tags;
 
   const punisherMoves = getPunisherMoves(ctx);
-  const captures = getPunisherCaptures(ctx).filter(
-    (event) => event.capture && event.capture.color === ctx.playerColor,
-  );
+  const captures = getPunisherCaptures(ctx).filter((event) => event.capture && event.capture.color === ctx.playerColor);
   if (captures.length < 2) return tags;
 
   for (let i = 0; i < punisherMoves.length - 1; i++) {

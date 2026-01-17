@@ -1,5 +1,5 @@
 import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { error, info } from "@tauri-apps/plugin-log";
 
 export interface FavoriteGame {
@@ -91,4 +91,3 @@ export async function isFavoriteGame(gameId: string, source: "local" | "chesscom
     return false;
   }
 }
-

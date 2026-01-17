@@ -9,9 +9,7 @@ export const PUZZLE_DEBUG_LOGS = false;
 
 export type Completion = "correct" | "incorrect" | "incomplete";
 
-export type PuzzleSource =
-  | { type: "db3"; path: string }
-  | { type: "pgn"; path: string; index: number };
+export type PuzzleSource = { type: "db3"; path: string } | { type: "pgn"; path: string; index: number };
 
 export interface Puzzle {
   fen: string;
@@ -46,7 +44,7 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
   try {
     const files = await readDir("puzzles", { baseDir: BaseDirectory.AppData });
     const dbs = files.filter((file) => file.name?.endsWith(".db3"));
-    
+
     // Verify each file actually exists before trying to get its info
     const appDataDirPath = await appDataDir();
     const verifiedDbs = await Promise.all(
@@ -57,10 +55,13 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
         return fileExists ? db : null;
       }),
     );
-    
+
     const existingDbs = verifiedDbs.filter((db): db is NonNullable<typeof db> => db !== null);
-    logger.debug(`Found ${existingDbs.length} existing puzzle database files:`, existingDbs.map((db) => db.name));
-    
+    logger.debug(
+      `Found ${existingDbs.length} existing puzzle database files:`,
+      existingDbs.map((db) => db.name),
+    );
+
     // Get puzzle database info, filtering out any that fail (e.g., file was deleted between check and read)
     const results = await Promise.allSettled(existingDbs.map((db) => getPuzzleDatabase(db.name)));
 
@@ -72,10 +73,7 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
     }
 
     dbPuzzles = results
-      .filter(
-        (r): r is PromiseFulfilledResult<PuzzleDatabaseInfo> =>
-          r.status === "fulfilled" && r.value !== null,
-      )
+      .filter((r): r is PromiseFulfilledResult<PuzzleDatabaseInfo> => r.status === "fulfilled" && r.value !== null)
       .filter((r) => {
         // Additional validation: ensure the database has puzzles and is not empty
         const dbInfo = r.value;
@@ -128,10 +126,20 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
     localPuzzles = await Promise.all(
       puzzleFiles.map(async (file) => {
         const fileInfo = file.metadata as FileInfoMetadata;
-        const tags = Array.isArray(fileInfo?.tags) ? fileInfo.tags.filter((t): t is string => typeof t === "string") : [];
+        const tags = Array.isArray(fileInfo?.tags)
+          ? fileInfo.tags.filter((t): t is string => typeof t === "string")
+          : [];
         const isPuzzleVariants = tags.includes("puzzle-variants");
-        const variantName = tags.find((tag) => tag.startsWith("variant:"))?.slice("variant:".length).trim() || null;
-        const depth = tags.find((tag) => tag.startsWith("depth:"))?.slice("depth:".length).trim() || null;
+        const variantName =
+          tags
+            .find((tag) => tag.startsWith("variant:"))
+            ?.slice("variant:".length)
+            .trim() || null;
+        const depth =
+          tags
+            .find((tag) => tag.startsWith("depth:"))
+            ?.slice("depth:".length)
+            .trim() || null;
 
         const stats = unwrap(await commands.getFileMetadata(file.path));
         return {
@@ -265,7 +273,7 @@ async function getPuzzleDatabase(name: string): Promise<PuzzleDatabaseInfo | nul
     // For other errors, still throw but don't show alert
     throw new Error(errorMsg);
   }
-  
+
   return result.data;
 }
 

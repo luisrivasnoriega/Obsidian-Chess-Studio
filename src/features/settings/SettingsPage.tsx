@@ -1,15 +1,29 @@
-import { Box, Button, Card, Group, Progress, ScrollArea, Select, Stack, Tabs, Text, TextInput, Title, useDirection } from "@mantine/core";
+import {
+  Box,
+  Button,
+  Card,
+  Group,
+  Progress,
+  ScrollArea,
+  Select,
+  Stack,
+  Tabs,
+  Text,
+  TextInput,
+  Title,
+  useDirection,
+} from "@mantine/core";
 
 import { notifications } from "@mantine/notifications";
 import { IconBook, IconBrush, IconChess, IconFolder, IconMouse, IconVolume } from "@tabler/icons-react";
 import { useLoaderData } from "@tanstack/react-router";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
 import { updateDirectoriesCache } from "@/App";
-import AboutModal from "@/components/About";
+import { commands } from "@/bindings";
 import FileInput from "@/components/FileInput";
 import ColorSchemeSettings from "@/features/themes/components/ColorSchemeSettings";
 import ThemeSelectionSettings from "@/features/themes/components/ThemeSettings";
@@ -28,6 +42,7 @@ import {
   percentageCoverageAtom,
   practiceAnimationSpeedAtom,
   previewBoardOnHoverAtom,
+  referenceDbAtom,
   showArrowsAtom,
   showConsecutiveArrowsAtom,
   showCoordinatesAtom,
@@ -35,10 +50,8 @@ import {
   snapArrowsAtom,
   spellCheckAtom,
   storedDocumentDirAtom,
-  referenceDbAtom,
 } from "@/state/atoms";
 import { hasTranslatedPieceChars } from "@/utils/format";
-import { commands } from "@/bindings";
 import ColorControl from "../themes/components/ColorControl";
 import FontSizeSlider from "../themes/components/FontSizeSlider";
 import BoardSelect from "./components/BoardSelect";
@@ -83,7 +96,7 @@ export default function Page() {
     completed?: boolean;
   } | null>(null);
   const [precaching, setPrecaching] = useState(false);
-  const [downloadingCache, setDownloadingCache] = useState(false);
+  const [_downloadingCache, _setDownloadingCache] = useState(false);
 
   const handleDateFormatModeChange = useCallback(
     (val: "intl" | "locale") => {
@@ -788,11 +801,7 @@ export default function Page() {
                   </Text>
                 )}
               </div>
-              <Button
-                onClick={handlePrecacheOpenings}
-                disabled={!referenceDatabase || precaching}
-                loading={precaching}
-              >
+              <Button onClick={handlePrecacheOpenings} disabled={!referenceDatabase || precaching} loading={precaching}>
                 {t("settings.directories.startPrecache")}
               </Button>
             </Group>
@@ -803,7 +812,10 @@ export default function Page() {
                     {precacheProgress.processed}/{precacheProgress.total}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    {precacheProgress.total > 0 ? Math.round((precacheProgress.processed / precacheProgress.total) * 100) : 0}%
+                    {precacheProgress.total > 0
+                      ? Math.round((precacheProgress.processed / precacheProgress.total) * 100)
+                      : 0}
+                    %
                   </Text>
                 </Group>
                 <Progress
@@ -858,6 +870,7 @@ export default function Page() {
       practiceAnimationSpeed,
       practiceAnimationSpeedData,
       setPracticeAnimationSpeed,
+      setCoordinatesMode,
     ],
   );
 

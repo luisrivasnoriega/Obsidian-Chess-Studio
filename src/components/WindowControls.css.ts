@@ -6,4 +6,3 @@ export const icon = style({
     backgroundColor: "light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5))",
   },
 });
-

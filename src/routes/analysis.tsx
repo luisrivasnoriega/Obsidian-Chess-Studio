@@ -5,4 +5,3 @@ export const Route = createFileRoute("/analysis")({
   component: () => <BoardsRouteEntry mode="analysis" />,
   loader: ({ context: { loadDirs } }) => loadDirs(),
 });
-

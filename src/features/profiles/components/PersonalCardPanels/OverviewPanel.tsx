@@ -3,19 +3,18 @@ import { useMediaQuery } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, type TooltipProps, XAxis, YAxis } from "recharts";
 import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 
 import type { PlayerGameInfo } from "@/bindings";
-import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import type { EloBucket, GameStats, PlayerSidebarModel } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
+import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { unwrap } from "@/utils/unwrap";
-
+import { PanelLoadGate } from "./PanelLoadGate";
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
-import { PanelLoadGate } from "./PanelLoadGate";
 
 /**
  * React 18 StrictMode (dev) can mount/unmount/mount and run `queryFn` twice.
@@ -33,13 +32,22 @@ function makeCacheKey(parts: Array<string | number | null | undefined>) {
   return parts.map((p) => (p === null || p === undefined ? "" : String(p))).join("|");
 }
 
-function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName: string; info: PlayerGameInfo; profileId?: string; isLoading?: boolean }) {
+function OverviewPanel({
+  playerName,
+  info,
+  profileId,
+  isLoading,
+}: {
+  playerName: string;
+  info: PlayerGameInfo;
+  profileId?: string;
+  isLoading?: boolean;
+}) {
   const { t } = useTranslation();
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
-
 
   const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
   const statsEnabled = statsSig.games > 0;
@@ -102,51 +110,54 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
   }, [eloBuckets, t]);
 
   // --- Game stats ---
-  const filters = useMemo(() => createPlayerStatsFilters(platform, timeControl, opponentEloBucket, null), [
-    platform,
-    timeControl,
-    opponentEloBucket,
-  ]);
+  const filters = useMemo(
+    () => createPlayerStatsFilters(platform, timeControl, opponentEloBucket, null),
+    [platform, timeControl, opponentEloBucket],
+  );
 
-  const { data: gameStats, isLoading: isLoadingGameStats, error: gameStatsError, isFetching: isFetchingGameStats } =
-    useQuery<GameStats>({
-      queryKey: [
-        "playerGameStats",
+  const {
+    data: gameStats,
+    isLoading: isLoadingGameStats,
+    error: gameStatsError,
+    isFetching: isFetchingGameStats,
+  } = useQuery<GameStats>({
+    queryKey: [
+      "playerGameStats",
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+    ],
+    queryFn: async () => {
+      const key = makeCacheKey([
+        "stats",
         statsSig.key,
         filters.platform,
         filters.time_control,
         filters.opponent_elo_bucket,
-        filters.date_range,
-      ],
-      queryFn: async () => {
-        const key = makeCacheKey([
-          "stats",
-          statsSig.key,
-          filters.platform,
-          filters.time_control,
-          filters.opponent_elo_bucket,
-          String(filters.date_range ?? ""),
-        ]);
+        String(filters.date_range ?? ""),
+      ]);
 
-        const existing = promiseCache.gameStats.get(key);
-        if (existing) return existing;
+      const existing = promiseCache.gameStats.get(key);
+      if (existing) return existing;
 
-        const p = (async () => {
-          const res = unwrap(await playerStatsCommands.calculatePlayerGameStats(info?.site_stats_data ?? [], filters));
-          return res;
-        })();
+      const p = (async () => {
+        const res = unwrap(await playerStatsCommands.calculatePlayerGameStats(info?.site_stats_data ?? [], filters));
+        return res;
+      })();
 
-        promiseCache.gameStats.set(key, p);
-        return p;
-      },
-      staleTime: Infinity,
-      gcTime: Infinity,
-      retry: false,
-      enabled: statsEnabled,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-      refetchOnMount: true,
-    });
+      promiseCache.gameStats.set(key, p);
+      return p;
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: statsEnabled,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: true,
+  });
 
   const { total = 0, won = 0, draw = 0, lost = 0, data_per_month = [], unknown_count = 0 } = gameStats ?? {};
 
@@ -214,22 +225,20 @@ function OverviewPanel({ playerName, info, profileId, isLoading }: { playerName:
             isFetching={isFetchingGameStats}
             hasData={hasPanelData || hasDataContext}
           >
-            <>
-              {gameStatsError ? (
-                <Text size="sm" c="red" p="md">
-                  {t("common.error", { defaultValue: "Error loading data" })}: {String(gameStatsError)}
-                </Text>
-              ) : total > 0 ? (
-                <Stack gap="md" p="md">
-                  <ResultsChart won={won} draw={draw} lost={lost} size="2rem" />
-                  <DateChart dataPerMonth={dataPerMonth} unknownCount={unknownCount} unknownLabel="Unknown" />
-                </Stack>
-              ) : (
-                <Text size="sm" c="dimmed" p="md">
-                  {t("common.noData", { defaultValue: "No data" })}
-                </Text>
-              )}
-            </>
+            {gameStatsError ? (
+              <Text size="sm" c="red" p="md">
+                {t("common.error", { defaultValue: "Error loading data" })}: {String(gameStatsError)}
+              </Text>
+            ) : total > 0 ? (
+              <Stack gap="md" p="md">
+                <ResultsChart won={won} draw={draw} lost={lost} size="2rem" />
+                <DateChart dataPerMonth={dataPerMonth} unknownCount={unknownCount} unknownLabel="Unknown" />
+              </Stack>
+            ) : (
+              <Text size="sm" c="dimmed" p="md">
+                {t("common.noData", { defaultValue: "No data" })}
+              </Text>
+            )}
           </PanelLoadGate>
         </Box>
       </Box>
@@ -259,7 +268,9 @@ const DateChartTooltip = ({
         }}
       >
         <p style={{ margin: "0" }}>{`${label}`}</p>
-        <p style={{ color: "var(--mantine-color-blue-filled)", marginTop: "8px" }}>{`${payload?.[0].name} : ${payload?.[0].value}`}</p>
+        <p
+          style={{ color: "var(--mantine-color-blue-filled)", marginTop: "8px" }}
+        >{`${payload?.[0].name} : ${payload?.[0].value}`}</p>
         <p style={{ fontSize: "0.75rem", margin: "0", color: "grey" }}>
           Click to {isYearsView ? "see the month details" : "return to the years view"}.
         </p>

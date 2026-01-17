@@ -5,7 +5,7 @@
  * of theme identifiers.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 
 /**
  * Determine the phase of play based on the move number and the endgame

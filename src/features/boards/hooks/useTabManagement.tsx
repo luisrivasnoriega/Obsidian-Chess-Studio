@@ -2,19 +2,19 @@ import { Text } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "@tanstack/react-router";
 import { commands } from "@/bindings";
 import { MAX_TABS } from "@/features/boards/constants";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { createTreeStore } from "@/state/store/tree";
 import { keyMapAtom } from "@/state/keybindings";
+import { createTreeStore } from "@/state/store/tree";
 import { getDocumentDir } from "@/utils/documentDir";
-import { createTab, genID, saveToFile, type Tab } from "@/utils/tabs";
 import { getTabState as getTabStateRaw, removeTabState, setTabState } from "@/utils/tabStateStorage";
+import { createTab, genID, saveToFile, type Tab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 
 function isValidTabState(value: unknown): value is { version: number; state: { dirty?: boolean } } {
@@ -83,18 +83,19 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
             : newTabsSnapshot.length === 0
               ? null
               : closingIndex === tabs.length - 1
-                ? newTabsSnapshot[closingIndex - 1]?.value ?? null
-                : newTabsSnapshot[closingIndex]?.value ?? null;
+                ? (newTabsSnapshot[closingIndex - 1]?.value ?? null)
+                : (newTabsSnapshot[closingIndex]?.value ?? null);
         const nextActiveTabSnapshot =
           nextActiveTabValueSnapshot != null
-            ? newTabsSnapshot.find((t) => t.value === nextActiveTabValueSnapshot) ?? null
+            ? (newTabsSnapshot.find((t) => t.value === nextActiveTabValueSnapshot) ?? null)
             : null;
 
         // If we are closing the last tab for the current boards route (/analysis, /play, /puzzles),
         // BoardsRouteEntry will try to recreate it. Mark that we want to skip that ensure once.
         if (isClosingActiveTab && typeof window !== "undefined") {
           const path = window.location.pathname;
-          const routeMode = path === "/analysis" ? "analysis" : path === "/play" ? "play" : path === "/puzzles" ? "puzzles" : null;
+          const routeMode =
+            path === "/analysis" ? "analysis" : path === "/play" ? "play" : path === "/puzzles" ? "puzzles" : null;
           if (routeMode) {
             const hasRemainingSameModeTab = newTabsSnapshot.some((t) =>
               routeMode === "analysis" ? t.type === "analysis" || t.type === "new" : t.type === routeMode,
@@ -173,7 +174,8 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
         } else if (isClosingActiveTab && nextActiveTabSnapshot) {
           try {
             const path = window.location.pathname;
-            const isBoardsRoute = path === "/analysis" || path === "/play" || path === "/puzzles" || path === "/profiles";
+            const isBoardsRoute =
+              path === "/analysis" || path === "/play" || path === "/puzzles" || path === "/profiles";
             if (isBoardsRoute) {
               const to =
                 nextActiveTabSnapshot.type === "play"

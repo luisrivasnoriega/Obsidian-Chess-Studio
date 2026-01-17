@@ -1,16 +1,24 @@
 import { Notifications } from "@mantine/notifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getMatches } from "@tauri-apps/plugin-cli";
 import { attachConsole, error, info } from "@tauri-apps/plugin-log";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useAtom, useAtomValue } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { activeProfileIdAtom, activeTabAtom, fontSizeAtom, pieceSetAtom, profilesAtom, sessionsAtom, tabsAtom } from "./state/atoms";
-import { ensurePieceSetCss } from "./utils/pieceSetCss";
 import { isFailedToFetchError, startNetworkCooldown } from "@/utils/networkCooldown";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  fontSizeAtom,
+  pieceSetAtom,
+  profilesAtom,
+  sessionsAtom,
+  tabsAtom,
+} from "./state/atoms";
+import { ensurePieceSetCss } from "./utils/pieceSetCss";
 
 import "@mantine/charts/styles.css";
 import "@mantine/core/styles.css";
@@ -30,17 +38,17 @@ import { showUpdateNotification, UpdateNotificationModal } from "@/components/Up
 import { VERSION_CHECK_SETTINGS } from "@/config";
 import ThemeProvider from "@/features/themes/components/ThemeProvider";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
+import type { Dirs } from "@/types/dirs";
 import { commands } from "./bindings";
 import { IS_DEV } from "./config";
 import i18n from "./i18n";
 import { routeTree } from "./routeTree.gen";
 import type { VersionCheckResult } from "./services/version-checker";
-import type { Dirs } from "@/types/dirs";
+import { autoRegisterBundledEngines } from "./utils/bundledEngines";
 import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
 import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
 import { ensureProfilesInitialized } from "./utils/profiles";
-import { autoRegisterBundledEngines } from "./utils/bundledEngines";
 
 type InitializationState = "loading" | "initialized" | "error";
 
@@ -397,7 +405,7 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount, not when initializeApp changes
+  }, [initializeApp]); // Only run once on mount, not when initializeApp changes
 
   useEffect(() => {
     const rootElement = document.documentElement;
@@ -422,7 +430,7 @@ export default function App() {
         const platform = s.lichess ? "lichess" : "chesscom";
         const username = s.lichess?.username ?? s.chessCom?.username ?? "";
         return `${s.profileId ?? ""}:${platform}:${username}`;
-      })
+      }),
     );
 
     // Filter out any sessions from res.sessions that don't exist in current sessions

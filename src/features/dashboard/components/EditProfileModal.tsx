@@ -171,40 +171,6 @@ export function EditProfileModal({
     }
   }, [fideIdValue, validateFideId, t]);
 
-  // Save profile
-  const handleSave = useCallback(() => {
-    const fideId = fideIdValue.trim();
-    const finalDisplayName = customName.trim();
-    const finalLichessToken = lichessToken.trim();
-
-    // Always save the displayName, even if there's no FIDE ID or FIDE player
-    if (fidePlayer && fideId) {
-      // If there's a FIDE player, save both
-      const playerData = {
-        name: fidePlayer.name,
-        firstName: fidePlayer.firstName, // Keep original firstName from FIDE
-        gender: fidePlayer.gender,
-        title: fidePlayer.title,
-        standardRating: fidePlayer.standardRating ?? fidePlayer.rating,
-        rapidRating: fidePlayer.rapidRating,
-        blitzRating: fidePlayer.blitzRating,
-        worldRank: fidePlayer.worldRank,
-        nationalRank: fidePlayer.nationalRank,
-        photo: fidePlayer.photo,
-      };
-      onSave(fideId, playerData, finalDisplayName, finalLichessToken || undefined);
-    } else if (fideId) {
-      // If there's only a FIDE ID but no player (failed or not performed search), save only the ID
-      onSave(fideId, null, finalDisplayName, finalLichessToken || undefined);
-    } else {
-      // If there's no FIDE ID, only save the displayName
-      onSave("", null, finalDisplayName, finalLichessToken || undefined);
-    }
-
-    // Reset state when closing
-    handleClose();
-  }, [fideIdValue, fidePlayer, customName, lichessToken, onSave, t]);
-
   // Close modal and reset state
   const handleClose = useCallback(() => {
     onClose();
@@ -236,6 +202,11 @@ export function EditProfileModal({
     // Allow saving if there's a displayName or FIDE ID
     return (customName.trim().length > 0 || fideIdValue.trim().length > 0) && !loading;
   }, [customName, fideIdValue, loading]);
+
+  const handleSave = useCallback(() => {
+    onSave(fideIdValue, fidePlayer, customName, lichessToken);
+    handleClose();
+  }, [fideIdValue, fidePlayer, customName, lichessToken, onSave, handleClose]);
 
   return (
     <Modal opened={opened} onClose={handleClose} title={t("features.dashboard.editProfile.title")} size="md">

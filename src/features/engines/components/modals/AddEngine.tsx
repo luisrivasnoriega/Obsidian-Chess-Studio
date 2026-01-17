@@ -17,8 +17,8 @@ import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconDatabase, IconTrophy, IconX } from "@tabler/icons-react";
 import { appDataDir, join, resolve } from "@tauri-apps/api/path";
-import { arch } from "@tauri-apps/plugin-os";
 import { exists, readDir, remove, rename } from "@tauri-apps/plugin-fs";
+import { arch } from "@tauri-apps/plugin-os";
 import { useAtom } from "jotai";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -334,8 +334,10 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
           throw new Error(`Unsupported installation method: ${engine.installMethod}`);
         }
 
-        let config: { name: string; options: { type: string; value: { name: string; default?: string | number | boolean | null } }[] } | null =
-          null;
+        let config: {
+          name: string;
+          options: { type: string; value: { name: string; default?: string | number | boolean | null } }[];
+        } | null = null;
         try {
           config = unwrap(await commands.getEngineConfig(enginePath)) as unknown as typeof config;
         } catch (e) {
@@ -402,7 +404,7 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         setInProgress(false);
       }
     },
-    [engine, setEngines, t],
+    [engine, setEngines, t, os, resolveAndroidEnginePath],
   );
 
   const getInstallText = () => {

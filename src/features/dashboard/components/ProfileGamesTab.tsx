@@ -1,8 +1,26 @@
-import { ActionIcon, Autocomplete, Avatar, Badge, Box, Button, Group, Loader, Menu, Pagination, ScrollArea, Stack, Table, Text, Select, Tooltip } from "@mantine/core";
 import {
-  IconChartLine,
-  IconChevronDown,
+  ActionIcon,
+  Autocomplete,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Loader,
+  Menu,
+  Pagination,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Tooltip,
+} from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
+import {
   IconChess,
+  IconChevronDown,
   IconExternalLink,
   IconSortAscending,
   IconSortDescending,
@@ -10,20 +28,17 @@ import {
   IconStarFilled,
   IconTrash,
 } from "@tabler/icons-react";
-import { notifications } from "@mantine/notifications";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { Event } from "@/bindings";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { stripAccountKey } from "@/utils/accountKeys";
-import type { Event } from "@/bindings";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
 import { getTimeControl } from "@/utils/timeControl";
-import { createPGNFromMoves } from "../utils/gameHelpers";
 import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
-import { useDebouncedValue } from "@mantine/hooks";
 
 type OnlineGameStats = {
   accuracy: number;
@@ -59,7 +74,7 @@ type GamesHistoryResponse = {
   totalCount: number;
 };
 
-function getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
+function _getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
   const trimmed = (timeControl ?? "").trim();
   const lower = trimmed.toLowerCase();
 
@@ -82,7 +97,7 @@ function isFavorite(favorites: FavoriteGame[], source: FavoriteGame["source"], i
   return favorites.some((f) => f.source === source && f.gameId === id);
 }
 
-function resultOutcome(color: "white" | "black", result: string): "win" | "loss" | "draw" | "unknown" {
+function _resultOutcome(color: "white" | "black", result: string): "win" | "loss" | "draw" | "unknown" {
   const r = (result ?? "").trim().toLowerCase();
   if (!r) return "unknown";
   if (r === "draw") return "draw";
@@ -94,15 +109,15 @@ function resultOutcome(color: "white" | "black", result: string): "win" | "loss"
   return "unknown";
 }
 const EVENT_TAG_REGEX = /\[Event\s+"([^"]+)"\]/i;
-const getEventNameFromPgn = (pgn: string | null | undefined, fallback: string) => {
+const _getEventNameFromPgn = (pgn: string | null | undefined, fallback: string) => {
   if (!pgn) return fallback;
   const match = pgn.match(EVENT_TAG_REGEX);
-  if (match && match[1]) return match[1];
+  if (match?.[1]) return match[1];
   return fallback;
 };
 
 const TIME_CONTROL_TAG_REGEX = /\[TimeControl\s+"([^"]+)"\]/i;
-const getTimeControlFromPgn = (pgn?: string | null): string | null => {
+const _getTimeControlFromPgn = (pgn?: string | null): string | null => {
   if (!pgn) return null;
   const match = pgn.match(TIME_CONTROL_TAG_REGEX);
   return match?.[1] ?? null;
@@ -188,7 +203,7 @@ export function ProfileGamesTab({
   onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
 }) {
   const { t } = useTranslation();
-  const usernamesLower = useMemo(() => {
+  const _usernamesLower = useMemo(() => {
     const set = new Set<string>();
     for (const username of profileUsernames) {
       const raw = (username ?? "").toLowerCase();
@@ -252,23 +267,22 @@ export function ProfileGamesTab({
     }
     let cancelled = false;
     const run = async () => {
-      const res =
-        (await invoke<GamesHistoryResponse>("dashboard_get_games_history_rows", {
-          req: {
-            profileId,
-            profileUsernames,
-            gameHistoryLimit,
-            page,
-            pageSize: itemsPerPage,
-            eventFilterId,
-            selectedOpponentId,
-            opponentContains: opponentFilter.trim() || null,
-            timeControlCategory,
-            resultFilter,
-            sortBy: sortBy ?? "date",
-            sortDirection,
-          },
-        })) ?? { rows: [], totalCount: 0 };
+      const res = (await invoke<GamesHistoryResponse>("dashboard_get_games_history_rows", {
+        req: {
+          profileId,
+          profileUsernames,
+          gameHistoryLimit,
+          page,
+          pageSize: itemsPerPage,
+          eventFilterId,
+          selectedOpponentId,
+          opponentContains: opponentFilter.trim() || null,
+          timeControlCategory,
+          resultFilter,
+          sortBy: sortBy ?? "date",
+          sortDirection,
+        },
+      })) ?? { rows: [], totalCount: 0 };
 
       if (cancelled) return;
       setRows(res.rows ?? []);
@@ -288,7 +302,6 @@ export function ProfileGamesTab({
     profileUsernames,
     gameHistoryLimit,
     page,
-    itemsPerPage,
     eventFilterId,
     opponentFilter,
     timeControlCategory,
@@ -308,19 +321,16 @@ export function ProfileGamesTab({
   };
 
   const totalPages = Math.ceil(totalCount / itemsPerPage);
-  const now = useMemo(() => Date.now(), [rows]);
-  const analyzeAllOptions = useMemo(
-    () => {
-      const totalCount = localGames.length + chessComGames.length + lichessGames.length;
-      return [
-        { type: "all" as const, label: "All", count: totalCount },
-        { type: "local" as const, label: "Local", count: localGames.length },
-        { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
-        { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
-      ];
-    },
-    [localGames.length, chessComGames.length, lichessGames.length],
-  );
+  const now = useMemo(() => Date.now(), []);
+  const analyzeAllOptions = useMemo(() => {
+    const totalCount = localGames.length + chessComGames.length + lichessGames.length;
+    return [
+      { type: "all" as const, label: "All", count: totalCount },
+      { type: "local" as const, label: "Local", count: localGames.length },
+      { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
+      { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
+    ];
+  }, [localGames.length, chessComGames.length, lichessGames.length]);
 
   const handleOpenGame = async (url: string | null) => {
     if (!url) return;
@@ -393,19 +403,19 @@ export function ProfileGamesTab({
               const getDate = (event: Event): string | null => {
                 return event.end_date || event.start_date || null;
               };
-              
+
               const dateA = getDate(a);
               const dateB = getDate(b);
-              
+
               // Events with dates come first
               if (dateA && !dateB) return -1;
               if (!dateA && dateB) return 1;
-              
+
               // Both have dates: compare (descending - most recent first)
               if (dateA && dateB) {
                 return dateB.localeCompare(dateA);
               }
-              
+
               // Neither has date: sort by ID (descending - most recent first)
               return b.id - a.id;
             })
@@ -481,10 +491,12 @@ export function ProfileGamesTab({
           placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
           value={timeControlCategory ?? undefined}
           onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
-          data={(["ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"] as const).map((value) => ({
-            value,
-            label: getTimeControlLabel(t, value),
-          }))}
+          data={(["ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"] as const).map(
+            (value) => ({
+              value,
+              label: getTimeControlLabel(t, value),
+            }),
+          )}
           clearable
           searchable
           size="sm"
@@ -551,96 +563,142 @@ export function ProfileGamesTab({
               </Table.Tr>
             ) : (
               rows.map((row) => {
-              const pgn = row.pgn ?? null;
-              const diffMs = now - row.timestampMs;
-              const dateStr =
-                diffMs < 60 * 60 * 1000
-                  ? `${Math.floor(diffMs / (60 * 1000))}m ago`
-                  : diffMs < 24 * 60 * 60 * 1000
-                    ? `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`
-                    : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
+                const pgn = row.pgn ?? null;
+                const diffMs = now - row.timestampMs;
+                const dateStr =
+                  diffMs < 60 * 60 * 1000
+                    ? `${Math.floor(diffMs / (60 * 1000))}m ago`
+                    : diffMs < 24 * 60 * 60 * 1000
+                      ? `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`
+                      : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
 
-              const favoriteSource =
-                row.kind === "Local" ? "local" : row.kind === "Chesscom" ? "chesscom" : "lichess";
-              const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
+                const favoriteSource =
+                  row.kind === "Local" ? "local" : row.kind === "Chesscom" ? "chesscom" : "lichess";
+                const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
 
-              return (
-                <Table.Tr key={`${row.kind}:${row.gameKey}`}>
-                  <Table.Td>
-                    <Badge variant="light" color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}>
-                      {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td style={{ width: 180 }}>
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                      <Avatar size={24} radius="xl">
-                        {(row.opponent || "?")[0]?.toUpperCase()}
-                      </Avatar>
-                      <Text truncate style={{ minWidth: 0 }}>
-                        {row.opponent}
-                      </Text>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td>
-                    <Box
-                      aria-label={row.color}
-                      style={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: 999,
-                        backgroundColor: row.color === "white" ? "#ffffff" : "#000000",
-                        border: row.color === "white" ? "1px solid #666666" : "1px solid #000000",
-                        marginLeft: 4,
-                      }}
-                    />
-                  </Table.Td>
-                  <Table.Td style={{ width: 85 }}>
-                    {(() => {
-                      const label =
-                        row.outcome === "win" ? "Win" : row.outcome === "loss" ? "Loss" : row.outcome === "draw" ? "Draw" : "-";
-                      const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
-                      return (
-                        <Badge variant="light" color={color}>
-                          {label}
-                        </Badge>
-                      );
-                    })()}
-                  </Table.Td>
-                  <Table.Td>{row.accuracy ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
-                  <Table.Td>{row.acpl ? Math.round(row.acpl) : "-"}</Table.Td>
-                  <Table.Td>{row.estimatedElo ? Math.round(row.estimatedElo) : "-"}</Table.Td>
-                  <Table.Td>{row.moves || "-"}</Table.Td>
-                  <Table.Td>
-                    {row.timeControl?.trim()
-                      ? (() => {
-                          const category = row.timeControlCategory ?? null;
-                          return category ? getTimeControlLabel(t, category) : "-";
-                        })()
-                      : "-"}
-                  </Table.Td>
-                  <Table.Td>{dateStr}</Table.Td>
-                  <Table.Td>
-                    <ActionIcon variant="subtle" onClick={async () => {
-                      if (row.kind === "Local" && onToggleFavoriteLocal) return await onToggleFavoriteLocal(row.gameKey);
-                      if (row.kind === "Chesscom" && onToggleFavoriteChessCom) return await onToggleFavoriteChessCom(row.gameKey);
-                      if (row.kind === "Lichess" && onToggleFavoriteLichess) return await onToggleFavoriteLichess(row.gameKey);
-                    }} disabled={
-                      (row.kind === "Local" && !onToggleFavoriteLocal) ||
-                      (row.kind === "Chesscom" && !onToggleFavoriteChessCom) ||
-                      (row.kind === "Lichess" && !onToggleFavoriteLichess)
-                    }>
-                      {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
-                    </ActionIcon>
-                  </Table.Td>
-                  <Table.Td style={{ textAlign: "left" }}>
-                    <Group gap="xs" wrap="nowrap" justify="flex-start">
-                      {row.kind === "Local" && onDeleteLocalGame && (
-                        <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      )}
-                      {row.isAnalyzed && pgn ? (
-                        <AnalysisPreview pgn={pgn}>
+                return (
+                  <Table.Tr key={`${row.kind}:${row.gameKey}`}>
+                    <Table.Td>
+                      <Badge
+                        variant="light"
+                        color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}
+                      >
+                        {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td style={{ width: 180 }}>
+                      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                        <Avatar size={24} radius="xl">
+                          {(row.opponent || "?")[0]?.toUpperCase()}
+                        </Avatar>
+                        <Text truncate style={{ minWidth: 0 }}>
+                          {row.opponent}
+                        </Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Box
+                        aria-label={row.color}
+                        style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: 999,
+                          backgroundColor: row.color === "white" ? "#ffffff" : "#000000",
+                          border: row.color === "white" ? "1px solid #666666" : "1px solid #000000",
+                          marginLeft: 4,
+                        }}
+                      />
+                    </Table.Td>
+                    <Table.Td style={{ width: 85 }}>
+                      {(() => {
+                        const label =
+                          row.outcome === "win"
+                            ? "Win"
+                            : row.outcome === "loss"
+                              ? "Loss"
+                              : row.outcome === "draw"
+                                ? "Draw"
+                                : "-";
+                        const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
+                        return (
+                          <Badge variant="light" color={color}>
+                            {label}
+                          </Badge>
+                        );
+                      })()}
+                    </Table.Td>
+                    <Table.Td>{row.accuracy ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
+                    <Table.Td>{row.acpl ? Math.round(row.acpl) : "-"}</Table.Td>
+                    <Table.Td>{row.estimatedElo ? Math.round(row.estimatedElo) : "-"}</Table.Td>
+                    <Table.Td>{row.moves || "-"}</Table.Td>
+                    <Table.Td>
+                      {row.timeControl?.trim()
+                        ? (() => {
+                            const category = row.timeControlCategory ?? null;
+                            return category ? getTimeControlLabel(t, category) : "-";
+                          })()
+                        : "-"}
+                    </Table.Td>
+                    <Table.Td>{dateStr}</Table.Td>
+                    <Table.Td>
+                      <ActionIcon
+                        variant="subtle"
+                        onClick={async () => {
+                          if (row.kind === "Local" && onToggleFavoriteLocal)
+                            return await onToggleFavoriteLocal(row.gameKey);
+                          if (row.kind === "Chesscom" && onToggleFavoriteChessCom)
+                            return await onToggleFavoriteChessCom(row.gameKey);
+                          if (row.kind === "Lichess" && onToggleFavoriteLichess)
+                            return await onToggleFavoriteLichess(row.gameKey);
+                        }}
+                        disabled={
+                          (row.kind === "Local" && !onToggleFavoriteLocal) ||
+                          (row.kind === "Chesscom" && !onToggleFavoriteChessCom) ||
+                          (row.kind === "Lichess" && !onToggleFavoriteLichess)
+                        }
+                      >
+                        {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
+                      </ActionIcon>
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "left" }}>
+                      <Group gap="xs" wrap="nowrap" justify="flex-start">
+                        {row.kind === "Local" && onDeleteLocalGame && (
+                          <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        )}
+                        {row.isAnalyzed && pgn ? (
+                          <AnalysisPreview pgn={pgn}>
+                            <Button
+                              size="xs"
+                              variant="default"
+                              leftSection={<IconChess size={16} />}
+                              onClick={() => {
+                                if (row.kind === "Local") {
+                                  const g = localGames.find((x) => x.id === row.gameKey);
+                                  if (g) onAnalyzeLocalGame(g);
+                                } else if (row.kind === "Chesscom") {
+                                  const g = chessComGames.find((x) => x.url === row.gameKey);
+                                  if (g && profileId) {
+                                    onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                                  } else if (g) {
+                                    onAnalyzeChessComGame(g);
+                                  }
+                                } else {
+                                  const g = lichessGames.find((x) => x.id === row.gameKey);
+                                  if (g && profileId) {
+                                    onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
+                                  } else if (g) {
+                                    onAnalyzeLichessGame(g);
+                                  }
+                                }
+                              }}
+                              disabled={!pgn && row.kind !== "Local"}
+                            >
+                              {t("features.dashboard.analyze") || "Analyze"}
+                            </Button>
+                          </AnalysisPreview>
+                        ) : (
                           <Button
                             size="xs"
                             variant="default"
@@ -669,48 +727,18 @@ export function ProfileGamesTab({
                           >
                             {t("features.dashboard.analyze") || "Analyze"}
                           </Button>
-                        </AnalysisPreview>
-                      ) : (
-                        <Button
-                          size="xs"
-                          variant="default"
-                          leftSection={<IconChess size={16} />}
-                          onClick={() => {
-                            if (row.kind === "Local") {
-                              const g = localGames.find((x) => x.id === row.gameKey);
-                              if (g) onAnalyzeLocalGame(g);
-                            } else if (row.kind === "Chesscom") {
-                              const g = chessComGames.find((x) => x.url === row.gameKey);
-                              if (g && profileId) {
-                                onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                              } else if (g) {
-                                onAnalyzeChessComGame(g);
-                              }
-                            } else {
-                              const g = lichessGames.find((x) => x.id === row.gameKey);
-                              if (g && profileId) {
-                                onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                              } else if (g) {
-                                onAnalyzeLichessGame(g);
-                              }
-                            }
-                          }}
-                          disabled={!pgn && row.kind !== "Local"}
-                        >
-                          {t("features.dashboard.analyze") || "Analyze"}
-                        </Button>
-                      )}
-                      {row.kind !== "Local" && (
-                        <Tooltip label={t("features.dashboard.openGame", "Open game")}>
-                          <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
-                            <IconExternalLink size={16} />
-                          </ActionIcon>
-                        </Tooltip>
-                      )}
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              );
+                        )}
+                        {row.kind !== "Local" && (
+                          <Tooltip label={t("features.dashboard.openGame", "Open game")}>
+                            <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
+                              <IconExternalLink size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                );
               })
             )}
           </Table.Tbody>

@@ -44,7 +44,14 @@ function parseNumber(value: string | null | undefined): number | undefined {
 }
 
 function extractName(doc: Document): string | null {
-  const selectors = [".player-title", "h1.player-title", ".profile-top-title", "h1.profile-top-title", ".player-name", "h1"];
+  const selectors = [
+    ".player-title",
+    "h1.player-title",
+    ".profile-top-title",
+    "h1.profile-top-title",
+    ".player-name",
+    "h1",
+  ];
 
   for (const selector of selectors) {
     const text = doc.querySelector(selector)?.textContent;
@@ -92,7 +99,7 @@ function extractGender(doc: Document, title?: string): "male" | "female" {
   if (text === "female" || text === "f") return "female";
   if (text === "male" || text === "m") return "male";
 
-  if (title && title.startsWith("W")) return "female";
+  if (title?.startsWith("W")) return "female";
   return "male";
 }
 
@@ -195,4 +202,3 @@ export async function fetchFidePlayer(fideId: string): Promise<FidePlayer | null
     age,
   };
 }
-

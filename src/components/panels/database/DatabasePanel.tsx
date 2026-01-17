@@ -18,7 +18,7 @@ import {
   lichessOptionsAtom,
   masterOptionsAtom,
 } from "@/state/atoms";
-import { type Opening, type DatabaseInfo, getDatabases, searchPosition } from "@/utils/db";
+import { type DatabaseInfo, getDatabases, type Opening, searchPosition } from "@/utils/db";
 import { convertToNormalized, getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGamesOptions, MasterGamesOptions } from "@/utils/lichess/explorer";
 import DatabaseLoader from "./DatabaseLoader";
@@ -129,33 +129,36 @@ function DatabasePanel() {
     if (localOptions.path) return localOptions.path;
     return gameDatabases[0]?.file ?? null;
   }, [gameDatabases, localOptions.path]);
-  
+
   // Only search when we're in the database tab and viewing stats or games
   const isDatabaseTabActive = currentTabSelected === "database";
   const isStatsOrGamesTab = tabType === "stats" || tabType === "games";
   const shouldSearch = isDatabaseTabActive && isStatsOrGamesTab;
-  
+
   // Always get FEN from store to ensure we have the current position
   // Use a ref to track the last FEN to prevent unnecessary re-renders when not searching
   const lastNeededFenRef = useRef<string>(localOptions.fen || "");
-  
+
   // Always get FEN from store - ALWAYS subscribe to changes
   // This ensures we always have the latest FEN, even when not searching
-  const fenFromStore = useStore(store, useShallow((s: ReturnType<typeof store.getState>) => s.currentNode().fen)) as string;
-  
+  const fenFromStore = useStore(
+    store,
+    useShallow((s: ReturnType<typeof store.getState>) => s.currentNode().fen),
+  ) as string;
+
   // Always use the current FEN from store
   const fen: string = fenFromStore || lastNeededFenRef.current;
-  
+
   // Update lastNeededFenRef when FEN changes
   useEffect(() => {
     if (fenFromStore && fenFromStore !== lastNeededFenRef.current) {
       lastNeededFenRef.current = fenFromStore;
     }
   }, [fenFromStore]);
-  
+
   // Reduced debounce for local DB to improve synchronization with analysis board
   const [debouncedFen] = useDebouncedValue(fen, db === "local" ? 100 : 50);
-  
+
   const prevFenRef = useRef<string>(localOptions.fen || "");
 
   // Update localOptions immediately when FEN changes (before debounce)
@@ -207,12 +210,12 @@ function DatabasePanel() {
       const currentFenFromStore = store.getState().currentNode().fen;
       const needsPathUpdate = defaultLocalDbPath && !localOptions.path;
       const needsFenUpdate = (!localOptions.fen || localOptions.fen.trim() === "") && currentFenFromStore;
-      
+
       if (needsPathUpdate || needsFenUpdate) {
-        setLocalOptions((q) => ({ 
-          ...q, 
+        setLocalOptions((q) => ({
+          ...q,
           ...(needsPathUpdate ? { path: defaultLocalDbPath } : {}),
-          ...(needsFenUpdate ? { fen: currentFenFromStore } : {})
+          ...(needsFenUpdate ? { fen: currentFenFromStore } : {}),
         }));
       }
     }
@@ -255,7 +258,8 @@ function DatabasePanel() {
   // 1. We're in the database tab (currentTabSelected === "database")
   // 2. We're viewing stats or games (not options)
   // 3. For local DB, we have FEN and path
-  const queryEnabled = shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
+  const queryEnabled =
+    shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
 
   const {
     data: openingData,
@@ -325,10 +329,10 @@ function DatabasePanel() {
           onChange={(value) => {
             if (value) {
               const currentFenFromStore = store.getState().currentNode().fen;
-              setLocalOptions((prev) => ({ 
-                ...prev, 
+              setLocalOptions((prev) => ({
+                ...prev,
                 path: value,
-                fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
               }));
               // Invalidate queries to trigger new search with new database
               queryClient.invalidateQueries({ queryKey: ["database-opening"] });
@@ -364,8 +368,8 @@ function DatabasePanel() {
           <OpeningsTable openings={openingData?.openings || []} loading={isLoading} />
         </PanelWithError>
         <PanelWithError value="games" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
-          <GamesTable 
-            games={openingData?.games || []} 
+          <GamesTable
+            games={openingData?.games || []}
             loading={isLoading}
             fen={db === "local" ? localOptions.fen : debouncedFen}
             databasePath={db === "local" ? (localOptions.path ?? undefined) : undefined}

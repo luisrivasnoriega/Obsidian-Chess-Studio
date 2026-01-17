@@ -1,4 +1,4 @@
-import { ActionIcon, Avatar, Badge, Box, Group, Pagination, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { ActionIcon, Avatar, Badge, Group, Pagination, ScrollArea, Stack, Table, Text } from "@mantine/core";
 import { IconStarFilled } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
@@ -6,8 +6,8 @@ import { useTranslation } from "react-i18next";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import { getAnalyzedGamesBulk } from "@/utils/analyzedGames";
-import type { GameRecord } from "@/utils/gameRecords";
 import type { FavoriteGame } from "@/utils/favoriteGames";
+import type { GameRecord } from "@/utils/gameRecords";
 import type { ChessComGameWithEvent, DashboardLichessGame } from "../types";
 
 interface FavoriteGamesTabProps {
@@ -86,17 +86,9 @@ export function FavoriteGamesTab({
     // Sort by timestamp (most recent first)
     return items.sort((a, b) => {
       const timeA =
-        a.type === "local"
-          ? a.game.timestamp
-          : a.type === "chesscom"
-            ? a.game.end_time * 1000
-            : a.game.createdAt;
+        a.type === "local" ? a.game.timestamp : a.type === "chesscom" ? a.game.end_time * 1000 : a.game.createdAt;
       const timeB =
-        b.type === "local"
-          ? b.game.timestamp
-          : b.type === "chesscom"
-            ? b.game.end_time * 1000
-            : b.game.createdAt;
+        b.type === "local" ? b.game.timestamp : b.type === "chesscom" ? b.game.end_time * 1000 : b.game.createdAt;
       return timeB - timeA;
     });
   }, [favoriteGames, localGames, chessComGames, lichessGames]);
@@ -117,8 +109,7 @@ export function FavoriteGamesTab({
 
       const idsToLoad: string[] = [];
       for (const item of paginatedGames) {
-        const id =
-          item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
+        const id = item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
         if (!analyzedPgns.has(id)) idsToLoad.push(id);
       }
       if (idsToLoad.length === 0) return;
@@ -129,8 +120,7 @@ export function FavoriteGamesTab({
       setAnalyzedPgns((prev) => {
         const next = new Map(prev);
         for (const item of paginatedGames) {
-          const gameId =
-            item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
+          const gameId = item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
           if (next.has(gameId)) continue;
           const analyzedPgn = analyzed.get(gameId);
           const fallbackPgn = item.type === "local" ? item.game.pgn : item.game.pgn;
@@ -156,10 +146,10 @@ export function FavoriteGamesTab({
   // Reset to page 1 when games change
   useEffect(() => {
     setPage(1);
-  }, [favoriteGameItems.length]);
+  }, []);
 
   // Calculate current time once per render
-  const now = useMemo(() => Date.now(), [paginatedGames]);
+  const now = useMemo(() => Date.now(), []);
 
   const handleToggleFavorite = async (item: FavoriteGameItem) => {
     if (item.type === "local" && onToggleFavoriteLocal) {
@@ -194,15 +184,15 @@ export function FavoriteGamesTab({
       <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
         <Table striped highlightOnHover>
           <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Source</Table.Th>
-            <Table.Th>Color</Table.Th>
-            <Table.Th>Opponent</Table.Th>
-            <Table.Th>Result</Table.Th>
-            <Table.Th>Date</Table.Th>
-            <Table.Th>Favorite</Table.Th>
-            <Table.Th>Actions</Table.Th>
-          </Table.Tr>
+            <Table.Tr>
+              <Table.Th>Source</Table.Th>
+              <Table.Th>Color</Table.Th>
+              <Table.Th>Opponent</Table.Th>
+              <Table.Th>Result</Table.Th>
+              <Table.Th>Date</Table.Th>
+              <Table.Th>Favorite</Table.Th>
+              <Table.Th>Actions</Table.Th>
+            </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {paginatedGames.map((item) => {
@@ -279,11 +269,7 @@ export function FavoriteGamesTab({
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
-                      {pgn && (
-                        <AnalysisPreview pgn={pgn}>
-                          <></>
-                        </AnalysisPreview>
-                      )}
+                      {pgn && <AnalysisPreview pgn={pgn}>{null}</AnalysisPreview>}
                       <Text
                         size="sm"
                         style={{ cursor: "pointer", textDecoration: "underline" }}
@@ -307,4 +293,3 @@ export function FavoriteGamesTab({
     </Stack>
   );
 }
-

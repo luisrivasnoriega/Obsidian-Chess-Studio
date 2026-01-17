@@ -6,7 +6,7 @@
  * TODOs for future improvement.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 
 /**
  * Return mate related tags given the context.  If the final position is

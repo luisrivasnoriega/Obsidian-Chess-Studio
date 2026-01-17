@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import DateRangeTabs, { DateRange } from "../components/PersonalCardPanels/DateRangeTabs";
+import { render, screen } from "./test-utils";
 
 // Mantine Tabs (and sometimes other UI libs) can rely on ResizeObserver in JSDOM
 beforeAll(() => {
@@ -33,8 +32,7 @@ describe("DateRangeTabs", () => {
     render(<DateRangeTabs timeRange={null} onTimeRangeChange={mockOnChange} />);
 
     // Prefer role-based query if the component uses real tabs
-    const sevenDaysTab =
-      screen.queryByRole("tab", { name: /7 days/i }) ?? screen.getByText(/7 days/i);
+    const sevenDaysTab = screen.queryByRole("tab", { name: /7 days/i }) ?? screen.getByText(/7 days/i);
 
     await user.click(sevenDaysTab);
 
@@ -46,8 +44,7 @@ describe("DateRangeTabs", () => {
     render(<DateRangeTabs timeRange={DateRange.ThirtyDays} onTimeRangeChange={mockOnChange} />);
 
     // Mantine Tabs usually render role="tab"
-    const thirtyDaysTab =
-      screen.queryByRole("tab", { name: /30 days/i }) ?? screen.getByText(/30 days/i);
+    const thirtyDaysTab = screen.queryByRole("tab", { name: /30 days/i }) ?? screen.getByText(/30 days/i);
 
     // Different libs mark active differently; we support a few common patterns:
     const tabEl = (thirtyDaysTab as HTMLElement).closest('[role="tab"]') ?? (thirtyDaysTab as HTMLElement);

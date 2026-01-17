@@ -3,7 +3,7 @@
  * and then captures after the reply, we tag it as an intermezzo.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { isImmediatePunishCapture } from "./utils";
 
 export function detectIntermezzo(ctx: ThemeContext): ThemeId[] {

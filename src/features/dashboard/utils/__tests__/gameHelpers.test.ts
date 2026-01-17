@@ -1,16 +1,16 @@
 import { describe, expect, test } from "vitest";
+import type { NormalizedGame } from "@/bindings";
+import type { ChessComGame } from "@/utils/chess.com/api";
+import type { GameRecord } from "@/utils/gameRecords";
 import {
-  createChessComGameHeaders,
-  createLocalGameHeaders,
-  createLichessGameHeaders,
-  createPGNFromMoves,
-  createPgnFromLocalGame,
   convertNormalizedToChessComGame,
   convertNormalizedToLichessGame,
+  createChessComGameHeaders,
+  createLichessGameHeaders,
+  createLocalGameHeaders,
+  createPGNFromMoves,
+  createPgnFromLocalGame,
 } from "../gameHelpers";
-import type { GameRecord } from "@/utils/gameRecords";
-import type { ChessComGame } from "@/utils/chess.com/api";
-import type { NormalizedGame } from "@/bindings";
 
 describe("gameHelpers", () => {
   describe("createLocalGameHeaders", () => {
@@ -94,7 +94,7 @@ describe("gameHelpers", () => {
     test("creates PGN with moves", () => {
       const moves = ["e4", "e5", "Nf3", "Nc6"];
       const pgn = createPGNFromMoves(moves, "1-0");
-      expect(pgn).toContain("[Event \"Local Game\"]");
+      expect(pgn).toContain('[Event "Local Game"]');
       expect(pgn).toContain("1. e4 e5");
       expect(pgn).toContain("2. Nf3 Nc6");
       expect(pgn).toContain("1-0");
@@ -104,13 +104,13 @@ describe("gameHelpers", () => {
       const moves = ["e4"];
       const customFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
       const pgn = createPGNFromMoves(moves, "1-0", customFen);
-      expect(pgn).toContain("[SetUp \"1\"]");
+      expect(pgn).toContain('[SetUp "1"]');
       expect(pgn).toContain(`[FEN "${customFen}"]`);
     });
 
     test("creates PGN with only result when no moves", () => {
       const pgn = createPGNFromMoves([], "1/2-1/2");
-      expect(pgn).toContain("[Result \"1/2-1/2\"]");
+      expect(pgn).toContain('[Result "1/2-1/2"]');
       expect(pgn).toContain("1/2-1/2");
     });
   });
@@ -128,9 +128,9 @@ describe("gameHelpers", () => {
         fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
       };
       const pgn = createPgnFromLocalGame(game);
-      expect(pgn).toContain("[White \"White\"]");
-      expect(pgn).toContain("[Black \"Black\"]");
-      expect(pgn).toContain("[TimeControl \"600+0\"]");
+      expect(pgn).toContain('[White "White"]');
+      expect(pgn).toContain('[Black "Black"]');
+      expect(pgn).toContain('[TimeControl "600+0"]');
       expect(pgn).toContain("1. e4 e5");
       expect(pgn).toContain("2. Nf3");
     });
@@ -191,4 +191,3 @@ describe("gameHelpers", () => {
     });
   });
 });
-

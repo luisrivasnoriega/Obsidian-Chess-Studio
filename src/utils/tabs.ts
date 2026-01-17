@@ -5,12 +5,11 @@ import type { StoreApi } from "zustand";
 import { commands } from "@/bindings";
 import { fileMetadataSchema } from "@/features/files/utils/file";
 import type { TreeStoreState } from "@/state/store/tree";
-import { createFile, getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
+import { getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
 import { setTabState } from "@/utils/tabStateStorage";
 import { unwrap } from "@/utils/unwrap";
-import { getMoveText, getPGN, getPGNFromReportView, getOpening, parsePGN } from "./chess";
+import { getMoveText, getPGNFromReportView, parsePGN } from "./chess";
 import { formatDateToPGN } from "./format";
-import { getTreeStats } from "./repertoire";
 import type { GameHeaders, TreeNode, TreeState } from "./treeReducer";
 
 const dbGameMetadataSchema = z.object({
@@ -200,8 +199,7 @@ export async function saveToFile({
     if (userChoice === null) return false;
     filePath = userChoice;
     const fileName = await getFileNameWithoutExtension(filePath);
-    const tempSourcePath =
-      tab?.source?.type === "file" && isTempImportFile(tab.source.path) ? tab.source.path : null;
+    const tempSourcePath = tab?.source?.type === "file" && isTempImportFile(tab.source.path) ? tab.source.path : null;
 
     // If this is a variants file, create the .info file with type "variants"
     if (isVariantsFile) {
@@ -288,13 +286,11 @@ export async function saveToFile({
   // For variants files, update tab name (but not metadata - that's done in buildVariantsTree)
   const shouldUpdateTabName =
     isVariantsFile || (tab?.source?.type === "file" && tab.source.metadata?.type === "variants");
-  
+
   if (shouldUpdateTabName && setTabs && tab?.value) {
     const fileName = await getFileNameWithoutExtension(filePath);
     const tabValue = tab.value;
-    setTabs((prev) =>
-      prev.map((t) => (t.value === tabValue ? { ...t, name: fileName } : t)),
-    );
+    setTabs((prev) => prev.map((t) => (t.value === tabValue ? { ...t, name: fileName } : t)));
   }
   return true;
 }
@@ -327,9 +323,7 @@ export async function saveTab(
     if (tab.source.metadata?.type === "variants") {
       const fileName = tab.source.name;
       if (setTabs) {
-        setTabs((prev) =>
-          prev.map((t) => (t.value === tab.value ? { ...t, name: fileName } : t)),
-        );
+        setTabs((prev) => prev.map((t) => (t.value === tab.value ? { ...t, name: fileName } : t)));
       }
     }
   } else if (tab.source?.type === "db") {
@@ -351,7 +345,7 @@ export async function saveTab(
 }
 
 // Helper function to generate PGN for a single variation (without headers)
-function getVariationPGN(
+function _getVariationPGN(
   node: TreeNode,
   {
     comments,
@@ -381,7 +375,7 @@ function getVariationPGN(
 
   // Continue with the main line (first child)
   if (node.children.length > 0) {
-    pgn += getVariationPGN(node.children[0], {
+    pgn += _getVariationPGN(node.children[0], {
       comments,
       extraMarkups,
       glyphs,
@@ -394,7 +388,7 @@ function getVariationPGN(
   if (variations && node.children.length > 1) {
     for (let i = 1; i < node.children.length; i++) {
       const subVariation = node.children[i];
-      const subVariationPGN = getVariationPGN(subVariation, {
+      const subVariationPGN = _getVariationPGN(subVariation, {
         comments,
         extraMarkups,
         glyphs,
@@ -409,7 +403,7 @@ function getVariationPGN(
 }
 
 // Helper function to generate PGN headers text
-function getPgnHeadersText(headers: GameHeaders): string {
+function _getPgnHeadersText(headers: GameHeaders): string {
   let text = `[Event "${headers.event || "?"}"]\n`;
   text += `[Site "${headers.site || "?"}"]\n`;
   text += `[Date "${headers.date || "????.??.??"}"]\n`;

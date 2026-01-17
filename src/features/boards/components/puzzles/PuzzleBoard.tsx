@@ -1,6 +1,6 @@
 import { Box } from "@mantine/core";
 import { useElementSize, useHotkeys } from "@mantine/hooks";
-import { type Move, parseUci, type NormalMove, parseSquare } from "chessops";
+import { type Move, type NormalMove, parseSquare, parseUci } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import equal from "fast-deep-equal";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -48,7 +48,7 @@ function PuzzleBoard({
   const currentNode = useMemo(() => getNodeAtPath(root, position), [root, position]);
 
   const puzzle = puzzles[currentPuzzle] ?? null;
-  const [hasMistake, setHasMistake] = useState(false);
+  const [_hasMistake, setHasMistake] = useState(false);
   const prevPuzzleIndexRef = useRef(currentPuzzle);
   const isProcessingMoveRef = useRef(false);
 

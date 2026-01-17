@@ -1,15 +1,14 @@
 import { AppShellSection, Group, Stack, Tooltip } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import type { ComponentType } from "react";
 import type { IconProps } from "@tabler/icons-react";
 import {
+  IconCalendarEvent,
   IconChartLine,
   IconCpu,
   IconDatabase,
   IconFiles,
   IconGitBranch,
   IconKeyboard,
-  IconCalendarEvent,
   IconLayoutDashboard,
   IconPlayerPlay,
   IconPuzzle,
@@ -20,9 +19,10 @@ import {
 import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
 import { useAtom } from "jotai";
+import type { ComponentType } from "react";
 import { useTranslation } from "react-i18next";
-import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { createTab, type Tab } from "@/utils/tabs";
 import * as classes from "./Sidebar.css";
@@ -57,7 +57,7 @@ function NavbarLink({ url, icon: Icon, label }: NavbarLinkProps) {
 }
 
 const LichessSideIcon: SidebarIcon = ({ size }) => {
-  const resolvedSize = typeof size === "number" ? `${size}px` : size ?? "1.5rem";
+  const resolvedSize = typeof size === "number" ? `${size}px` : (size ?? "1.5rem");
   return (
     <div
       style={{
@@ -97,17 +97,15 @@ function MayaActionLink({
 
   return (
     <Tooltip label={label} position={isFooter ? "top" : "right"}>
-      <a
-        href="#"
-        onClick={(e) => {
-          e.preventDefault();
-          onClick(e);
-        }}
+      <button
+        type="button"
+        onClick={onClick}
         className={cx(classes.link)}
         data-position={isFooter ? "footer" : "navbar"}
+        style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
       >
         <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
-      </a>
+      </button>
     </Tooltip>
   );
 }
@@ -128,9 +126,7 @@ const secondaryLinksData = [
 ];
 
 // Sección terciaria (configuración/avanzado)
-const tertiaryLinksData = [
-  { icon: LichessSideIcon, label: "tournaments", url: "/tournaments" },
-];
+const tertiaryLinksData = [{ icon: LichessSideIcon, label: "tournaments", url: "/tournaments" }];
 
 const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: string }> = [
   { icon: IconLayoutDashboard, labelKey: "features.sidebar.dashboard", url: "/" },
@@ -144,11 +140,7 @@ const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: strin
 ];
 
 // Mantener linksdata para compatibilidad
-export const linksdata = [
-  ...primaryLinks,
-  ...secondaryLinksData,
-  ...tertiaryLinksData,
-];
+export const linksdata = [...primaryLinks, ...secondaryLinksData, ...tertiaryLinksData];
 
 export function SideBar() {
   const matchesRoute = useMatchRoute();

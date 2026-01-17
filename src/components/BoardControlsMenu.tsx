@@ -74,7 +74,7 @@ function BoardControlsMenu({
   reload,
   addGame: _addGame,
   toggleOrientation,
-  currentTabSourceType,
+  currentTabSourceType: _currentTabSourceType,
   count: _count = 0,
   dirty = false,
   autoSave = false,
@@ -119,12 +119,7 @@ function BoardControlsMenu({
     {
       id: "changeTabType",
       condition: !!changeTabType,
-      icon:
-        currentTabType === "analysis" ? (
-          <IconTarget size={iconSize} />
-        ) : (
-          <IconZoomCheck size={iconSize} />
-        ),
+      icon: currentTabType === "analysis" ? <IconTarget size={iconSize} /> : <IconZoomCheck size={iconSize} />,
       onClick: () => changeTabType?.(),
       label: t(
         currentTabType === "analysis" ? "features.board.actions.playFromHere" : "features.board.actions.analyzeGame",

@@ -18,18 +18,14 @@ const useFileDirectory = (dir: string) => {
   const { data, error, isLoading, refetch } = useQuery({
     queryKey: ["file-directory", dir],
     queryFn: async () => {
-      try {
-        // Ensure directory exists before reading
-        if (!(await exists(dir))) {
-          await mkdir(dir, { recursive: true });
-          return [];
-        }
-        const entries = await readDir(dir);
-        const allEntries = await processEntriesRecursively(dir, entries);
-        return allEntries;
-      } catch (err) {
-        throw err;
+      // Ensure directory exists before reading
+      if (!(await exists(dir))) {
+        await mkdir(dir, { recursive: true });
+        return [];
       }
+      const entries = await readDir(dir);
+      const allEntries = await processEntriesRecursively(dir, entries);
+      return allEntries;
     },
   });
 

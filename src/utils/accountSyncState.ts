@@ -26,10 +26,7 @@ export async function getAccountSyncState(input: {
   });
 }
 
-export async function upsertAccountSyncState(input: {
-  dbPath: string;
-  state: AccountSyncState;
-}): Promise<void> {
+export async function upsertAccountSyncState(input: { dbPath: string; state: AccountSyncState }): Promise<void> {
   await invoke("upsert_account_sync_state", {
     dbPath: input.dbPath,
     syncState: input.state,

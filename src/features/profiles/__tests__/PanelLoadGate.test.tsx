@@ -1,7 +1,7 @@
-import React from "react";
+import type React from "react";
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { PanelLoadGate } from "../components/PersonalCardPanels/PanelLoadGate";
+import { render, screen } from "./test-utils";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -45,5 +45,3 @@ describe("PanelLoadGate", () => {
     expect(screen.getByTestId("child")).toBeInTheDocument();
   });
 });
-
-

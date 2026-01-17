@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 // We mock the bindings layer so we can observe the payload passed to Tauri commands
 const mockCommands = vi.hoisted(() => ({
@@ -56,5 +56,3 @@ describe("db invoke payloads (BigInt-safe serialization)", () => {
     expect(() => JSON.stringify(payload)).not.toThrow();
   });
 });
-
-

@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { JSONModal } from "../../modals/JSONModal";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -30,15 +29,7 @@ describe("JSONModal", () => {
   };
 
   test("renders when opened", () => {
-    render(
-      <JSONModal
-        opened={true}
-        toggleOpened={mockToggleOpened}
-        engine={mockEngine}
-        setEngine={mockSetEngine}
-      />
-    );
+    render(<JSONModal opened={true} toggleOpened={mockToggleOpened} engine={mockEngine} setEngine={mockSetEngine} />);
     expect(document.body).toBeTruthy();
   });
 });
-

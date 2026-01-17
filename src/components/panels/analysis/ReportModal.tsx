@@ -4,7 +4,7 @@ import { useAtom, useAtomValue } from "jotai";
 import { memo, useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { commands, type GoMode } from "@/bindings";
+import { commands } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
@@ -62,7 +62,7 @@ function ReportModal({
           : reportSettings.engine;
 
     form.setValues({ ...reportSettings, engine });
-  }, [localEngines.length, reportSettings]);
+  }, [localEngines.length, reportSettings, form.setValues, localEngines.some, localEngines[0].path]);
 
   const handleStop = async () => {
     if (analysisEngineRef.current) {

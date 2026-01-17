@@ -13,7 +13,12 @@ interface PanelLoadingStateProps {
  * Shows loading indicator whenever isLoading or isFetching is true,
  * providing consistent user feedback across all panels.
  */
-export function PanelLoadingState({ isLoading = false, isFetching = false, hasData = false, message }: PanelLoadingStateProps) {
+export function PanelLoadingState({
+  isLoading = false,
+  isFetching = false,
+  hasData = false,
+  message,
+}: PanelLoadingStateProps) {
   const { t } = useTranslation();
 
   // Show loading if either isLoading (initial load) or isFetching (refetch) is true
@@ -50,4 +55,3 @@ export function PanelLoadingState({ isLoading = false, isFetching = false, hasDa
     </Box>
   );
 }
-

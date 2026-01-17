@@ -6,7 +6,7 @@
  * marker.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 
 export function detectDoubleCheck(ctx: ThemeContext): ThemeId[] {
   const tags: ThemeId[] = [];

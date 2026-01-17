@@ -8,11 +8,11 @@ import {
   Loader,
   Modal,
   ScrollArea,
+  Select,
   Stack,
   Table,
   Text,
   TextInput,
-  Select,
 } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
 import { useForm } from "@mantine/form";
@@ -28,10 +28,16 @@ import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
 import { query_games } from "@/utils/db";
 import { formatDateToPGN, parseDate } from "@/utils/format";
+import {
+  createEventGame,
+  deleteManagedEvent,
+  listManagedEvents,
+  type ManagedEvent,
+  upsertManagedEvent,
+} from "@/utils/managedEvents";
 import { getProfileDbPath } from "@/utils/profileDb";
-import { unwrap } from "@/utils/unwrap";
 import { createTab } from "@/utils/tabs";
-import { createEventGame, deleteManagedEvent, listManagedEvents, upsertManagedEvent, type ManagedEvent } from "@/utils/managedEvents";
+import { unwrap } from "@/utils/unwrap";
 
 type CreateFormValues = {
   name: string;
@@ -52,7 +58,7 @@ export default function EventsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [tabs, setTabs] = useAtom(tabsAtom);
+  const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
 
   const profiles = useAtomValue(profilesAtom);
@@ -75,7 +81,8 @@ export default function EventsPage() {
       endDate: null,
     },
     validate: {
-      name: (value) => (value.trim().length === 0 ? t("features.events.validation.nameRequired", "Name is required") : null),
+      name: (value) =>
+        value.trim().length === 0 ? t("features.events.validation.nameRequired", "Name is required") : null,
     },
   });
 
@@ -370,7 +377,9 @@ export default function EventsPage() {
                           <Table.Td>#{event.id}</Table.Td>
                           <Table.Td>{event.name || "-"}</Table.Td>
                           <Table.Td>{event.location || "-"}</Table.Td>
-                          <Table.Td>{event.start_date ? (event.start_date as string).replace(/\./g, "-") : "-"}</Table.Td>
+                          <Table.Td>
+                            {event.start_date ? (event.start_date as string).replace(/\./g, "-") : "-"}
+                          </Table.Td>
                           <Table.Td>{event.end_date ? (event.end_date as string).replace(/\./g, "-") : "-"}</Table.Td>
                           <Table.Td>
                             <Group gap="xs" wrap="nowrap">

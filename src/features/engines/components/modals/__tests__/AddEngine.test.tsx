@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import AddEngine from "../../modals/AddEngine";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -87,4 +86,3 @@ describe("AddEngine", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

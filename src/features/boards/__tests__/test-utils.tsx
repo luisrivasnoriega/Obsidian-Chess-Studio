@@ -1,8 +1,8 @@
+import { createTheme, DirectionProvider, MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MantineProvider, createTheme, DirectionProvider } from "@mantine/core";
-import { I18nextProvider } from "react-i18next";
+import { type RenderOptions, render as rtlRender } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { render as rtlRender, type RenderOptions } from "@testing-library/react";
+import { I18nextProvider } from "react-i18next";
 import { vi } from "vitest";
 
 // Mock react-i18next before importing i18n
@@ -67,4 +67,3 @@ export function render(ui: ReactElement, options?: Omit<RenderOptions, "wrapper"
 }
 
 export * from "@testing-library/react";
-

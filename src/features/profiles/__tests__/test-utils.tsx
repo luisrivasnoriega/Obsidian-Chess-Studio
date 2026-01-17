@@ -1,8 +1,8 @@
+import { createTheme, DirectionProvider, MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MantineProvider, createTheme, DirectionProvider } from "@mantine/core";
-import { I18nextProvider } from "react-i18next";
+import { type RenderOptions, render } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { render, type RenderOptions } from "@testing-library/react";
+import { I18nextProvider } from "react-i18next";
 import i18n from "@/i18n";
 
 // Create a minimal theme for testing
@@ -55,4 +55,3 @@ function customRender(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">
 // Re-export everything from @testing-library/react
 export * from "@testing-library/react";
 export { customRender as render };
-

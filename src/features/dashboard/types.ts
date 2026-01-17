@@ -5,7 +5,14 @@ export type ChessComGameWithEvent = ChessComGame & {
   eventName: string | null;
 };
 
-export type TimeControlCategory = "ultra_bullet" | "bullet" | "blitz" | "rapid" | "classical" | "correspondence" | "daily";
+export type TimeControlCategory =
+  | "ultra_bullet"
+  | "bullet"
+  | "blitz"
+  | "rapid"
+  | "classical"
+  | "correspondence"
+  | "daily";
 
 export interface DashboardLichessGame {
   id: string;

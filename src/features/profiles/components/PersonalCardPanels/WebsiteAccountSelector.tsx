@@ -42,7 +42,7 @@ const WebsiteAccountSelector = ({
   useEffect(() => {
     setWebsite(defaultWebsiteValue);
     setAccount("All accounts");
-  }, [defaultWebsiteValue, playerName]);
+  }, [defaultWebsiteValue]);
 
   useEffect(() => {
     onWebsiteChange(website === ALL_WEBSITES_VALUE ? null : website);

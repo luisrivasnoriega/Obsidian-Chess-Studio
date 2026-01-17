@@ -284,7 +284,7 @@
 }
 .youtu img
 {
-    height: 15px !important;
+    height: 15px;
 }
 
 	.header-title {
@@ -343,11 +343,11 @@ display:none;
 	}
 	.mobile-menu-container {
 			display: none;
-			z-index: 10000 !important;
+			z-index: 10000;
 	}
 	.main-submenu button:hover
 	{
-	background-color: #24305E !important;
+	background-color: #24305E;
 	}
 	.submenu-button a:visited
 	{
@@ -370,7 +370,7 @@ display:none;
 			box-shadow: 0 4px 2px -2px rgba(36, 36, 36, 0.17);
 			left: -200%;
 			transition: all 0.4s ease;
-			z-index: 10000 !important;
+			z-index: 10000;
 	}
 	.mobile-menu-container.open-menu {
 			left: 0;
@@ -535,7 +535,7 @@ display:none;
 }
 .submenu-button.dir_button
 {
-	margin: 1px !important;
+	margin: 1px;
 	padding: 10px 4px;
 }
 .tabs-btn-active, .tabs-btn-active:focus, .tabs-btn-active:active
@@ -661,7 +661,7 @@ padding-left: 10px;
 }
 .submenu-button.dir_button
 {
-	margin: 1px !important;
+	margin: 1px;
 	padding: 10px 4px;
 }
 .main-submenu button {
@@ -775,11 +775,11 @@ justify-content: center;
 	 background-color: #374785;
 }
 .activeurll {
-  background-color: #24305E !important;
-  color: #ffffff !important;
+  background-color: #24305E;
+  color: #ffffff;
 }
 .activeurll a {
-  color: #ffffff !important;
+  color: #ffffff;
 }
 
 .main-submenu a:hover
@@ -819,10 +819,10 @@ font-weight: normal;
 </style>
 
 <script>
-let burger = document.querySelector('.menu-burger');
-let menu = document.querySelector('.mobile-menu-container');
+const burger = document.querySelector('.menu-burger');
+const menu = document.querySelector('.mobile-menu-container');
 
-burger.onclick = function() {
+burger.onclick = () => {
 	
 menu.classList.toggle('open-menu');
 burger.classList.toggle('open-menu');
@@ -924,7 +924,7 @@ const accordionToggle = () => {
   });
 };
 
-const tabs = new ItcTabs(".tabs");
+const _tabs = new ItcTabs(".tabs");
 accordionToggle();
 const accordeon = () => {
   const chItems = document.querySelectorAll(".accordeon");
@@ -950,7 +950,7 @@ const accordeon = () => {
       if (chDesc.classList.contains("open")) {
         chDesc.style.height = 0;
       } else {
-        chDesc.style.height = chDesc.scrollHeight + "px";
+        chDesc.style.height = `${chDesc.scrollHeight}px`;
       }
 
       chDesc.classList.toggle("open");
@@ -961,8 +961,8 @@ const accordeon = () => {
 
 accordeon();
 
-document.addEventListener('DOMContentLoaded', function() {
-  var currentURL = window.location.href;
+document.addEventListener('DOMContentLoaded', () => {
+  var _currentURL = window.location.href;
   var substituteURL = window.location.href;
   
 
@@ -977,7 +977,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 	for (var i = 0; i <linksLvlOne.length; i++) {
 		var linkLvlOne = linksLvlOne[i];
-		var href = linkLvlOne.getAttribute('href');
+		var _href = linkLvlOne.getAttribute('href');
 		
 		//custom links
 		  if (href.includes("https://ratings.fide.com") & substituteURL.includes("ratings2.fide.com.test"))
@@ -997,7 +997,7 @@ document.addEventListener('DOMContentLoaded', function() {
 			parent.classList.add('tabs-btn-active');
 			parent.classList.remove('tabs-btn-not-active');
 			var dataIndex = parent.getAttribute('data-index');
-			var newId = 'content-' + (parseInt(dataIndex, 10) + 1);
+			var newId = `content-${parseInt(dataIndex, 10) + 1}`;
 
 
 // ������� ������� � ����� ��������������� � ��������� ����������� ��������
@@ -1035,7 +1035,7 @@ if (element) {
 
       // ������� ������� � ����� ��������������� � ��������� ����������� ��������
 			
-      var element = menuContainerLvlOne.querySelector('[data-index="' + newId + '"]');
+      var element = menuContainerLvlOne.querySelector(`[data-index="${newId}"]`);
 			
       if (element) {
         element.classList.add('tabs-btn-active');
@@ -1053,7 +1053,7 @@ if (element) {
   }
 
   const buttons = document.querySelectorAll('.tabs-btn.menu-button');
-  let activeSubmenu = null;
+  const _activeSubmenu = null;
 
   buttons.forEach((button, index) => {
     const submenu = document.getElementById(`content-${index + 1}`);

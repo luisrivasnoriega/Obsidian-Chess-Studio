@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { SideInput } from "../../components/SideInput";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -29,10 +28,9 @@ describe("SideInput", () => {
   });
 
   test("calls setSides when option is selected", async () => {
-    const user = userEvent.setup();
+    const _user = userEvent.setup();
     render(<SideInput selectingFor="player" sides="Any" setSides={mockSetSides} />);
     // Interaction would depend on component implementation
     expect(document.body).toBeTruthy();
   });
 });
-

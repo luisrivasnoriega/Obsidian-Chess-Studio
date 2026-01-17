@@ -1,8 +1,8 @@
-import { Alert, Box, Center, SimpleGrid, Skeleton, Stack } from "@mantine/core";
+import { Alert, Center, SimpleGrid, Skeleton, Stack } from "@mantine/core";
 import { IconGitBranch } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
-import { VariantCard } from "./VariantCard";
 import type { VariantInfo } from "../types";
+import { VariantCard } from "./VariantCard";
 
 interface VariantGridViewProps {
   variants: VariantInfo[];

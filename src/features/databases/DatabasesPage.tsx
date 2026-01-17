@@ -21,7 +21,7 @@ import {
 import { useDebouncedValue, useToggle } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconArrowRight, IconDatabase, IconPlus, IconPuzzle, IconStar, IconRefresh } from "@tabler/icons-react";
+import { IconArrowRight, IconDatabase, IconPlus, IconPuzzle, IconRefresh, IconStar } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
@@ -84,8 +84,6 @@ function isPuzzleDatabase(db: UnifiedDatabase): db is UnifiedDatabase & {
   return db.dbType === "puzzle";
 }
 
-
-
 export default function DatabasesPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -129,7 +127,6 @@ export default function DatabasesPage() {
       });
     }
   }, [search.value, search.tab, navigate]);
-
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -222,14 +219,13 @@ export default function DatabasesPage() {
         setViewMode={setViewMode}
         pageKey="databases"
         filters={
-          <>
-            {progress && convertLoading && (
-              <Group align="center" justify="space-between" maw={200}>
-                <Text fz="xs">{progress.total} games</Text>
-                <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
-              </Group>
-            )}
-          </>
+          progress &&
+          convertLoading && (
+            <Group align="center" justify="space-between" maw={200}>
+              <Text fz="xs">{progress.total} games</Text>
+              <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
+            </Group>
+          )
         }
         actions={
           <Button
@@ -887,7 +883,14 @@ function GeneralSettings({ selectedDatabase, mutate }: { selectedDatabase: Succe
     commands
       .editDbInfo(selectedDatabase.file, debouncedTitle ?? null, debouncedDescription ?? null)
       .then(() => mutate());
-  }, [debouncedTitle, debouncedDescription, selectedDatabase.file, mutate]);
+  }, [
+    debouncedTitle,
+    debouncedDescription,
+    selectedDatabase.file,
+    mutate,
+    selectedDatabase.description,
+    selectedDatabase.title,
+  ]);
 
   return (
     <>
@@ -1036,7 +1039,6 @@ function IndexInput({
   );
 }
 
-
 function filterAndSortDatabases(
   databases: UnifiedDatabase[],
   query: string,
@@ -1076,7 +1078,6 @@ function filterAndSortDatabases(
     return sortBy.direction === "asc" ? comparison : -comparison;
   });
 }
-
 
 // biome-ignore lint/suspicious/noExplicitAny: Translation function type
 function getDatabaseStats(database: UnifiedDatabase, t: any) {

@@ -1,8 +1,8 @@
-import React from "react";
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "./test-utils";
-import Databases from "../components/PersonalCardPanels/Databases";
+import type React from "react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { PlayerGameInfo } from "@/bindings";
+import Databases from "../components/PersonalCardPanels/Databases";
+import { render, screen, waitFor } from "./test-utils";
 
 // -----------------------------
 // Mocks
@@ -176,9 +176,7 @@ describe("Databases", () => {
     // Be flexible: projects often show "Processing", "Loading", "Fetching", etc.
     await waitFor(() => {
       const maybeLoading =
-        screen.queryByText(/processing/i) ||
-        screen.queryByText(/loading/i) ||
-        screen.queryByText(/fetching/i);
+        screen.queryByText(/processing/i) || screen.queryByText(/loading/i) || screen.queryByText(/fetching/i);
       expect(maybeLoading).toBeTruthy();
     });
 

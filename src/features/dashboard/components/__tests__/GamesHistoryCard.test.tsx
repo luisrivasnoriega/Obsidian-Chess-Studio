@@ -1,8 +1,7 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { GamesHistoryCard } from "../../components/GamesHistoryCard";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -60,13 +59,13 @@ describe("GamesHistoryCard", () => {
         onOpponentSelected={() => {}}
         timeControlCategory={null}
         onTimeControlCategoryChange={() => {}}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 
   test("calls onTabChange when tab is changed", async () => {
-    const user = userEvent.setup();
+    const _user = userEvent.setup();
     render(
       <GamesHistoryCard
         profileId={"p1"}
@@ -92,10 +91,9 @@ describe("GamesHistoryCard", () => {
         onOpponentSelected={() => {}}
         timeControlCategory={null}
         onTimeControlCategoryChange={() => {}}
-      />
+      />,
     );
     // Tab change would be tested if tabs are visible
     expect(document.body).toBeTruthy();
   });
 });
-

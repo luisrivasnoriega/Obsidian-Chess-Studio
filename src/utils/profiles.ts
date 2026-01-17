@@ -1,6 +1,6 @@
-import { genID } from "@/utils/tabs";
 import type { Profile } from "@/state/atoms";
 import type { Session } from "@/utils/session";
+import { genID } from "@/utils/tabs";
 
 function sessionUsername(session: Session): string | null {
   return session.lichess?.username ?? session.chessCom?.username ?? null;

@@ -74,7 +74,7 @@ export function UpdateNotificationModal({
     const maxLength = 300;
     if (notes.length <= maxLength) return notes;
 
-    return notes.substring(0, maxLength) + "...";
+    return `${notes.substring(0, maxLength)}...`;
   };
   return (
     <Modal

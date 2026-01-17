@@ -21,7 +21,6 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import type { TreeNode } from "@/utils/treeReducer";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
@@ -35,6 +34,7 @@ import {
 import { getVariationLine } from "@/utils/chess";
 import { getPiecesCount, hasCaptures, positionFromFen } from "@/utils/chessops";
 import type { Engine } from "@/utils/engines";
+import type { TreeNode } from "@/utils/treeReducer";
 import BestMoves, { arrowColors } from "./BestMoves";
 import EngineSelection from "./EngineSelection";
 import LogsPanel from "./LogsPanel";
@@ -264,10 +264,7 @@ function AnalysisPanel() {
             {t("features.board.analysis.logs")}
           </Tabs.Tab>
         </Tabs.List>
-        <Tabs.Panel
-          value="engines"
-          style={panelStyle}
-        >
+        <Tabs.Panel value="engines" style={panelStyle}>
           <ScrollArea
             offsetScrollbars
             onScrollPositionChange={() => document.dispatchEvent(new Event("analysis-panel-scroll"))}
@@ -378,18 +375,10 @@ function AnalysisPanel() {
             </Stack>
           </ScrollArea>
         </Tabs.Panel>
-        <Tabs.Panel
-          value="report"
-          pt="xs"
-          style={panelStyle}
-        >
+        <Tabs.Panel value="report" pt="xs" style={panelStyle}>
           <ReportPanel />
         </Tabs.Panel>
-        <Tabs.Panel
-          value="logs"
-          pt="xs"
-          style={panelStyle}
-        >
+        <Tabs.Panel value="logs" pt="xs" style={panelStyle}>
           <LogsPanel />
         </Tabs.Panel>
       </Tabs>

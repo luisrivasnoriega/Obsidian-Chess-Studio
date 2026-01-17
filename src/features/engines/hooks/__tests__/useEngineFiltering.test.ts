@@ -1,8 +1,8 @@
-import { describe, expect, test } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useEngineFiltering } from "../useEngineFiltering";
-import type { Engine } from "@/utils/engines";
+import { describe, expect, test } from "vitest";
 import type { SortState } from "@/components/GenericHeader";
+import type { Engine } from "@/utils/engines";
+import { useEngineFiltering } from "../useEngineFiltering";
 
 describe("useEngineFiltering", () => {
   const engines: Engine[] = [
@@ -68,4 +68,3 @@ describe("useEngineFiltering", () => {
     expect(result.current[0]).toBe(0);
   });
 });
-

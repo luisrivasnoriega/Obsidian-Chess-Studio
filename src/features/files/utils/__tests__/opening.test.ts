@@ -1,7 +1,6 @@
-import { describe, expect, test } from "vitest";
-import { buildFromTree, getStats, getCardForReview, type Position } from "../opening";
 import { createEmptyCard } from "ts-fsrs";
-import type { TreeNode } from "@/utils/treeReducer";
+import { describe, expect, test } from "vitest";
+import { getCardForReview, getStats, type Position } from "../opening";
 
 describe("opening utils", () => {
   describe("getStats", () => {
@@ -58,4 +57,3 @@ describe("opening utils", () => {
     });
   });
 });
-

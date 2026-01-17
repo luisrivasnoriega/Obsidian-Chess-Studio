@@ -3,7 +3,7 @@
  * punisher move that later results in material gain or mate.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { getPunisherCaptures, getPunisherMoves, isImmediatePunishCapture } from "./utils";
 
 export function detectDoubleThreat(ctx: ThemeContext): ThemeId[] {
@@ -11,9 +11,7 @@ export function detectDoubleThreat(ctx: ThemeContext): ThemeId[] {
   if (isImmediatePunishCapture(ctx)) return tags;
 
   const punisherMoves = getPunisherMoves(ctx);
-  const captures = getPunisherCaptures(ctx).filter(
-    (event) => event.capture && event.capture.color === ctx.playerColor,
-  );
+  const captures = getPunisherCaptures(ctx).filter((event) => event.capture && event.capture.color === ctx.playerColor);
   const hasQuiet = punisherMoves.some((event) => !event.isCapture && !event.isCheck && !event.isMate);
   const hasCheck = punisherMoves.some((event) => event.isCheck);
 

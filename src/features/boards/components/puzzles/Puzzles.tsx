@@ -1,16 +1,17 @@
 import { Divider, Grid, Paper, ScrollArea, Stack, Text } from "@mantine/core";
 import { modals } from "@mantine/modals";
+import type { Platform } from "@tauri-apps/plugin-os";
 import { useAtom } from "jotai";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useStore } from "zustand";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
+import { commands } from "@/bindings";
 import ChallengeHistory from "@/components/ChallengeHistory";
 import GameNotation from "@/components/GameNotation";
 import MoveControls from "@/components/MoveControls";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { usePuzzleDatabase, usePuzzleSession } from "@/features/boards/hooks";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import type { Platform } from "@tauri-apps/plugin-os";
 import {
   hidePuzzleRatingAtom,
   inOrderPuzzlesAtom,
@@ -18,17 +19,14 @@ import {
   progressivePuzzlesAtom,
   puzzlePlayerRatingAtom,
 } from "@/state/atoms";
-import { commands } from "@/bindings";
 import { positionFromFen } from "@/utils/chessops";
-import { getAdaptivePuzzleRange } from "@/utils/puzzles";
-import { unwrap } from "@/utils/unwrap";
-import { getPuzzleDatabases } from "@/utils/puzzles";
+import { getAdaptivePuzzleRange, getPuzzleDatabases } from "@/utils/puzzles";
+import { AddPuzzle } from "./AddPuzzle";
 import PuzzleBoard from "./PuzzleBoard";
 import { PuzzleControls } from "./PuzzleControls";
 import { PuzzleSettings } from "./PuzzleSettings";
 import { PuzzleStatistics } from "./PuzzleStatistics";
 import { PuzzleVariantsPanel } from "./PuzzleVariantsPanel";
-import { AddPuzzle } from "./AddPuzzle";
 
 function Puzzles({ id }: { id: string }) {
   const store = useContext(TreeStateContext);
@@ -77,7 +75,9 @@ function Puzzles({ id }: { id: string }) {
   const [hasOpeningTags, setHasOpeningTags] = useState(false);
   const [themes, setThemes] = useState<string[]>([]);
   const [openingTags, setOpeningTags] = useState<string[]>([]);
-  const [themesOptions, setThemesOptions] = useState<Array<{ group: string; items: Array<{ value: string; label: string }> }>>([]);
+  const [themesOptions, setThemesOptions] = useState<
+    Array<{ group: string; items: Array<{ value: string; label: string }> }>
+  >([]);
   const [openingTagsOptions, setOpeningTagsOptions] = useState<Array<{ value: string; label: string }>>([]);
 
   const updateShowingSolution = (isShowing: boolean) => {
@@ -175,7 +175,7 @@ function Puzzles({ id }: { id: string }) {
             setSelectedDb(null);
           }
           // Delete the file in the background
-          commands.deleteDatabase(dbPath).catch((error) => {
+          commands.deleteDatabase(dbPath).catch((_error) => {
             // If it fails, reload the list to restore state
             getPuzzleDatabases().then((updatedPuzzleDbs) => {
               setPuzzleDbs(updatedPuzzleDbs);
@@ -261,7 +261,10 @@ function Puzzles({ id }: { id: string }) {
 
           if (hasThemesCol && themesResult.status === "ok") {
             // Backend returns ThemeGroup[] with group and items, convert to format for MultiSelect
-            const themesData = themesResult.data as unknown as Array<{ group: string; items: Array<{ value: string; label: string }> }>;
+            const themesData = themesResult.data as unknown as Array<{
+              group: string;
+              items: Array<{ value: string; label: string }>;
+            }>;
             setThemesOptions(
               themesData.map((group) => ({
                 group: group.group,
@@ -294,7 +297,7 @@ function Puzzles({ id }: { id: string }) {
           setThemesOptions([]);
           setOpeningTagsOptions([]);
         }
-      } catch (error) {
+      } catch (_error) {
         if (!cancelled) {
           setHasThemes(false);
           setHasOpeningTags(false);
@@ -425,103 +428,103 @@ function Puzzles({ id }: { id: string }) {
 
   return (
     <>
-    <Grid h="100%" gutter="md" style={{ flex: 1, minHeight: 0 }}>
-      <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
-        <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <ScrollArea h="100%" offsetScrollbars>
-            <PuzzleSettings
-              puzzleDbs={puzzleDbs}
-              selectedDb={selectedDb}
-              onDatabaseChange={handleDatabaseChange}
-              onAddNew={handleAddNew}
-              onDelete={handleDeletePuzzle}
-              ratingRange={ratingRange}
-              onRatingRangeChange={setRatingRange}
-              minRating={minRating}
-              maxRating={maxRating}
-              dbRatingRange={dbRatingRange}
-              progressive={progressive}
-              onProgressiveChange={setProgressive}
-              hideRating={hideRating}
-              onHideRatingChange={setHideRating}
-              inOrder={inOrder}
-              onInOrderChange={setInOrder}
-              hasThemes={hasThemes}
-              themes={themes}
-              themesOptions={themesOptions}
-              onThemesChange={setThemes}
-              hasOpeningTags={hasOpeningTags}
-              openingTags={openingTags}
-              openingTagsOptions={openingTagsOptions}
-              onOpeningTagsChange={setOpeningTags}
-            />
-            <Divider my="sm" />
+      <Grid h="100%" gutter="md" style={{ flex: 1, minHeight: 0 }}>
+        <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
+          <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <ScrollArea h="100%" offsetScrollbars>
+              <PuzzleSettings
+                puzzleDbs={puzzleDbs}
+                selectedDb={selectedDb}
+                onDatabaseChange={handleDatabaseChange}
+                onAddNew={handleAddNew}
+                onDelete={handleDeletePuzzle}
+                ratingRange={ratingRange}
+                onRatingRangeChange={setRatingRange}
+                minRating={minRating}
+                maxRating={maxRating}
+                dbRatingRange={dbRatingRange}
+                progressive={progressive}
+                onProgressiveChange={setProgressive}
+                hideRating={hideRating}
+                onHideRatingChange={setHideRating}
+                inOrder={inOrder}
+                onInOrderChange={setInOrder}
+                hasThemes={hasThemes}
+                themes={themes}
+                themesOptions={themesOptions}
+                onThemesChange={setThemes}
+                hasOpeningTags={hasOpeningTags}
+                openingTags={openingTags}
+                openingTagsOptions={openingTagsOptions}
+                onOpeningTagsChange={setOpeningTags}
+              />
+              <Divider my="sm" />
 
-            <PuzzleControls
-              selectedDb={selectedDb}
-              onGeneratePuzzle={handleGeneratePuzzle}
-              onClearSession={handleClearSession}
-              changeCompletion={changeCompletion}
-              currentPuzzle={currentPuzzleData}
-              puzzles={puzzles}
-              jumpToNext={jumpToNext}
-              onJumpToNextChange={setJumpToNext}
-              turnToMove={turnToMove}
-              showingSolution={showingSolution}
-              updateShowingSolution={updateShowingSolution}
-              isShowingSolutionRef={isShowingSolutionRef}
-            />
-            <Divider my="sm" />
+              <PuzzleControls
+                selectedDb={selectedDb}
+                onGeneratePuzzle={handleGeneratePuzzle}
+                onClearSession={handleClearSession}
+                changeCompletion={changeCompletion}
+                currentPuzzle={currentPuzzleData}
+                puzzles={puzzles}
+                jumpToNext={jumpToNext}
+                onJumpToNextChange={setJumpToNext}
+                turnToMove={turnToMove}
+                showingSolution={showingSolution}
+                updateShowingSolution={updateShowingSolution}
+                isShowingSolutionRef={isShowingSolutionRef}
+              />
+              <Divider my="sm" />
 
-            <PuzzleStatistics currentPuzzle={currentPuzzleData} />
-          </ScrollArea>
-        </Paper>
-      </Grid.Col>
+              <PuzzleStatistics currentPuzzle={currentPuzzleData} />
+            </ScrollArea>
+          </Paper>
+        </Grid.Col>
 
-      <Grid.Col
-        span={{ base: 12, md: 6 }}
-        style={{ minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-      >
-        <PuzzleBoard
-          key={currentPuzzle}
-          puzzles={puzzles}
-          currentPuzzle={currentPuzzle}
-          changeCompletion={changeCompletion}
-          generatePuzzle={handleGeneratePuzzle}
-          db={selectedDb}
-          jumpToNext={jumpToNext}
-        />
-      </Grid.Col>
+        <Grid.Col
+          span={{ base: 12, md: 6 }}
+          style={{ minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <PuzzleBoard
+            key={currentPuzzle}
+            puzzles={puzzles}
+            currentPuzzle={currentPuzzle}
+            changeCompletion={changeCompletion}
+            generatePuzzle={handleGeneratePuzzle}
+            db={selectedDb}
+            jumpToNext={jumpToNext}
+          />
+        </Grid.Col>
 
-      <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
-        <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <ScrollArea h="100%" offsetScrollbars>
-            <PuzzleVariantsPanel selectedDb={selectedDb} />
-            <Divider my="sm" />
+        <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
+          <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <ScrollArea h="100%" offsetScrollbars>
+              <PuzzleVariantsPanel selectedDb={selectedDb} />
+              <Divider my="sm" />
 
-            <ChallengeHistory
-              challenges={puzzles.map((p) => ({
-                ...p,
-                label: p.rating.toString(),
-              }))}
-              current={currentPuzzle}
-              select={handleSelectPuzzle}
-            />
-            <Divider my="sm" />
+              <ChallengeHistory
+                challenges={puzzles.map((p) => ({
+                  ...p,
+                  label: p.rating.toString(),
+                }))}
+                current={currentPuzzle}
+                select={handleSelectPuzzle}
+              />
+              <Divider my="sm" />
 
-            <GameNotation initialVariationState="variations" />
-            <MoveControls readOnly />
-          </ScrollArea>
-        </Paper>
-      </Grid.Col>
-    </Grid>
+              <GameNotation initialVariationState="variations" />
+              <MoveControls readOnly />
+            </ScrollArea>
+          </Paper>
+        </Grid.Col>
+      </Grid>
 
-    <AddPuzzle
-      puzzleDbs={puzzleDbs}
-      opened={addPuzzleModalOpened}
-      setOpened={setAddPuzzleModalOpened}
-      setPuzzleDbs={setPuzzleDbs}
-    />
+      <AddPuzzle
+        puzzleDbs={puzzleDbs}
+        opened={addPuzzleModalOpened}
+        setOpened={setAddPuzzleModalOpened}
+        setPuzzleDbs={setPuzzleDbs}
+      />
     </>
   );
 }

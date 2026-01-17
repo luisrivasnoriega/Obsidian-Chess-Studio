@@ -145,7 +145,9 @@ function PersonalPlayerCard({
         </Tabs>
       ) : (
         <>
-          {allowedTabs.includes("overview") && <OverviewPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />}
+          {allowedTabs.includes("overview") && (
+            <OverviewPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
+          )}
           {allowedTabs.includes("openings") && (
             <Box
               mt={showHeaderSelector ? "xs" : 0}
@@ -154,7 +156,9 @@ function PersonalPlayerCard({
               <OpeningsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
             </Box>
           )}
-          {allowedTabs.includes("ratings") && <RatingsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />}
+          {allowedTabs.includes("ratings") && (
+            <RatingsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
+          )}
         </>
       )}
     </Paper>

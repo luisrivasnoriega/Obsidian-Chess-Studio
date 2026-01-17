@@ -8,9 +8,9 @@ import {
   Divider,
   Flex,
   Group,
-  Paper,
   Modal,
   Pagination,
+  Paper,
   ScrollArea,
   Select,
   Stack,
@@ -21,19 +21,20 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconCheck, IconEdit, IconPlus, IconTrash, IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { IconCheck, IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { mkdir, remove } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
+import type { SortState } from "@/components/GenericHeader";
 import GenericHeader from "@/components/GenericHeader";
-import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
-import {
+import { DatabaseDetails } from "@/features/databases/DatabasesPage";
+import Databases, {
   buildSessionsSignature,
   computePersonalInfoSignature,
   fetchMergedPlayerInfo,
@@ -41,29 +42,25 @@ import {
   getMergedPlayerInfoQueryKey,
   getPersonalInfoQueryKey,
 } from "@/features/profiles/components/PersonalCardPanels/Databases";
-import { DatabaseDetails } from "@/features/databases/DatabasesPage";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessionsAtom } from "@/state/atoms";
+import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
+import { getAccountSyncState } from "@/utils/accountSyncState";
 import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
+import { parseDate } from "@/utils/format";
 import { getLichessAccount } from "@/utils/lichess/api";
+import { isFailedToFetchError } from "@/utils/networkCooldown";
+import { createSiteStatsSignature } from "@/utils/playerStats";
 import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
-import { getAccountKey } from "@/utils/accountKeys";
-import { getAccountSyncState } from "@/utils/accountSyncState";
-import { parseDate } from "@/utils/format";
 import { unwrap } from "@/utils/unwrap";
-import { createSiteStatsSignature } from "@/utils/playerStats";
-import type { SortState } from "@/components/GenericHeader";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
-import {
-  isFailedToFetchError,
-} from "@/utils/networkCooldown";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {
   if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
@@ -149,7 +146,7 @@ export default function ProfilesPage() {
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
   const didAutoUpdateAccountsRef = useRef(false);
   const autoUpdateRetryTimerRef = useRef<number | null>(null);
-  const [autoUpdateRetryNonce, setAutoUpdateRetryNonce] = useState(0);
+  const [_autoUpdateRetryNonce, setAutoUpdateRetryNonce] = useState(0);
   const autoUpdateRetryAttemptRef = useRef(0);
   const backgroundSyncRetryTimersRef = useRef<Map<string, number>>(new Map());
   const backgroundSyncRetryAttemptsRef = useRef<Map<string, number>>(new Map());
@@ -186,18 +183,21 @@ export default function ProfilesPage() {
     return profiles.filter((p) => p.name.toLowerCase().includes(q));
   }, [profileQuery, profiles]);
 
-  const invalidateProfilePlayerStats = useCallback((profileId: string) => {
-    // Broad invalidation is OK here: these queries are only used for the player
-    // sidebar/overview panels and we only do it when we *actually* import new games.
-    queryClient.invalidateQueries({ queryKey: ["personalInfo", profileId] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["mergedPlayerInfo"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerOpeningsWhite"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerOpeningsBlack"] }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["playerRatingTimeline"] }).catch(() => {});
-  }, [queryClient]);
+  const invalidateProfilePlayerStats = useCallback(
+    (profileId: string) => {
+      // Broad invalidation is OK here: these queries are only used for the player
+      // sidebar/overview panels and we only do it when we *actually* import new games.
+      queryClient.invalidateQueries({ queryKey: ["personalInfo", profileId] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["mergedPlayerInfo"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerOpeningsWhite"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerOpeningsBlack"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerRatingTimeline"] }).catch(() => {});
+    },
+    [queryClient],
+  );
 
   // Prefetch the active profile's sidebar model as soon as Profiles loads.
   // This makes switching to Overview/Ratings/Openings instant (no "thinking").
@@ -252,7 +252,7 @@ export default function ProfilesPage() {
     let cancelled = false;
     const loadLastActivities = async () => {
       const activityMap = new Map<string, number | null>();
-      
+
       for (const profile of filteredProfiles) {
         const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
         if (linkedSessions.length === 0) {
@@ -285,7 +285,7 @@ export default function ProfilesPage() {
               ]
                 .filter((d): d is number => d !== undefined && d !== null)
                 .map((d) => d * 1000); // Convert from seconds to milliseconds
-              
+
               if (lastDates.length > 0) {
                 activityDates.push(Math.max(...lastDates));
               }
@@ -322,7 +322,25 @@ export default function ProfilesPage() {
     return () => {
       cancelled = true;
     };
-  }, [filteredProfiles, sessionsByProfileId, sessions]);
+  }, [filteredProfiles, sessionsByProfileId]);
+
+  const profileDbFile = useMemo(() => (activeProfileId ? profileDbFilename(activeProfileId) : null), [activeProfileId]);
+
+  const loadDatabases = useCallback(async () => {
+    setDbLoading(true);
+    try {
+      const dbs = await getDatabases();
+      setDbList(dbs);
+    } catch {
+      setDbList(null);
+    } finally {
+      setDbLoading(false);
+    }
+  }, []);
+
+  const mutateDatabases = useCallback(() => {
+    void loadDatabases();
+  }, [loadDatabases]);
 
   // Auto-update statistics and download games for all accounts of all profiles
   useEffect(() => {
@@ -414,18 +432,20 @@ export default function ProfilesPage() {
                           total: u.totalBatches,
                         })}`
                       : u.batchLabel || `${profile.name} - ${username} (${u.platform})`;
-                  
+
                   // Determine if this is an optimization-related message
-                  const isOptimization = u.batchLabel?.toLowerCase().includes("optimiz") || 
-                                         u.batchLabel?.toLowerCase().includes("cleaning") ||
-                                         u.batchLabel?.toLowerCase().includes("deleted");
-                  const isComplete = u.batchLabel?.toLowerCase().includes("complete") ||
-                                    u.batchLabel?.toLowerCase().includes("downloaded");
-                  
+                  const isOptimization =
+                    u.batchLabel?.toLowerCase().includes("optimiz") ||
+                    u.batchLabel?.toLowerCase().includes("cleaning") ||
+                    u.batchLabel?.toLowerCase().includes("deleted");
+                  const isComplete =
+                    u.batchLabel?.toLowerCase().includes("complete") ||
+                    u.batchLabel?.toLowerCase().includes("downloaded");
+
                   notifications.update({
                     id,
                     message,
-                    loading: isOptimization || (u.totalBatches > 0),
+                    loading: isOptimization || u.totalBatches > 0,
                     autoClose: isComplete ? 3000 : false,
                   });
                 }
@@ -532,7 +552,8 @@ export default function ProfilesPage() {
     setSessions,
     t,
     isAccountSyncRunning,
-    autoUpdateRetryNonce,
+    invalidateProfilePlayerStats,
+    mutateDatabases,
   ]);
 
   const sortedProfiles = useMemo(() => {
@@ -543,12 +564,12 @@ export default function ProfilesPage() {
       } else if (sortBy.field === "lastActivity") {
         const aDate = lastActivityMap.get(a.id) ?? null;
         const bDate = lastActivityMap.get(b.id) ?? null;
-        
+
         // When sorting by lastActivity, nulls always go to the end
         if (aDate === null && bDate === null) return 0;
         if (aDate === null) return 1; // a goes to end
         if (bDate === null) return -1; // b goes to end
-        
+
         // Both have dates, compare them
         const comparison = aDate - bDate;
         // For descending, we want most recent first, so reverse the comparison
@@ -556,7 +577,7 @@ export default function ProfilesPage() {
       }
       return 0;
     });
-    
+
     return list;
   }, [filteredProfiles, sortBy, lastActivityMap]);
 
@@ -579,20 +600,6 @@ export default function ProfilesPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
-  const profileDbFile = useMemo(() => (activeProfileId ? profileDbFilename(activeProfileId) : null), [activeProfileId]);
-
-  const loadDatabases = useCallback(async () => {
-    setDbLoading(true);
-    try {
-      const dbs = await getDatabases();
-      setDbList(dbs);
-    } catch {
-      setDbList(null);
-    } finally {
-      setDbLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void loadDatabases();
   }, [loadDatabases]);
@@ -720,7 +727,7 @@ export default function ProfilesPage() {
       const result = await commands.initProfileDb(dbPath, next.name, null);
       if (result.status === "error") {
       }
-    } catch (error) {
+    } catch (_error) {
       // Ignore initialization errors (best-effort)
     } finally {
       void persistProfileToken(next.id, lichessTokenValue);
@@ -1037,7 +1044,7 @@ export default function ProfilesPage() {
         runOnce();
       })();
     },
-    [t, upsertSession, loadDatabases],
+    [t, upsertSession, loadDatabases, invalidateProfilePlayerStats],
   );
 
   useEffect(() => {
@@ -1142,10 +1149,6 @@ export default function ProfilesPage() {
     };
   }, [activeProfileId, profiles, startBackgroundSync, upsertSession]);
 
-  const mutateDatabases = useCallback(() => {
-    void loadDatabases();
-  }, [loadDatabases]);
-
   const refreshPuzzleDatabases = useCallback(async () => {}, []);
 
   return (
@@ -1212,16 +1215,23 @@ export default function ProfilesPage() {
                     <Table.Tr>
                       <Table.Th style={{ width: 240 }}>
                         <Text fw={600} size="sm">
-                          <Group gap={4} style={{ cursor: "pointer" }} onClick={() => {
-                            setSortBy((prev) => ({
-                              field: "name",
-                              direction: prev.field === "name" && prev.direction === "asc" ? "desc" : "asc",
-                            }));
-                          }}>
+                          <Group
+                            gap={4}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => {
+                              setSortBy((prev) => ({
+                                field: "name",
+                                direction: prev.field === "name" && prev.direction === "asc" ? "desc" : "asc",
+                              }));
+                            }}
+                          >
                             {t("profiles.profile", { defaultValue: "Profile" })}
-                            {sortBy.field === "name" && (
-                              sortBy.direction === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />
-                            )}
+                            {sortBy.field === "name" &&
+                              (sortBy.direction === "asc" ? (
+                                <IconChevronUp size={14} />
+                              ) : (
+                                <IconChevronDown size={14} />
+                              ))}
                           </Group>
                         </Text>
                       </Table.Th>
@@ -1232,16 +1242,23 @@ export default function ProfilesPage() {
                       </Table.Th>
                       <Table.Th style={{ width: 160 }}>
                         <Text fw={600} size="sm">
-                          <Group gap={4} style={{ cursor: "pointer" }} onClick={() => {
-                            setSortBy((prev) => ({
-                              field: "lastActivity",
-                              direction: prev.field === "lastActivity" && prev.direction === "asc" ? "desc" : "asc",
-                            }));
-                          }}>
+                          <Group
+                            gap={4}
+                            style={{ cursor: "pointer" }}
+                            onClick={() => {
+                              setSortBy((prev) => ({
+                                field: "lastActivity",
+                                direction: prev.field === "lastActivity" && prev.direction === "asc" ? "desc" : "asc",
+                              }));
+                            }}
+                          >
                             {t("accounts.accountCard.lastActivity", { defaultValue: "Last Activity" })}
-                            {sortBy.field === "lastActivity" && (
-                              sortBy.direction === "asc" ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />
-                            )}
+                            {sortBy.field === "lastActivity" &&
+                              (sortBy.direction === "asc" ? (
+                                <IconChevronUp size={14} />
+                              ) : (
+                                <IconChevronDown size={14} />
+                              ))}
                           </Group>
                         </Text>
                       </Table.Th>
@@ -1424,7 +1441,11 @@ export default function ProfilesPage() {
                   mb="sm"
                 />
               )}
-              <Tabs value={detailsTab} onChange={(v) => setDetailsTab((v as typeof detailsTab) ?? "database")} keepMounted={false}>
+              <Tabs
+                value={detailsTab}
+                onChange={(v) => setDetailsTab((v as typeof detailsTab) ?? "database")}
+                keepMounted={false}
+              >
                 {!useTabDropdown && (
                   <Tabs.List>
                     <Tabs.Tab value="database">{t("profiles.tabs.database", { defaultValue: "Database" })}</Tabs.Tab>
@@ -1563,7 +1584,8 @@ export default function ProfilesPage() {
               defaultValue: "Enter your Lichess API token",
             })}
             description={t("features.dashboard.editProfile.lichessTokenDescription", {
-              defaultValue: "Required for tournament scheduling. Get one at https://lichess.org/account/oauth/token/create",
+              defaultValue:
+                "Required for tournament scheduling. Get one at https://lichess.org/account/oauth/token/create",
             })}
             value={draftLichessToken}
             onChange={(e) => setDraftLichessToken(e.currentTarget.value)}

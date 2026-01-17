@@ -1,7 +1,8 @@
 import { ActionIcon, Box, Text } from "@mantine/core";
-import equal from "fast-deep-equal";
-import React, { memo } from "react";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
+import equal from "fast-deep-equal";
+import type React from "react";
+import { memo } from "react";
 import CompleteMoveCell from "@/components/CompleteMoveCell";
 import type { TreeNode } from "@/utils/treeReducer";
 
@@ -89,26 +90,24 @@ function RenderVariationLineBase({
             {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
           </ActionIcon>
         ) : variations && variations.length > 1 ? (
-          <>
-            {variations.map((childVariation, index) => (
-              <VariationBranch
-                key={`${childVariation.fen}-${index}`}
-                variation={childVariation}
-                path={[...path, index]}
-                depth={depth + 1}
-                start={start}
-                showComments={showComments}
-                targetRef={targetRef}
-                maxDepth={maxDepth}
-                maxVariationDepth={maxVariationDepth}
-                variationDepth={variationDepth + 1}
-                getExtraDepth={getExtraDepth}
-                onToggleExpanded={onToggleExpanded}
-                extraDepth={0}
-                expansionVersion={expansionVersion}
-              />
-            ))}
-          </>
+          variations.map((childVariation, index) => (
+            <VariationBranch
+              key={`${childVariation.fen}-${index}`}
+              variation={childVariation}
+              path={[...path, index]}
+              depth={depth + 1}
+              start={start}
+              showComments={showComments}
+              targetRef={targetRef}
+              maxDepth={maxDepth}
+              maxVariationDepth={maxVariationDepth}
+              variationDepth={variationDepth + 1}
+              getExtraDepth={getExtraDepth}
+              onToggleExpanded={onToggleExpanded}
+              extraDepth={0}
+              expansionVersion={expansionVersion}
+            />
+          ))
         ) : variations && variations.length === 1 ? (
           <RenderVariationLine
             tree={variations[0]}
@@ -168,26 +167,24 @@ function RenderVariationLineBase({
           {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
         </ActionIcon>
       ) : variations.length > 1 ? (
-        <>
-          {variations.map((childVariation, index) => (
-            <VariationBranch
-              key={`${childVariation.fen}-${index}`}
-              variation={childVariation}
-              path={[...path, index]}
-              depth={depth + 1}
-              start={start}
-              showComments={showComments}
-              targetRef={targetRef}
-              maxDepth={maxDepth}
-              maxVariationDepth={maxVariationDepth}
-              variationDepth={variationDepth + 1}
-              getExtraDepth={getExtraDepth}
-              onToggleExpanded={onToggleExpanded}
-              extraDepth={0}
-              expansionVersion={expansionVersion}
-            />
-          ))}
-        </>
+        variations.map((childVariation, index) => (
+          <VariationBranch
+            key={`${childVariation.fen}-${index}`}
+            variation={childVariation}
+            path={[...path, index]}
+            depth={depth + 1}
+            start={start}
+            showComments={showComments}
+            targetRef={targetRef}
+            maxDepth={maxDepth}
+            maxVariationDepth={maxVariationDepth}
+            variationDepth={variationDepth + 1}
+            getExtraDepth={getExtraDepth}
+            onToggleExpanded={onToggleExpanded}
+            extraDepth={0}
+            expansionVersion={expansionVersion}
+          />
+        ))
       ) : (
         <RenderVariationLine
           tree={variations[0]}
@@ -285,26 +282,24 @@ function VariationBranchBase({
           {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
         </ActionIcon>
       ) : variation.children.length > 1 ? (
-        <>
-          {variation.children.map((childVariation, index) => (
-            <VariationBranch
-              key={`${childVariation.fen}-${index}`}
-              variation={childVariation}
-              path={[...path, index]}
-              depth={depth + 1}
-              start={start}
-              showComments={showComments}
-              targetRef={targetRef}
-              maxDepth={maxDepth}
-              maxVariationDepth={maxVariationDepth}
-              variationDepth={variationDepth + 1}
-              getExtraDepth={getExtraDepth}
-              onToggleExpanded={onToggleExpanded}
-              extraDepth={0}
-              expansionVersion={expansionVersion}
-            />
-          ))}
-        </>
+        variation.children.map((childVariation, index) => (
+          <VariationBranch
+            key={`${childVariation.fen}-${index}`}
+            variation={childVariation}
+            path={[...path, index]}
+            depth={depth + 1}
+            start={start}
+            showComments={showComments}
+            targetRef={targetRef}
+            maxDepth={maxDepth}
+            maxVariationDepth={maxVariationDepth}
+            variationDepth={variationDepth + 1}
+            getExtraDepth={getExtraDepth}
+            onToggleExpanded={onToggleExpanded}
+            extraDepth={0}
+            expansionVersion={expansionVersion}
+          />
+        ))
       ) : variation.children.length === 1 ? (
         <RenderVariationLine
           tree={variation.children[0]}

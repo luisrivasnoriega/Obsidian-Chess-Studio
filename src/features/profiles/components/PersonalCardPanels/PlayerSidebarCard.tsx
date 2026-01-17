@@ -41,15 +41,18 @@ function PlatformIcon({ platform }: { platform: Exclude<PlatformFilter, "all"> }
       }}
     >
       {platform === "Chess.com" ? (
-        <Image
-          src="/chesscom.png"
-          alt="Chess.com"
-          w={18}
-          h={18}
-          style={{ objectFit: "contain" }}
-        />
+        <Image src="/chesscom.png" alt="Chess.com" w={18} h={18} style={{ objectFit: "contain" }} />
       ) : (
-        <Box style={{ width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        <Box
+          style={{
+            width: 18,
+            height: 18,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+          }}
+        >
           <svg viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg" style={{ width: 18, height: 18 }}>
             <title>Lichess</title>
             <path
@@ -211,12 +214,19 @@ export default function PlayerSidebarCard({
             return (
               <Stack key={block.platform} gap={6}>
                 <Group gap="xs" wrap="nowrap">
-                  {(platformLabel === "Chess.com" || platformLabel === "Lichess") && <PlatformIcon platform={platformLabel} />}
+                  {(platformLabel === "Chess.com" || platformLabel === "Lichess") && (
+                    <PlatformIcon platform={platformLabel} />
+                  )}
                   <Text fw={600}>{block.platform}</Text>
                 </Group>
 
                 {block.rows.map((row) => (
-                  <Group key={`${block.platform}:${row.label}`} justify="space-between" align="flex-start" wrap="nowrap">
+                  <Group
+                    key={`${block.platform}:${row.label}`}
+                    justify="space-between"
+                    align="flex-start"
+                    wrap="nowrap"
+                  >
                     <Text size="sm" fw={600} style={{ maxWidth: "55%", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {row.label}
                     </Text>

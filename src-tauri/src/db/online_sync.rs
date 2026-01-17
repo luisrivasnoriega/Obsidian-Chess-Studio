@@ -29,9 +29,8 @@ use super::{
     list_account_sync_completed_batches, mark_account_sync_batch_complete, upsert_account_sync_state,
     ConnectionOptions, JournalMode, ADDITIONAL_INDEXES_SQL, PRAGMA_PERFORMANCE,
 };
-use super::schema::{events, games};
+use super::schema::events;
 use diesel::prelude::*;
-use diesel::sql_types::Integer;
 
 static GLOBAL_PROFILE_SYNC_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -858,6 +857,7 @@ fn ensure_db_dir(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir)
 }
 
+#[allow(dead_code)]
 /// Extract Lichess tournament ID from event name, game PGN, Round field, or Site field.
 /// Tournament IDs in Lichess are typically alphanumeric strings (8-12 chars).
 fn extract_lichess_tournament_id(event_name: &str, game_pgn: Option<&str>, round: Option<&str>, site: Option<&str>) -> Option<String> {
@@ -975,6 +975,7 @@ fn extract_lichess_tournament_id(event_name: &str, game_pgn: Option<&str>, round
     None
 }
 
+#[allow(dead_code)]
 /// Fetch tournament details from Lichess API.
 async fn fetch_lichess_tournament(tournament_id: &str) -> Result<Option<LichessTournamentInfo>> {
     let client = reqwest_client_lichess().await?;
@@ -998,6 +999,7 @@ async fn fetch_lichess_tournament(tournament_id: &str) -> Result<Option<LichessT
     Ok(Some(tournament))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct LichessTournamentInfo {
     #[serde(rename = "id")]
@@ -1027,6 +1029,7 @@ struct LichessTournamentPlayedResponse {
     #[serde(rename = "tournament")]
     tournament: LichessTournamentPlayed,
     #[serde(rename = "player")]
+    #[allow(dead_code)]
     player: serde_json::Value, // Ignore player data
 }
 
@@ -1037,12 +1040,14 @@ struct LichessTournamentPlayed {
     #[serde(rename = "name")]
     name: Option<String>,
     #[serde(rename = "createdAt")]
+    #[allow(dead_code)]
     created_at: Option<i64>,
     #[serde(rename = "startsAt")]
     starts_at: Option<i64>,
     #[serde(rename = "finishesAt")]
     finishes_at: Option<i64>,
     #[serde(rename = "status")]
+    #[allow(dead_code)]
     status: Option<i32>,
     #[serde(rename = "fullName")]
     full_name: Option<String>,
@@ -1112,8 +1117,10 @@ pub async fn update_lichess_tournament_events_standalone(
         #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
         name: Option<String>,
         #[diesel(sql_type = Nullable<Text>, column_name = "StartDate")]
+        #[allow(dead_code)]
         start_date: Option<String>,
         #[diesel(sql_type = Nullable<Text>, column_name = "EndDate")]
+        #[allow(dead_code)]
         end_date: Option<String>,
     }
     
@@ -1156,6 +1163,7 @@ pub async fn update_lichess_tournament_events_standalone(
         #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
         name: Option<String>,
         #[diesel(sql_type = Integer, column_name = "GameCount")]
+        #[allow(dead_code)]
         game_count: i32,
     }
     
@@ -1341,6 +1349,7 @@ pub async fn update_lichess_tournament_events_standalone(
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Update Lichess tournament events with metadata from API.
 async fn update_lichess_tournament_events(
     db: &mut diesel::SqliteConnection,
@@ -1360,8 +1369,10 @@ async fn update_lichess_tournament_events(
         #[diesel(sql_type = Nullable<Text>, column_name = "Name")]
         name: Option<String>,
         #[diesel(sql_type = Nullable<Text>, column_name = "StartDate")]
+        #[allow(dead_code)]
         start_date: Option<String>,
         #[diesel(sql_type = Nullable<Text>, column_name = "EndDate")]
+        #[allow(dead_code)]
         end_date: Option<String>,
     }
     

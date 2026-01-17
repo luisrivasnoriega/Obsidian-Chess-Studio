@@ -1,5 +1,5 @@
-import type { GoMode } from "@/bindings";
 import { atomWithStorage } from "jotai/utils";
+import type { GoMode } from "@/bindings";
 
 export type ReportSettings = {
   novelty: boolean;
@@ -14,4 +14,3 @@ export const reportSettingsAtom = atomWithStorage<ReportSettings>("report-settin
   goMode: { t: "Time", c: 500 },
   engine: "",
 });
-

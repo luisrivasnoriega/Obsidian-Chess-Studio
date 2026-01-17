@@ -6,17 +6,13 @@ import react from "@vitejs/plugin-react-swc";
 import { defineConfig } from "vitest/config";
 
 const isDebug = !!process.env.TAURI_ENV_DEBUG;
-const isProdBuild = !isDebug;
+const _isProdBuild = !isDebug;
 
 const devHost = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [
-    tanstackRouter(),
-    react(),
-    vanillaExtractPlugin(),
-  ],
+  plugins: [tanstackRouter(), react(), vanillaExtractPlugin()],
   clearScreen: false,
   server: {
     port: 1420,
@@ -67,14 +63,9 @@ export default defineConfig({
     reporters: ["default", "hanging-process"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "html", "lcov"],
+      reporter: ["text", "html", "lcov", "json-summary"],
       reportsDirectory: "./coverage",
-      exclude: [
-        "**/node_modules/**",
-        "**/__tests__/**",
-        "**/*.test.*",
-        "**/*.spec.*",
-      ],
+      exclude: ["**/node_modules/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*"],
     },
   },
 });

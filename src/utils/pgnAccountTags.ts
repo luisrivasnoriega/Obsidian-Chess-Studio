@@ -1,5 +1,5 @@
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { getAccountKey, type AccountPlatform } from "./accountKeys";
+import { type AccountPlatform, getAccountKey } from "./accountKeys";
 
 export async function rewritePgnAccountTags(
   filePath: string,

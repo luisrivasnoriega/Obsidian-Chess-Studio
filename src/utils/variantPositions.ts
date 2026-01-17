@@ -8,9 +8,10 @@ export type VariantPosition = {
 };
 
 export async function getVariantPosition(fen: string, engine: string): Promise<VariantPosition | null> {
-  const result = await invoke<any>("get_variant_position", { fen, engine });
+  // biome-ignore lint/suspicious/noExplicitAny: Tauri invoke returns unknown, we validate the structure
+  const result = (await invoke<unknown>("get_variant_position", { fen, engine })) as VariantPosition | null;
   if (!result) return null;
-  
+
   // Handle BigInt conversion - Tauri may return it as bigint, string, or object
   let ms: number;
   if (typeof result.ms === "bigint") {
@@ -21,16 +22,16 @@ export async function getVariantPosition(fen: string, engine: string): Promise<V
     ms = result.ms;
   } else if (result.ms && typeof result.ms === "object" && "value" in result.ms) {
     // Handle object format like {type: "bigint", value: "123"}
-    const value = result.ms.value;
+    const value = (result.ms as { value: string | number }).value;
     ms = typeof value === "string" ? Number.parseInt(value, 10) : Number(value);
   } else {
     ms = 0;
   }
-  
+
   return {
     fen: result.fen,
     engine: result.engine,
-    recommended_move: result.recommended_move || result.recommendedMove,
+    recommended_move: result.recommended_move || (result as { recommendedMove?: string }).recommendedMove || "",
     ms,
   };
 }

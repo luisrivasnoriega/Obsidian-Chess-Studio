@@ -1,5 +1,6 @@
 import type { MantineColor } from "@mantine/core";
 import { Box, Button, Grid, Group, Select, Stack, Text } from "@mantine/core";
+import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconBolt, IconChess, IconClock, IconStopwatch } from "@tabler/icons-react";
@@ -10,15 +11,12 @@ import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
-import { commands, type GoMode } from "@/bindings";
 import type { Event } from "@/bindings";
+import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
-import type { ChessComGame } from "@/utils/chess.com/api";
-import { getChessComAccount } from "@/utils/chess.com/api";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
@@ -37,11 +35,9 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
-import { getLichessAccount } from "@/utils/lichess/api";
 import type { AnalysisResult } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
-import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
-import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "./types";
+import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
@@ -55,6 +51,7 @@ import { PuzzleVariantsCard } from "./components/PuzzleVariantsCard";
 import { QuickActionsGrid } from "./components/QuickActionsGrid";
 import { UserProfileCard } from "./components/UserProfileCard";
 import { WelcomeCard } from "./components/WelcomeCard";
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "./types";
 import { calculateOnlineRating } from "./utils/calculateOnlineRating";
 import { getChessTitle } from "./utils/chessTitle";
 import {
@@ -86,7 +83,7 @@ export default function DashboardPage() {
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const [_activeTab, setActiveTab] = useAtom(activeTabAtom);
 
-  const [sessions, setSessions] = useAtom(sessionsAtom);
+  const [sessions, _setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
@@ -96,7 +93,7 @@ export default function DashboardPage() {
     let cancelled = false;
     const loadLastActivities = async () => {
       const activityMap = new Map<string, number | null>();
-      
+
       for (const profile of profiles) {
         const linkedSessions = sessions.filter((s) => s.profileId === profile.id);
         if (linkedSessions.length === 0) {
@@ -129,7 +126,7 @@ export default function DashboardPage() {
               ]
                 .filter((d): d is number => d !== undefined && d !== null)
                 .map((d) => d * 1000); // Convert from seconds to milliseconds
-              
+
               if (lastDates.length > 0) {
                 activityDates.push(Math.max(...lastDates));
               }
@@ -173,7 +170,7 @@ export default function DashboardPage() {
     list.sort((a, b) => {
       const aDate = lastActivityMap.get(a.id) ?? null;
       const bDate = lastActivityMap.get(b.id) ?? null;
-      
+
       // When sorting by lastActivity, nulls always go to the end
       if (aDate === null && bDate === null) {
         // If both are null, sort by name
@@ -181,7 +178,7 @@ export default function DashboardPage() {
       }
       if (aDate === null) return 1; // a goes to end
       if (bDate === null) return -1; // b goes to end
-      
+
       // Both have dates, compare them (most recent first)
       return bDate - aDate;
     });
@@ -221,8 +218,6 @@ export default function DashboardPage() {
   // Map external key -> internal profile DB game id (Games.ID as string).
   // This guarantees analysis.db3 is keyed by (profileId, Games.ID) even when callers don't pass meta.
   const profileDbIdByExternalKeyRef = useRef<Map<string, string>>(new Map());
-
-  
 
   const [activeGamesTab, setActiveGamesTab] = useState<string | null>("games");
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
@@ -418,25 +413,24 @@ export default function DashboardPage() {
     let cancelled = false;
     const run = async () => {
       try {
-        const res =
-          (await invoke<{
-            rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }>;
-          }>("dashboard_get_games_history_rows", {
-            req: {
-              profileId: activeProfileId,
-              profileUsernames,
-              gameHistoryLimit,
-              page: 1,
-              pageSize: gameHistoryLimit,
-              eventFilterId: null,
-              selectedOpponentId: null,
-              opponentContains: null,
-              timeControlCategory: null,
-              resultFilter: null,
-              sortBy: "date",
-              sortDirection: "desc",
-            },
-          })) ?? { rows: [] };
+        const res = (await invoke<{
+          rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }>;
+        }>("dashboard_get_games_history_rows", {
+          req: {
+            profileId: activeProfileId,
+            profileUsernames,
+            gameHistoryLimit,
+            page: 1,
+            pageSize: gameHistoryLimit,
+            eventFilterId: null,
+            selectedOpponentId: null,
+            opponentContains: null,
+            timeControlCategory: null,
+            resultFilter: null,
+            sortBy: "date",
+            sortDirection: "desc",
+          },
+        })) ?? { rows: [] };
 
         const next = new Map<string, string>();
         for (const r of res.rows ?? []) {
@@ -561,7 +555,7 @@ export default function DashboardPage() {
     setEventFilterId(null);
     setEventSearch("");
     setTimeControlCategory(null);
-  }, [activeProfileId]);
+  }, []);
 
   const getOrientationFromFen = useCallback((fen?: string | null) => {
     if (!fen) return null;
@@ -671,8 +665,7 @@ export default function DashboardPage() {
             };
           })
           .filter((g) => hasEnoughMoves(g.pgn))
-          .slice(0, gameHistoryLimit)
-          ;
+          .slice(0, gameHistoryLimit);
 
         setLichessGames(games);
       } catch {
@@ -755,8 +748,7 @@ export default function DashboardPage() {
             };
           })
           .filter((g) => hasEnoughMoves(g.pgn))
-          .slice(0, gameHistoryLimit)
-          ;
+          .slice(0, gameHistoryLimit);
 
         setChessComGames(games);
       } catch {
@@ -791,43 +783,39 @@ export default function DashboardPage() {
     } catch {}
   }, []);
 
-  const handleAnalyzeAll = useCallback(async (type: "local" | "chesscom" | "lichess" | "all") => {
-    setAnalyzeAllGameType(type);
-    setUnanalyzedGameCount(null);
-    setAnalyzeAllCounts(null);
-    setAnalyzeAllModalOpened(true);
+  const handleAnalyzeAll = useCallback(
+    async (type: "local" | "chesscom" | "lichess" | "all") => {
+      setAnalyzeAllGameType(type);
+      setUnanalyzedGameCount(null);
+      setAnalyzeAllCounts(null);
+      setAnalyzeAllModalOpened(true);
 
-    // Fast counts computed on backend (profile-aware, uses analysis.db3).
-    if (activeProfileId) {
-      try {
-        const res =
-          (await invoke<{ total: number; analyzed: number; unanalyzed: number }>("dashboard_get_analyze_all_counts", {
-            req: {
-              profileId: activeProfileId,
-              profileUsernames,
-              gameHistoryLimit,
-              eventFilterId,
-              selectedOpponentId,
-              timeControlCategory,
-              target: type,
-            },
-          })) ?? null;
-        if (res) {
-          setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
-          setUnanalyzedGameCount(res.unanalyzed);
+      // Fast counts computed on backend (profile-aware, uses analysis.db3).
+      if (activeProfileId) {
+        try {
+          const res =
+            (await invoke<{ total: number; analyzed: number; unanalyzed: number }>("dashboard_get_analyze_all_counts", {
+              req: {
+                profileId: activeProfileId,
+                profileUsernames,
+                gameHistoryLimit,
+                eventFilterId,
+                selectedOpponentId,
+                timeControlCategory,
+                target: type,
+              },
+            })) ?? null;
+          if (res) {
+            setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
+            setUnanalyzedGameCount(res.unanalyzed);
+          }
+        } catch {
+          // best-effort: fallback to UI-only counts if backend fails
         }
-      } catch {
-        // best-effort: fallback to UI-only counts if backend fails
       }
-    }
-  }, [
-    activeProfileId,
-    profileUsernames,
-    gameHistoryLimit,
-    eventFilterId,
-    selectedOpponentId,
-    timeControlCategory,
-  ]);
+    },
+    [activeProfileId, profileUsernames, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory],
+  );
 
   useEffect(() => {
     loadFavoriteGames();
@@ -1378,7 +1366,7 @@ export default function DashboardPage() {
 
             // Create activeAnalysisIds set early so stop function can access it
             const activeAnalysisIds = new Set<string>();
-            
+
             // Function to stop all active engines - defined early so it can be returned immediately
             const stopAllEngines = async () => {
               const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
@@ -1389,33 +1377,31 @@ export default function DashboardPage() {
               await Promise.all(stopPromises);
               activeAnalysisIds.clear();
             };
-            
+
             // If we're on an active profile, build a map from external key -> internal profile DB game id (Games.ID).
             // This is required so analysis.db3 is saved under (profileId, Games.ID) and the dashboard LEFT JOIN can match.
             const internalIdByExternalKey = new Map<string, string>();
             if (activeProfileId) {
               try {
                 const idLookupLimit = Math.max(5000, gameHistoryLimit);
-                const res =
-                  (await invoke<{ rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }> }>(
-                    "dashboard_get_games_history_rows",
-                    {
-                      req: {
-                        profileId: activeProfileId,
-                        profileUsernames,
-                        gameHistoryLimit: idLookupLimit,
-                        page: 1,
-                        pageSize: idLookupLimit,
-                        eventFilterId,
-                        selectedOpponentId,
-                        opponentContains: null,
-                        timeControlCategory,
-                        resultFilter: null,
-                        sortBy: "date",
-                        sortDirection: "desc",
-                      },
-                    },
-                  )) ?? { rows: [] };
+                const res = (await invoke<{
+                  rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }>;
+                }>("dashboard_get_games_history_rows", {
+                  req: {
+                    profileId: activeProfileId,
+                    profileUsernames,
+                    gameHistoryLimit: idLookupLimit,
+                    page: 1,
+                    pageSize: idLookupLimit,
+                    eventFilterId,
+                    selectedOpponentId,
+                    opponentContains: null,
+                    timeControlCategory,
+                    resultFilter: null,
+                    sortBy: "date",
+                    sortDirection: "desc",
+                  },
+                })) ?? { rows: [] };
                 for (const r of res.rows ?? []) {
                   // Backend serializes enum as camelCase ("lichess" / "chesscom"), so normalize here.
                   internalIdByExternalKey.set(`${String(r.kind).toLowerCase()}:${r.gameKey}`, r.analysisGameId);
@@ -1427,7 +1413,7 @@ export default function DashboardPage() {
 
             // Get all analyzed games for this profile to filter out already analyzed ones if needed
             const analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
-            
+
             const getFilteredGames = (type: "local" | "chesscom" | "lichess") => {
               if (type === "local") {
                 return recentGames.filter((g) => {
@@ -1460,8 +1446,7 @@ export default function DashboardPage() {
                       .replace(/\[[^\]]*\]/g, "")
                       .replace(/\{[^}]*\}/g, "")
                       .replace(/\([^)]*\)/g, "");
-                    const movePattern =
-                      /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
                     const matches = cleanMoves.match(movePattern) || [];
                     return matches.length >= 5;
                   } catch {
@@ -1974,7 +1959,7 @@ export default function DashboardPage() {
               // If cancelled, make sure all engines are stopped
               await stopAllEngines();
             }
-            
+
             // Return stop function for immediate cancellation
             return { stop: stopAllEngines };
           }}
@@ -1982,7 +1967,9 @@ export default function DashboardPage() {
             analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
               ? analyzeAllCounts.total
               : analyzeAllGameType === "all"
-                ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length + chessComGames.length + lichessGames.length
+                ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length +
+                  chessComGames.length +
+                  lichessGames.length
                 : analyzeAllGameType === "local"
                   ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length
                   : analyzeAllGameType === "chesscom"
@@ -1994,7 +1981,7 @@ export default function DashboardPage() {
           unanalyzedGameCount={
             analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
               ? analyzeAllCounts.unanalyzed
-              : unanalyzedGameCount ?? undefined
+              : (unanalyzedGameCount ?? undefined)
           }
         />
       </Stack>

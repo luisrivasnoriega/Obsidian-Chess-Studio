@@ -100,8 +100,7 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
       set(() => ({ ...state, saveVersion: 0 }));
     },
 
-    reset: () =>
-      set(() => ({ ...defaultTree(), saveVersion: 0 })),
+    reset: () => set(() => ({ ...defaultTree(), saveVersion: 0 })),
 
     save: () => {
       set((state) => ({
@@ -627,7 +626,7 @@ function deleteMove(state: TreeState, path: number[]) {
   if (!node) return;
   const parent = getNodeAtPath(state.root, path.slice(0, -1));
   if (!parent) return;
-  const index = parent.children.findIndex((n) => n === node);
+  const index = parent.children.indexOf(node);
   parent.children.splice(index, 1);
   if (isPrefix(path, state.position)) {
     state.position = path.slice(0, -1);

@@ -49,7 +49,10 @@ function GraphPanel() {
       const path: number[] = [];
       let current = d;
       while (current.parent) {
-        path.unshift(current.parent.children!.indexOf(current));
+        const index = current.parent.children?.indexOf(current);
+        if (index !== undefined && index >= 0) {
+          path.unshift(index);
+        }
         current = current.parent;
       }
       d.movePath = path;
@@ -96,7 +99,9 @@ function GraphPanel() {
     if (!svgRef.current || !hierarchyRef.current || !zoomRef.current) return;
 
     const svg = d3.select(svgRef.current);
-    const { width, height } = svg.node()!.getBoundingClientRect();
+    const node = svg.node();
+    if (!node) return;
+    const { width, height } = node.getBoundingClientRect();
 
     svg
       .transition()
@@ -110,7 +115,9 @@ function GraphPanel() {
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const { width, height } = svg.node()!.getBoundingClientRect();
+    const node = svg.node();
+    if (!node) return;
+    const { width, height } = node.getBoundingClientRect();
     const g = svg.append("g");
     const root = d3.hierarchy(rootData, (d) => d.children);
 
@@ -187,7 +194,7 @@ function GraphPanel() {
       .style("pointer-events", "none");
 
     updateSelection(root);
-  }, [rootData, currentPosition, goToMove]);
+  }, [rootData, goToMove, addMovePaths, createCenterTransform, findCurrentNode, updateSelection]);
 
   return (
     <Paper flex={1} h="100%" style={{ overflow: "hidden", position: "relative" }}>

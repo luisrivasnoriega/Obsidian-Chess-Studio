@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { AnalyzeAllModal } from "../../components/AnalyzeAllModal";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -34,4 +33,3 @@ describe("AnalyzeAllModal", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

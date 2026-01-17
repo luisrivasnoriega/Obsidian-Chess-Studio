@@ -418,15 +418,15 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 18.2% |
-| **Branches** | 13.59% |
-| **Functions** | 16.47% |
-| **Lines** | 19.16% |
+| **Statements** | 19.36% |
+| **Branches** | 14.61% |
+| **Functions** | 17.65% |
+| **Lines** | 20.41% |
 
 **Test Statistics:**
-- ✅ **83 test files** passing
-- ✅ **336 tests** passing
-- ⏱️ Test execution time: ~71 seconds
+- ✅ **177 test files** passing
+- ✅ **316 tests** passing
+- ⏱️ Test execution time: ~0 seconds
 
 **Well-Tested Areas:**
 - **Profile Components** (92.59% coverage): Player profiles, account selectors, personal cards, and panel components
@@ -446,6 +446,7 @@ The Rust backend uses **Cargo's built-in test framework** with comprehensive uni
 **Test Statistics:**
 - ✅ **234 tests** passing
 - ⏱️ Test execution time: ~3.44 seconds
+
 - ⏸️ 2 stress tests ignored (performance benchmarks)
 
 **Well-Tested Modules:**

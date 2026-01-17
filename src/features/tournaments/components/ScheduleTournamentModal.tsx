@@ -52,10 +52,10 @@ export function ScheduleTournamentModal({
     let startTime: Date;
     try {
       startTime = new Date(startDate);
-      if (isNaN(startTime.getTime())) {
+      if (Number.isNaN(startTime.getTime())) {
         throw new Error("Invalid date");
       }
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error"),
         message: t("features.tournaments.schedule.invalidDate"),
@@ -98,7 +98,7 @@ export function ScheduleTournamentModal({
 
       // Add team restriction if specified
       // Lichess API expects the team ID in a specific format
-      if (template.teamRestriction && template.teamRestriction.trim()) {
+      if (template.teamRestriction?.trim()) {
         const teamId = template.teamRestriction.trim();
         // Try bracket notation format which is more standard for form-encoded data
         // This format: conditions[teamMember][teamId] is commonly used in HTML forms
@@ -191,7 +191,7 @@ export function ScheduleTournamentModal({
       await navigator.clipboard.writeText(tournamentUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error", "Error"),
         message: t("features.tournaments.schedule.copyError", "Failed to copy URL"),
@@ -207,7 +207,7 @@ export function ScheduleTournamentModal({
       await navigator.clipboard.writeText(tournamentUrl);
       setShared(true);
       setTimeout(() => setShared(false), 2000);
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error", "Error"),
         message: t("features.tournaments.schedule.copyError", "Failed to copy URL"),
@@ -223,7 +223,7 @@ export function ScheduleTournamentModal({
       await navigator.clipboard.writeText(tournamentId);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error", "Error"),
         message: t("features.tournaments.schedule.copyError", "Failed to copy ID"),

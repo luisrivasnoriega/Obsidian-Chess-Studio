@@ -62,13 +62,7 @@ export function VariantsTreeBuilderModal(props: Props) {
   } = props;
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={t("features.board.variants.treeBuilder.title")}
-      centered
-      size="lg"
-    >
+    <Modal opened={opened} onClose={onClose} title={t("features.board.variants.treeBuilder.title")} centered size="lg">
       <Stack gap="md">
         <Stack gap="xs">
           <Text size="sm">{t("features.board.variants.treeBuilder.syncHint")}</Text>
@@ -168,4 +162,3 @@ export function VariantsTreeBuilderModal(props: Props) {
     </Modal>
   );
 }
-

@@ -6,12 +6,12 @@ import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
 import { commands, events } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
-import { unwrap } from "@/utils/unwrap";
 import { sessionsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { query_players } from "@/utils/db";
 import { getProfileDbPath } from "@/utils/profileDb";
 import type { Session } from "@/utils/session";
+import { unwrap } from "@/utils/unwrap";
 import PersonalPlayerCard from "../PersonalCard";
 import { PanelLoadingState } from "./PanelLoadingState";
 
@@ -69,9 +69,7 @@ export async function fetchPersonalInfoForProfile(input: {
     }),
   );
 
-  return results
-    .filter((r) => r.status === "fulfilled")
-    .map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
+  return results.filter((r) => r.status === "fulfilled").map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
 }
 
 export function computePersonalInfoSignature(personalInfo: PersonalInfo[] | undefined | null): string | null {
@@ -188,7 +186,7 @@ function Databases({
     };
   }, []);
 
-  const hasPanelData = !!mergedInfo;
+  const _hasPanelData = !!mergedInfo;
   const showInitialPlayerShell = !!personalInfo && personalInfo.length > 0;
   const effectiveProfileId = profileId ?? profilesByName.get(name) ?? undefined;
 
@@ -214,38 +212,34 @@ function Databases({
       )}
       {shouldShowBlockingLoader ? (
         <PanelLoadingState isLoading={isLoading} isFetching={isFetching} hasData={false} />
-      ) : (
-        <>
-          {personalInfo && personalInfo.length === 0 ? (
-            <Paper
-              h="100%"
-              shadow="sm"
-              p="md"
-              withBorder
-              style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
-            >
-              <Stack>
-                <Text ta="center" fw="bold" my="auto" fz="lg">
-                  No databases found
-                </Text>
-              </Stack>
-            </Paper>
-          ) : showInitialPlayerShell ? (
-            <PersonalPlayerCard
-              name={name}
-              setName={setName}
-              info={{
-                site_stats_data: mergedInfo?.site_stats_data ?? [],
-              }}
-              visibleTabs={visibleTabs}
-              showPlayerSelector={showPlayerSelector}
-              profileId={effectiveProfileId}
-              // Keep the sidebar + layout visible immediately; panels will show their own loaders.
-              isLoading={isLoading || isFetching || !mergedInfo}
-            />
-          ) : null}
-        </>
-      )}
+      ) : personalInfo && personalInfo.length === 0 ? (
+        <Paper
+          h="100%"
+          shadow="sm"
+          p="md"
+          withBorder
+          style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
+        >
+          <Stack>
+            <Text ta="center" fw="bold" my="auto" fz="lg">
+              No databases found
+            </Text>
+          </Stack>
+        </Paper>
+      ) : showInitialPlayerShell ? (
+        <PersonalPlayerCard
+          name={name}
+          setName={setName}
+          info={{
+            site_stats_data: mergedInfo?.site_stats_data ?? [],
+          }}
+          visibleTabs={visibleTabs}
+          showPlayerSelector={showPlayerSelector}
+          profileId={effectiveProfileId}
+          // Keep the sidebar + layout visible immediately; panels will show their own loaders.
+          isLoading={isLoading || isFetching || !mergedInfo}
+        />
+      ) : null}
     </>
   );
 }

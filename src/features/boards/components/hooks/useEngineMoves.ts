@@ -34,7 +34,7 @@ export function useEngineMoves(
   } | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Force re-request after error by incrementing this counter
-  const [retryCounter, setRetryCounter] = useState(0);
+  const [_retryCounter, setRetryCounter] = useState(0);
 
   // Use refs for times to avoid triggering effect on time updates
   const whiteTimeRef = useRef(whiteTime);
@@ -46,7 +46,7 @@ export function useEngineMoves(
 
   const moves = useMemo(() => getMainLine(root, headers.variant === "Chess960"), [root, headers.variant]);
   const mainLine = useMemo(() => Array.from(treeIteratorMainLine(root)), [root]);
-  const lastNode = useMemo(() => mainLine[mainLine.length - 1].node, [mainLine]);
+  const _lastNode = useMemo(() => mainLine[mainLine.length - 1].node, [mainLine]);
 
   // Request engine moves when it's the engine's turn
   // Use separate effect for position/turn changes vs time updates
@@ -251,18 +251,18 @@ export function useEngineMoves(
     // Time updates should not trigger new engine requests - we use refs for times
   }, [
     gameState,
-    pos, // Need pos to check turn and if position is valid
+    pos,
     players.white.type,
     players.black.type,
-    players.white.type === "engine" ? players.white.engine?.path : undefined,
-    players.black.type === "engine" ? players.black.engine?.path : undefined,
     headers.result,
     activeTab,
     root.fen,
     moves,
-    retryCounter,
     appendMove,
     t,
+    players.black,
+    players.white?.timeControl?.seconds,
+    players.white,
   ]);
 
   // Listen for engine move responses
@@ -360,7 +360,7 @@ export function useEngineMoves(
         }
 
         // Clear refs BEFORE applying move to prevent race conditions and duplicate moves
-        const currentRequestKey = engineRequestRef.current;
+        const _currentRequestKey = engineRequestRef.current;
         engineRequestRef.current = null;
         engineRequestDetailsRef.current = null;
 
@@ -369,7 +369,7 @@ export function useEngineMoves(
             payload: parsed,
             clock: (pos.turn === "white" ? whiteTimeRef.current : blackTimeRef.current) ?? undefined,
           });
-        } catch (error) {
+        } catch (_error) {
           // Clear refs on error to allow retry
           engineRequestRef.current = null;
           engineRequestDetailsRef.current = null;
@@ -414,7 +414,7 @@ export function useEngineMoves(
           // Component unmounted while listener was being set up, clean up immediately
           try {
             unlisten();
-          } catch (e) {
+          } catch (_e) {
             // Ignore errors if callback was already cleaned up
           }
         }
@@ -438,7 +438,7 @@ export function useEngineMoves(
       if (unlistenFn) {
         try {
           unlistenFn();
-        } catch (e) {
+        } catch (_e) {
           // Ignore errors if callback was already cleaned up
         }
         unlistenFn = null;

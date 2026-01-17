@@ -1,7 +1,7 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import { Box, Stack } from "@mantine/core";
 import { useElementSize } from "@mantine/hooks";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";

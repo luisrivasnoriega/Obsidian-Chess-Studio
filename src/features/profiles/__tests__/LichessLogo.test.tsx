@@ -1,6 +1,5 @@
-import React from "react";
-import { describe, expect, test } from "vitest";
 import { render } from "@testing-library/react";
+import { describe, expect, test } from "vitest";
 import LichessLogo from "../components/LichessLogo";
 
 describe("LichessLogo", () => {
@@ -28,8 +27,7 @@ describe("LichessLogo", () => {
 
     // In the DOM, SVG attributes are typically lowercase (stroke-linejoin),
     // even if written as strokeLinejoin in JSX.
-    const strokeLinejoin =
-      path?.getAttribute("stroke-linejoin") ?? path?.getAttribute("strokeLinejoin");
+    const strokeLinejoin = path?.getAttribute("stroke-linejoin") ?? path?.getAttribute("strokeLinejoin");
 
     expect(strokeLinejoin).toBeTruthy();
     expect(strokeLinejoin).toBe("round");

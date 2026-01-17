@@ -12,7 +12,7 @@ import type { ThemeContext, ThemeId } from "../types";
  * implement heuristics based on move repetition, piece mobility, and
  * evaluation stability.
  */
-export function detectZugzwang(ctx: ThemeContext): ThemeId[] {
+export function detectZugzwang(_ctx: ThemeContext): ThemeId[] {
   // TODO: Implement zugzwang detection
   // - Check if the position has limited legal moves
   // - Verify that all moves lead to worse evaluations

@@ -1,10 +1,10 @@
 import { Box, Tabs } from "@mantine/core";
 import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
-import { useAtomValue } from "jotai";
 import { CreateTournamentForm } from "./components/CreateTournamentForm";
 import { TournamentList } from "./components/TournamentList";
 
@@ -35,7 +35,7 @@ export default function TournamentsPage() {
 
   useEffect(() => {
     setRefreshKey((prev) => prev + 1);
-  }, [activeProfileId]);
+  }, []);
 
   return (
     <>

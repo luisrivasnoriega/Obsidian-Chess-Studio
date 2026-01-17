@@ -92,10 +92,7 @@ export function getCurrentPath(): string {
  * Check if current location is puzzles page
  */
 export function isPuzzlesPage(): boolean {
-  return (
-    window.location.pathname === "/puzzles" ||
-    document.title.toLowerCase().includes("puzzle")
-  );
+  return window.location.pathname === "/puzzles" || document.title.toLowerCase().includes("puzzle");
 }
 
 /**

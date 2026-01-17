@@ -3,7 +3,7 @@
  * line attack on a high-value piece, we treat it as interference.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { hasLineAttack, isImmediatePunishCapture, parseFenBoard } from "./utils";
 
 export function detectInterference(ctx: ThemeContext): ThemeId[] {

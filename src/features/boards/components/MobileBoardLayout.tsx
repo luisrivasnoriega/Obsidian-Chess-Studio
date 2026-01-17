@@ -139,18 +139,7 @@ function MobileBoardLayout({
     const next = isPuzzle ? "info" : "analysis";
     setMobilePanelsTab(next);
     setCurrentTabSelected(next);
-  }, [
-    currentTab?.value,
-    currentTab?.gameNumber,
-    currentTab?.source?.type,
-    currentTab?.source?.type === "file" ? currentTab.source.path : null,
-    currentTab?.source?.type === "file" ? currentTab.source.lastModified : null,
-    currentTab?.source?.type === "file" ? currentTab.source.metadata?.type : null,
-    currentTab?.source?.type === "db" ? currentTab.source.db : null,
-    currentTab?.source?.type === "db" ? currentTab.source.id : null,
-    isPuzzle,
-    setCurrentTabSelected,
-  ]);
+  }, [isPuzzle, setCurrentTabSelected]);
 
   // Mobile layout pattern is now passed as a prop from ResponsiveBoard
 
@@ -184,23 +173,23 @@ function MobileBoardLayout({
     <Stack gap="xs" align="stretch">
       {showAnalysisPanel && (
         <Box>
-            <Suspense fallback={<ResponsiveSkeleton type="default" />}>
-              <ResponsiveAnalysisPanels
-                currentTab={mobilePanelsTab}
-                onTabChange={(value) => {
-                  setMobilePanelsTab(value);
-                  if (value) {
-                    setCurrentTabSelected(value);
-                  }
-                }}
-                isRepertoire={showRepertoirePanels}
-                isPuzzle={isPuzzle}
-                disableCollapse
-                renderAsSelect
-                unstyledContainer
-              />
-            </Suspense>
-          </Box>
+          <Suspense fallback={<ResponsiveSkeleton type="default" />}>
+            <ResponsiveAnalysisPanels
+              currentTab={mobilePanelsTab}
+              onTabChange={(value) => {
+                setMobilePanelsTab(value);
+                if (value) {
+                  setCurrentTabSelected(value);
+                }
+              }}
+              isRepertoire={showRepertoirePanels}
+              isPuzzle={isPuzzle}
+              disableCollapse
+              renderAsSelect
+              unstyledContainer
+            />
+          </Suspense>
+        </Box>
       )}
 
       <Box

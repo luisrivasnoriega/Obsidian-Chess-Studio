@@ -1,7 +1,8 @@
-import { commands } from "@/bindings";
+import type { Position } from "chessops";
 import { makeFen } from "chessops/fen";
 import { parsePgn, startingPosition } from "chessops/pgn";
 import { parseSan } from "chessops/san";
+import { commands } from "@/bindings";
 
 type OpeningInfo = { eco: string; opening: string; variation: string };
 
@@ -23,7 +24,7 @@ async function getOpeningInfoFromFen(fen: string): Promise<OpeningInfo | null> {
 }
 
 function escapeHeaderValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\"/g, '\\"').trim();
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').trim();
 }
 
 function upsertHeader(headerLines: string[], key: "ECO" | "Opening" | "Variation", value: string) {
@@ -67,7 +68,7 @@ export async function addOpeningHeadersToPgn(pgn: string): Promise<string> {
     const game = games?.[0];
     if (!game) return pgn;
 
-    let pos;
+    let pos: Position | undefined;
     try {
       pos = startingPosition(game.headers).unwrap();
     } catch {

@@ -32,6 +32,8 @@ function RepertoireInfo() {
   const percentageCoverage = useAtomValue(percentageCoverageAtom);
   const minimumGames = useAtomValue(minimumGamesAtom);
 
+  const _stats = useMemo(() => getTreeStats(root), [root]);
+
   if (!currentTab) {
     return null;
   }
@@ -62,17 +64,15 @@ function RepertoireInfo() {
     });
   }
 
-  const stats = useMemo(() => getTreeStats(root), [root]);
-
   return (
     <Stack style={{ overflow: "hidden" }} h="100%">
       <Group>
-        <Text>Variations: {stats.leafs}</Text>
+        <Text>Variations: {_stats.leafs}</Text>
         <Text>
-          {t("repertoire.maxDepth")} {stats.depth}
+          {t("repertoire.maxDepth")} {_stats.depth}
         </Text>
         <Text>
-          {t("repertoire.totalMoves")} {stats.total}
+          {t("repertoire.totalMoves")} {_stats.total}
         </Text>
       </Group>
 

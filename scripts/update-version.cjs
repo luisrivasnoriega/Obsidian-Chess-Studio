@@ -36,7 +36,7 @@ function updateCargoToml(repoRoot, version) {
   const file = path.join(repoRoot, "src-tauri", "Cargo.toml");
   const original = fs.readFileSync(file, "utf8");
 
-  const packageSection = /^\[package\][\s\S]*?(?=^\[|\Z)/m;
+  const packageSection = /^\[package\][\s\S]*?(?=^\[|Z)/m;
   const sectionMatch = packageSection.exec(original);
   if (!sectionMatch) throw new Error("Cargo.toml missing [package] section.");
 

@@ -1,22 +1,41 @@
-import { Badge, Code, Group, Modal, Progress, ScrollArea, Stack, Table, Text, Title, Divider, Tabs, Select, MultiSelect, ActionIcon, Tooltip, Button, SegmentedControl } from "@mantine/core";
-import { useTranslation } from "react-i18next";
-import { useState, useMemo, useEffect, Fragment } from "react";
-import { IconExternalLink, IconCopy, IconSearch } from "@tabler/icons-react";
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Code,
+  Divider,
+  Group,
+  Modal,
+  MultiSelect,
+  Progress,
+  ScrollArea,
+  SegmentedControl,
+  Select,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  Title,
+  Tooltip,
+} from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { useAtom } from "jotai";
+import { IconCopy, IconExternalLink, IconSearch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { useAtom } from "jotai";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { NormalizedGame } from "@/bindings";
-import { tabsAtom, activeTabAtom } from "@/state/atoms";
-import { createTab } from "@/utils/tabs";
+import { Chessground } from "@/components/Chessground";
+import { createPgnFromLocalGame } from "@/features/dashboard/utils/gameHelpers";
+import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { getAllAnalyzedGames } from "@/utils/analyzedGames";
 import { parsePGN } from "@/utils/chess";
+import { getDatabases, query_games } from "@/utils/db";
+import { getAllGames } from "@/utils/gameRecords";
 import { splitPgnGames } from "@/utils/pgnUtils";
 import type { AnalysisResult, ErrorKind, PawnStructureStat } from "@/utils/playerMistakes";
 import { generateAnalysisResult } from "@/utils/playerMistakes";
-import { Chessground } from "@/components/Chessground";
-import { getAllAnalyzedGames } from "@/utils/analyzedGames";
-import { getDatabases, query_games } from "@/utils/db";
-import { getAllGames } from "@/utils/gameRecords";
-import { createPgnFromLocalGame } from "@/features/dashboard/utils/gameHelpers";
+import { createTab } from "@/utils/tabs";
 
 interface PlayerStatsModalProps {
   opened: boolean;
@@ -40,8 +59,8 @@ export function PlayerStatsModal({
   const { t } = useTranslation();
   const [, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useAtom(activeTabAtom)[1];
-  const navigate = useNavigate();
-  
+  const _navigate = useNavigate();
+
   const [themeFilter, setThemeFilter] = useState<string[]>([]);
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"cpSwing" | "moveNumber" | "theme" | "severity">("cpSwing");
@@ -65,9 +84,13 @@ export function PlayerStatsModal({
   const uniqueThemes = useMemo(() => {
     const issues = result?.issues ?? [];
     const themes = new Set<string>();
-    issues.forEach((issue) => {
-      issue.tags?.forEach((tag) => themes.add(tag));
-    });
+    for (const issue of issues) {
+      if (issue.tags) {
+        for (const tag of issue.tags) {
+          themes.add(tag);
+        }
+      }
+    }
     return Array.from(themes).sort();
   }, [result]);
 
@@ -76,12 +99,12 @@ export function PlayerStatsModal({
     const severities = new Set(issues.map((i) => i.severity));
     return Array.from(severities).sort();
   }, [result]);
-  
+
   // Filter and sort issues (must be before early return)
   const filteredAndSortedIssues = useMemo(() => {
     const issues = result?.issues ?? [];
     let filtered = issues;
-    
+
     // Apply filters
     if (themeFilter.length > 0) {
       filtered = filtered.filter((i) => i.tags?.some((tag) => themeFilter.includes(tag)));
@@ -89,32 +112,34 @@ export function PlayerStatsModal({
     if (severityFilter) {
       filtered = filtered.filter((i) => i.severity === severityFilter);
     }
-    
+
     // Sort
     const sorted = [...filtered].sort((a, b) => {
       let comparison = 0;
-      
+
       switch (sortBy) {
-        case "cpSwing":
+        case "cpSwing": {
           const aSwing = a.evidence.cpSwingAbs ?? 0;
           const bSwing = b.evidence.cpSwingAbs ?? 0;
           comparison = aSwing - bSwing;
           break;
+        }
         case "moveNumber":
           comparison = a.moveNumber - b.moveNumber;
           break;
         case "theme":
           comparison = (a.tags?.join(", ") ?? "").localeCompare(b.tags?.join(", ") ?? "");
           break;
-        case "severity":
+        case "severity": {
           const severityOrder = { blunder: 0, mistake: 1, inaccuracy: 2, info: 3 };
           comparison = (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99);
           break;
+        }
       }
-      
+
       return sortOrder === "asc" ? comparison : -comparison;
     });
-    
+
     return sorted;
   }, [result, themeFilter, severityFilter, sortBy, sortOrder]);
 
@@ -171,12 +196,12 @@ export function PlayerStatsModal({
   const filteredAndSortedOpenings = useMemo(() => {
     const openings = result?.stats?.byOpening ?? [];
     let filtered = openings;
-    
+
     // Apply color filter
     if (openingsColorFilter !== "all") {
       filtered = filtered.filter((o) => o.playerColor === openingsColorFilter);
     }
-    
+
     // Sort by games count descending (most played first)
     return [...filtered].sort((a, b) => b.games - a.games);
   }, [result, openingsColorFilter]);
@@ -192,7 +217,7 @@ export function PlayerStatsModal({
   }
 
   const { player, gamesAnalyzed, gamesMatchedPlayer, issues, stats } = result;
-  
+
   const copyFenToClipboard = (fen: string) => {
     navigator.clipboard.writeText(fen);
     notifications.show({
@@ -213,12 +238,12 @@ export function PlayerStatsModal({
     const firstFen = structure.sampleFen ?? structure.games?.[0]?.fen ?? null;
     setExpandedFen(firstFen);
   };
-  
+
   const openGameInNewTab = async (fenBefore: string, gameIndex: number) => {
     const sourcePgns = pawnSearchPgns ?? debugPgns ?? pgnText ?? null;
     if (sourcePgns) {
       const games = splitPgnGames(sourcePgns);
-      
+
       let game = games[gameIndex];
       let targetPosition: number[] = [];
 
@@ -244,9 +269,7 @@ export function PlayerStatsModal({
               game = games[i];
               break;
             }
-          } catch {
-            continue;
-          }
+          } catch {}
         }
       }
 
@@ -279,8 +302,12 @@ export function PlayerStatsModal({
           pgn: game,
           position: targetPosition.length > 0 ? targetPosition : undefined,
         });
-        
-        notifications.show({ title: t("features.dashboard.gameOpened"), message: t("features.dashboard.gameOpenedMessage"), color: "green" });
+
+        notifications.show({
+          title: t("features.dashboard.gameOpened"),
+          message: t("features.dashboard.gameOpenedMessage"),
+          color: "green",
+        });
       } catch {
         notifications.show({
           title: t("features.dashboard.error"),
@@ -339,10 +366,7 @@ export function PlayerStatsModal({
     return null;
   };
 
-  const collectAnalyzedPgnsFromStorage = async (
-    target: string,
-    type: "chesscom" | "lichess",
-  ): Promise<string[]> => {
+  const collectAnalyzedPgnsFromStorage = async (target: string, type: "chesscom" | "lichess"): Promise<string[]> => {
     if (!target) return [];
     const normalizedTarget = normalizeName(target);
     if (!normalizedTarget) return [];
@@ -360,11 +384,7 @@ export function PlayerStatsModal({
         const isWhite = matchesName(whiteName, normalizedTarget);
         const isBlack = matchesName(blackName, normalizedTarget);
         const matchesColor =
-          pawnColorFilter === "white"
-            ? isWhite
-            : pawnColorFilter === "black"
-              ? isBlack
-              : isWhite || isBlack;
+          pawnColorFilter === "white" ? isWhite : pawnColorFilter === "black" ? isBlack : isWhite || isBlack;
         if (matchesColor) {
           matches.push(pgn);
         }
@@ -377,7 +397,7 @@ export function PlayerStatsModal({
   };
 
   const createPgnFromNormalizedGame = (game: NormalizedGame): string => {
-    const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const _INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     const resultTag = game.result || "*";
     const movesText = (game.moves || "").trim();
     const hasResult = /(?:1-0|0-1|1\/2-1\/2|\*)$/.test(movesText);
@@ -420,9 +440,7 @@ export function PlayerStatsModal({
       if (pawnColorFilter === "black" && !blackMatch) return false;
       return whiteMatch || blackMatch;
     });
-    return filtered
-      .map((game) => game.pgn || createPgnFromLocalGame(game))
-      .filter(Boolean) as string[];
+    return filtered.map((game) => game.pgn || createPgnFromLocalGame(game)).filter(Boolean) as string[];
   };
 
   const queryAllGamesFromDb = async (
@@ -458,11 +476,7 @@ export function PlayerStatsModal({
         const isWhite = matchesName(game.white, normalizedTarget);
         const isBlack = matchesName(game.black, normalizedTarget);
         const matchesColorFilter =
-          pawnColorFilter === "white"
-            ? isWhite
-            : pawnColorFilter === "black"
-              ? isBlack
-              : isWhite || isBlack;
+          pawnColorFilter === "white" ? isWhite : pawnColorFilter === "black" ? isBlack : isWhite || isBlack;
         if (!matchesColorFilter) continue;
         if (game.moves) {
           collected.push(createPgnFromNormalizedGame(game));
@@ -504,15 +518,11 @@ export function PlayerStatsModal({
     }
     if (statsGameType === "chesscom") {
       const fetched = await fetchOnlinePgns("chesscom", normalizedPlayer, onProgress);
-      return fetched.length
-        ? fetched
-        : await collectAnalyzedPgnsFromStorage(normalizedPlayer, "chesscom");
+      return fetched.length ? fetched : await collectAnalyzedPgnsFromStorage(normalizedPlayer, "chesscom");
     }
     if (statsGameType === "lichess") {
       const fetched = await fetchOnlinePgns("lichess", normalizedPlayer, onProgress);
-      return fetched.length
-        ? fetched
-        : await collectAnalyzedPgnsFromStorage(normalizedPlayer, "lichess");
+      return fetched.length ? fetched : await collectAnalyzedPgnsFromStorage(normalizedPlayer, "lichess");
     }
     return [];
   };
@@ -577,15 +587,21 @@ export function PlayerStatsModal({
           <ScrollArea h="calc(90vh - 180px)">
             <Stack gap="md">
               <Group>
-                <Text size="sm" c="dimmed">{t("features.dashboard.gamesAnalyzed")}:</Text>
+                <Text size="sm" c="dimmed">
+                  {t("features.dashboard.gamesAnalyzed")}:
+                </Text>
                 <Text fw={600}>{gamesAnalyzed}</Text>
               </Group>
               <Group>
-                <Text size="sm" c="dimmed">{t("features.dashboard.gamesMatched")}:</Text>
+                <Text size="sm" c="dimmed">
+                  {t("features.dashboard.gamesMatched")}:
+                </Text>
                 <Text fw={600}>{gamesMatchedPlayer}</Text>
               </Group>
               <Group>
-                <Text size="sm" c="dimmed">{t("features.dashboard.totalIssues")}:</Text>
+                <Text size="sm" c="dimmed">
+                  {t("features.dashboard.totalIssues")}:
+                </Text>
                 <Text fw={600}>{issues.length}</Text>
               </Group>
 
@@ -613,10 +629,20 @@ export function PlayerStatsModal({
                           <Table.Td style={{ width: 120 }}>{count}</Table.Td>
                           <Table.Td style={{ width: 200 }}>
                             <Group gap="xs">
-                              <Badge size="sm" variant="light" color="gray" style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}>
+                              <Badge
+                                size="sm"
+                                variant="light"
+                                color="gray"
+                                style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}
+                              >
                                 ♔ {whiteCount}
                               </Badge>
-                              <Badge size="sm" variant="light" color="dark" style={{ backgroundColor: "rgba(0, 0, 0, 0.1)" }}>
+                              <Badge
+                                size="sm"
+                                variant="light"
+                                color="dark"
+                                style={{ backgroundColor: "rgba(0, 0, 0, 0.1)" }}
+                              >
                                 ♚ {blackCount}
                               </Badge>
                             </Group>
@@ -651,10 +677,20 @@ export function PlayerStatsModal({
                           <Table.Td style={{ width: 120 }}>{count}</Table.Td>
                           <Table.Td style={{ width: 200 }}>
                             <Group gap="xs">
-                              <Badge size="sm" variant="light" color="gray" style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}>
+                              <Badge
+                                size="sm"
+                                variant="light"
+                                color="gray"
+                                style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}
+                              >
                                 ♔ {whiteCount}
                               </Badge>
-                              <Badge size="sm" variant="light" color="dark" style={{ backgroundColor: "rgba(0, 0, 0, 0.1)" }}>
+                              <Badge
+                                size="sm"
+                                variant="light"
+                                color="dark"
+                                style={{ backgroundColor: "rgba(0, 0, 0, 0.1)" }}
+                              >
                                 ♚ {blackCount}
                               </Badge>
                             </Group>
@@ -671,7 +707,9 @@ export function PlayerStatsModal({
               <Stack gap="xs">
                 {stats.global.mostCommonSchemes.slice(0, 10).map((scheme, idx) => (
                   <Group key={idx} justify="space-between">
-                    <Text size="sm" style={{ fontFamily: "monospace" }}>{scheme.schemeSignature}</Text>
+                    <Text size="sm" style={{ fontFamily: "monospace" }}>
+                      {scheme.schemeSignature}
+                    </Text>
                     <Badge>{scheme.count}</Badge>
                   </Group>
                 ))}
@@ -726,11 +764,11 @@ export function PlayerStatsModal({
                 style={{ flex: 1, minWidth: 120 }}
               />
             </Group>
-            
+
             <Text size="sm" c="dimmed">
               {t("features.dashboard.showingIssues", { count: filteredAndSortedIssues.length, total: issues.length })}
             </Text>
-            
+
             <ScrollArea h="calc(90vh - 180px)">
               <Table>
                 <Table.Thead>
@@ -753,7 +791,9 @@ export function PlayerStatsModal({
                           {issue.game.index}
                         </Text>
                       </Table.Td>
-                      <Table.Td>{issue.moveNumber}. {issue.playedSan}</Table.Td>
+                      <Table.Td>
+                        {issue.moveNumber}. {issue.playedSan}
+                      </Table.Td>
                       <Table.Td>
                         {issue.bestAlternative?.san
                           ? `${issue.bestAlternative.san} — ${issue.tags?.join(", ") ?? ""}`
@@ -761,9 +801,7 @@ export function PlayerStatsModal({
                             ? issue.tags.join(", ")
                             : "-"}
                       </Table.Td>
-                      <Table.Td>
-                        {issue.tags && issue.tags.length > 0 ? issue.tags.join(", ") : "-"}
-                      </Table.Td>
+                      <Table.Td>{issue.tags && issue.tags.length > 0 ? issue.tags.join(", ") : "-"}</Table.Td>
                       <Table.Td>
                         <Badge
                           color={
@@ -796,11 +834,7 @@ export function PlayerStatsModal({
                       <Table.Td>
                         <Group gap="xs">
                           <Tooltip label={t("features.dashboard.copyFen")}>
-                            <ActionIcon
-                              size="sm"
-                              variant="subtle"
-                              onClick={() => copyFenToClipboard(issue.fenBefore)}
-                            >
+                            <ActionIcon size="sm" variant="subtle" onClick={() => copyFenToClipboard(issue.fenBefore)}>
                               <IconCopy size={16} />
                             </ActionIcon>
                           </Tooltip>
@@ -831,14 +865,16 @@ export function PlayerStatsModal({
         <Tabs.Panel value="openings" pt="md">
           <Stack gap="md">
             <Group justify="space-between" align="center">
-              <Text size="sm" fw={500}>{t("features.dashboard.filterByColor")}:</Text>
+              <Text size="sm" fw={500}>
+                {t("features.dashboard.filterByColor")}:
+              </Text>
               <SegmentedControl
                 value={openingsColorFilter}
                 onChange={(value) => setOpeningsColorFilter(value as "all" | "white" | "black")}
                 data={[
                   { label: t("features.dashboard.all"), value: "all" },
-                  { label: "♔ " + t("features.dashboard.white"), value: "white" },
-                  { label: "♚ " + t("features.dashboard.black"), value: "black" },
+                  { label: `♔ ${t("features.dashboard.white")}`, value: "white" },
+                  { label: `♚ ${t("features.dashboard.black")}`, value: "black" },
                 ]}
                 size="sm"
               />
@@ -846,100 +882,102 @@ export function PlayerStatsModal({
             <ScrollArea h="calc(90vh - 180px)">
               <Stack gap="md">
                 {filteredAndSortedOpenings.map((opening, idx) => (
-                <Stack 
-                  key={idx} 
-                  gap="xs"
-                  style={{
-                    padding: "8px",
-                    borderRadius: "4px",
-                    backgroundColor: opening.playerColor === "white" 
-                      ? "rgba(255, 255, 255, 0.05)" 
-                      : "rgba(0, 0, 0, 0.05)",
-                    borderLeft: `3px solid ${opening.playerColor === "white" ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.3)"}`,
-                  }}
-                >
-                  <Group justify="space-between">
-                    <Group gap="xs">
-                      <Text fw={600}>
-                        {opening.opening || opening.eco || t("features.dashboard.unknownOpening")}
-                      </Text>
-                      <Badge 
-                        size="xs" 
-                        variant="light" 
-                        color={opening.playerColor === "white" ? "gray" : "dark"}
-                        style={{ 
-                          backgroundColor: opening.playerColor === "white" 
-                            ? "rgba(255, 255, 255, 0.1)" 
-                            : "rgba(0, 0, 0, 0.1)" 
-                        }}
-                      >
-                        {opening.playerColor === "white" ? "♔" : "♚"}
+                  <Stack
+                    key={idx}
+                    gap="xs"
+                    style={{
+                      padding: "8px",
+                      borderRadius: "4px",
+                      backgroundColor:
+                        opening.playerColor === "white" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.05)",
+                      borderLeft: `3px solid ${opening.playerColor === "white" ? "rgba(255, 255, 255, 0.3)" : "rgba(0, 0, 0, 0.3)"}`,
+                    }}
+                  >
+                    <Group justify="space-between">
+                      <Group gap="xs">
+                        <Text fw={600}>{opening.opening || opening.eco || t("features.dashboard.unknownOpening")}</Text>
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={opening.playerColor === "white" ? "gray" : "dark"}
+                          style={{
+                            backgroundColor:
+                              opening.playerColor === "white" ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
+                          }}
+                        >
+                          {opening.playerColor === "white" ? "♔" : "♚"}
+                        </Badge>
+                      </Group>
+                      <Badge>
+                        {opening.games} {t("features.dashboard.games")}
                       </Badge>
                     </Group>
-                    <Badge>{opening.games} {t("features.dashboard.games")}</Badge>
-                  </Group>
-                  <Group gap="xs">
-                    <Text size="xs" c="dimmed">
-                      {t("features.dashboard.pliesAnalyzed")}: {opening.pliesAnalyzed}
-                    </Text>
-                  </Group>
-                  <Table>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>{t("features.dashboard.issueType")}</Table.Th>
-                        <Table.Th>{t("features.dashboard.count")}</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {Object.entries(opening.issueCounts)
-                        .filter(([_, count]) => count > 0)
-                        .sort(([_, a], [__, b]) => b - a)
-                        .slice(0, 5)
-                        .map(([kind, count]) => (
-                          <Table.Tr key={kind}>
-                            <Table.Td>{kind.replace(/_/g, " ")}</Table.Td>
-                            <Table.Td>{count}</Table.Td>
-                          </Table.Tr>
-                        ))}
-                    </Table.Tbody>
-                  </Table>
-                  {opening.frequentMistakes.length > 0 && (
-                    <Stack gap="xs" mt="xs">
-                      <Text size="xs" fw={600}>{t("features.dashboard.frequentMistakes")}:</Text>
-                      <Table>
-                        <Table.Thead>
-                          <Table.Tr>
-                            <Table.Th>{t("features.dashboard.move")}</Table.Th>
-                            <Table.Th>{t("features.dashboard.kind")}</Table.Th>
-                            <Table.Th>{t("features.dashboard.count")}</Table.Th>
-                            <Table.Th>{t("features.dashboard.fen")}</Table.Th>
-                          </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                          {opening.frequentMistakes.slice(0, 5).map((mistake, mIdx) => (
-                            <Table.Tr key={mIdx}>
-                              <Table.Td>{mistake.moveNumber}. {mistake.playedSan}</Table.Td>
-                              <Table.Td>{mistake.kind.replace(/_/g, " ")}</Table.Td>
-                              <Table.Td>{mistake.count ?? 1}</Table.Td>
-                              <Table.Td>
-                                <Tooltip label={mistake.fenBefore}>
-                                  <ActionIcon
-                                    size="sm"
-                                    variant="subtle"
-                                    onClick={() => copyFenToClipboard(mistake.fenBefore)}
-                                  >
-                                    <IconCopy size={16} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              </Table.Td>
+                    <Group gap="xs">
+                      <Text size="xs" c="dimmed">
+                        {t("features.dashboard.pliesAnalyzed")}: {opening.pliesAnalyzed}
+                      </Text>
+                    </Group>
+                    <Table>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>{t("features.dashboard.issueType")}</Table.Th>
+                          <Table.Th>{t("features.dashboard.count")}</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {Object.entries(opening.issueCounts)
+                          .filter(([_, count]) => count > 0)
+                          .sort(([_, a], [__, b]) => b - a)
+                          .slice(0, 5)
+                          .map(([kind, count]) => (
+                            <Table.Tr key={kind}>
+                              <Table.Td>{kind.replace(/_/g, " ")}</Table.Td>
+                              <Table.Td>{count}</Table.Td>
                             </Table.Tr>
                           ))}
-                        </Table.Tbody>
-                      </Table>
-                    </Stack>
-                  )}
-                  <Divider />
-                </Stack>
+                      </Table.Tbody>
+                    </Table>
+                    {opening.frequentMistakes.length > 0 && (
+                      <Stack gap="xs" mt="xs">
+                        <Text size="xs" fw={600}>
+                          {t("features.dashboard.frequentMistakes")}:
+                        </Text>
+                        <Table>
+                          <Table.Thead>
+                            <Table.Tr>
+                              <Table.Th>{t("features.dashboard.move")}</Table.Th>
+                              <Table.Th>{t("features.dashboard.kind")}</Table.Th>
+                              <Table.Th>{t("features.dashboard.count")}</Table.Th>
+                              <Table.Th>{t("features.dashboard.fen")}</Table.Th>
+                            </Table.Tr>
+                          </Table.Thead>
+                          <Table.Tbody>
+                            {opening.frequentMistakes.slice(0, 5).map((mistake, mIdx) => (
+                              <Table.Tr key={mIdx}>
+                                <Table.Td>
+                                  {mistake.moveNumber}. {mistake.playedSan}
+                                </Table.Td>
+                                <Table.Td>{mistake.kind.replace(/_/g, " ")}</Table.Td>
+                                <Table.Td>{mistake.count ?? 1}</Table.Td>
+                                <Table.Td>
+                                  <Tooltip label={mistake.fenBefore}>
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      onClick={() => copyFenToClipboard(mistake.fenBefore)}
+                                    >
+                                      <IconCopy size={16} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </Table.Td>
+                              </Table.Tr>
+                            ))}
+                          </Table.Tbody>
+                        </Table>
+                      </Stack>
+                    )}
+                    <Divider />
+                  </Stack>
                 ))}
               </Stack>
             </ScrollArea>
@@ -950,69 +988,60 @@ export function PlayerStatsModal({
           <ScrollArea h="calc(90vh - 180px)">
             <Stack gap="md">
               <Title order={4}>{t("features.dashboard.pawnStructures")}</Title>
-              
+
               <Group>
-              <Select
-                label={t("features.dashboard.inMove")}
-                data={Array.from({ length: 100 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }))}
-                value={pawnMoveFilter.toString()}
-                onChange={(value) => setPawnMoveFilter(parseInt(value || "10"))}
-                style={{ width: 120 }}
-              />
-              <Select
-                label={t("features.dashboard.playerColor")}
-                data={[
-                  { value: "white", label: t("features.dashboard.white") },
-                  { value: "black", label: t("features.dashboard.black") },
-                  { value: "any", label: t("features.dashboard.any") },
-                ]}
-                value={pawnColorFilter}
-                onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
-                style={{ width: 120 }}
-              />
-              <SegmentedControl
-                value={pawnScope}
-                onChange={(value) => setPawnScope(value as typeof pawnScope)}
-                data={[
-                  { value: "analyzed", label: t("features.dashboard.analyzed") },
-                  { value: "all", label: t("features.dashboard.all") },
-                ]}
-              />
-              <SegmentedControl
-                value={pawnStructureMode}
-                onChange={(value) => setPawnStructureMode(value as typeof pawnStructureMode)}
-                data={[
-                  { value: "player", label: t("features.dashboard.playerStructure") },
-                  { value: "both", label: t("features.dashboard.bothStructures") },
-                ]}
-              />
-              <Button
-                leftSection={<IconSearch size={16} />}
-                onClick={handlePawnSearch}
-                loading={pawnLoading}
-              >
-                {t("features.dashboard.search")}
-              </Button>
-            </Group>
-            {pawnLoading && (
-              <Progress value={pawnProgress ?? 0} size="xs" />
-            )}
+                <Select
+                  label={t("features.dashboard.inMove")}
+                  data={Array.from({ length: 100 }, (_, i) => ({
+                    value: (i + 1).toString(),
+                    label: (i + 1).toString(),
+                  }))}
+                  value={pawnMoveFilter.toString()}
+                  onChange={(value) => setPawnMoveFilter(parseInt(value || "10", 10))}
+                  style={{ width: 120 }}
+                />
+                <Select
+                  label={t("features.dashboard.playerColor")}
+                  data={[
+                    { value: "white", label: t("features.dashboard.white") },
+                    { value: "black", label: t("features.dashboard.black") },
+                    { value: "any", label: t("features.dashboard.any") },
+                  ]}
+                  value={pawnColorFilter}
+                  onChange={(value) => setPawnColorFilter((value as "white" | "black" | "any") || "any")}
+                  style={{ width: 120 }}
+                />
+                <SegmentedControl
+                  value={pawnScope}
+                  onChange={(value) => setPawnScope(value as typeof pawnScope)}
+                  data={[
+                    { value: "analyzed", label: t("features.dashboard.analyzed") },
+                    { value: "all", label: t("features.dashboard.all") },
+                  ]}
+                />
+                <SegmentedControl
+                  value={pawnStructureMode}
+                  onChange={(value) => setPawnStructureMode(value as typeof pawnStructureMode)}
+                  data={[
+                    { value: "player", label: t("features.dashboard.playerStructure") },
+                    { value: "both", label: t("features.dashboard.bothStructures") },
+                  ]}
+                />
+                <Button leftSection={<IconSearch size={16} />} onClick={handlePawnSearch} loading={pawnLoading}>
+                  {t("features.dashboard.search")}
+                </Button>
+              </Group>
+              {pawnLoading && <Progress value={pawnProgress ?? 0} size="xs" />}
 
               {pawnStructures.length > 0 && (
                 <Table>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th style={{ width: 200 }}>{t("features.dashboard.structure")}</Table.Th>
-                      <Table.Th
-                        style={{ width: 120, cursor: "pointer" }}
-                        onClick={() => setPawnSortBy("frequency")}
-                      >
+                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("frequency")}>
                         {t("features.dashboard.frequency")} {pawnSortBy === "frequency" ? "^" : ""}
                       </Table.Th>
-                      <Table.Th
-                        style={{ width: 120, cursor: "pointer" }}
-                        onClick={() => setPawnSortBy("winRate")}
-                      >
+                      <Table.Th style={{ width: 120, cursor: "pointer" }} onClick={() => setPawnSortBy("winRate")}>
                         {t("features.dashboard.winRate")} {pawnSortBy === "winRate" ? "^" : ""}
                       </Table.Th>
                       <Table.Th style={{ width: 120 }}>{t("features.dashboard.actions")}</Table.Th>
@@ -1020,9 +1049,10 @@ export function PlayerStatsModal({
                   </Table.Thead>
                   <Table.Tbody>
                     {pawnStructures
-                      .sort((a, b) => pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate)
+                      .sort((a, b) => (pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate))
                       .map((structure, index) => {
-                        const displayFen = expandedFen ?? structure.sampleFen ?? structure.games?.[0]?.fen ?? fallbackFen;
+                        const displayFen =
+                          expandedFen ?? structure.sampleFen ?? structure.games?.[0]?.fen ?? fallbackFen;
                         return (
                           <Fragment key={index}>
                             <Table.Tr>
@@ -1030,11 +1060,7 @@ export function PlayerStatsModal({
                               <Table.Td>{structure.frequency}</Table.Td>
                               <Table.Td>{(structure.winRate * 100).toFixed(1)}%</Table.Td>
                               <Table.Td>
-                                <Button
-                                  size="xs"
-                                  variant="light"
-                                  onClick={() => toggleStructureDetails(structure)}
-                                >
+                                <Button size="xs" variant="light" onClick={() => toggleStructureDetails(structure)}>
                                   {expandedStructure === structure.structure
                                     ? t("features.dashboard.hide")
                                     : t("features.dashboard.view")}
@@ -1158,7 +1184,6 @@ export function PlayerStatsModal({
             </Stack>
           </ScrollArea>
         </Tabs.Panel>
-
 
         <Tabs.Panel value="debug" pt="md">
           <ScrollArea h="calc(90vh - 180px)">

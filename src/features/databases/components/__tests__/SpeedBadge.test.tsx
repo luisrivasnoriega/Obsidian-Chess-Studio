@@ -1,8 +1,6 @@
-import React from "react";
 import { describe, expect, test } from "vitest";
-import { render, screen } from "./test-utils";
 import SpeedBadge from "../../components/SpeedBadge";
-import type { Speed } from "@/utils/db";
+import { render, screen } from "./test-utils";
 
 describe("SpeedBadge", () => {
   test("renders UltraBullet badge", () => {
@@ -40,4 +38,3 @@ describe("SpeedBadge", () => {
     expect(screen.getByText("Unknown")).toBeInTheDocument();
   });
 });
-

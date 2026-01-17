@@ -75,7 +75,7 @@ export async function openFile(
   const firstGameTree = await parsePGN(games[0]);
 
   // For variants files, use the file name as the tab name
-  const tabName = fileType === "variants" ? fileName : (getGameName(firstGameTree?.headers) || "Multiple Games");
+  const tabName = fileType === "variants" ? fileName : getGameName(firstGameTree?.headers) || "Multiple Games";
 
   const tabId = await createTab({
     tab: {

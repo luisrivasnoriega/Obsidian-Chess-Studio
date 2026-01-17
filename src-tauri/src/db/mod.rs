@@ -12,7 +12,7 @@ mod search;
 mod sync_state;
 mod online_sync;
 pub use sync_state::*;
-pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress, update_lichess_tournament_events_standalone};
+pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress};
 
 use crate::{
     db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
@@ -2158,7 +2158,7 @@ pub async fn optimize_database(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     use diesel::connection::SimpleConnection;
-    use online_sync::update_lichess_tournament_events_standalone;
+    use crate::db::online_sync::update_lichess_tournament_events_standalone;
     
     let db = &mut get_db_or_create(
         &state,

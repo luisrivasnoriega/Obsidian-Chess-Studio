@@ -1,10 +1,10 @@
 import { makeFen } from "chessops/fen";
-import { parsePgn, parseComment, startingPosition, type PgnNodeData } from "chessops/pgn";
+import { type PgnNodeData, parseComment, parsePgn, startingPosition } from "chessops/pgn";
 import { parseSan } from "chessops/san";
 import type { Color, Role, Square } from "chessops/types";
 
-import { detectThemes, type ThemeId, type ThemeContext } from "./themes";
-import { clonePosition, playMovesWithEvents, materialFromFen, isEndgameFen, isMatePosition } from "./themes/engine";
+import { detectThemes, type ThemeContext, type ThemeId } from "./themes";
+import { clonePosition, isEndgameFen, isMatePosition, materialFromFen, playMovesWithEvents } from "./themes/engine";
 
 function determineWin(result: string | undefined, playerColor: Color): number {
   if (!result) return 0;
@@ -44,7 +44,7 @@ export interface PlayerMistakeOptions {
 
 export interface GameIdentity {
   index: number;
-  source: string; 
+  source: string;
   site?: string;
   event?: string;
   date?: string;
@@ -60,45 +60,38 @@ export interface GameIdentity {
 export interface AlternativeSuggestion {
   san: string;
   line: string;
-  cpAfterPlayer?: number; 
-  gainCpVsPlayed?: number; 
+  cpAfterPlayer?: number;
+  gainCpVsPlayed?: number;
 }
 
 export interface PlayerMistake {
   game: GameIdentity;
 
-  
   playerName: string;
   playerColor: Color;
 
-  
   ply: number;
   moveNumber: number;
   mover: Color;
-  moveLabel: string; 
+  moveLabel: string;
   playedSan: string;
 
-  
-  sanContextBefore: string[]; 
+  sanContextBefore: string[];
   opponentReplySan?: string;
   opponentReplyMoveLabel?: string;
 
-  
   fenBefore: string;
   fenAfter: string;
   fenAfterOpponentReply?: string;
 
-  
   cpBeforePlayer?: number;
   cpAfterPlayer?: number;
-  cpSwingPlayer?: number; 
-  cpLossAbs?: number; 
+  cpSwingPlayer?: number;
+  cpLossAbs?: number;
 
-  
   kind: MistakeKind;
   severity: MistakeSeverity;
 
-  
   flags: {
     hasQuestionMark: boolean;
     hasDoubleQuestion: boolean;
@@ -114,7 +107,6 @@ export interface PlayerMistake {
 
     openingPhase: boolean;
 
-    
     kingCastledBefore?: boolean;
     kingCastledAfter?: boolean;
     kingShieldBefore?: number;
@@ -151,10 +143,8 @@ export interface PlayerMistake {
    */
   tags?: ThemeId[];
 
-  
   bestAlternative?: AlternativeSuggestion;
 
-  
   alternativeCandidates?: AlternativeSuggestion[];
 }
 
@@ -165,22 +155,9 @@ export interface PlayerMistakesReport {
   mistakes: PlayerMistake[];
 }
 
-
-
-
-
-
-
-
-
-
-
-
 export type ErrorKind = MistakeKind;
 
-
 export interface Evidence {
-  
   cpSwingAbs: number;
 }
 
@@ -193,7 +170,6 @@ export interface Issue extends PlayerMistake {
   tags: ThemeId[];
   evidence: Evidence;
 }
-
 
 export interface OpeningStat {
   opening?: string;
@@ -220,7 +196,6 @@ export interface PlayerMistakeOptions {
   playerColor?: Color | "any";
   pawnStructureMode?: "player" | "both";
 }
-
 
 export interface AnalysisResult {
   player: string;
@@ -251,21 +226,21 @@ export function generateAnalysisResult(
   options?: PlayerMistakeOptions,
 ): AnalysisResult {
   const report = analyzePlayerMistakes(pgnText, playerName, options);
-  
+
   const issues: Issue[] = report.mistakes.map((m) => {
     const tags = m.tags ?? [];
     const evidence: Evidence = { cpSwingAbs: m.cpLossAbs ?? 0 };
     return { ...m, tags, evidence };
   });
-  
+
   let filteredIssues = issues;
   if (options?.maxMove !== undefined) {
-    filteredIssues = filteredIssues.filter(i => i.moveNumber <= options.maxMove!);
+    filteredIssues = filteredIssues.filter((i) => i.moveNumber <= options.maxMove!);
   }
   if (options?.playerColor && options.playerColor !== "any") {
-    filteredIssues = filteredIssues.filter(i => i.playerColor === options.playerColor);
+    filteredIssues = filteredIssues.filter((i) => i.playerColor === options.playerColor);
   }
-  
+
   const pawnStructures =
     options?.maxMove !== undefined && options?.playerColor
       ? computePawnStructures(pgnText, playerName, {
@@ -274,7 +249,7 @@ export function generateAnalysisResult(
           pawnStructureMode: options.pawnStructureMode,
         })
       : [];
-  
+
   const initialCounts: Record<ErrorKind, number> = {
     tactical_blunder: 0,
     tactical_mistake: 0,
@@ -301,7 +276,7 @@ export function generateAnalysisResult(
   const mostCommonSchemes = Object.entries(schemeCounts)
     .map(([schemeSignature, count]) => ({ schemeSignature, count }))
     .sort((a, b) => b.count - a.count);
-  
+
   const byOpeningMap = new Map<string, OpeningStat>();
   const gameCountMap = new Map<string, Set<number>>();
   const ecoMap = new Map<string, Set<string>>();
@@ -334,11 +309,11 @@ export function generateAnalysisResult(
       };
       byOpeningMap.set(key, stat);
     }
-    
+
     stat.pliesAnalyzed++;
     stat.issueCounts[issue.kind] = (stat.issueCounts[issue.kind] ?? 0) + 1;
     stat.frequentMistakes.push(issue);
-    
+
     let set = gameCountMap.get(key);
     if (!set) {
       set = new Set<number>();
@@ -355,7 +330,7 @@ export function generateAnalysisResult(
       ecoSet.add(eco);
     }
   }
-  
+
   const byOpening: OpeningStat[] = [];
   for (const [key, stat] of byOpeningMap.entries()) {
     const gamesSet = gameCountMap.get(key);
@@ -380,7 +355,7 @@ export function generateAnalysisResult(
       .map((entry) => ({ ...entry.issue, count: entry.count }));
     byOpening.push(stat);
   }
-  
+
   byOpening.sort((a, b) => b.games - a.games);
   return {
     player: report.playerName,
@@ -458,18 +433,18 @@ export function computePawnStructures(
       if (!mv) break;
       pos.play(mv);
 
-    if (mover === colorForStructure && moveNumber === options.moveNumber) {
-      const fenAfter = makeFen(pos.toSetup());
-      structureFen = fenAfter;
-      if (options.pawnStructureMode === "both") {
-        const whiteSig = pawnStructureSignatureForColor(fenAfter, "white");
-        const blackSig = pawnStructureSignatureForColor(fenAfter, "black");
-        structure = `w:${whiteSig}|b:${blackSig}`;
-      } else {
-        structure = pawnStructureSignatureForColor(fenAfter, colorForStructure);
+      if (mover === colorForStructure && moveNumber === options.moveNumber) {
+        const fenAfter = makeFen(pos.toSetup());
+        structureFen = fenAfter;
+        if (options.pawnStructureMode === "both") {
+          const whiteSig = pawnStructureSignatureForColor(fenAfter, "white");
+          const blackSig = pawnStructureSignatureForColor(fenAfter, "black");
+          structure = `w:${whiteSig}|b:${blackSig}`;
+        } else {
+          structure = pawnStructureSignatureForColor(fenAfter, colorForStructure);
+        }
+        break;
       }
-      break;
-    }
 
       node = main as any;
     }
@@ -537,8 +512,23 @@ function pawnStructureSignatureForColor(fen: string, color: Color): string {
   return pawns.join(",") || "-";
 }
 
-
-const DEFAULTS: Required<Pick<PlayerMistakeOptions, "maxVariationPlies" | "openingPhasePlies" | "cpInaccuracy" | "cpMistake" | "cpBlunder" | "minAltGainCp" | "minStrategicLossCp" | "allowSymbolOnly" | "maxSiblingsPerPly" | "contextPlies" | "maxMove" | "pawnStructureMode">> = {
+const DEFAULTS: Required<
+  Pick<
+    PlayerMistakeOptions,
+    | "maxVariationPlies"
+    | "openingPhasePlies"
+    | "cpInaccuracy"
+    | "cpMistake"
+    | "cpBlunder"
+    | "minAltGainCp"
+    | "minStrategicLossCp"
+    | "allowSymbolOnly"
+    | "maxSiblingsPerPly"
+    | "contextPlies"
+    | "maxMove"
+    | "pawnStructureMode"
+  >
+> = {
   maxVariationPlies: 30,
   openingPhasePlies: 20,
 
@@ -605,7 +595,6 @@ export function analyzePlayerMistakes(
     mistakes.push(...perGame);
   }
 
-  
   mistakes.sort((a, b) => (b.cpLossAbs ?? 0) - (a.cpLossAbs ?? 0));
 
   return {
@@ -615,8 +604,6 @@ export function analyzePlayerMistakes(
     mistakes,
   };
 }
-
-
 
 type NodeAny = { data?: PgnNodeData; children: ChildNodeAny[] };
 type ChildNodeAny = { data: PgnNodeData; children: ChildNodeAny[] };
@@ -630,26 +617,20 @@ function analyzeSingleGame(
 ): PlayerMistake[] {
   const out: PlayerMistake[] = [];
 
-  
   let pos: any;
   try {
     pos = startingPosition(game.headers).unwrap();
   } catch {
-    
     return out;
   }
 
-  
   let ply = 0;
   let decisionNode: NodeAny = game.moves;
 
-  
   let lastCpWhite: number | undefined;
 
-  
   const context: string[] = [];
 
-  
   let pendingReply: { idx: number; materialBaselinePawns: number } | null = null;
 
   while (decisionNode.children && decisionNode.children.length > 0) {
@@ -665,32 +646,26 @@ function analyzeSingleGame(
     const rawSan = main.data.san;
     const playedSan = sanitizeSan(rawSan);
 
-    
     const cpWhiteBefore = evalCpWhiteFromAnyComments(main.data.startingComments) ?? lastCpWhite;
     const cpBeforePlayer = cpWhiteBefore !== undefined ? cpToPlayer(cpWhiteBefore, playerColor) : undefined;
 
-    
     const nags = main.data.nags ?? [];
     const hasQM = /[?]/.test(rawSan) || hasQuestionMarkFromNags(nags);
-    const hasDQM = /\?\?/.test(rawSan) || nags.includes(4); 
+    const hasDQM = /\?\?/.test(rawSan) || nags.includes(4);
     const hasEX = /[!]/.test(rawSan) || hasExclamationFromNags(nags);
 
-    
     const undBefore = undevelopedMinorsCount(pos, playerColor);
 
-    
     const preKing = mover === playerColor ? kingSafetyFeatures(pos, playerColor) : null;
     const prePawn = mover === playerColor ? pawnStructureFeatures(pos, playerColor) : null;
     const preSpace = mover === playerColor ? spaceFeatures(pos, playerColor) : null;
     const preDev = mover === playerColor ? developmentFeatures(pos, playerColor) : null;
 
-    
     const mv = safeParseSan(pos, playedSan);
     if (!mv) {
-      
       decisionNode = main as any;
       ply += 1;
-      
+
       contextPush(context, playedSan, opt.contextPlies);
       continue;
     }
@@ -699,20 +674,16 @@ function analyzeSingleGame(
 
     const fenAfter = makeFen(pos.toSetup());
 
-    
     const postKing = mover === playerColor ? kingSafetyFeatures(pos, playerColor) : null;
     const postPawn = mover === playerColor ? pawnStructureFeatures(pos, playerColor) : null;
     const postSpace = mover === playerColor ? spaceFeatures(pos, playerColor) : null;
     const postDev = mover === playerColor ? developmentFeatures(pos, playerColor) : null;
 
-    
     const cpWhiteAfter = evalCpWhiteFromAnyComments(main.data.comments);
     if (cpWhiteAfter !== undefined) lastCpWhite = cpWhiteAfter;
 
     const cpAfterPlayer = cpWhiteAfter !== undefined ? cpToPlayer(cpWhiteAfter, playerColor) : undefined;
 
-    
-    
     if (pendingReply && mover !== playerColor) {
       const rec = out[pendingReply.idx];
       if (rec) {
@@ -727,13 +698,11 @@ function analyzeSingleGame(
         const loss = pendingReply.materialBaselinePawns - playerMatNow;
         rec.flags.materialLossSoonPawns = loss > 0 ? loss : 0;
 
-        
         if ((rec.flags.materialLossSoonPawns ?? 0) >= 2) {
           rec.kind = "material_blunder";
           rec.severity = "blunder";
         }
 
-        
         const absLoss = rec.cpLossAbs ?? 0;
         if (
           rec.kind === "positional_misplay" &&
@@ -751,17 +720,14 @@ function analyzeSingleGame(
       pendingReply = null;
     }
 
-    
     if (mover === playerColor) {
       const undAfter = undevelopedMinorsCount(pos, playerColor);
 
       const cpSwingPlayer =
         cpBeforePlayer !== undefined && cpAfterPlayer !== undefined ? cpAfterPlayer - cpBeforePlayer : undefined;
 
-      
       const cpLoss = cpSwingPlayer !== undefined && cpSwingPlayer < 0 ? -cpSwingPlayer : 0;
 
-      
       const altSiblings = (parent.children.slice(1) as ChildNodeAny[]).slice(0, opt.maxSiblingsPerPly);
 
       const altCandidates: AlternativeSuggestion[] = altSiblings
@@ -773,10 +739,6 @@ function analyzeSingleGame(
       const altGainAbs =
         bestAlt?.gainCpVsPlayed !== undefined && bestAlt.gainCpVsPlayed > 0 ? bestAlt.gainCpVsPlayed : 0;
 
-      
-      
-      
-      
       const hasEvalLoss = cpLoss >= opt.cpInaccuracy;
       const hasSymbol = hasQM || hasDQM;
       const hasStrongAlt = altGainAbs >= opt.minAltGainCp;
@@ -785,7 +747,6 @@ function analyzeSingleGame(
         hasEvalLoss || (opt.allowSymbolOnly && hasSymbol) || (cpSwingPlayer === undefined && hasStrongAlt);
 
       if (shouldEmit) {
-        
         const lossForSeverity = cpLoss > 0 ? cpLoss : altGainAbs;
 
         const severity: MistakeSeverity =
@@ -797,7 +758,6 @@ function analyzeSingleGame(
                 ? "inaccuracy"
                 : "info";
 
-        
         const openingPhase = ply < opt.openingPhasePlies;
 
         const { kind, adjustedSeverity } = classify({
@@ -879,15 +839,6 @@ function analyzeSingleGame(
           alternativeCandidates: altCandidates.length ? altCandidates.slice(0, 3) : undefined,
         };
 
-        
-        
-        
-        
-        
-        
-        
-        
-        
         const themeSibling = chooseEvaluatedSibling(altSiblings, playerColor);
         if (themeSibling) {
           const altForTheme = buildSiblingAlternativeSuggestion(
@@ -925,26 +876,17 @@ function analyzeSingleGame(
 
           const variation = lineNode ? collectVariationInfo(lineNode, maxPlies) : { moves: [], mateIn: undefined };
           const seq = variation.moves;
-          const startMaterialDiff =
-            materialFromFen(startFen, lineActorColor) - materialFromFen(startFen, playerColor);
-          const { finalPos, movesPlayed, events } = playMovesWithEvents(
-            lineStartPos,
-            seq,
-            lineActorColor,
-            playerColor,
-          );
+          const startMaterialDiff = materialFromFen(startFen, lineActorColor) - materialFromFen(startFen, playerColor);
+          const { finalPos, movesPlayed, events } = playMovesWithEvents(lineStartPos, seq, lineActorColor, playerColor);
           const finalFen = makeFen(finalPos.toSetup());
-          const finalMaterialDiff =
-            materialFromFen(finalFen, lineActorColor) - materialFromFen(finalFen, playerColor);
-          const regressionEvents = [...events]
-            .reverse()
-            .map((event) => ({
-              ...event,
-              fenBefore: event.fenAfter,
-              fenAfter: event.fenBefore,
-              materialDiffBefore: event.materialDiffAfter,
-              materialDiffAfter: event.materialDiffBefore,
-            }));
+          const finalMaterialDiff = materialFromFen(finalFen, lineActorColor) - materialFromFen(finalFen, playerColor);
+          const regressionEvents = [...events].reverse().map((event) => ({
+            ...event,
+            fenBefore: event.fenAfter,
+            fenAfter: event.fenBefore,
+            materialDiffBefore: event.materialDiffAfter,
+            materialDiffAfter: event.materialDiffBefore,
+          }));
           const ctx: ThemeContext = {
             startFen,
             finalFen,
@@ -969,7 +911,8 @@ function analyzeSingleGame(
         if (!tags.length) {
           const startFen = fenBefore;
           const startMaterialDiff =
-            materialFromFen(startFen, playerColor) - materialFromFen(startFen, playerColor === "white" ? "black" : "white");
+            materialFromFen(startFen, playerColor) -
+            materialFromFen(startFen, playerColor === "white" ? "black" : "white");
           const ctx: ThemeContext = {
             startFen,
             finalFen: startFen,
@@ -988,34 +931,26 @@ function analyzeSingleGame(
           tags = detectThemes(ctx);
         }
 
-        
-        
-        
         record.tags = tags;
 
         const idx = out.push(record) - 1;
 
-        
         pendingReply = {
           idx,
-          
+
           materialBaselinePawns: materialCountInPawns(pos, playerColor),
         };
       }
     }
 
-    
     contextPush(context, playedSan, opt.contextPlies);
 
-    
     decisionNode = main as any;
     ply += 1;
   }
 
   return out;
 }
-
-
 
 function classify(args: {
   cpLoss: number;
@@ -1031,26 +966,13 @@ function classify(args: {
   altGainAbs: number;
   opt: MistakeOptionsResolved;
 }): { kind: MistakeKind; adjustedSeverity: MistakeSeverity } {
-  const {
-    cpLoss,
-    severity,
-    openingPhase,
-    playedSan,
-    hasQM,
-    hasDQM,
-    undBefore,
-    undAfter,
-    bestAlt,
-    altGainAbs,
-    opt,
-  } = args;
+  const { cpLoss, severity, openingPhase, playedSan, hasQM, hasDQM, undBefore, undAfter, bestAlt, altGainAbs, opt } =
+    args;
 
-  
   if (cpLoss < opt.cpInaccuracy && (hasQM || hasDQM) && severity === "info") {
     return { kind: "positional_misplay", adjustedSeverity: "inaccuracy" };
   }
 
-  
   if (cpLoss >= opt.cpBlunder) {
     return { kind: "tactical_blunder", adjustedSeverity: "blunder" };
   }
@@ -1058,19 +980,10 @@ function classify(args: {
     return { kind: "tactical_mistake", adjustedSeverity: "mistake" };
   }
   if (cpLoss >= opt.cpInaccuracy) {
-    
-    
-    if (
-      openingPhase &&
-      looksLikeOpeningPrincipleViolation(playedSan) &&
-      undAfter >= undBefore &&
-      undAfter >= 3
-    ) {
+    if (openingPhase && looksLikeOpeningPrincipleViolation(playedSan) && undAfter >= undBefore && undAfter >= 3) {
       return { kind: "opening_principle", adjustedSeverity: severity };
     }
 
-    
-    
     if (
       cpLoss >= opt.minStrategicLossCp &&
       openingPhase &&
@@ -1081,7 +994,6 @@ function classify(args: {
       return { kind: "piece_inactivity", adjustedSeverity: severity };
     }
 
-    
     if (bestAlt && altGainAbs >= opt.minAltGainCp) {
       if (isCaptureSan(bestAlt.san) || isCheckSan(bestAlt.san)) {
         return { kind: "tactical_inaccuracy", adjustedSeverity: severity };
@@ -1091,17 +1003,12 @@ function classify(args: {
     return { kind: "positional_misplay", adjustedSeverity: severity };
   }
 
-  
-  
-  
   if (bestAlt && altGainAbs >= opt.minAltGainCp) {
     return { kind: "positional_misplay", adjustedSeverity: "inaccuracy" };
   }
 
   return { kind: "unknown", adjustedSeverity: "info" };
 }
-
-
 
 function buildSiblingAlternativeSuggestion(
   siblingNode: ChildNodeAny,
@@ -1115,7 +1022,6 @@ function buildSiblingAlternativeSuggestion(
   const sanAltRaw = siblingNode.data.san;
   const sanAlt = sanitizeSan(sanAltRaw);
 
-  
   const cpWhiteAfter =
     evalCpWhiteFromAnyComments(siblingNode.data.comments) ??
     evalCpWhiteFromAnyComments(siblingNode.data.startingComments);
@@ -1147,7 +1053,6 @@ function chooseBestAlternativeByEval(cands: AlternativeSuggestion[]): Alternativ
     return withEval[0];
   }
 
-  
   return cands[0];
 }
 
@@ -1175,7 +1080,7 @@ function formatVariationLineFromNode(
   firstNode: ChildNodeAny,
   firstMover: Color,
   startMoveNumber: number,
-  startPly: number,
+  _startPly: number,
   maxPlies: number,
 ): string {
   const parts: string[] = [];
@@ -1183,8 +1088,6 @@ function formatVariationLineFromNode(
   let mover: Color = firstMover;
   let moveNo = startMoveNumber;
 
-  
-  
   parts.push(mover === "white" ? `${moveNo}.` : `${moveNo}...`);
 
   let node: ChildNodeAny | null = firstNode;
@@ -1192,10 +1095,8 @@ function formatVariationLineFromNode(
   for (let i = 0; i < maxPlies && node; i++) {
     parts.push(sanitizeSan(node.data.san));
 
-    
-    node = node.children && node.children.length ? node.children[0] : null;
+    node = node.children?.length ? node.children[0] : null;
 
-    
     if (mover === "black") moveNo += 1;
     mover = mover === "white" ? "black" : "white";
 
@@ -1208,30 +1109,24 @@ function formatVariationLineFromNode(
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
-
-
 function evalCpWhiteFromAnyComments(comments?: string[]): number | undefined {
   if (!comments || !comments.length) return undefined;
 
   for (const raw of comments) {
     const parsed: any = parseComment(raw);
 
-    
     const ev = parsed?.eval ?? parsed?.evaluation ?? parsed?.engine ?? undefined;
     if (!ev) continue;
 
-    
     if (typeof ev.pawns === "number") return Math.round(ev.pawns * 100);
     if (typeof ev.cp === "number") return Math.round(ev.cp);
 
-    
     if (typeof ev.mate === "number") {
       const sign = ev.mate >= 0 ? 1 : -1;
       const n = Math.min(999, Math.abs(ev.mate));
       return sign * (100000 - n * 100);
     }
 
-    
     if (typeof ev === "number") return Math.round(ev);
   }
 
@@ -1242,27 +1137,20 @@ function cpToPlayer(cpWhite: number, playerColor: Color): number {
   return playerColor === "white" ? cpWhite : -cpWhite;
 }
 
-
-
 function looksLikeOpeningPrincipleViolation(san: string): boolean {
-  
-  
   if (isCastlingSan(san)) return false;
   if (isDevelopingPieceMove(san)) return false;
 
-  
   if (/^Q/.test(san)) return true;
   if (/^R/.test(san)) return true;
   if (/^K/.test(san)) return true;
 
-  
   if (isPawnMove(san) && isFlankPawnMove(san)) return true;
 
   return false;
 }
 
 function isClearlyNonDevelopingMove(san: string): boolean {
-  
   if (isCastlingSan(san)) return false;
   if (isDevelopingPieceMove(san)) return false;
 
@@ -1285,8 +1173,6 @@ function isPawnMove(san: string): boolean {
 }
 
 function isCentralPawnMove(san: string): boolean {
-  
-  
   const m = san.match(/^([a-h])/);
   if (!m) return false;
   const file = m[1];
@@ -1304,10 +1190,7 @@ function undevelopedMinorsCount(pos: any, color: Color): number {
   const setup = pos.toSetup();
   const board = setup.board;
 
-  const squares =
-    color === "white"
-      ? ["b1", "g1", "c1", "f1"]
-      : ["b8", "g8", "c8", "f8"];
+  const squares = color === "white" ? ["b1", "g1", "c1", "f1"] : ["b8", "g8", "c8", "f8"];
 
   let count = 0;
 
@@ -1323,13 +1206,11 @@ function undevelopedMinorsCount(pos: any, color: Color): number {
   return count;
 }
 
-
-
 type KingSafety = {
   castled: boolean;
-  shield: number; 
-  onOpenFile: boolean; 
-  xrayHeavy: boolean; 
+  shield: number;
+  onOpenFile: boolean;
+  xrayHeavy: boolean;
 };
 
 type PawnStruct = {
@@ -1406,7 +1287,7 @@ function hasEnemyHeavyXrayOnFile(pos: any, ks: Square, color: Color): boolean {
         continue;
       }
       if (pc.color === enemy && (pc.role === "rook" || pc.role === "queen")) return true;
-      break; 
+      break;
     }
   }
   return false;
@@ -1415,15 +1296,17 @@ function hasEnemyHeavyXrayOnFile(pos: any, ks: Square, color: Color): boolean {
 function kingShieldCount(pos: any, color: Color, ks: Square | null): number {
   if (ks == null) return 0;
 
-  
   if (isCastledKingSquare(color, ks)) {
     const kingside =
-      (color === "white" && ks === squareFromName("g1")) ||
-      (color === "black" && ks === squareFromName("g8"));
+      (color === "white" && ks === squareFromName("g1")) || (color === "black" && ks === squareFromName("g8"));
 
     const shieldSquares = kingside
-      ? (color === "white" ? ["f2", "g2", "h2"] : ["f7", "g7", "h7"])
-      : (color === "white" ? ["a2", "b2", "c2"] : ["a7", "b7", "c7"]);
+      ? color === "white"
+        ? ["f2", "g2", "h2"]
+        : ["f7", "g7", "h7"]
+      : color === "white"
+        ? ["a2", "b2", "c2"]
+        : ["a7", "b7", "c7"];
 
     let count = 0;
     for (const n of shieldSquares) {
@@ -1433,7 +1316,6 @@ function kingShieldCount(pos: any, color: Color, ks: Square | null): number {
     return count;
   }
 
-  
   const f = fileOf(ks);
   const r = rankOf(ks);
   const forwardRank = color === "white" ? r + 1 : r - 1;
@@ -1472,7 +1354,6 @@ function pawnStructureFeatures(pos: any, color: Color): PawnStruct {
   const byFile = new Array(8).fill(0);
   for (const sq of pawns) byFile[fileOf(sq)]++;
 
-  
   let islands = 0;
   let inIsland = false;
   for (let f = 0; f < 8; f++) {
@@ -1484,11 +1365,9 @@ function pawnStructureFeatures(pos: any, color: Color): PawnStruct {
     }
   }
 
-  
   let doubled = 0;
   for (let f = 0; f < 8; f++) doubled += Math.max(0, byFile[f] - 1);
 
-  
   let isolated = 0;
   for (let f = 0; f < 8; f++) {
     if (byFile[f] === 0) continue;
@@ -1497,7 +1376,6 @@ function pawnStructureFeatures(pos: any, color: Color): PawnStruct {
     if (left === 0 && right === 0) isolated += byFile[f];
   }
 
-  
   const enemyMax = new Array(8).fill(-1);
   const enemyMin = new Array(8).fill(8);
   for (const sq of enemyPawns) {
@@ -1554,9 +1432,7 @@ function spaceFeatures(pos: any, color: Color): SpaceFeat {
     color === "white" ? pawns.filter((sq) => rankOf(sq) >= 4).length : pawns.filter((sq) => rankOf(sq) <= 3).length;
 
   const piecesEnemyHalf =
-    color === "white"
-      ? pieces.filter((sq) => rankOf(sq) >= 4).length
-      : pieces.filter((sq) => rankOf(sq) <= 3).length;
+    color === "white" ? pieces.filter((sq) => rankOf(sq) >= 4).length : pieces.filter((sq) => rankOf(sq) <= 3).length;
 
   const spaceScore = pawnsEnemyHalf * 2 + piecesEnemyHalf;
 
@@ -1575,9 +1451,8 @@ function developmentFeatures(pos: any, color: Color): DevFeat {
   const ks = kingSafetyFeatures(pos, color);
   const qm = queenMoved(pos, color);
 
-  
   const pawns = Array.from(pos.board.pieces(color, "pawn") ?? []) as number[];
-  const centralFiles = new Set<number>([2, 3, 4, 5]); 
+  const centralFiles = new Set<number>([2, 3, 4, 5]);
   let centralAdvanced = 0;
   for (const sq of pawns) {
     const f = fileOf(sq);
@@ -1591,8 +1466,6 @@ function developmentFeatures(pos: any, color: Color): DevFeat {
 
   return { score, developedMinors, castled: ks.castled, queenMoved: qm };
 }
-
-
 
 function materialCountInPawns(pos: any, color: Color): number {
   const values: Record<Role, number> = {
@@ -1620,11 +1493,8 @@ function countIterable(it: Iterable<any> | undefined | null): number {
   return Array.from(it).length;
 }
 
-
-
 function sanitizeSan(san: string): string {
-  
-  return san.trim().replace(/[\!\?]+$/g, "");
+  return san.trim().replace(/[!?]+$/g, "");
 }
 
 function isCaptureSan(san: string): boolean {
@@ -1637,13 +1507,13 @@ function isCheckSan(san: string): boolean {
 
 function hasQuestionMarkFromNags(nags?: number[]): boolean {
   if (!nags || !nags.length) return false;
-  
+
   return nags.includes(2) || nags.includes(4) || nags.includes(6);
 }
 
 function hasExclamationFromNags(nags?: number[]): boolean {
   if (!nags || !nags.length) return false;
-  
+
   return nags.includes(1) || nags.includes(3) || nags.includes(5);
 }
 
@@ -1659,14 +1529,10 @@ function moveLabel(moveNumber: number, mover: Color, san: string): string {
   return mover === "white" ? `${moveNumber}. ${san}` : `${moveNumber}... ${san}`;
 }
 
-
-
 function contextPush(buf: string[], san: string, max: number) {
   buf.push(san);
   while (buf.length > max) buf.shift();
 }
-
-
 
 /**
  * Select one sibling variation to use as the punishment line.  When multiple
@@ -1735,8 +1601,7 @@ function collectVariationInfo(node: ChildNodeAny, maxPlies: number): { moves: st
     moves.push(san);
 
     const mateFromComments =
-      extractMateInFromComments(current.data.comments) ??
-      extractMateInFromComments(current.data.startingComments);
+      extractMateInFromComments(current.data.comments) ?? extractMateInFromComments(current.data.startingComments);
     if (typeof mateFromComments === "number") {
       mateIn = mateIn === undefined ? mateFromComments : Math.min(mateIn, mateFromComments);
     }
@@ -1751,8 +1616,6 @@ function collectVariationInfo(node: ChildNodeAny, maxPlies: number): { moves: st
   return { moves, mateIn };
 }
 
-
-
 function detectPlayerColor(playerName: string, white: string, black: string): Color | null {
   const p = normalizeName(playerName);
   if (!p) return null;
@@ -1763,7 +1626,6 @@ function detectPlayerColor(playerName: string, white: string, black: string): Co
   if (w && (w.includes(p) || p.includes(w))) return "white";
   if (b && (b.includes(p) || p.includes(b))) return "black";
 
-  
   const tokens = p.split(" ").filter(Boolean);
   if (tokens.some((t) => w.includes(t))) return "white";
   if (tokens.some((t) => b.includes(t))) return "black";
@@ -1774,17 +1636,14 @@ function detectPlayerColor(playerName: string, white: string, black: string): Co
 function normalizeName(s: string): string {
   return (s ?? "")
     .toLowerCase()
-    .replace(/[.,;:_\-]+/g, " ")
+    .replace(/[.,;:_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-
-
 function safeParseGames(pgnText: string): any[] {
   let games = parsePgn(pgnText) as any[];
 
-  
   if (!games.length) {
     const wrapped = `[Event "?"]\n[Site "?"]\n[Date "????.??.??"]\n[Round "?"]\n[White "?"]\n[Black "?"]\n[Result "*"]\n\n${pgnText}\n`;
     games = parsePgn(wrapped) as any[];
@@ -1797,7 +1656,6 @@ function extractSourceName(siteOrEvent: string): string {
   const s = (siteOrEvent ?? "").trim();
   if (!s) return "Unknown";
 
-  
   if (/^https?:\/\//.test(s)) {
     try {
       const u = new URL(s);
@@ -1805,12 +1663,9 @@ function extractSourceName(siteOrEvent: string): string {
       if (host.includes("chess.com")) return "Chess.com";
       if (host.includes("lichess.org")) return "Lichess";
       return host;
-    } catch {
-      
-    }
+    } catch {}
   }
 
-  
   const low = s.toLowerCase();
   if (low.includes("chess.com")) return "Chess.com";
   if (low.includes("lichess")) return "Lichess";
@@ -1818,17 +1673,11 @@ function extractSourceName(siteOrEvent: string): string {
   return s;
 }
 
-
-
 function squareFromName(name: string): Square {
   const file = name.charCodeAt(0) - "a".charCodeAt(0);
   const rank = parseInt(name[1]!, 10) - 1;
   return (rank * 8 + file) as Square;
 }
-
-
-
-
 
 export type Theme =
   | "missed_tactic"
@@ -1928,8 +1777,7 @@ export interface AnalysisResult {
   };
 }
 
-
-function mistakeKindToTheme(kind: MistakeKind): Theme {
+function _mistakeKindToTheme(kind: MistakeKind): Theme {
   switch (kind) {
     case "tactical_blunder":
     case "tactical_mistake":
@@ -1953,12 +1801,10 @@ function mistakeKindToTheme(kind: MistakeKind): Theme {
 function inferThemeFromMistake(m: PlayerMistake): Theme {
   const loss = m.cpLossAbs ?? 0;
 
-  
   if (m.kind === "material_blunder" || (m.flags.materialLossSoonPawns ?? 0) >= 2) {
     return "hanging_material";
   }
 
-  
   const shieldBefore = m.flags.kingShieldBefore;
   const shieldAfter = m.flags.kingShieldAfter;
   const xrayBefore = m.flags.kingXrayHeavyBefore ?? false;
@@ -1974,14 +1820,12 @@ function inferThemeFromMistake(m: PlayerMistake): Theme {
 
   if (kingWorsened && loss >= 30) return "king_exposed";
 
-  
   const islandsWorse = (m.flags.pawnIslandsAfter ?? 0) > (m.flags.pawnIslandsBefore ?? 0);
   const isoWorse = (m.flags.pawnIsolatedAfter ?? 0) > (m.flags.pawnIsolatedBefore ?? 0);
   const dblWorse = (m.flags.pawnDoubledAfter ?? 0) > (m.flags.pawnDoubledBefore ?? 0);
 
   if ((islandsWorse || isoWorse || dblWorse) && loss >= 40) return "pawn_structure";
 
-  
   const opening = m.flags.openingPhase;
   const devBefore = m.flags.developmentScoreBefore;
   const devAfter = m.flags.developmentScoreAfter;
@@ -1998,7 +1842,6 @@ function inferThemeFromMistake(m: PlayerMistake): Theme {
 
   if (devStalled && loss >= 30) return "development";
 
-  
   const centerBefore = m.flags.centerPresenceBefore;
   const centerAfter = m.flags.centerPresenceAfter;
   const spaceBefore = m.flags.spaceScoreBefore;
@@ -2010,17 +1853,14 @@ function inferThemeFromMistake(m: PlayerMistake): Theme {
 
   if ((lostCenter || lostSpace) && loss >= 40) return "space";
 
-  
   if (m.kind === "tactical_blunder" || m.kind === "tactical_mistake" || m.kind === "tactical_inaccuracy") {
     return "missed_tactic";
   }
 
-  
   return m.kind === "unknown" ? "unknown" : "plan";
 }
 
-
-function convertMistakeToRecord(mistake: PlayerMistake, gameIndex: number): MistakeRecord {
+function _convertMistakeToRecord(mistake: PlayerMistake, gameIndex: number): MistakeRecord {
   const schemeSignature = mistake.sanContextBefore.slice(-12).join(" ");
   const theme = inferThemeFromMistake(mistake);
 
@@ -2096,7 +1936,6 @@ function convertMistakeToRecord(mistake: PlayerMistake, gameIndex: number): Mist
   };
 }
 
-
 /**
  * Goals:
  * 1) Sort by player color (white first, then black).
@@ -2110,15 +1949,15 @@ function convertMistakeToRecord(mistake: PlayerMistake, gameIndex: number): Mist
  * - For display, we keep a nice base opening name (first good candidate).
  * - ECO can be ambiguous across a grouped opening; we keep it only when unique.
  */
-function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[] {
+function _buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[] {
   type Agg = {
     key: string;
     playerColor: Color;
 
-    openingKeyId: string; 
-    openingDisplay?: string; 
-    ecoSet: Set<string>; 
-    openingSet: Set<string>; 
+    openingKeyId: string;
+    openingDisplay?: string;
+    ecoSet: Set<string>;
+    openingSet: Set<string>;
 
     games: Set<string>;
     pliesAnalyzed: number;
@@ -2168,14 +2007,9 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
     if (!opening) return "";
     let s = opening.trim();
 
-    
-    
-    
-    
     s = s.split(/[,:;]/)[0] ?? s;
     s = s.split(/\(/)[0] ?? s;
 
-    
     s = s.split(" - ")[0] ?? s;
     s = s.split(" / ")[0] ?? s;
 
@@ -2183,12 +2017,11 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
   }
 
   function normalizeOpeningId(base: string): string {
-    
     return base
       .toLowerCase()
-      .replace(/[’']/g, "") 
-      .replace(/[.,;:!?'"()\[\]{}]/g, " ")
-      .replace(/[_\-]+/g, " ")
+      .replace(/[’']/g, "")
+      .replace(/[.,;:!?'"()[\]{}]/g, " ")
+      .replace(/[_-]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
@@ -2199,12 +2032,10 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
     if (!n) return c || undefined;
     if (!c) return n;
 
-    
     const cCaps = /[A-Z]/.test(c);
     const nCaps = /[A-Z]/.test(n);
     if (!cCaps && nCaps) return n;
 
-    
     if (n.length > c.length + 2) return n;
 
     return c;
@@ -2223,8 +2054,6 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
     const openingBase = baseOpeningName(m.game.opening);
     const openingId = normalizeOpeningId(openingBase);
 
-    
-    
     const primaryId = openingId || ecoNorm || "?";
 
     const key = makeOpeningKey(m.playerColor, primaryId);
@@ -2247,15 +2076,11 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
       map.set(key, agg);
     }
 
-    
     if (ecoNorm) agg.ecoSet.add(ecoNorm);
     if (openingBase) agg.openingSet.add(openingBase);
 
-    
     agg.openingDisplay = pickBetterDisplay(agg.openingDisplay, openingBase);
 
-    
-    
     agg.games.add(String(m.game.index));
 
     agg.pliesAnalyzed += 1;
@@ -2292,12 +2117,8 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
       .sort((a, b) => b.count - a.count || (b.avgCpSwingAbs ?? 0) - (a.avgCpSwingAbs ?? 0))
       .slice(0, 15);
 
-    
     const eco = agg.ecoSet.size === 1 ? Array.from(agg.ecoSet)[0] : undefined;
 
-    
-    
-    
     const openingDisplay =
       agg.openingDisplay?.trim() ||
       (eco ? eco : undefined) ||
@@ -2307,7 +2128,7 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
       key: agg.key,
       eco,
       opening: openingDisplay,
-      variation: undefined, 
+      variation: undefined,
       playerColor: agg.playerColor,
       games: agg.games.size,
       pliesAnalyzed: agg.pliesAnalyzed,
@@ -2317,7 +2138,6 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
     });
   }
 
-  
   return result.sort((a, b) => {
     if (a.playerColor !== b.playerColor) return a.playerColor === "white" ? -1 : 1;
     if (b.games !== a.games) return b.games - a.games;
@@ -2326,9 +2146,6 @@ function buildOpeningStatsFromMistakes(mistakes: PlayerMistake[]): OpeningStats[
     return an.localeCompare(bn);
   });
 }
-
-
-
 
 /*
 export function analyzeAnnotatedPgnCollection(

@@ -59,7 +59,7 @@ cg-board square.last-move {
 cg-board piece.dragging {
   cursor: grabbing;
   /* !important to override z-index from 3D piece inline style */
-  z-index: 11 !important;
+  z-index: 11;
 }
 
 piece.anim {

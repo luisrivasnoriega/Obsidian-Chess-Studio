@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { FavoriteGamesTab } from "../../components/FavoriteGamesTab";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -42,9 +41,8 @@ describe("FavoriteGamesTab", () => {
         onToggleFavoriteLocal={mockOnToggleFavoriteLocal}
         onToggleFavoriteChessCom={mockOnToggleFavoriteChessCom}
         onToggleFavoriteLichess={mockOnToggleFavoriteLichess}
-      />
+      />,
     );
     expect(document.body).toBeTruthy();
   });
 });
-

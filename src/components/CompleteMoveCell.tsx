@@ -57,7 +57,10 @@ function CompleteMoveCell({
   targetRef: React.RefObject<HTMLSpanElement | null>;
   enableTranspositions?: boolean;
 }) {
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("CompleteMoveCell must be used within TreeStateProvider");
+  }
   const isCurrentVariation = useStore(store, (s) => equal(s.position, movePath));
   const root = useStore(store, (s) => (enableTranspositions ? s.root : null));
   const goToMove = useStore(store, (s) => s.goToMove);
@@ -76,8 +79,7 @@ function CompleteMoveCell({
   const [open, setOpen] = useState(false);
   const currentTab = useAtomValue(currentTabAtom);
 
-  const transpositions =
-    enableTranspositions && fen && root ? getTranspositions(fen, movePath, root) : [];
+  const transpositions = enableTranspositions && fen && root ? getTranspositions(fen, movePath, root) : [];
   const { t } = useTranslation();
 
   const clockLabel = useMemo(() => {

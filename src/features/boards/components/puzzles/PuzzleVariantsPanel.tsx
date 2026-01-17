@@ -19,11 +19,27 @@ type PuzzleVariantsInfo = {
 const PUZZLE_VARIANTS_UPDATED_EVENT = "puzzle-variants:updated";
 const solutionCache = new Map<string, string[]>();
 
-function parsePuzzleVariantTags(tags: string[]): { variantName: string | null; depth: number | null; mainline: string | null } {
-  const variantName = tags.find((tag) => tag.startsWith("variant:"))?.slice("variant:".length).trim() || null;
-  const depthRaw = tags.find((tag) => tag.startsWith("depth:"))?.slice("depth:".length).trim() || null;
+function parsePuzzleVariantTags(tags: string[]): {
+  variantName: string | null;
+  depth: number | null;
+  mainline: string | null;
+} {
+  const variantName =
+    tags
+      .find((tag) => tag.startsWith("variant:"))
+      ?.slice("variant:".length)
+      .trim() || null;
+  const depthRaw =
+    tags
+      .find((tag) => tag.startsWith("depth:"))
+      ?.slice("depth:".length)
+      .trim() || null;
   const depth = depthRaw ? Number.parseInt(depthRaw, 10) : null;
-  const mainline = tags.find((tag) => tag.startsWith("mainline:"))?.slice("mainline:".length).trim() || null;
+  const mainline =
+    tags
+      .find((tag) => tag.startsWith("mainline:"))
+      ?.slice("mainline:".length)
+      .trim() || null;
   return {
     variantName,
     depth: depthRaw && Number.isFinite(depth) ? depth : null,
@@ -32,7 +48,7 @@ function parsePuzzleVariantTags(tags: string[]): { variantName: string | null; d
 }
 
 function extractSolutionHeader(pgn: string): string | null {
-  const match = pgn.match(/\[Solution\s+\"([^\"]*)\"\]/i);
+  const match = pgn.match(/\[Solution\s+"([^"]*)"\]/i);
   return match?.[1]?.trim() || null;
 }
 
@@ -40,7 +56,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
   const { t } = useTranslation();
   const [info, setInfo] = useState<PuzzleVariantsInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  const [progressVersion, setProgressVersion] = useState(0);
+  const [_progressVersion, setProgressVersion] = useState(0);
   const [solvedLines, setSolvedLines] = useState<string[]>([]);
 
   const isPgn = selectedDb?.toLowerCase().endsWith(".pgn") ?? false;
@@ -85,7 +101,9 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
           return;
         }
 
-        const tags = Array.isArray(metadata.tags) ? metadata.tags.filter((tag): tag is string => typeof tag === "string") : [];
+        const tags = Array.isArray(metadata.tags)
+          ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
+          : [];
         if (!tags.includes("puzzle-variants")) {
           setInfo(null);
           setSolvedLines([]);
@@ -130,7 +148,9 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
 
       const cached = solutionCache.get(selectedDb);
       if (cached) {
-        const lines = solvedIndexes.map((idx) => cached[idx]).filter((line): line is string => typeof line === "string" && line.length > 0);
+        const lines = solvedIndexes
+          .map((idx) => cached[idx])
+          .filter((line): line is string => typeof line === "string" && line.length > 0);
         setSolvedLines(lines);
         return;
       }
@@ -154,12 +174,9 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
     return () => {
       cancelled = true;
     };
-  }, [info, progressVersion, selectedDb]);
+  }, [info, selectedDb]);
 
-  const solvedCount = useMemo(
-    () => (selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0),
-    [info, progressVersion, selectedDb],
-  );
+  const solvedCount = useMemo(() => (selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0), [info, selectedDb]);
   const clampedSolvedCount = useMemo(() => {
     if (!info) return 0;
     return Math.min(solvedCount, Math.max(0, info.puzzleCount));

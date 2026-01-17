@@ -1,21 +1,77 @@
+import { createTheme, DirectionProvider, MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MantineProvider, createTheme, DirectionProvider } from "@mantine/core";
-import { I18nextProvider } from "react-i18next";
+import { type RenderOptions, render } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { render, type RenderOptions } from "@testing-library/react";
 import { vi } from "vitest";
 
-// Mock react-i18next before importing i18n
-vi.mock("react-i18next", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-i18next")>();
-  return {
-    ...actual,
-    initReactI18next: {
-      type: "languageDetector",
-      init: vi.fn(),
+// Mock i18n completely to avoid initialization issues
+vi.mock("@/i18n", () => {
+  const i18nMock = {
+    language: "en-US",
+    languages: ["en-US"],
+    isInitialized: true,
+    changeLanguage: vi.fn().mockResolvedValue("en-US"),
+    t: (key: string, options?: { defaultValue?: string; [key: string]: unknown }) => {
+      if (options?.defaultValue) {
+        return options.defaultValue;
+      }
+      // Handle interpolation for welcome messages
+      if (key.includes("backWithName") && options?.name) {
+        return `Welcome back, ${options.name}!`;
+      }
+      return key;
+    },
+    exists: vi.fn().mockReturnValue(true),
+    getFixedT: vi.fn().mockReturnValue((key: string) => key),
+    hasResourceBundle: vi.fn().mockReturnValue(true),
+    getResourceBundle: vi.fn().mockReturnValue({}),
+    addResourceBundle: vi.fn(),
+    removeResourceBundle: vi.fn(),
+    loadNamespaces: vi.fn().mockResolvedValue(undefined),
+    loadLanguages: vi.fn().mockResolvedValue(undefined),
+    reloadResources: vi.fn().mockResolvedValue(undefined),
+    use: vi.fn().mockReturnThis(),
+    init: vi.fn().mockResolvedValue(undefined),
+    on: vi.fn(),
+    off: vi.fn(),
+    emit: vi.fn(),
+    dir: vi.fn().mockReturnValue("ltr"),
+    services: {
+      formatter: {
+        add: vi.fn(),
+        format: vi.fn().mockImplementation((value) => String(value)),
+      },
     },
   };
+  return {
+    default: i18nMock,
+  };
 });
+
+// Mock react-i18next
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { defaultValue?: string; [key: string]: unknown }) => {
+      if (options?.defaultValue) {
+        return options.defaultValue;
+      }
+      // Handle interpolation for welcome messages
+      if (key.includes("backWithName") && options?.name) {
+        return `Welcome back, ${options.name}!`;
+      }
+      return key;
+    },
+    i18n: {
+      language: "en-US",
+      changeLanguage: vi.fn().mockResolvedValue("en-US"),
+    },
+  }),
+  I18nextProvider: ({ children }: { children: React.ReactNode }) => children,
+  initReactI18next: {
+    type: "languageDetector",
+    init: vi.fn(),
+  },
+}));
 
 // Mock jotai
 vi.mock("jotai", async (importOriginal) => {
@@ -65,27 +121,8 @@ vi.mock("@/features/files/utils/file", async (importOriginal) => {
   };
 });
 
-import i18n from "@/i18n";
-
 // Create a minimal theme for testing
 const testTheme = createTheme({});
-
-// Ensure i18n is initialized for tests
-if (!i18n.isInitialized) {
-  i18n.init({
-    lng: "en-US",
-    fallbackLng: "en-US",
-    resources: {
-      "en-US": {
-        translation: {},
-        language: {},
-      },
-    },
-    interpolation: {
-      escapeValue: false,
-    },
-  });
-}
 
 // Create a test wrapper with all necessary providers
 function AllTheProviders({ children }: { children: React.ReactNode }) {
@@ -102,7 +139,7 @@ function AllTheProviders({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <DirectionProvider>
         <MantineProvider theme={testTheme} defaultColorScheme="light">
-          <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+          {children}
         </MantineProvider>
       </DirectionProvider>
     </QueryClientProvider>
@@ -117,4 +154,3 @@ function customRender(ui: ReactElement, options?: Omit<RenderOptions, "wrapper">
 // Re-export everything from @testing-library/react
 export * from "@testing-library/react";
 export { customRender as render };
-

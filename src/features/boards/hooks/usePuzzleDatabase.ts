@@ -1,4 +1,4 @@
-import { type Chess, makeUci } from "chessops";
+import type { Chess } from "chessops";
 import { INITIAL_BOARD_FEN } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom } from "jotai";
@@ -8,11 +8,7 @@ import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import {
-  getAttemptedPgnPuzzleCount,
-  getSolvedPgnPuzzleIndexes,
-  isPgnPuzzleAttempted,
-} from "@/utils/pgnPuzzleProgress";
+import { getAttemptedPgnPuzzleCount, isPgnPuzzleAttempted } from "@/utils/pgnPuzzleProgress";
 import { getPuzzleDatabases, PUZZLE_DEBUG_LOGS, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
@@ -55,12 +51,12 @@ export const usePuzzleDatabase = () => {
         }
       });
     };
-    
+
     loadDatabases();
-    
+
     // Listen for puzzle database updates (e.g., when a database is deleted)
     window.addEventListener("puzzles:updated", loadDatabases);
-    
+
     return () => {
       window.removeEventListener("puzzles:updated", loadDatabases);
     };
@@ -287,9 +283,9 @@ export const usePuzzleDatabase = () => {
     const { puzzle_indexes } = localPuzzleDb.generated;
     if (!puzzle_indexes.length) return null;
 
-      // Select next index:
-      // - If random=true: walk shuffled list to avoid repeats.
-      // - If random=false: walk list in order (existing behavior).
+    // Select next index:
+    // - If random=true: walk shuffled list to avoid repeats.
+    // - If random=false: walk list in order (existing behavior).
     let attempts = 0;
     while (attempts < puzzle_indexes.length) {
       const idx = puzzle_indexes[localPuzzleDb.generated.counter % puzzle_indexes.length];

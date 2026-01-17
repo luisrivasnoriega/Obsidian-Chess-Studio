@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getChessComAccount } from "@/utils/chess.com/api";
-import { getLichessAccount } from "@/utils/lichess/api";
 import type { Profile } from "@/state/atoms";
-import type { Session } from "@/utils/session";
 import { getAccountKey } from "@/utils/accountKeys";
 import type { AccountSyncPlatform } from "@/utils/accountSyncState";
+import { getChessComAccount } from "@/utils/chess.com/api";
+import { getLichessAccount } from "@/utils/lichess/api";
+import type { Session } from "@/utils/session";
 
 type BackendAccountImportStats = {
   last_game_utc_ms: number | null;

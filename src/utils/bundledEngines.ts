@@ -1,6 +1,6 @@
-import { commands } from "@/bindings";
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { appDataDir } from "@tauri-apps/api/path";
 import { getDefaultStore } from "jotai";
+import { commands } from "@/bindings";
 import { enginesAtom } from "@/state/atoms";
 import type { LocalEngine } from "@/utils/engines";
 import { requiredEngineSettings } from "@/utils/engines";
@@ -14,12 +14,11 @@ export async function autoRegisterBundledEngines(): Promise<void> {
   const log = await import("@tauri-apps/plugin-log").catch(() => null);
   const info: (msg: string) => Promise<void> | void = log?.info ?? ((msg) => console.log(msg));
   const warn: (msg: string) => Promise<void> | void = log?.warn ?? ((msg) => console.warn(msg));
-  const logError: (msg: string) => Promise<void> | void =
-    log?.error ?? ((msg) => console.error(msg));
+  const logError: (msg: string) => Promise<void> | void = log?.error ?? ((msg) => console.error(msg));
 
   try {
     await info("Starting auto-registration of bundled engines");
-    
+
     const store = getDefaultStore();
     const currentEngines = await store.get(enginesAtom);
     const localEngines = currentEngines.filter((e): e is LocalEngine => e.type === "local");
@@ -28,24 +27,21 @@ export async function autoRegisterBundledEngines(): Promise<void> {
     // Check for bundled Stockfish on Android
     const platform = await import("@tauri-apps/plugin-os").then((m) => m.platform());
     info(`Platform detected: ${platform}`);
-    
+
     if (platform === "android") {
       const appDataDirPath = await appDataDir();
       info(`App data dir: ${appDataDirPath}`);
-      
+
       // We register Stockfish using a logical path and rely on the backend resolver:
       // - app data dir: engines/stockfish
       // - nativeLibraryDir: libstockfish.so (copied from build into jniLibs)
       // This avoids fragile resourceDir paths and works even on devices that block exec in app data.
       const bundledStockfishPath = "engines/stockfish";
-      
+
       if (bundledStockfishPath) {
         // Check if Stockfish is already registered
         const stockfishIndex = currentEngines.findIndex(
-          (e) =>
-            e.type === "local" &&
-            e.name === "Stockfish" &&
-            (e as LocalEngine).version === "17.1",
+          (e) => e.type === "local" && e.name === "Stockfish" && (e as LocalEngine).version === "17.1",
         );
         const stockfishExists = stockfishIndex !== -1;
 
@@ -55,7 +51,10 @@ export async function autoRegisterBundledEngines(): Promise<void> {
           // The backend will resolve this to a real executable path (native libs / filesDir) when spawning.
           //
           // Try to get engine config (with timeout fallback)
-          let config: { name: string; options: { type: string; value: { name: string; default?: string | number | boolean | null } }[] } | null = null;
+          let config: {
+            name: string;
+            options: { type: string; value: { name: string; default?: string | number | boolean | null } }[];
+          } | null = null;
           try {
             config = unwrap(await commands.getEngineConfig(bundledStockfishPath)) as unknown as typeof config;
           } catch (e) {

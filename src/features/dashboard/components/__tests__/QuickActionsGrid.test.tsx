@@ -1,9 +1,8 @@
-import React from "react";
-import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
-import userEvent from "@testing-library/user-event";
-import { QuickActionsGrid } from "../../components/QuickActionsGrid";
 import { IconChess } from "@tabler/icons-react";
+import userEvent from "@testing-library/user-event";
+import { beforeAll, describe, expect, test, vi } from "vitest";
+import { QuickActionsGrid } from "../../components/QuickActionsGrid";
+import { render, screen } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -65,4 +64,3 @@ describe("QuickActionsGrid", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

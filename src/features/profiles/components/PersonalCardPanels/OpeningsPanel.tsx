@@ -1,8 +1,8 @@
 import { Box, DEFAULT_THEME, Divider, Flex, Group, Select, Stack, Text } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
+import { useQuery } from "@tanstack/react-query";
 import type { Color } from "chessops";
 import { useAtom } from "jotai";
-import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
@@ -17,13 +17,23 @@ import { countMainPly, defaultTree } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
 import * as classes from "./OpeningsPanel.css";
+import { PanelLoadGate } from "./PanelLoadGate";
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 import ResultsChart from "./ResultsChart";
-import { PanelLoadGate } from "./PanelLoadGate";
 
 type OpeningSort = "games_desc" | "score_desc" | "score_asc";
 
-function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName: string; info: PlayerGameInfo; profileId?: string; isLoading?: boolean }) {
+function OpeningsPanel({
+  playerName,
+  info,
+  profileId,
+  isLoading,
+}: {
+  playerName: string;
+  info: PlayerGameInfo;
+  profileId?: string;
+  isLoading?: boolean;
+}) {
   const { t } = useTranslation();
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
 
@@ -121,7 +131,9 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
       filters.date_range,
     ],
     queryFn: async () => {
-      return unwrap(await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, false));
+      return unwrap(
+        await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, false),
+      );
     },
     staleTime: Infinity,
     gcTime: Infinity,
@@ -181,7 +193,8 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
   const activeTotalGames = activeColor === "white" ? whiteGames : blackGames;
 
   // Calculate loading state: prop from parent OR internal queries loading/fetching
-  const isAnyLoading = isLoading || isLoadingWhiteOpenings || isFetchingWhiteOpenings || isLoadingBlackOpenings || isFetchingBlackOpenings;
+  const isAnyLoading =
+    isLoading || isLoadingWhiteOpenings || isFetchingWhiteOpenings || isLoadingBlackOpenings || isFetchingBlackOpenings;
   const hasPanelData = (isStackedLayout ? activeOpenings.length : rowCount) > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;
@@ -241,12 +254,7 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
           }}
         >
           <Group justify="flex-end" p="md" pb={0}>
-            <Group
-              justify="center"
-              wrap="nowrap"
-              gap="md"
-              w="100%"
-            >
+            <Group justify="center" wrap="nowrap" gap="md" w="100%">
               {isStackedLayout && (
                 <Select
                   label={t("features.dashboard.playerColor", { defaultValue: "Player color" })}
@@ -285,49 +293,57 @@ function OpeningsPanel({ playerName, info, profileId, isLoading }: { playerName:
             isFetching={isFetchingWhiteOpenings || isFetchingBlackOpenings}
             hasData={hasPanelData || hasDataContext}
           >
-            <>
-              {((isStackedLayout ? activeOpenings.length : rowCount) === 0) ? (
-                <Text size="sm" c="dimmed" p="md">
-                  {t("common.noData", { defaultValue: "No data" })}
-                </Text>
-              ) : (
-            <Stack gap="md" p="md" style={{ minWidth: 0, minHeight: 0, width: "100%" }}>
-              {(isStackedLayout ? activeOpenings : Array.from({ length: rowCount }, (_, i) => i)).map((item, index) => {
-                const white = isStackedLayout ? null : sortedWhiteOpenings[index];
-                const black = isStackedLayout ? null : sortedBlackOpenings[index];
-                const active = isStackedLayout ? (item as OpeningStats) : null;
-                const key = isStackedLayout
-                  ? `${activeColor}:${active?.name ?? "-"}:${active?.games ?? 0}`
-                  : `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
+            {(isStackedLayout ? activeOpenings.length : rowCount) === 0 ? (
+              <Text size="sm" c="dimmed" p="md">
+                {t("common.noData", { defaultValue: "No data" })}
+              </Text>
+            ) : (
+              <Stack gap="md" p="md" style={{ minWidth: 0, minHeight: 0, width: "100%" }}>
+                {(isStackedLayout ? activeOpenings : Array.from({ length: rowCount }, (_, i) => i)).map(
+                  (item, index) => {
+                    const white = isStackedLayout ? null : sortedWhiteOpenings[index];
+                    const black = isStackedLayout ? null : sortedBlackOpenings[index];
+                    const active = isStackedLayout ? (item as OpeningStats) : null;
+                    const key = isStackedLayout
+                      ? `${activeColor}:${active?.name ?? "-"}:${active?.games ?? 0}`
+                      : `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
 
-                return (
-                  <Box key={key} style={{ minWidth: 0 }}>
-                    {isStackedLayout ? (
-                      <Stack gap="sm" style={{ minWidth: 0 }}>
-                        <Box style={{ minWidth: 0 }}>
-                          {active ? (
-                            <OpeningDetail opening={active} totalGames={activeTotalGames} color={activeColor} />
-                          ) : null}
-                        </Box>
-                      </Stack>
-                    ) : (
-                      // Two fixed columns that can shrink properly
-                      <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
-                        <Box style={{ flex: 1, minWidth: 0 }}>
-                          {white ? <OpeningDetail opening={white} totalGames={whiteGames} color="white" /> : <div />}
-                        </Box>
-                        <Box style={{ flex: 1, minWidth: 0 }}>
-                          {black ? <OpeningDetail opening={black} totalGames={blackGames} color="black" /> : <div />}
-                        </Box>
-                      </Group>
-                    )}
-                    <Divider />
-                  </Box>
-                );
-              })}
-            </Stack>
-              )}
-            </>
+                    return (
+                      <Box key={key} style={{ minWidth: 0 }}>
+                        {isStackedLayout ? (
+                          <Stack gap="sm" style={{ minWidth: 0 }}>
+                            <Box style={{ minWidth: 0 }}>
+                              {active ? (
+                                <OpeningDetail opening={active} totalGames={activeTotalGames} color={activeColor} />
+                              ) : null}
+                            </Box>
+                          </Stack>
+                        ) : (
+                          // Two fixed columns that can shrink properly
+                          <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
+                            <Box style={{ flex: 1, minWidth: 0 }}>
+                              {white ? (
+                                <OpeningDetail opening={white} totalGames={whiteGames} color="white" />
+                              ) : (
+                                <div />
+                              )}
+                            </Box>
+                            <Box style={{ flex: 1, minWidth: 0 }}>
+                              {black ? (
+                                <OpeningDetail opening={black} totalGames={blackGames} color="black" />
+                              ) : (
+                                <div />
+                              )}
+                            </Box>
+                          </Group>
+                        )}
+                        <Divider />
+                      </Box>
+                    );
+                  },
+                )}
+              </Stack>
+            )}
           </PanelLoadGate>
         </Box>
       </Box>

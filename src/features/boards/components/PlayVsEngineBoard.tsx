@@ -250,7 +250,7 @@ function PlayVsEngineBoardContent() {
       const result = currentTurn === "white" ? "0-1" : "1-0";
 
       // Set result temporarily for saving
-      const previousResult = headers.result;
+      const _previousResult = headers.result;
       setHeaders({
         ...headers,
         result,
@@ -286,7 +286,7 @@ function PlayVsEngineBoardContent() {
       const result = currentTurn === "white" ? "0-1" : "1-0";
 
       // Set result temporarily for saving
-      const previousResult = headers.result;
+      const _previousResult = headers.result;
       setHeaders({
         ...headers,
         result,

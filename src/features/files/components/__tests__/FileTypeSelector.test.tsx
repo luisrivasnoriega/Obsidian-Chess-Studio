@@ -1,7 +1,6 @@
-import React from "react";
 import { beforeAll, describe, expect, test, vi } from "vitest";
-import { render, screen } from "./test-utils";
 import { FileTypeSelector } from "../../components/FileTypeSelector";
+import { render } from "./test-utils";
 
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
@@ -27,4 +26,3 @@ describe("FileTypeSelector", () => {
     expect(document.body).toBeTruthy();
   });
 });
-

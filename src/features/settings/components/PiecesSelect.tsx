@@ -121,6 +121,8 @@ export default function PiecesSelect() {
           renderOption={({ option }) => {
             return (
               <div
+                role="option"
+                tabIndex={0}
                 onMouseEnter={() => {
                   if (hoverTimeoutRef.current) {
                     window.clearTimeout(hoverTimeoutRef.current);

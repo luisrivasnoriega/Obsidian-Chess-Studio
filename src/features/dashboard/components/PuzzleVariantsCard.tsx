@@ -5,7 +5,7 @@ import { useAtom, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { loadDirectories } from "@/App";
-import { processEntriesRecursively, type FileMetadata } from "@/features/files/utils/file";
+import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
 import { activeTabAtom, selectedPuzzleDbAtom, tabsAtom } from "@/state/atoms";
 import { getSolvedPgnPuzzleCount, PGN_PUZZLE_PROGRESS_UPDATED_EVENT } from "@/utils/pgnPuzzleProgress";
 import { createTab } from "@/utils/tabs";
@@ -24,10 +24,22 @@ function parsePuzzleVariantTags(tags: string[]): {
   depth: number | null;
   mainline: string | null;
 } {
-  const variantName = tags.find((tag) => tag.startsWith("variant:"))?.slice("variant:".length).trim() || null;
-  const depthRaw = tags.find((tag) => tag.startsWith("depth:"))?.slice("depth:".length).trim() || null;
+  const variantName =
+    tags
+      .find((tag) => tag.startsWith("variant:"))
+      ?.slice("variant:".length)
+      .trim() || null;
+  const depthRaw =
+    tags
+      .find((tag) => tag.startsWith("depth:"))
+      ?.slice("depth:".length)
+      .trim() || null;
   const depth = depthRaw ? Number.parseInt(depthRaw, 10) : null;
-  const mainline = tags.find((tag) => tag.startsWith("mainline:"))?.slice("mainline:".length).trim() || null;
+  const mainline =
+    tags
+      .find((tag) => tag.startsWith("mainline:"))
+      ?.slice("mainline:".length)
+      .trim() || null;
 
   return {
     variantName,
@@ -47,7 +59,7 @@ export function PuzzleVariantsCard() {
 
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<PuzzleVariantFile[]>([]);
-  const [progressVersion, setProgressVersion] = useState(0);
+  const [_progressVersion, setProgressVersion] = useState(0);
 
   const openPuzzles = useCallback(
     (dbPath?: string) => {
@@ -131,7 +143,7 @@ export function PuzzleVariantsCard() {
       const coverage = safeTotal > 0 ? Math.round((clampedSolved / safeTotal) * 100) : 0;
       return { ...file, solvedCount: clampedSolved, coverage };
     });
-  }, [files, progressVersion]);
+  }, [files]);
 
   return (
     <Card withBorder p="lg" radius="md" h="100%">

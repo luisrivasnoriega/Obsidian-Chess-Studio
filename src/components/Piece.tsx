@@ -22,6 +22,7 @@ export default function PieceComponent({
   onSelect?: (piece: Piece, isDragging: boolean) => void;
 }) {
   size = size || "100%";
+  // Use HTMLDivElement for Draggable compatibility, but render as button for accessibility
   const pieceRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [hasDragged, setHasDragged] = useState(false);
@@ -41,7 +42,9 @@ export default function PieceComponent({
           height: size,
           backgroundSize: "cover",
         }}
-      />
+      >
+        {/* Empty content - piece is rendered via background image */}
+      </div>
     );
   }
 
@@ -65,7 +68,10 @@ export default function PieceComponent({
         x = 7 - x;
         y = 7 - y;
       }
-      putPiece(squareFromCoords(x, 7 - y)!, piece);
+      const square = squareFromCoords(x, 7 - y);
+      if (square) {
+        putPiece(square, piece);
+      }
     }
   };
 
@@ -84,8 +90,11 @@ export default function PieceComponent({
       }}
       scale={1}
     >
+      {/* biome-ignore lint/a11y/useSemanticElements: Draggable requires HTMLDivElement, but we add role="button" for accessibility */}
       <div
         ref={pieceRef}
+        role="button"
+        tabIndex={0}
         className={getPieceName(piece)}
         style={{
           backgroundSize: "contain",
@@ -96,8 +105,17 @@ export default function PieceComponent({
             !isDragging && selectedPiece && piece.role === selectedPiece.role && piece.color === selectedPiece.color
               ? "var(--mantine-primary-color-filled)"
               : "transparent",
+          border: "none",
+          padding: 0,
+          cursor: "pointer",
         }}
         onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleClick();
+          }
+        }}
       />
     </Draggable>
   );

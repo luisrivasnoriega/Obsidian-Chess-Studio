@@ -6,30 +6,30 @@
  * individual heuristics without impacting the others.
  */
 
-export { Theme, type ThemeId, type ThemeContext } from "./types";
+export { Theme, type ThemeContext, type ThemeId } from "./types";
 
-import { Theme } from "./types";
-import { detectPhases } from "./gamePhases";
 import { detectEndgames } from "./endgames";
+import { detectPhases } from "./gamePhases";
 import { detectMatePatterns } from "./matePatterns";
+import { detectOther } from "./other";
 import { detectSpecialMoves } from "./specialMoves";
 import { detectStrategy } from "./strategy";
-import { detectZugzwang } from "./zugzwang";
-import { detectOther } from "./other";
 import { detectCapturingDefender } from "./tactics/capturingDefender";
 import { detectDeflection } from "./tactics/deflection";
 import { detectDiscoveredAttack } from "./tactics/discoveredAttack";
-import { detectFork } from "./tactics/fork";
-import { detectHangingPiece } from "./tactics/hangingPiece";
 import { detectDoubleCheck } from "./tactics/doubleCheck";
 import { detectDoubleThreat } from "./tactics/doubleThreat";
 import { detectExposedKing } from "./tactics/exposedKing";
+import { detectFork } from "./tactics/fork";
+import { detectHangingPiece } from "./tactics/hangingPiece";
 import { detectInterference } from "./tactics/interference";
 import { detectIntermezzo } from "./tactics/intermezzo";
 import { detectPin } from "./tactics/pin";
 import { detectSkewer } from "./tactics/skewer";
 import { detectTrappedPiece } from "./tactics/trappedPiece";
 import { detectXRayAttack } from "./tactics/xRayAttack";
+import { Theme } from "./types";
+import { detectZugzwang } from "./zugzwang";
 
 const MATE_TAGS = new Set<import("./types").ThemeId>([
   Theme.Mate,

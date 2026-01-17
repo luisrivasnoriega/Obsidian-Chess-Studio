@@ -41,7 +41,7 @@ export function LessonBoard({
         </Paper>
       )}
 
-      {selectedExercise && selectedExercise.gameData.variations && selectedExercise.gameData.variations.length > 1 && (
+      {selectedExercise?.gameData.variations && selectedExercise.gameData.variations.length > 1 && (
         <Group mt="xs" justify="space-between" align="center">
           <Group gap="xs">
             <ActionIcon

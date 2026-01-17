@@ -19,11 +19,7 @@ function safeSetItem(key: string, value: string): void {
 
 export function isFailedToFetchError(err: unknown): boolean {
   const msg =
-    err instanceof Error
-      ? err.message
-      : typeof err === "string"
-        ? err
-        : JSON.stringify(err, null, 2) ?? String(err);
+    err instanceof Error ? err.message : typeof err === "string" ? err : (JSON.stringify(err, null, 2) ?? String(err));
 
   // Do NOT retry auth failures.
   // These are permanent until the user fixes credentials/token.
@@ -59,5 +55,3 @@ export function startNetworkCooldown(now: number = Date.now()): number {
   safeSetItem(STORAGE_KEY, String(until));
   return until;
 }
-
-

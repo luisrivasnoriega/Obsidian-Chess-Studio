@@ -18,7 +18,10 @@ function Clock({
   whiteTime?: number;
   blackTime?: number;
 }) {
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("Clock must be used within TreeStateProvider");
+  }
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
   const headers = useStore(store, (s) => s.headers);

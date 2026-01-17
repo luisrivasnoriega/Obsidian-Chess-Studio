@@ -128,7 +128,7 @@ function EngineListener({
     progress: number;
   } | null>(null);
   const timerRef = useRef<number | null>(null);
-  const searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
+  const _searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
 
   const flushPending = () => {
     const pending = pendingRef.current;
@@ -152,12 +152,12 @@ function EngineListener({
 
   useEffect(() => {
     if (!settings.enabled) return;
-    
+
     // Skip if this is the variants-builder-backend tab (used during build variants)
-    if (activeTab && activeTab.includes("variants-builder")) {
+    if (activeTab?.includes("variants-builder")) {
       return;
     }
-    
+
     const unlisten = events.bestMovesPayload.listen(({ payload }) => {
       const ev = payload.bestLines;
       if (
@@ -192,17 +192,7 @@ function EngineListener({
           // Ignore unlisten errors (e.g. already removed)
         });
     };
-  }, [
-    activeTab,
-    setScore,
-    settings.enabled,
-    isGameOver,
-    searchingFen,
-    searchingMovesKey,
-    engine.name,
-    setEngineVariation,
-    setProgress,
-  ]);
+  }, [activeTab, settings.enabled, isGameOver, searchingFen, engine.name, flushPending, searchingMoves]);
 
   const getBestMoves = useMemo(
     () =>
@@ -221,7 +211,7 @@ function EngineListener({
   useThrottledEffect(
     () => {
       // Skip if this is the variants-builder-backend tab (used during build variants)
-      if (activeTab && activeTab.includes("variants-builder")) {
+      if (activeTab?.includes("variants-builder")) {
         if (engine.type === "local") {
           stopEngine(engine, activeTab);
         }
@@ -247,16 +237,16 @@ function EngineListener({
             fen: searchingFen,
             extraOptions: options,
           }).then((moves) => {
-              if (moves) {
-                const [progress, bestMoves] = moves;
-                setEngineVariation((prev) => {
-                  const newMap = new Map(prev);
-                  newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
-                  return newMap;
-                });
-                setProgress(progress);
-              }
-            });
+            if (moves) {
+              const [progress, bestMoves] = moves;
+              setEngineVariation((prev) => {
+                const newMap = new Map(prev);
+                newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
+                return newMap;
+              });
+              setProgress(progress);
+            }
+          });
         }
       } else {
         if (engine.type === "local") {

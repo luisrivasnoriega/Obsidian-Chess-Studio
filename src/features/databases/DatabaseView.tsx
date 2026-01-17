@@ -11,7 +11,7 @@ function DatabaseView() {
   const database = useActiveDatabaseViewStore((s) => s.database);
   const databaseTitle = useActiveDatabaseViewStore((s) => s.database?.title)!;
   const mode = useActiveDatabaseViewStore((s) => s.activeTab);
-  const clearDatabase = useActiveDatabaseViewStore((s) => s.clearDatabase);
+  const _clearDatabase = useActiveDatabaseViewStore((s) => s.clearDatabase);
   const setActiveTab = useActiveDatabaseViewStore((s) => s.setActiveTab);
   const { t } = useTranslation();
 

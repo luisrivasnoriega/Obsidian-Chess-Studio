@@ -34,4 +34,3 @@ export function VariantsActions(props: Props) {
     </Group>
   );
 }
-

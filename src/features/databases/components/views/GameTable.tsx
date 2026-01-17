@@ -12,7 +12,7 @@ import {
   Text,
 } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
-import { useForceUpdate, useHotkeys } from "@mantine/hooks";
+import { useForceUpdate } from "@mantine/hooks";
 import { IconExternalLink, IconFilter, IconFilterFilled } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -26,6 +26,7 @@ import type { GameSort, NormalizedGame, Outcome } from "@/bindings";
 import { useLanguageChangeListener } from "@/hooks/useLanguageChangeListener";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { activeDatabaseViewStore } from "@/state/store/database";
 import { query_games } from "@/utils/db";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import { createTab } from "@/utils/tabs";
@@ -47,19 +48,21 @@ function GameTable() {
   const forceUpdate = useForceUpdate();
   useLanguageChangeListener(forceUpdate);
 
-  if (!store) return null;
-
-  const file = useStore(store, (s) => s.database?.file);
-  const query = useStore(store, (s) => s.games.query);
-  const setQuery = useStore(store, (s) => s.setGamesQuery);
-  const openedSettings = useStore(store, (s) => s.games.isFilterExpanded);
-  const toggleOpenedSettings = useStore(store, (s) => s.toggleGamesOpenedSettings);
+  // Always call hooks unconditionally - use activeDatabaseViewStore as fallback
+  const storeToUse = store ?? activeDatabaseViewStore;
+  const file = useStore(storeToUse, (s) => s.database?.file ?? null);
+  const query = useStore(storeToUse, (s) => s.games.query);
+  const setQuery = useStore(storeToUse, (s) => s.setGamesQuery);
+  const openedSettings = useStore(storeToUse, (s) => s.games.isFilterExpanded ?? false);
+  const toggleOpenedSettings = useStore(storeToUse, (s) => s.toggleGamesOpenedSettings);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["games", query, file],
     queryFn: () => (file ? query_games(file, query) : null),
-    enabled: !!file,
+    enabled: !!store && !!file && !!query,
   });
+
+  if (!store || !query || !setQuery) return null;
 
   const mutate = () => refetch();
 
@@ -171,37 +174,6 @@ function GameTable() {
           }),
       }
     : {};
-
-  useHotkeys([
-    [
-      "ArrowUp",
-      () => {
-        setSelectedGame((prev) => {
-          if (prev === null) {
-            return null;
-          }
-          if (prev === 0) {
-            return 0;
-          }
-          return prev - 1;
-        });
-      },
-    ],
-    [
-      "ArrowDown",
-      () => {
-        setSelectedGame((prev) => {
-          if (prev === null) {
-            return 0;
-          }
-          if (prev === games.length - 1) {
-            return games.length - 1;
-          }
-          return prev + 1;
-        });
-      },
-    ],
-  ]);
 
   return (
     <GridLayout
@@ -317,7 +289,7 @@ function GameTable() {
               </Stack>
             </Collapse>
           </Box>
-          <ActionIcon style={{ flexGrow: 0 }} onClick={() => toggleOpenedSettings()}>
+          <ActionIcon style={{ flexGrow: 0 }} onClick={() => toggleOpenedSettings?.()}>
             {openedSettings ? <IconFilterFilled size="1rem" /> : <IconFilter size="1rem" />}
           </ActionIcon>
         </Flex>

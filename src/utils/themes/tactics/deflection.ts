@@ -4,7 +4,7 @@
  * to deflect a key defender.
  */
 
-import { Theme, type ThemeId, type ThemeContext } from "../types";
+import { Theme, type ThemeContext, type ThemeId } from "../types";
 import { isImmediatePunishCapture } from "./utils";
 
 export function detectDeflection(ctx: ThemeContext): ThemeId[] {

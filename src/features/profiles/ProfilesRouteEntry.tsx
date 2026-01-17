@@ -1,10 +1,10 @@
 import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { createTab } from "@/utils/tabs";
-import { debugNavLog } from "@/utils/debugNav";
 import BoardsPage from "@/features/boards/BoardsPage";
+import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { debugNavLog } from "@/utils/debugNav";
+import { createTab } from "@/utils/tabs";
 
 export default function ProfilesRouteEntry() {
   const { t } = useTranslation();
@@ -22,7 +22,7 @@ export default function ProfilesRouteEntry() {
 
     // Check if there's an existing profiles tab
     const existing = tabs.find((tab) => tab.type === "profiles") ?? null;
-    
+
     debugNavLog("profiles-route-entry:init", { tabs: tabs.length, activeTab, activeType: active?.type ?? null });
 
     if (existing) {

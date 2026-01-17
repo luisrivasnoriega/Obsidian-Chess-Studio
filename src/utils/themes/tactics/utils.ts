@@ -1,5 +1,5 @@
 import type { Color, Role } from "chessops/types";
-import type { ThemeContext, MoveEvent } from "../types";
+import type { MoveEvent, ThemeContext } from "../types";
 
 export type BoardPiece = { color: Color; role: Role };
 export type BoardState = Array<BoardPiece | null>;
@@ -208,13 +208,7 @@ export function linePieceCanMove(role: Role, df: number, dr: number): boolean {
   return role === "bishop" || role === "queen";
 }
 
-export function hasLineOfSight(
-  board: BoardState,
-  from: number,
-  to: number,
-  df: number,
-  dr: number,
-): boolean {
+export function hasLineOfSight(board: BoardState, from: number, to: number, df: number, dr: number): boolean {
   for (const sq of raySquares(from, df, dr)) {
     if (sq === to) return true;
     if (board[sq]) break;
@@ -222,13 +216,7 @@ export function hasLineOfSight(
   return false;
 }
 
-export function countPiecesBetween(
-  board: BoardState,
-  from: number,
-  to: number,
-  df: number,
-  dr: number,
-): number {
+export function countPiecesBetween(board: BoardState, from: number, to: number, df: number, dr: number): number {
   let count = 0;
   for (const sq of raySquares(from, df, dr)) {
     if (sq === to) break;

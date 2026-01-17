@@ -137,14 +137,14 @@ export function getMoveText(
       if (squares.length > 0) {
         content += `[%csl ${squares
           .map((shape) => {
-            return shape.brush![0].toUpperCase() + shape.orig;
+            return shape.brush?.[0].toUpperCase() + shape.orig;
           })
           .join(",")}]`;
       }
       if (arrows.length > 0) {
         content += `[%cal ${arrows
           .map((shape) => {
-            return shape.brush![0].toUpperCase() + shape.orig + shape.dest;
+            return shape.brush?.[0].toUpperCase() + shape.orig + shape.dest;
           })
           .join(",")}]`;
       }
@@ -200,30 +200,30 @@ export function getPGNFromReportView(
   },
 ): string {
   let pgn = "";
-  
+
   // Add headers
   if (headers) {
     pgn += headersToPGN(headers);
   }
-  
+
   // Add setup if not initial position
   if (tree.fen !== INITIAL_FEN) {
     pgn += '[SetUp "1"]\n';
     pgn += `[FEN "${tree.fen}"]\n`;
   }
-  
+
   pgn += "\n";
-  
+
   // Add root comment if present
   if (tree.comment !== null && tree.comment !== "") {
     pgn += `{${tree.comment}} `;
   }
-  
+
   // Follow the same logic as buildMainlineItems:
   // If root has no san, jump into its mainline child 0
   let currentNode: TreeNode | undefined = tree;
   let currentParent: TreeNode | null = null;
-  
+
   if (!currentNode.san) {
     if (currentNode.children?.length > 0) {
       currentParent = currentNode;
@@ -238,11 +238,11 @@ export function getPGNFromReportView(
       return pgn.trim();
     }
   }
-  
+
   // Now follow children[0] to build the main line (same as buildMainlineItems)
   const mainlineNodes: TreeNode[] = [];
   let cur: TreeNode | undefined = currentNode;
-  
+
   while (cur) {
     if (cur.san) {
       mainlineNodes.push(cur);
@@ -250,7 +250,7 @@ export function getPGNFromReportView(
     if (!cur.children?.length) break;
     cur = cur.children[0];
   }
-  
+
   // If no moves found, return early
   if (mainlineNodes.length === 0) {
     if (headers) {
@@ -260,28 +260,28 @@ export function getPGNFromReportView(
     }
     return pgn.trim();
   }
-  
+
   // Generate PGN from mainline nodes, including variations
   // Build a list of (node, parent) pairs to track which variations belong to which parent
   const nodeParentPairs: Array<{ node: TreeNode; parent: TreeNode }> = [];
-  
+
   // First node's parent
   let currentParentForNode: TreeNode = currentParent || tree;
-  
+
   for (let i = 0; i < mainlineNodes.length; i++) {
     const moveNode = mainlineNodes[i];
     nodeParentPairs.push({ node: moveNode, parent: currentParentForNode });
-    
+
     // Next node's parent is this node (since we follow children[0])
     if (moveNode.children.length > 0) {
       currentParentForNode = moveNode;
     }
   }
-  
+
   // Now generate PGN processing each node with its parent's variations
   for (let i = 0; i < nodeParentPairs.length; i++) {
     const { node: moveNode, parent: parentNode } = nodeParentPairs[i];
-    
+
     // Add the move text
     const isFirst = i === 0 && !tree.san;
     pgn += getMoveText(moveNode, {
@@ -290,23 +290,21 @@ export function getPGNFromReportView(
       extraMarkups,
       isFirst,
     });
-    
+
     // Add variations if enabled and parent has siblings (variations)
     // The main line is always children[0], so variations are children[1..]
     if (variations && parentNode.children.length > 1) {
       // Process all variations (siblings of the main line child, which is always index 0)
-      const variationsPGN = parentNode.children
-        .slice(1)
-        .map((variation) => {
-          return getVariationPGN(variation, {
-            glyphs,
-            comments,
-            extraMarkups,
-            variations,
-            isFirst: false,
-          });
+      const variationsPGN = parentNode.children.slice(1).map((variation) => {
+        return getVariationPGN(variation, {
+          glyphs,
+          comments,
+          extraMarkups,
+          variations,
+          isFirst: false,
         });
-      
+      });
+
       for (const variation of variationsPGN) {
         if (variation) {
           pgn += ` (${variation}) `;
@@ -314,14 +312,14 @@ export function getPGNFromReportView(
       }
     }
   }
-  
+
   // Add result
   if (headers) {
     pgn += ` ${headers.result || "*"}`;
   } else {
     pgn += " *";
   }
-  
+
   return pgn.trim();
 }
 
@@ -690,7 +688,7 @@ export async function getOpening(root: TreeNode, position: number[]): Promise<st
 function innerParsePGN(tokens: Token[], fen: string = INITIAL_FEN, halfMoves = 0, isVariantsMode = false): TreeState {
   const tree = defaultTree(fen);
   let root = tree.root;
-  let prevNode = root;
+  let _prevNode = root;
   // Keep track of the parent node where variations should be added
   // This is the node before the current move, updated after each move
   let variationParentNode = root;
@@ -912,7 +910,7 @@ function innerParsePGN(tokens: Token[], fen: string = INITIAL_FEN, halfMoves = 0
       // Variations in PGN appear after a move but refer to the position BEFORE that move
       // So variations should be added to the parent node (root) before we move to the new node
       variationParentNode = root;
-      prevNode = root;
+      _prevNode = root;
       root = newTree;
       i++;
     } else if (token.type === "Outcome") {

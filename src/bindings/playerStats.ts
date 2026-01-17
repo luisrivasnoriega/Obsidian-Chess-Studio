@@ -127,7 +127,10 @@ export const playerStatsCommands = {
     });
   },
   calculatePlayerRatingTimeline(site_stats_data: SiteStatsData[], filters: PlayerStatsFilters) {
-    return invoke_result<RatingTimeline>("calculate_player_rating_timeline", { siteStatsData: site_stats_data, filters });
+    return invoke_result<RatingTimeline>("calculate_player_rating_timeline", {
+      siteStatsData: site_stats_data,
+      filters,
+    });
   },
   calculatePlayerEloDomain(rating_timeline: RatingTimeline) {
     return invoke_result<EloDomain | null>("calculate_player_elo_domain", { ratingTimeline: rating_timeline });
@@ -142,8 +145,9 @@ export const playerStatsCommands = {
     return invoke_result<MonthData[]>("merge_years_data", { data });
   },
   calculateEarliestDateFromRange(date_range: DateRange, rating_dates: number[]) {
-    return invoke_result<number | null>("calculate_earliest_date_from_range", { dateRange: date_range, ratingDates: rating_dates });
+    return invoke_result<number | null>("calculate_earliest_date_from_range", {
+      dateRange: date_range,
+      ratingDates: rating_dates,
+    });
   },
 };
-
-

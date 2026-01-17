@@ -14,19 +14,19 @@ import { check } from "@tauri-apps/plugin-updater";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { Dirs } from "@/types/dirs";
 import AboutModal from "@/components/About";
-import { getSpotlightActions } from "@/components/spotlightActions";
-import { SideBar } from "@/components/Sidebar";
 import { MayaHeader } from "@/components/MayaHeader";
-import ImportModal from "@/features/boards/components/ImportModal";
+import { SideBar } from "@/components/Sidebar";
+import { getSpotlightActions } from "@/components/spotlightActions";
 import { getRouteForTab } from "@/features/boards/BoardsRouteEntry";
+import ImportModal from "@/features/boards/components/ImportModal";
 import { useTabManagement } from "@/features/boards/hooks/useTabManagement";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { keyMapAtom } from "@/state/keybindings";
+import type { Dirs } from "@/types/dirs";
+import { debugNavLog, debugNavLogPaths } from "@/utils/debugNav";
 import { openFile } from "@/utils/files";
 import { formatHotkeyDisplay } from "@/utils/formatHotkey";
-import { debugNavLog, debugNavLogPaths } from "@/utils/debugNav";
 import { createTab, tabSchema } from "@/utils/tabs";
 
 type MenuGroup = {
@@ -198,10 +198,9 @@ function RootLayout() {
     try {
       const update = await check();
       if (update) {
-        const shouldInstall = await ask(
-          t("notifications.updateAvailablePrompt", { version: update.version }),
-          { title: t("notifications.newVersionAvailable") },
-        );
+        const shouldInstall = await ask(t("notifications.updateAvailablePrompt", { version: update.version }), {
+          title: t("notifications.newVersionAvailable"),
+        });
 
         if (shouldInstall) {
           notifications.show({
@@ -455,16 +454,13 @@ function RootLayout() {
         [keyMap.SHOW_KEYBINDINGS.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],
         [keyMap.TOGGLE_HELP.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],
       ] as HotkeyItem[],
-    [keyMap, createNewTab, navigate, t, setTabs, setActiveTab, openNewFile],
+    [keyMap, createNewTab, navigate, t, setTabs, setActiveTab, openNewFile, tabs.find],
   );
 
   useHotkeys(hotkeyBindings);
 
   const handleClearData = useCallback(async () => {
-    const confirmed = await ask(
-      t("notifications.clearAllDataPrompt"),
-      { title: t("notifications.clearAllData") },
-    );
+    const confirmed = await ask(t("notifications.clearAllDataPrompt"), { title: t("notifications.clearAllData") });
 
     if (confirmed) {
       try {
@@ -540,7 +536,7 @@ function RootLayout() {
     } catch {}
   }, []);
 
-  const handleToggleFullScreen = useCallback(async () => {
+  const _handleToggleFullScreen = useCallback(async () => {
     try {
       const webviewWindow = getCurrentWebviewWindow();
       const isFullscreen = await webviewWindow.isFullscreen();
@@ -588,48 +584,48 @@ function RootLayout() {
             shortcut: formatHotkeyDisplay(keyMap.NEW_BOARD_TAB.keys),
             action: createNewTab,
           },
-           {
-             label: t("features.menu.newPlayBoard"),
-             id: "new_play_board",
-             shortcut: formatHotkeyDisplay(keyMap.PLAY_BOARD.keys),
-             action: () => {
-               navigate({ to: "/play" });
-               createTab({
-                 tab: { name: "Play", type: "play" },
-                 setTabs,
-                 setActiveTab,
-               });
-             },
-           },
-           {
-             label: t("features.menu.newAnalysisBoard"),
-             id: "new_analysis_board",
-             shortcut: formatHotkeyDisplay(keyMap.ANALYZE_BOARD.keys),
-             action: () => {
-               navigate({ to: "/analysis" });
-               createTab({
-                 tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
-                 setTabs,
-                 setActiveTab,
-                 initialAnalysisTab: "analysis",
-                 initialAnalysisSubTab: "report",
-                 initialNotationView: "report" as const,
-               });
-             },
-           },
-           {
-             label: t("features.tabs.puzzle.title"),
-             id: "new_puzzles_board",
-             shortcut: formatHotkeyDisplay(keyMap.TRAIN_BOARD.keys),
-             action: () => {
-               navigate({ to: "/puzzles" });
-               createTab({
-                 tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
-                 setTabs,
-                 setActiveTab,
-               });
-             },
-           },
+          {
+            label: t("features.menu.newPlayBoard"),
+            id: "new_play_board",
+            shortcut: formatHotkeyDisplay(keyMap.PLAY_BOARD.keys),
+            action: () => {
+              navigate({ to: "/play" });
+              createTab({
+                tab: { name: "Play", type: "play" },
+                setTabs,
+                setActiveTab,
+              });
+            },
+          },
+          {
+            label: t("features.menu.newAnalysisBoard"),
+            id: "new_analysis_board",
+            shortcut: formatHotkeyDisplay(keyMap.ANALYZE_BOARD.keys),
+            action: () => {
+              navigate({ to: "/analysis" });
+              createTab({
+                tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
+                setTabs,
+                setActiveTab,
+                initialAnalysisTab: "analysis",
+                initialAnalysisSubTab: "report",
+                initialNotationView: "report" as const,
+              });
+            },
+          },
+          {
+            label: t("features.tabs.puzzle.title"),
+            id: "new_puzzles_board",
+            shortcut: formatHotkeyDisplay(keyMap.TRAIN_BOARD.keys),
+            action: () => {
+              navigate({ to: "/puzzles" });
+              createTab({
+                tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
+                setTabs,
+                setActiveTab,
+              });
+            },
+          },
           { label: "divider" },
           {
             label: t("features.menu.openFile"),
@@ -637,18 +633,18 @@ function RootLayout() {
             shortcut: formatHotkeyDisplay(keyMap.OPEN_FILE.keys),
             action: openNewFile,
           },
-           {
-             label: t("features.menu.importPgn"),
-             id: "import_pgn",
-             shortcut: formatHotkeyDisplay(keyMap.IMPORT_BOARD.keys),
-             action: () => {
-               navigate({ to: "/analysis" });
-               modals.openContextModal({
-                 modal: "importModal",
-                 innerProps: {},
-               });
-             },
-           },
+          {
+            label: t("features.menu.importPgn"),
+            id: "import_pgn",
+            shortcut: formatHotkeyDisplay(keyMap.IMPORT_BOARD.keys),
+            action: () => {
+              navigate({ to: "/analysis" });
+              modals.openContextModal({
+                modal: "importModal",
+                innerProps: {},
+              });
+            },
+          },
         ],
       },
       {
@@ -723,10 +719,10 @@ function RootLayout() {
             id: "go_dashboard",
             action: () => navigate({ to: "/" }),
           },
-           {
-             label: t("features.menu.goToBoards"),
-             id: "go_boards",
-             action: () => navigate({ to: "/analysis" }),
+          {
+            label: t("features.menu.goToBoards"),
+            id: "go_boards",
+            action: () => navigate({ to: "/analysis" }),
           },
           {
             label: t("features.menu.goToFiles"),
@@ -832,7 +828,6 @@ function RootLayout() {
       handleCloseAllTabs,
       handleMinimizeWindow,
       handleToggleMaximize,
-      handleToggleFullScreen,
     ],
   );
 

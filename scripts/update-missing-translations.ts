@@ -1,6 +1,6 @@
 // @ts-nocheck
-import fs, { readFileSync } from "fs";
-import { join } from "path";
+import fs, { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 interface TranslationData {
   language: { DisplayName: string };
@@ -20,7 +20,7 @@ export function loadLocaleData(localePath: string): TranslationData | undefined 
   try {
     const indexPath = join(localePath, "index.ts");
     const commonJsonPath = join(localePath, "common.json");
-    
+
     if (!fs.existsSync(indexPath) || !fs.existsSync(commonJsonPath)) {
       console.warn(`Missing files in ${localePath}`);
       return undefined;
@@ -37,7 +37,7 @@ export function loadLocaleData(localePath: string): TranslationData | undefined 
 
     return {
       language: { DisplayName: displayName },
-      translation
+      translation,
     };
   } catch (error) {
     console.error(`Error loading locale data from ${localePath}:`, error);
@@ -52,7 +52,8 @@ function updateTranslations() {
   const lang = process.argv.find((arg) => arg.startsWith("--lang="))?.split("=")[1];
 
   // Get all locale directories
-  const localeDirs = fs.readdirSync(LOCALES_DIR)
+  const localeDirs = fs
+    .readdirSync(LOCALES_DIR)
     .filter((dir) => {
       const dirPath = join(LOCALES_DIR, dir);
       return fs.statSync(dirPath).isDirectory() && dir !== "en-US";
@@ -85,21 +86,25 @@ function updateTranslations() {
     let updatedCount = 0;
 
     // Function to insert missing keys at correct nested positions
-    function insertMissingKeys(obj: Record<string, unknown>, missingObj: Record<string, unknown>, path = ""): Record<string, unknown> {
+    function insertMissingKeys(
+      obj: Record<string, unknown>,
+      missingObj: Record<string, unknown>,
+      path = "",
+    ): Record<string, unknown> {
       const result = { ...obj };
-      
+
       for (const [key, value] of Object.entries(missingObj)) {
         const fullKey = path ? `${path}.${key}` : key;
-        
+
         if (typeof value === "object" && value !== null && !Array.isArray(value)) {
           // Handle nested objects
           if (!result[key] || typeof result[key] !== "object") {
             result[key] = {};
           }
           result[key] = insertMissingKeys(
-            result[key] as Record<string, unknown>, 
-            value as Record<string, unknown>, 
-            fullKey
+            result[key] as Record<string, unknown>,
+            value as Record<string, unknown>,
+            fullKey,
           );
         } else {
           // Handle leaf values
@@ -110,7 +115,7 @@ function updateTranslations() {
           }
         }
       }
-      
+
       return result;
     }
 
@@ -136,22 +141,22 @@ function updateTranslations() {
  */
 function unflattenObject(flatObj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  
+
   for (const [key, value] of Object.entries(flatObj)) {
-    const keys = key.split('.');
+    const keys = key.split(".");
     let current = result;
-    
+
     for (let i = 0; i < keys.length - 1; i++) {
       const k = keys[i];
-      if (!(k in current) || typeof current[k] !== 'object' || current[k] === null) {
+      if (!(k in current) || typeof current[k] !== "object" || current[k] === null) {
         current[k] = {};
       }
       current = current[k] as Record<string, unknown>;
     }
-    
+
     current[keys[keys.length - 1]] = value;
   }
-  
+
   return result;
 }
 
