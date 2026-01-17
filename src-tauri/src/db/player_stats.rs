@@ -694,7 +694,7 @@ fn get_time_control(site: &str, time_control: &str) -> TimeControlFilter {
         "Unknown"
     };
 
-    let tc = time_control.trim();
+    let tc = time_control.trim().to_lowercase();
 
     // Chess.com daily like "1/86400"
     if website == "Chess.com" && tc.starts_with("1/") {
@@ -706,6 +706,24 @@ fn get_time_control(site: &str, time_control: &str) -> TimeControlFilter {
         return TimeControlFilter::Classical;
     }
 
+    // Handle string-based time control names (for test data and some edge cases)
+    if tc.contains("ultra") || tc.contains("ultra_bullet") {
+        return TimeControlFilter::Bullet; // ultra-bullet is grouped into Bullet
+    }
+    if tc.contains("bullet") {
+        return TimeControlFilter::Bullet;
+    }
+    if tc.contains("blitz") {
+        return TimeControlFilter::Blitz;
+    }
+    if tc.contains("rapid") {
+        return TimeControlFilter::Rapid;
+    }
+    if tc.contains("classical") || tc.contains("correspondence") || tc.contains("daily") {
+        return TimeControlFilter::Classical;
+    }
+
+    // Try to parse as numeric time control (e.g., "180+0", "300+3")
     let mut parts = tc.split('+');
     let initial: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
     let increment: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
