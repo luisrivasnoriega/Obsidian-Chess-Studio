@@ -26,11 +26,16 @@ beforeAll(() => {
     } as any;
   }
   
-  // Setup clipboard API
+  // Setup clipboard API - use Object.defineProperty for read-only property
   if (!globalThis.navigator.clipboard) {
-    globalThis.navigator.clipboard = {
-      writeText: vi.fn().mockResolvedValue(undefined),
-    } as any;
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
   }
 });
 
@@ -234,7 +239,7 @@ const mockedPlayerStatsCommands = vi.mocked(playerStatsCommands);
 // -----------------------------
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 let consoleWarnSpy: ReturnType<typeof vi.spyOn> | null = null;
-let clipboardWriteTextMock: ReturnType<typeof vi.fn> | null = null;
+let clipboardWriteTextMock: ReturnType<typeof vi.fn<(text: string) => Promise<void>>> | null = null;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -247,14 +252,17 @@ beforeEach(() => {
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-  // Clipboard - reset the mock
-  clipboardWriteTextMock = vi.fn().mockResolvedValue(undefined);
-  // Always use spyOn to ensure it's tracked as a spy
-  if (navigator.clipboard.writeText) {
-    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(clipboardWriteTextMock);
+  // Clipboard - reset the mock with proper typing
+  clipboardWriteTextMock = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+  
+  // Use Object.defineProperty to ensure it's configurable
+  // Since we set it up in beforeAll, it should always exist, but we handle both cases
+  const clipboard = navigator.clipboard as { writeText?: (text: string) => Promise<void> };
+  if (clipboard.writeText) {
+    vi.spyOn(clipboard, "writeText").mockImplementation(clipboardWriteTextMock);
   } else {
     // If writeText doesn't exist, define it as a spy
-    Object.defineProperty(navigator.clipboard, "writeText", {
+    Object.defineProperty(clipboard, "writeText", {
       value: clipboardWriteTextMock,
       writable: true,
       configurable: true,
