@@ -414,12 +414,49 @@ export default function App() {
       res.profiles.length !== profiles.length ||
       res.profiles.some((p, i) => p.id !== profiles[i]?.id || p.name !== profiles[i]?.name);
 
+    // More robust comparison for sessions - check by unique key instead of index
+    // Only update if there are actual changes (profile updates, etc.)
+    // Don't restore sessions that were deleted (i.e., sessions in res.sessions that don't exist in current sessions)
+    const currentSessionKeys = new Set(
+      sessions.map((s) => {
+        const platform = s.lichess ? "lichess" : "chesscom";
+        const username = s.lichess?.username ?? s.chessCom?.username ?? "";
+        return `${s.profileId ?? ""}:${platform}:${username}`;
+      })
+    );
+
+    // Filter out any sessions from res.sessions that don't exist in current sessions
+    // This prevents restoring deleted sessions
+    const filteredResSessions = res.sessions.filter((s) => {
+      const platform = s.lichess ? "lichess" : "chesscom";
+      const username = s.lichess?.username ?? s.chessCom?.username ?? "";
+      const key = `${s.profileId ?? ""}:${platform}:${username}`;
+      return currentSessionKeys.has(key);
+    });
+
     const sessionsChanged =
-      res.sessions.length !== sessions.length ||
-      res.sessions.some((s, i) => s.profileId !== sessions[i]?.profileId || s.player !== sessions[i]?.player);
+      filteredResSessions.length !== sessions.length ||
+      filteredResSessions.some((s) => {
+        const platform = s.lichess ? "lichess" : "chesscom";
+        const username = s.lichess?.username ?? s.chessCom?.username ?? "";
+        const sessionKey = `${s.profileId ?? ""}:${platform}:${username}`;
+        const existing = sessions.find((existing) => {
+          const existingPlatform = existing.lichess ? "lichess" : "chesscom";
+          const existingUsername = existing.lichess?.username ?? existing.chessCom?.username ?? "";
+          const existingKey = `${existing.profileId ?? ""}:${existingPlatform}:${existingUsername}`;
+          return existingKey === sessionKey;
+        });
+        // Only consider it changed if profile/player name changed, not if it's a new session
+        if (!existing) return false;
+        return existing.profileId !== s.profileId || existing.player !== s.player;
+      });
 
     if (profilesChanged) setProfiles(res.profiles);
-    if (sessionsChanged) setSessions(res.sessions);
+    // Only update sessions if there are actual meaningful changes (profile updates)
+    // Don't restore deleted sessions
+    if (sessionsChanged) {
+      setSessions(filteredResSessions);
+    }
     if (res.activeProfileId !== activeProfileId) setActiveProfileId(res.activeProfileId);
   }, [activeProfileId, profiles, sessions, setActiveProfileId, setProfiles, setSessions]);
 

@@ -124,6 +124,7 @@ export default function ProfilesPage() {
     "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
   >("database");
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
+  const deletedSessionKeysRef = useRef<Set<string>>(new Set());
 
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
@@ -818,6 +819,22 @@ export default function ProfilesPage() {
       const username = session.lichess?.username ?? session.chessCom?.username ?? null;
       if (!username) return;
 
+      // Create a unique key for this session to track deletions
+      const sessionKey = `${profileId ?? ""}:${platform}:${username}`;
+      deletedSessionKeysRef.current.add(sessionKey);
+
+      // Update state first to immediately remove from UI
+      setSessions((prev) => {
+        const filtered = prev.filter((s) => {
+          if (platform === "lichess") {
+            return !((s.profileId ?? null) === profileId && s.lichess?.username === username);
+          }
+          return !((s.profileId ?? null) === profileId && s.chessCom?.username === username);
+        });
+        return filtered;
+      });
+
+      // Then clean up files asynchronously
       const dbDir = await appDataDir();
       const pgnPath = await getAccountPgnPath({
         appDataDir: dbDir,
@@ -840,14 +857,10 @@ export default function ProfilesPage() {
         } catch {}
       } catch {}
 
-      setSessions((prev) =>
-        prev.filter((s) => {
-          if (platform === "lichess") {
-            return !((s.profileId ?? null) === profileId && s.lichess?.username === username);
-          }
-          return !((s.profileId ?? null) === profileId && s.chessCom?.username === username);
-        }),
-      );
+      // Keep the deletion key for a short time to prevent restoration
+      setTimeout(() => {
+        deletedSessionKeysRef.current.delete(sessionKey);
+      }, 5000);
     },
     [setSessions],
   );

@@ -32,6 +32,8 @@ export function ensureProfilesInitialized(input: {
     return created;
   };
 
+  // Only process sessions that already exist in the input - don't add new ones
+  // This prevents restoring deleted sessions from localStorage
   const sessions: Session[] = input.sessions.map((s) => {
     const username = sessionUsername(s);
     const desiredName = normalizeProfileName(s.player ?? username ?? "Profile");

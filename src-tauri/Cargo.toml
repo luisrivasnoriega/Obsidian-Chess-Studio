@@ -1,6 +1,6 @@
 [package]
 name = "obsidian-chess-studio"
-version = "1.13.26"
+version = "1.13.27"
 description = "A Modern Chess Database"
 authors = ["OCS Team"]
 license = "GPL-3.0-only"
