@@ -124,6 +124,7 @@ export const useResponsiveLayout: () => {
         : "normal";
     const databasesLayoutType: LayoutType = isTabletLayout || largeScreenMax ? "mobile" : "desktop";
     const twoColumnLayoutType: LayoutType = isTabletLayout || largeScreenMax ? "mobile" : "desktop";
+    const chessBoardTouchOptimized = isMobileOS || hasCoarsePointer;
 
     // AppShell states
     // menuBarMode is always "custom", so header is never collapsed
@@ -221,7 +222,7 @@ export const useResponsiveLayout: () => {
       },
       chessBoard: {
         layoutType: chessBoardLayoutType,
-        touchOptimized: isTabletLayout,
+        touchOptimized: chessBoardTouchOptimized,
         maintainAspectRatio: true,
       },
     };

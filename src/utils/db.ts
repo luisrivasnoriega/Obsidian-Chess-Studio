@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { BaseDirectory, readDir } from "@tauri-apps/plugin-fs";
+import { parsePgn, startingPosition } from "chessops/pgn";
+import { makeFen } from "chessops/fen";
+import { parseSan } from "chessops/san";
+import { positionFromFen } from "@/utils/chessops";
 import {
   commands,
   type DatabaseInfo,
@@ -238,6 +242,103 @@ export interface Opening {
   draw: number;
 }
 
+/**
+ * Recalculate opening stats from limited games.
+ * This ensures stats reflect only the games that are actually returned (after limit is applied).
+ */
+function recalculateOpeningsFromGames(
+  games: NormalizedGame[],
+  currentFen: string,
+): Opening[] {
+  const openingsMap = new Map<string, { move: string; white: number; black: number; draw: number }>();
+  
+  // Parse current position - normalize FEN by removing move counters for comparison
+  const currentPos = positionFromFen(currentFen);
+  if (!currentPos) {
+    return [];
+  }
+  
+  // Normalize FEN for comparison (remove move counters and halfmove clock)
+  const normalizeFen = (fen: string): string => {
+    const parts = fen.split(" ");
+    // Keep only position, active color, castling, en passant (first 4 parts)
+    return parts.slice(0, 4).join(" ");
+  };
+  const normalizedCurrentFen = normalizeFen(currentFen);
+  
+  let processedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+  
+  for (const game of games) {
+    try {
+      // Parse PGN to find the next move after current position
+      const parsed = parsePgn(game.moves);
+      if (!parsed || parsed.length === 0) {
+        skippedCount++;
+        continue;
+      }
+      
+      const gameData = parsed[0];
+      let pos = startingPosition(gameData.headers).unwrap();
+      let currentNode = gameData.moves;
+      
+      // Navigate to current position
+      let foundPosition = false;
+      while (currentNode) {
+        const fen = makeFen(pos.toSetup());
+        const normalizedFen = normalizeFen(fen);
+        if (normalizedFen === normalizedCurrentFen) {
+          foundPosition = true;
+          break;
+        }
+        
+        const nextNode = currentNode.children?.[0];
+        if (!nextNode) break;
+        
+        const move = parseSan(pos, nextNode.data.san);
+        if (!move) break;
+        
+        pos.play(move);
+        currentNode = nextNode;
+      }
+      
+      if (!foundPosition || !currentNode) {
+        skippedCount++;
+        continue;
+      }
+      
+      // Get next move
+      const nextNode = currentNode.children?.[0];
+      if (!nextNode) {
+        // Game ended at this position
+        const move = "*";
+        const existing = openingsMap.get(move) || { move, white: 0, black: 0, draw: 0 };
+        if (game.result === "1-0") existing.white++;
+        else if (game.result === "0-1") existing.black++;
+        else if (game.result === "1/2-1/2") existing.draw++;
+        openingsMap.set(move, existing);
+        processedCount++;
+        continue;
+      }
+      
+      const nextMove = nextNode.data.san;
+      const existing = openingsMap.get(nextMove) || { move: nextMove, white: 0, black: 0, draw: 0 };
+      if (game.result === "1-0") existing.white++;
+      else if (game.result === "0-1") existing.black++;
+      else if (game.result === "1/2-1/2") existing.draw++;
+      openingsMap.set(nextMove, existing);
+      processedCount++;
+    } catch (error) {
+      // Skip games that can't be parsed
+      errorCount++;
+      continue;
+    }
+  }
+  
+  return Array.from(openingsMap.values());
+}
+
 export async function getTournamentGames(file: string, id: number) {
   return await query_games(file, {
     options: {
@@ -275,6 +376,169 @@ export async function searchPosition(options: LocalOptions, tab: string) {
 
   // Convert result to wanted_result format (undefined for "any" to omit from payload)
   const wantedResult = options.result === "any" ? undefined : options.result;
+
+  // If color is "any" and there's a player, we need to search for both white and black
+  // and combine the results since the backend doesn't support OR queries
+  if (options.color === "any" && options.player !== null) {
+    // Request maximum games from each search (backend limits to 1000 per search)
+    // We'll combine all results without applying the limit to show all games
+    const searchLimit = 1000; // Backend maximum per search
+    // Build base payload
+    const basePayload = {
+      position: {
+        fen,
+        type_: type,
+      },
+      game_details_limit: String(searchLimit) as unknown as bigint,
+      options: {
+        skipCount: true,
+        sort: (options.sort || "averageElo") as "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count",
+        direction: (options.direction || "desc") as "asc" | "desc",
+      },
+      ...(options.start_date ? { start_date: options.start_date } : {}),
+      ...(options.end_date ? { end_date: options.end_date } : {}),
+      ...(wantedResult ? { wanted_result: wantedResult } : {}),
+    };
+
+    // Search for player as white
+    const whitePayload = {
+      ...basePayload,
+      player1: options.player,
+    };
+
+    // Search for player as black
+    const blackPayload = {
+      ...basePayload,
+      player2: options.player,
+    };
+
+    // Execute both searches in parallel
+    const [whiteRes, blackRes] = await Promise.all([
+      commands.searchPosition(options.path, whitePayload, tab),
+      commands.searchPosition(options.path, blackPayload, tab),
+    ]);
+
+    // Handle errors
+    if (whiteRes.status === "error" && whiteRes.error !== "Search stopped") {
+      unwrap(whiteRes);
+      throw new Error(whiteRes.error);
+    }
+    if (blackRes.status === "error" && blackRes.error !== "Search stopped") {
+      unwrap(blackRes);
+      throw new Error(blackRes.error);
+    }
+
+    // Combine openings stats
+    const whiteOpenings = whiteRes.status === "ok" ? whiteRes.data[0] : [];
+    const blackOpenings = blackRes.status === "ok" ? blackRes.data[0] : [];
+    const whiteGames = whiteRes.status === "ok" ? whiteRes.data[1] : [];
+    const blackGames = blackRes.status === "ok" ? blackRes.data[1] : [];
+
+    // Merge openings by move (combine stats)
+    const openingsMap = new Map<string, { move: string; white: number; black: number; draw: number }>();
+
+    for (const opening of whiteOpenings) {
+      const existing = openingsMap.get(opening.move) || { move: opening.move, white: 0, black: 0, draw: 0 };
+      existing.white += opening.white;
+      existing.black += opening.black;
+      existing.draw += opening.draw;
+      openingsMap.set(opening.move, existing);
+    }
+
+    for (const opening of blackOpenings) {
+      const existing = openingsMap.get(opening.move) || { move: opening.move, white: 0, black: 0, draw: 0 };
+      existing.white += opening.white;
+      existing.black += opening.black;
+      existing.draw += opening.draw;
+      openingsMap.set(opening.move, existing);
+    }
+
+    const combinedOpenings = Array.from(openingsMap.values());
+
+    // Combine games (deduplicate by game ID)
+    const gamesMap = new Map<number, NormalizedGame>();
+    for (const game of whiteGames) {
+      gamesMap.set(game.id, game);
+    }
+    for (const game of blackGames) {
+      gamesMap.set(game.id, game);
+    }
+    let combinedGames = Array.from(gamesMap.values());
+    const combinedGamesCountBeforeLimit = combinedGames.length;
+    
+    // Re-sort combined games according to the sort criteria
+    // Both searches return sorted results, but we need to merge-sort them
+    const sortField = options.sort || "averageElo";
+    const sortDirection = options.direction || "desc";
+    const sortMultiplier = sortDirection === "asc" ? 1 : -1;
+    
+    combinedGames.sort((a, b) => {
+      let aValue: number | string | null | undefined;
+      let bValue: number | string | null | undefined;
+      
+      switch (sortField) {
+        case "id":
+          aValue = a.id;
+          bValue = b.id;
+          break;
+        case "date":
+          aValue = a.date;
+          bValue = b.date;
+          break;
+        case "whiteElo":
+          aValue = a.white_elo;
+          bValue = b.white_elo;
+          break;
+        case "blackElo":
+          aValue = a.black_elo;
+          bValue = b.black_elo;
+          break;
+        case "averageElo":
+          aValue = a.white_elo != null && a.black_elo != null ? (a.white_elo + a.black_elo) / 2 : null;
+          bValue = b.white_elo != null && b.black_elo != null ? (b.white_elo + b.black_elo) / 2 : null;
+          break;
+        case "ply_count":
+          aValue = a.ply_count;
+          bValue = b.ply_count;
+          break;
+        default:
+          aValue = a.id;
+          bValue = b.id;
+      }
+      
+      // Handle null/undefined values
+      if (aValue == null && bValue == null) return 0;
+      if (aValue == null) return sortMultiplier;
+      if (bValue == null) return -sortMultiplier;
+      
+      // Compare values
+      if (typeof aValue === "number" && typeof bValue === "number") {
+        return (aValue - bValue) * sortMultiplier;
+      }
+      if (typeof aValue === "string" && typeof bValue === "string") {
+        return aValue.localeCompare(bValue) * sortMultiplier;
+      }
+      return 0;
+    });
+    
+    // For "any color" with player, don't apply limit - show all combined games
+    // The stats should reflect ALL games, not just the limited set
+    // The backend already limits each search to 1000, so we get up to 2000 unique games
+    // We should show all of them, not limit further
+    const shouldApplyLimit = false; // Always show all combined games for "any color" with player
+    
+    // Use stats based on whether we applied limit or not
+    let finalOpenings: Opening[];
+    if (shouldApplyLimit) {
+      // Recalculate openings stats from limited games to ensure stats reflect only returned games
+      finalOpenings = recalculateOpeningsFromGames(combinedGames, fen);
+    } else {
+      // Use original combined stats since we're showing all games
+      finalOpenings = combinedOpenings;
+    }
+    
+    return [finalOpenings, combinedGames] as [Opening[], NormalizedGame[]];
+  }
 
   // Build payload matching GameQueryJs type exactly
   // Only include fields that have values to avoid serialization issues

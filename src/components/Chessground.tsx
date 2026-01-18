@@ -76,12 +76,15 @@ export function Chessground({
     [chessgroundConfig.movable?.free, selectedPiece, api],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Chessground must initialize exactly once; updates go through `api.set(...)`.
   useEffect(() => {
-    if (!ref.current || api) return;
+    const el = ref.current;
+    if (!el) return;
+    // Initialize Chessground once; subsequent updates go through `api.set(...)`.
 
     const config: Config = {
       ...chessgroundConfig,
-      addDimensionsCssVarsTo: ref.current,
+      addDimensionsCssVarsTo: el,
       events: {
         ...chessgroundConfig.events,
         change: handleChange,
@@ -97,14 +100,14 @@ export function Chessground({
       },
     };
 
-    const chessgroundApi = NativeChessground(ref.current, config);
+    const chessgroundApi = NativeChessground(el, config);
     setApi(chessgroundApi);
 
     return () => {
       chessgroundApi.destroy?.();
       setApi(null);
     };
-  }, [api, chessgroundConfig, handleChange, handleSelect, moveMethod]);
+  }, []);
 
   // Android WebView can treat drag gestures as scroll even if the board uses `touch-action: none`,
   // especially when the board is adjacent to or nested near scroll containers.

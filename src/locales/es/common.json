@@ -1039,8 +1039,26 @@
         "centerGraph": "Centrar en el movimiento actual",
         "analysis": "Análisis",
         "database": "Base de datos",
+        "simulate": "Simular",
         "annotate": "Anotar",
         "info": "Información"
+      },
+      "simulate": {
+        "opponentProfile": "Perfil rival",
+        "opponentProfilePlaceholder": "Selecciona un perfil rival...",
+        "resolvedOpponent": "Jugador rival resuelto (id): {{id}}",
+        "profile": "Perfil",
+        "profilePlaceholder": "Selecciona un perfil...",
+        "opponentPlaceholder": "Buscar jugador rival...",
+        "useCurrentPosition": "Usar posiciИn actual",
+        "exportPgn": "Exportar PGN",
+        "pgn": "PGN",
+        "pgnPlaceholder": "Ejecuta Exportar PGN para generar un PGN.",
+        "errors": {
+          "noOpponentProfile": "Selecciona un perfil rival.",
+          "noOpponentResolved": "No se pudo resolver el jugador rival en la base de datos de ese perfil. Vincula una cuenta a ese perfil y/o importa partidas para que el jugador exista en su base de datos.",
+          "noOpponent": "Selecciona un jugador rival."
+        }
       },
       "practice": {
         "train": "Entrenar",

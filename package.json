@@ -1,6 +1,6 @@
 {
   "name": "obsidian-chess-studio",
-  "version": "1.13.42",
+  "version": "1.13.43",
   "type": "module",
   "packageManager": "pnpm@10.27.0",
   "scripts": {
@@ -94,6 +94,7 @@
     "@biomejs/biome": "2.3.10",
     "@commitlint/cli": "^20.3.0",
     "@commitlint/config-conventional": "^20.3.0",
+    "@playwright/test": "^1.57.0",
     "@tanstack/router-plugin": "^1.145.7",
     "@tauri-apps/cli": "2.9.6",
     "@testing-library/jest-dom": "^6.9.1",
@@ -101,6 +102,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/d3": "^7.4.3",
     "@types/lodash": "^4.17.21",
+    "@types/node": "^25.0.9",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@types/react-helmet": "^6.1.11",

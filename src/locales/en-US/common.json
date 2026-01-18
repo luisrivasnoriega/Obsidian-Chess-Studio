@@ -1210,8 +1210,22 @@
         "centerGraph": "Center on current move",
         "analysis": "Analysis",
         "database": "Database",
+        "simulate": "Simulate",
         "annotate": "Annotate",
         "info": "Info"
+      },
+      "simulate": {
+        "opponentProfile": "Opponent profile",
+        "opponentProfilePlaceholder": "Select an opponent profile...",
+        "resolvedOpponent": "Resolved opponent player id: {{id}}",
+        "useCurrentPosition": "Use current position",
+        "exportPgn": "Export PGN",
+        "pgn": "PGN",
+        "pgnPlaceholder": "Run Export PGN to generate a PGN.",
+        "errors": {
+          "noOpponentProfile": "Select an opponent profile.",
+          "noOpponentResolved": "Could not resolve the opponent player in that profile database. Link an account to that profile and/or import games so the player exists in its database."
+        }
       },
       "practice": {
         "train": "Train",

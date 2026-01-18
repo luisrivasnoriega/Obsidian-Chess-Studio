@@ -58,7 +58,9 @@ pub use self::player_stats::{
     PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel, PlayerStatsFilters,
     PlayerStyleLabel, PlatformInfo, RatingDataPoint, RatingTimeline, TimeControlFilter,
 };
-pub use self::position_cache::{get_cached_position, is_position_cached, save_position_cache};
+pub use self::position_cache::{
+    clear_position_cache, get_cached_position, is_position_cached, save_position_cache,
+};
 pub use self::schema::puzzles;
 pub use self::search::{
     is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,

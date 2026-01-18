@@ -936,6 +936,7 @@ function BoardVariants() {
                   onTabChange={(v) => setCurrentTabSelected(v || "info")}
                   isRepertoire={showRepertoirePanels}
                   isPuzzle={isPuzzle}
+                  showSimulate
                   disableCollapse
                   renderAsSelect
                   unstyledContainer
@@ -1105,6 +1106,7 @@ function BoardVariants() {
           onTabChange={(v) => setCurrentTabSelected(v || "info")}
           isRepertoire={showRepertoirePanels}
           isPuzzle={isPuzzle}
+          showSimulate
         />
       </Portal>
 

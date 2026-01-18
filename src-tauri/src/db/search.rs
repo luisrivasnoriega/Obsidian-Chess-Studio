@@ -35,7 +35,8 @@ use tauri::Emitter;
 
 use crate::{
     db::{
-        get_cached_position, get_db_or_create, get_pawn_home, is_position_cached,
+        clear_position_cache, get_cached_position, get_db_or_create, get_pawn_home,
+        is_position_cached,
         models::*,
         normalize_games,
         pgn::{get_material_count, MaterialCount},
@@ -1689,8 +1690,31 @@ pub async fn search_position(
         None => return Err(Error::NoMatchFound),
     };
 
-    // Check if position is cached in database
-    if is_position_cached(&app, &fen, &file)? {
+    // Check if we have active filters that would affect the results
+    // If filters are active, we can't use the cache because it doesn't account for filters
+    let has_filters = query.player1.is_some()
+        || query.player2.is_some()
+        || query.start_date.is_some()
+        || query.end_date.is_some()
+        || query.wanted_result.is_some();
+
+    // If filters are active, clear any existing cache for this position
+    // This ensures that when filters are removed, we get fresh results instead of stale cached data
+    if has_filters {
+        let _ = clear_position_cache(&app, &fen, &file);
+    }
+
+    // IMPORTANT: Always clear cache when no filters are active to ensure fresh data
+    // This prevents using stale cache that may have been corrupted by previous filtered searches
+    // The cache will be rebuilt with correct unfiltered data after this search completes
+    if !has_filters {
+        let _ = clear_position_cache(&app, &fen, &file);
+    }
+
+    // Check if position is cached in database (only if no filters are active)
+    // NOTE: This check will now always be false because we just cleared the cache above
+    // This ensures we always get fresh data when no filters are active
+    if !has_filters && is_position_cached(&app, &fen, &file)? {
         // Load cached data
         if let Some((cached_stats, cached_game_ids)) = get_cached_position(&app, &fen, &file)? {
             // If we cached an empty result (common when DB schema/metadata was incomplete),
@@ -1970,8 +1994,12 @@ pub async fn search_position(
 
     // Save results to persistent cache (save all game IDs, not just the loaded ones)
     // This allows us to load different subsets later based on game_details_limit
-    // Save to cache after we've extracted ids_to_load
-    let _ = save_position_cache(&app, &fen, &file, &openings, &all_game_ids);
+    // IMPORTANT: Only save to cache if NO filters are active, because cache doesn't account for filters
+    // If we save filtered results to cache, they will overwrite the unfiltered cache
+    // and cause incorrect results when filters are removed
+    if !has_filters {
+        let _ = save_position_cache(&app, &fen, &file, &openings, &all_game_ids);
+    }
 
     let _ = app.emit(
         "search_progress",

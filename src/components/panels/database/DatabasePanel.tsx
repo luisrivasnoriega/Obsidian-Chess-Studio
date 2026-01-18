@@ -40,7 +40,7 @@ export type LocalOptions = {
   fen: string;
   type: "exact" | "partial";
   player: number | null;
-  color: "white" | "black";
+  color: "white" | "black" | "any";
   start_date?: string;
   end_date?: string;
   result: "any" | "whitewon" | "draw" | "blackwon";
@@ -261,29 +261,33 @@ function DatabasePanel() {
   const queryEnabled =
     shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
 
+  const queryKey = [
+    "database-opening",
+    db,
+    db === "local" ? localOptions.fen : debouncedFen, // include fen for all DBs to refetch on board move
+    db === "local" ? localOptions.path : null, // include path to refetch when database changes
+    db === "local" ? localOptions.type : null,
+    db === "local" ? localOptions.player : null,
+    db === "local" ? localOptions.color : null,
+    db === "local" ? localOptions.start_date : null,
+    db === "local" ? localOptions.end_date : null,
+    db === "local" ? localOptions.result : null,
+    db === "local" ? localOptions.sort : null,
+    db === "local" ? localOptions.direction : null,
+    tabValue,
+    gameLimit,
+  ];
   const {
     data: openingData,
     isLoading,
     error,
   } = useQuery<OpeningData, Error, OpeningData, readonly unknown[]>({
     // Use localOptions.fen directly for queryKey to ensure it matches what's sent to backend
-    queryKey: [
-      "database-opening",
-      db,
-      db === "local" ? localOptions.fen : debouncedFen, // include fen for all DBs to refetch on board move
-      db === "local" ? localOptions.path : null, // include path to refetch when database changes
-      db === "local" ? localOptions.type : null,
-      db === "local" ? localOptions.player : null,
-      db === "local" ? localOptions.color : null,
-      db === "local" ? localOptions.start_date : null,
-      db === "local" ? localOptions.end_date : null,
-      db === "local" ? localOptions.result : null,
-      db === "local" ? localOptions.sort : null,
-      db === "local" ? localOptions.direction : null,
-      tabValue,
-      gameLimit,
-    ],
-    queryFn: () => fetchOpening(dbType, tabValue, gameLimit) as Promise<OpeningData>,
+    queryKey,
+    queryFn: async () => {
+      const result = (await fetchOpening(dbType, tabValue, gameLimit)) as OpeningData;
+      return result;
+    },
     enabled: queryEnabled && (db !== "local" || (!!localOptions.fen && !!localOptions.path)),
     staleTime: 0, // Always refetch when FEN or parameters change to show latest results
     gcTime: 10000, // Keep in cache for 10 seconds (reduced from 30)

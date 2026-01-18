@@ -831,6 +831,14 @@ async plannerBuildVariantBook(req: PlannerBuildBookRequest) : Promise<Result<Var
     else return { status: "error", error: e  as any };
 }
 },
+async plannerBuildVariantPgn(req: PlannerBuildPgnRequest) : Promise<Result<PlannerBuildPgnResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("planner_build_variant_pgn", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async openExternalLink(url: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_external_link", { url }) };
@@ -1265,6 +1273,12 @@ export type PlannerBuildBookRequest = { profileId: string; enginePath: string;
  * Extra UCI options to apply (e.g. Hash, SyzygyPath). MultiPV is managed by the planner.
  */
 uciOptions: EngineOption[]; ctx: MatchContext; opts: PlanOptions }
+export type PlannerBuildPgnRequest = { profileId: string; enginePath: string; 
+/**
+ * Extra UCI options to apply (e.g. Hash, SyzygyPath). MultiPV is managed by the planner.
+ */
+uciOptions: EngineOption[]; ctx: MatchContext; opts: PlanOptions }
+export type PlannerBuildPgnResponse = { pgn: string }
 export type PlatformFilter = "All" | "Lichess" | "ChessCom"
 export type PlatformInfo = { key: string; label: string; stroke: string }
 export type Player = { id: number; name: string | null; elo: number | null }

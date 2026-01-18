@@ -339,3 +339,41 @@ pub fn clear_cache_for_database(app: &AppHandle, database_path: &PathBuf) -> Res
 
     Ok(())
 }
+
+/// Clear cache for a specific position (when filters are applied)
+pub fn clear_position_cache(
+    app: &AppHandle,
+    fen: &str,
+    database_path: &PathBuf,
+) -> Result<(), Error> {
+    let mut conn = get_cache_db(app)?;
+    let db_path_str = normalize_db_path(database_path);
+
+    // Find the position cache entry
+    let cache_entry: Option<i32> = position_cache::table
+        .select(position_cache::id)
+        .filter(position_cache::fen.eq(fen))
+        .filter(position_cache::database_path.eq(&db_path_str))
+        .first(&mut conn)
+        .optional()?;
+
+    if let Some(position_id) = cache_entry {
+        conn.transaction::<_, Error, _>(|conn| {
+            // Delete stats and games
+            diesel::delete(position_stats::table.filter(position_stats::position_id.eq(position_id)))
+                .execute(conn)?;
+            diesel::delete(position_games::table.filter(position_games::position_id.eq(position_id)))
+                .execute(conn)?;
+
+            // Delete cache entry
+            diesel::delete(
+                position_cache::table.filter(position_cache::id.eq(position_id)),
+            )
+            .execute(conn)?;
+
+            Ok(())
+        })?;
+    }
+
+    Ok(())
+}

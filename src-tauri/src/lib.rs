@@ -46,7 +46,7 @@ use crate::dashboard_games_history::{
     dashboard_get_analyze_all_counts, dashboard_get_games_history_rows, dashboard_resolve_profile_db_game_id,
     dashboard_search_profile_opponents,
 };
-use crate::player_match_planner::planner_build_variant_book;
+use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::chess::{
     analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
     stop_engine,
@@ -221,6 +221,7 @@ pub async fn run() {
             dashboard_search_profile_opponents,
             dashboard_resolve_profile_db_game_id,
             planner_build_variant_book,
+            planner_build_variant_pgn,
             open_external_link,
             compute_pawn_structures,
             calculate_player_game_stats,

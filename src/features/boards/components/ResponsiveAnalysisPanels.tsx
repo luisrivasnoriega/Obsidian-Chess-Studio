@@ -7,6 +7,7 @@ import {
   IconGraphFilled,
   IconInfoCircle,
   IconNotes,
+  IconPlayerPlay,
   IconTargetArrow,
   IconZoomCheck,
 } from "@tabler/icons-react";
@@ -18,6 +19,7 @@ import DatabasePanel from "@/components/panels/database/DatabasePanel";
 import InfoPanel from "@/components/panels/info/InfoPanel";
 import GraphPanel from "@/components/panels/practice/GraphPanel";
 import PracticePanel from "@/components/panels/practice/PracticePanel";
+import SimulatePanel from "@/components/panels/simulate/SimulatePanel";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
@@ -28,6 +30,7 @@ interface ResponsiveAnalysisPanelsProps {
   onTabChange?: (value: string | null) => void;
   isRepertoire?: boolean;
   isPuzzle?: boolean;
+  showSimulate?: boolean;
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
@@ -42,6 +45,7 @@ function ResponsiveAnalysisPanels({
   onTabChange,
   isRepertoire = false,
   isPuzzle = false,
+  showSimulate = false,
   isLoading = false,
   error = null,
   onRetry,
@@ -57,7 +61,7 @@ function ResponsiveAnalysisPanels({
 
   const tabOptions = useMemo(() => {
     const baseOptions: Record<string, { value: string; label: string }> = {};
-    const orderedKeys = ["analysis", "database", "graph", "practice", "annotate", "info"];
+    const orderedKeys = ["analysis", "database", "graph", "practice", "simulate", "annotate", "info"];
 
     if (isRepertoire) {
       baseOptions.graph = { value: "graph", label: t("features.board.tabs.graph") };
@@ -66,6 +70,9 @@ function ResponsiveAnalysisPanels({
     if (!isPuzzle) {
       baseOptions.analysis = { value: "analysis", label: t("features.board.tabs.analysis") };
       baseOptions.database = { value: "database", label: t("features.board.tabs.database") };
+      if (showSimulate) {
+        baseOptions.simulate = { value: "simulate", label: t("features.board.tabs.simulate") };
+      }
       baseOptions.annotate = { value: "annotate", label: t("features.board.tabs.annotate") };
     }
     baseOptions.info = { value: "info", label: t("features.board.tabs.info") };
@@ -76,7 +83,7 @@ function ResponsiveAnalysisPanels({
       }
       return acc;
     }, []);
-  }, [isPuzzle, isRepertoire, t]);
+  }, [isPuzzle, isRepertoire, t, showSimulate]);
 
   useEffect(() => {
     if (!renderAsSelect) return;
@@ -227,6 +234,11 @@ function ResponsiveAnalysisPanels({
                 {t("features.board.tabs.practice")}
               </Tabs.Tab>
             )}
+            {!isPuzzle && showSimulate && (
+              <Tabs.Tab value="simulate" leftSection={<IconPlayerPlay size="1rem" />}>
+                {t("features.board.tabs.simulate")}
+              </Tabs.Tab>
+            )}
             {!isPuzzle && (
               <Tabs.Tab value="annotate" leftSection={<IconNotes size="1rem" />}>
                 {t("features.board.tabs.annotate")}
@@ -257,6 +269,15 @@ function ResponsiveAnalysisPanels({
             <Suspense>
               <GraphPanel />
             </Suspense>
+          </Tabs.Panel>
+        )}
+        {!isPuzzle && showSimulate && (
+          <Tabs.Panel
+            value="simulate"
+            flex={1}
+            style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
+          >
+            <SimulatePanel />
           </Tabs.Panel>
         )}
         <Tabs.Panel

@@ -47,9 +47,10 @@ function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
             data={[
               { value: "white", label: t("chess.white") },
               { value: "black", label: t("chess.black") },
+              { value: "any", label: t("chess.any") },
             ]}
             value={options.color}
-            onChange={(v) => setOptions({ ...options, color: v as "white" | "black" })}
+            onChange={(v) => setOptions({ ...options, color: v as "white" | "black" | "any" })}
           />
         </Group>
         <Group>
