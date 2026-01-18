@@ -1955,6 +1955,7 @@
     "invalidMove": "Invalid move",
     "failedToCopyFen": "Failed to copy FEN",
     "failedToCopyPgn": "Failed to copy PGN",
+    "failedToGeneratePgn": "Failed to generate PGN",
     "failedToPasteFen": "Failed to paste FEN",
     "failedToSaveGame": "Failed to save game",
     "failedToImportPuzzleFile": "Failed to import puzzle file",

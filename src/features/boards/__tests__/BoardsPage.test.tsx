@@ -53,6 +53,7 @@ vi.mock("@/hooks/useResponsiveLayout", () => ({
     isMobile: false,
     isTablet: false,
   }),
+  getPlatform: () => "desktop",
 }));
 
 vi.mock("../hooks/useTabManagement", () => ({

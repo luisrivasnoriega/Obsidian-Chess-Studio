@@ -20,6 +20,7 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("@/hooks/useResponsiveLayout", () => ({
   useResponsiveLayout: () => ({ layout: { engines: { layoutType: "desktop" } } }),
+  getPlatform: () => "desktop",
 }));
 
 vi.mock("@/components/GenericCard", () => ({

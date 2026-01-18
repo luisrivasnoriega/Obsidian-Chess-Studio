@@ -25,6 +25,7 @@ vi.mock("@/hooks/useResponsiveLayout", () => ({
       databases: { density: "normal", layoutType: "desktop" },
     },
   }),
+  getPlatform: () => "desktop",
 }));
 
 vi.mock("@/bindings", () => ({

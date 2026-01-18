@@ -2,10 +2,9 @@ import {
   Accordion,
   Button,
   Card,
-  CopyButton,
-  Divider,
   Group,
   NumberInput,
+  ScrollArea,
   Select,
   Stack,
   Text,
@@ -15,30 +14,38 @@ import {
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { makeSan } from "chessops/san";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import type { BookEdge, BookNode, EngineOption, PlayerQuery, VariantBook } from "@/bindings";
+import type { EngineOption, PlayerQuery } from "@/bindings";
 import { commands } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { activeProfileIdAtom, enginesAtom, profilesAtom, sessionsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, currentTabSelectedAtom, enginesAtom, profilesAtom, sessionsAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
 import { getAccountKey } from "@/utils/accountKeys";
-import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
+import { parsePGN } from "@/utils/chess";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { getNodeAtPath } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 
 type PlannerBuildPgnResponse = { pgn: string };
 
+function requireContext<T>(value: T | null | undefined, name: string): T {
+  if (value == null) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
 function SimulatePanel() {
   const { t } = useTranslation();
-  const store = useContext(TreeStateContext)!;
+  const store = requireContext(useContext(TreeStateContext), "TreeStateContext");
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
   const currentNode = getNodeAtPath(root, position);
+  const setTreeState = useStore(store, (s) => s.setState);
+  const setCurrentTabSelected = useSetAtom(currentTabSelectedAtom);
 
   const engines = useAtomValue(enginesAtom);
   const profiles = useAtomValue(profilesAtom);
@@ -174,95 +181,6 @@ function SimulatePanel() {
   const [smoothingAlpha, setSmoothingAlpha] = useState<number>(0.2);
 
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<VariantBook | null>(null);
-  const [pgn, setPgn] = useState<string>("");
-
-  const bookView = useMemo(() => {
-    if (!result) return null;
-
-    const nodes = (result.nodes ?? []) as BookNode[];
-    const edges = (result.edges ?? []) as BookEdge[];
-    const rootId = result.rootNodeId as bigint;
-
-    const nodeById = new Map<bigint, BookNode>();
-    for (const n of nodes) nodeById.set(n.id as bigint, n);
-
-    const edgesByFrom = new Map<bigint, BookEdge[]>();
-    for (const e of edges) {
-      const from = e.from as bigint;
-      const list = edgesByFrom.get(from) ?? [];
-      list.push(e);
-      edgesByFrom.set(from, list);
-    }
-
-    for (const list of edgesByFrom.values()) {
-      list.sort((a, b) => {
-        if (a.kind !== b.kind) return a.kind === "ourMove" ? -1 : 1;
-        if (a.kind === "opponentMove") return (b.prob ?? 0) - (a.prob ?? 0);
-        return 0;
-      });
-    }
-
-    const edgeSan = (edge: BookEdge): string => {
-      const fromNode = nodeById.get(edge.from as bigint);
-      if (!fromNode) return edge.uci;
-      const [pos] = positionFromFen(fromNode.fen);
-      if (!pos) return edge.uci;
-      const mv = parseSanOrUci(pos, edge.uci);
-      if (!mv) return edge.uci;
-      const san = makeSan(pos, mv);
-      return san && san !== "--" ? san : edge.uci;
-    };
-
-    const rootNode = nodeById.get(rootId) ?? null;
-    const startTurn = rootNode?.sideToMove ?? "white";
-
-    const formatLine = (sanMoves: string[]): string => {
-      let ply = 0;
-      let moveNo = 1;
-      const parts: string[] = [];
-      for (const san of sanMoves) {
-        const isWhiteMove = (startTurn === "white" && ply % 2 === 0) || (startTurn === "black" && ply % 2 === 1);
-        if (isWhiteMove) parts.push(`${moveNo}. ${san}`);
-        else parts.push(san);
-        if (!isWhiteMove) moveNo += 1;
-        ply += 1;
-      }
-      return parts.join(" ").trim();
-    };
-
-    const lines: Array<{ sanLine: string; reachProb: number; ev?: number | null }> = [];
-
-    const walk = (node: bigint, sanMoves: string[], reach: number, depth: number) => {
-      if (depth >= horizonPlies) {
-        lines.push({ sanLine: formatLine(sanMoves), reachProb: reach, ev: null });
-        return;
-      }
-      const outgoing = edgesByFrom.get(node) ?? [];
-      if (outgoing.length === 0) {
-        lines.push({ sanLine: formatLine(sanMoves), reachProb: reach, ev: null });
-        return;
-      }
-
-      // Follow our forced move (if present), and branch on opponent moves.
-      const ourMove = outgoing.find((e) => e.kind === "ourMove");
-      if (ourMove) {
-        const san = edgeSan(ourMove);
-        walk(ourMove.to as bigint, [...sanMoves, san], reach, depth + 1);
-        return;
-      }
-
-      const oppMoves = outgoing.filter((e) => e.kind === "opponentMove").slice(0, 6);
-      for (const e of oppMoves) {
-        const san = edgeSan(e);
-        walk(e.to as bigint, [...sanMoves, san], reach * (e.prob ?? 0), depth + 1);
-      }
-    };
-
-    walk(rootId, [], 1, 0);
-    lines.sort((a, b) => b.reachProb - a.reachProb);
-    return { lines };
-  }, [horizonPlies, result]);
 
   const engineOptions: EngineOption[] = useMemo(() => {
     return selectedEngine?.type === "local"
@@ -304,53 +222,10 @@ function SimulatePanel() {
     }
 
     setRunning(true);
-    setResult(null);
-    setPgn("");
-    try {
-      const res = await commands.plannerBuildVariantBook({
-        // Train + plan from the opponent profile DB.
-        profileId: opponentProfileId,
-        enginePath,
-        uciOptions: engineOptions,
-        ctx: {
-          matchStartUtcMs: Date.now(),
-          timeControl,
-          ourElo,
-          targetPlayerId: opponentPlayerId,
-          ourColor,
-          startFen,
-        },
-        opts: {
-          horizonPlies: horizonPlies as unknown as bigint,
-          opponentTopK: opponentTopK as unknown as bigint,
-          minBranchProb,
-          maxNodes: maxNodes as unknown as bigint,
-          ourMultipv: ourMultipv as unknown as bigint,
-          quickEvalLimits: { depth: quickDepth, timeMs: null },
-          candidateLimits: { depth: candidateDepth, timeMs: null },
-          backoffK,
-          smoothingAlpha,
-        },
-      } as any);
-      setResult(unwrap(res));
-    } catch (e) {
-      notifications.show({
-        title: t("common.error"),
-        message: e instanceof Error ? e.message : String(e),
-        color: "red",
-      });
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const onExportPgn = async () => {
-    const opponentPlayerId = opponentPlayerIdQuery.data;
-    if (!enginePath || !opponentProfileId || !opponentPlayerId) return;
-    setRunning(true);
     try {
       const resp = await invoke<PlannerBuildPgnResponse>("planner_build_variant_pgn", {
         req: {
+          // Train + plan from the opponent profile DB.
           profileId: opponentProfileId,
           enginePath,
           uciOptions: engineOptions,
@@ -375,7 +250,21 @@ function SimulatePanel() {
           },
         },
       });
-      setPgn(resp.pgn ?? "");
+
+      const nextPgn = (resp.pgn ?? "").trim();
+      if (!nextPgn) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("errors.failedToGeneratePgn"),
+          color: "red",
+        });
+        return;
+      }
+
+      const tree = await parsePGN(nextPgn);
+      tree.position = [];
+      setTreeState(tree);
+      setCurrentTabSelected("info");
     } catch (e) {
       notifications.show({
         title: t("common.error"),
@@ -397,241 +286,176 @@ function SimulatePanel() {
           </Text>
         </Stack>
 
-        <Group grow>
-          <Select
-            label={t("features.board.simulate.opponentProfile")}
-            placeholder={t("features.board.simulate.opponentProfilePlaceholder")}
-            value={opponentProfileId}
-            onChange={(v) => setOpponentProfileId(v)}
-            data={profiles
-              .filter((p) => p.id !== activeProfileId)
-              .map((p) => ({ value: p.id, label: p.name || `Profile ${p.id}` }))}
-            searchable
-            clearable
-          />
-          <Select
-            label={t("profiles.simulate.engine")}
-            placeholder={t("profiles.simulate.enginePlaceholder")}
-            value={enginePath}
-            onChange={(v) => setEnginePath(v)}
-            data={localEngines.map((e) => ({ value: e.path, label: e.name }))}
-            clearable={false}
-          />
-        </Group>
+        <ScrollArea style={{ flex: 1 }} offsetScrollbars>
+          <Stack gap="sm">
+            <Group grow>
+              <Select
+                label={t("features.board.simulate.opponentProfile")}
+                placeholder={t("features.board.simulate.opponentProfilePlaceholder")}
+                value={opponentProfileId}
+                onChange={(v) => setOpponentProfileId(v)}
+                data={profiles
+                  .filter((p) => p.id !== activeProfileId)
+                  .map((p) => ({ value: p.id, label: p.name || `Profile ${p.id}` }))}
+                searchable
+                clearable
+              />
+              <Select
+                label={t("profiles.simulate.engine")}
+                placeholder={t("profiles.simulate.enginePlaceholder")}
+                value={enginePath}
+                onChange={(v) => setEnginePath(v)}
+                data={localEngines.map((e) => ({ value: e.path, label: e.name }))}
+                clearable={false}
+              />
+            </Group>
 
-        {opponentProfileId && (
-          <Text size="sm" c="dimmed">
-            {t("features.board.simulate.resolvedOpponent", {
-              defaultValue: "Resolved opponent player id: {{id}}",
-              id: opponentPlayerIdQuery.data ?? "-",
-            })}
-          </Text>
-        )}
+            {opponentProfileId && (
+              <Text size="sm" c="dimmed">
+                {t("features.board.simulate.resolvedOpponent", {
+                  defaultValue: "Resolved opponent player id: {{id}}",
+                  id: opponentPlayerIdQuery.data ?? "-",
+                })}
+              </Text>
+            )}
 
-        <Group grow>
-          <TextInput
-            label={t("profiles.simulate.timeControl")}
-            value={timeControl}
-            onChange={(e) => setTimeControl(e.currentTarget.value)}
-          />
-          <NumberInput
-            label={t("profiles.simulate.ourElo")}
-            value={ourElo}
-            onChange={(v) => setOurElo(Number(v) || 0)}
-          />
-          <Select
-            label={t("chess.player")}
-            data={[
-              { value: "white", label: t("chess.white") },
-              { value: "black", label: t("chess.black") },
-            ]}
-            value={ourColor}
-            onChange={(v) => setOurColor((v as "white" | "black") ?? "white")}
-          />
-        </Group>
+            <Group grow>
+              <TextInput
+                label={t("profiles.simulate.timeControl")}
+                value={timeControl}
+                onChange={(e) => setTimeControl(e.currentTarget.value)}
+              />
+              <NumberInput
+                label={t("profiles.simulate.ourElo")}
+                value={ourElo}
+                onChange={(v) => setOurElo(Number(v) || 0)}
+              />
+              <Select
+                label={t("chess.player")}
+                data={[
+                  { value: "white", label: t("chess.white") },
+                  { value: "black", label: t("chess.black") },
+                ]}
+                value={ourColor}
+                onChange={(v) => setOurColor((v as "white" | "black") ?? "white")}
+              />
+            </Group>
 
-        <Group align="end">
-          <Textarea
-            style={{ flex: 1 }}
-            label={t("profiles.simulate.startFen")}
-            value={startFen}
-            onChange={(e) => setStartFen(e.currentTarget.value)}
-            autosize
-            minRows={2}
-            maxRows={3}
-          />
-          <Button variant="light" onClick={onUseCurrentPosition}>
-            {t("features.board.simulate.useCurrentPosition")}
-          </Button>
-        </Group>
+            <Group align="end">
+              <Textarea
+                style={{ flex: 1 }}
+                label={t("profiles.simulate.startFen")}
+                value={startFen}
+                onChange={(e) => setStartFen(e.currentTarget.value)}
+                autosize
+                minRows={2}
+                maxRows={3}
+              />
+              <Button variant="light" onClick={onUseCurrentPosition}>
+                {t("features.board.simulate.useCurrentPosition")}
+              </Button>
+            </Group>
 
-        <Accordion variant="separated">
-          <Accordion.Item value="planner">
-            <Accordion.Control>{t("profiles.simulate.plannerSettings")}</Accordion.Control>
-            <Accordion.Panel>
-              <Group grow>
-                <NumberInput
-                  label={t("profiles.simulate.horizonPlies")}
-                  value={horizonPlies}
-                  onChange={(v) => setHorizonPlies(Number(v) || 1)}
-                  min={1}
-                  max={80}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.opponentTopK")}
-                  value={opponentTopK}
-                  onChange={(v) => setOpponentTopK(Number(v) || 1)}
-                  min={1}
-                  max={8}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.maxNodes")}
-                  value={maxNodes}
-                  onChange={(v) => setMaxNodes(Number(v) || 1)}
-                  min={10}
-                  max={50_000}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.minBranchProb")}
-                  value={minBranchProb}
-                  onChange={(v) => setMinBranchProb(Number(v) || 0)}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  decimalScale={3}
-                />
-              </Group>
-            </Accordion.Panel>
-          </Accordion.Item>
+            <Accordion variant="separated">
+              <Accordion.Item value="planner">
+                <Accordion.Control>{t("profiles.simulate.plannerSettings")}</Accordion.Control>
+                <Accordion.Panel>
+                  <Group grow>
+                    <NumberInput
+                      label={t("profiles.simulate.horizonPlies")}
+                      value={horizonPlies}
+                      onChange={(v) => setHorizonPlies(Number(v) || 1)}
+                      min={1}
+                      max={80}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.opponentTopK")}
+                      value={opponentTopK}
+                      onChange={(v) => setOpponentTopK(Number(v) || 1)}
+                      min={1}
+                      max={8}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.maxNodes")}
+                      value={maxNodes}
+                      onChange={(v) => setMaxNodes(Number(v) || 1)}
+                      min={10}
+                      max={50_000}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.minBranchProb")}
+                      value={minBranchProb}
+                      onChange={(v) => setMinBranchProb(Number(v) || 0)}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      decimalScale={3}
+                    />
+                  </Group>
+                </Accordion.Panel>
+              </Accordion.Item>
 
-          <Accordion.Item value="engine">
-            <Accordion.Control>{t("profiles.simulate.engineSettings")}</Accordion.Control>
-            <Accordion.Panel>
-              <Group grow>
-                <NumberInput
-                  label={t("profiles.simulate.ourMultiPv")}
-                  value={ourMultipv}
-                  onChange={(v) => setOurMultipv(Number(v) || 1)}
-                  min={1}
-                  max={8}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.candidateDepth")}
-                  value={candidateDepth}
-                  onChange={(v) => setCandidateDepth(Number(v) || 1)}
-                  min={1}
-                  max={30}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.quickDepth")}
-                  value={quickDepth}
-                  onChange={(v) => setQuickDepth(Number(v) || 1)}
-                  min={1}
-                  max={30}
-                />
-              </Group>
-            </Accordion.Panel>
-          </Accordion.Item>
+              <Accordion.Item value="engine">
+                <Accordion.Control>{t("profiles.simulate.engineSettings")}</Accordion.Control>
+                <Accordion.Panel>
+                  <Group grow>
+                    <NumberInput
+                      label={t("profiles.simulate.ourMultiPv")}
+                      value={ourMultipv}
+                      onChange={(v) => setOurMultipv(Number(v) || 1)}
+                      min={1}
+                      max={8}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.candidateDepth")}
+                      value={candidateDepth}
+                      onChange={(v) => setCandidateDepth(Number(v) || 1)}
+                      min={1}
+                      max={30}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.quickDepth")}
+                      value={quickDepth}
+                      onChange={(v) => setQuickDepth(Number(v) || 1)}
+                      min={1}
+                      max={30}
+                    />
+                  </Group>
+                </Accordion.Panel>
+              </Accordion.Item>
 
-          <Accordion.Item value="model">
-            <Accordion.Control>{t("profiles.simulate.modelSettings")}</Accordion.Control>
-            <Accordion.Panel>
-              <Group grow>
-                <NumberInput
-                  label={t("profiles.simulate.backoffK")}
-                  value={backoffK}
-                  onChange={(v) => setBackoffK(Number(v) || 1)}
-                  min={1}
-                  max={500}
-                />
-                <NumberInput
-                  label={t("profiles.simulate.smoothingAlpha")}
-                  value={smoothingAlpha}
-                  onChange={(v) => setSmoothingAlpha(Number(v) || 0)}
-                  min={0}
-                  max={10}
-                  step={0.1}
-                  decimalScale={2}
-                />
-              </Group>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
+              <Accordion.Item value="model">
+                <Accordion.Control>{t("profiles.simulate.modelSettings")}</Accordion.Control>
+                <Accordion.Panel>
+                  <Group grow>
+                    <NumberInput
+                      label={t("profiles.simulate.backoffK")}
+                      value={backoffK}
+                      onChange={(v) => setBackoffK(Number(v) || 1)}
+                      min={1}
+                      max={500}
+                    />
+                    <NumberInput
+                      label={t("profiles.simulate.smoothingAlpha")}
+                      value={smoothingAlpha}
+                      onChange={(v) => setSmoothingAlpha(Number(v) || 0)}
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      decimalScale={2}
+                    />
+                  </Group>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+          </Stack>
+        </ScrollArea>
 
         <Group justify="flex-end">
           <Button onClick={onRun} loading={running} disabled={running}>
             {t("profiles.simulate.run")}
           </Button>
-          <Button variant="light" onClick={onExportPgn} loading={running} disabled={running || !result}>
-            {t("features.board.simulate.exportPgn")}
-          </Button>
         </Group>
-
-        {(result || pgn) && <Divider />}
-
-        {result && (
-          <Stack gap="xs" style={{ minHeight: 0 }}>
-            <Text size="sm" fw={600}>
-              {t("profiles.simulate.result")}
-            </Text>
-            <Text size="sm" c="dimmed">
-              {t("profiles.simulate.resultSummary", {
-                nodes: result.nodes?.length ?? 0,
-                edges: result.edges?.length ?? 0,
-              })}
-            </Text>
-
-            {bookView && (
-              <>
-                <Group justify="space-between" align="flex-end">
-                  <Text size="sm" fw={600}>
-                    {t("profiles.simulate.bestLine")}
-                  </Text>
-                  <CopyButton value={(bookView.lines?.[0]?.sanLine ?? "").trim()} timeout={1200}>
-                    {({ copied, copy }) => (
-                      <Button size="xs" variant="light" onClick={copy} disabled={!bookView.lines?.[0]?.sanLine}>
-                        {copied ? t("common.copied") : t("common.copy")}
-                      </Button>
-                    )}
-                  </CopyButton>
-                </Group>
-                <Textarea
-                  value={(bookView.lines?.[0]?.sanLine ?? "").trim()}
-                  placeholder={t("profiles.simulate.bestLinePlaceholder")}
-                  autosize
-                  minRows={2}
-                  maxRows={6}
-                  readOnly
-                />
-              </>
-            )}
-          </Stack>
-        )}
-
-        {pgn && (
-          <Stack gap="xs" style={{ minHeight: 0 }}>
-            <Group justify="space-between" align="flex-end">
-              <Text size="sm" fw={600}>
-                {t("features.board.simulate.pgn")}
-              </Text>
-              <CopyButton value={pgn} timeout={1200}>
-                {({ copied, copy }) => (
-                  <Button size="xs" variant="light" onClick={copy} disabled={!pgn}>
-                    {copied ? t("common.copied") : t("common.copy")}
-                  </Button>
-                )}
-              </CopyButton>
-            </Group>
-            <Textarea
-              value={pgn}
-              placeholder={t("features.board.simulate.pgnPlaceholder")}
-              autosize
-              minRows={6}
-              maxRows={14}
-              readOnly
-            />
-          </Stack>
-        )}
       </Stack>
     </Card>
   );

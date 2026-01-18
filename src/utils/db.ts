@@ -1,10 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { BaseDirectory, readDir } from "@tauri-apps/plugin-fs";
-import { parsePgn, startingPosition } from "chessops/pgn";
 import { makeFen } from "chessops/fen";
+import { parsePgn, startingPosition } from "chessops/pgn";
 import { parseSan } from "chessops/san";
-import { positionFromFen } from "@/utils/chessops";
 import {
   commands,
   type DatabaseInfo,
@@ -16,6 +15,7 @@ import {
   type QueryResponse,
 } from "@/bindings";
 import type { LocalOptions } from "@/components/panels/database/DatabasePanel";
+import { positionFromFen } from "@/utils/chessops";
 import { unwrap } from "./unwrap";
 
 export type { DatabaseInfo } from "@/bindings";
@@ -246,18 +246,15 @@ export interface Opening {
  * Recalculate opening stats from limited games.
  * This ensures stats reflect only the games that are actually returned (after limit is applied).
  */
-function recalculateOpeningsFromGames(
-  games: NormalizedGame[],
-  currentFen: string,
-): Opening[] {
+function recalculateOpeningsFromGames(games: NormalizedGame[], currentFen: string): Opening[] {
   const openingsMap = new Map<string, { move: string; white: number; black: number; draw: number }>();
-  
+
   // Parse current position - normalize FEN by removing move counters for comparison
   const currentPos = positionFromFen(currentFen);
   if (!currentPos) {
     return [];
   }
-  
+
   // Normalize FEN for comparison (remove move counters and halfmove clock)
   const normalizeFen = (fen: string): string => {
     const parts = fen.split(" ");
@@ -265,24 +262,24 @@ function recalculateOpeningsFromGames(
     return parts.slice(0, 4).join(" ");
   };
   const normalizedCurrentFen = normalizeFen(currentFen);
-  
-  let processedCount = 0;
-  let skippedCount = 0;
-  let errorCount = 0;
-  
+
+  let _processedCount = 0;
+  let _skippedCount = 0;
+  let _errorCount = 0;
+
   for (const game of games) {
     try {
       // Parse PGN to find the next move after current position
       const parsed = parsePgn(game.moves);
       if (!parsed || parsed.length === 0) {
-        skippedCount++;
+        _skippedCount++;
         continue;
       }
-      
+
       const gameData = parsed[0];
-      let pos = startingPosition(gameData.headers).unwrap();
+      const pos = startingPosition(gameData.headers).unwrap();
       let currentNode = gameData.moves;
-      
+
       // Navigate to current position
       let foundPosition = false;
       while (currentNode) {
@@ -292,22 +289,22 @@ function recalculateOpeningsFromGames(
           foundPosition = true;
           break;
         }
-        
+
         const nextNode = currentNode.children?.[0];
         if (!nextNode) break;
-        
+
         const move = parseSan(pos, nextNode.data.san);
         if (!move) break;
-        
+
         pos.play(move);
         currentNode = nextNode;
       }
-      
+
       if (!foundPosition || !currentNode) {
-        skippedCount++;
+        _skippedCount++;
         continue;
       }
-      
+
       // Get next move
       const nextNode = currentNode.children?.[0];
       if (!nextNode) {
@@ -318,24 +315,23 @@ function recalculateOpeningsFromGames(
         else if (game.result === "0-1") existing.black++;
         else if (game.result === "1/2-1/2") existing.draw++;
         openingsMap.set(move, existing);
-        processedCount++;
+        _processedCount++;
         continue;
       }
-      
+
       const nextMove = nextNode.data.san;
       const existing = openingsMap.get(nextMove) || { move: nextMove, white: 0, black: 0, draw: 0 };
       if (game.result === "1-0") existing.white++;
       else if (game.result === "0-1") existing.black++;
       else if (game.result === "1/2-1/2") existing.draw++;
       openingsMap.set(nextMove, existing);
-      processedCount++;
-    } catch (error) {
+      _processedCount++;
+    } catch (_error) {
       // Skip games that can't be parsed
-      errorCount++;
-      continue;
+      _errorCount++;
     }
   }
-  
+
   return Array.from(openingsMap.values());
 }
 
@@ -463,19 +459,19 @@ export async function searchPosition(options: LocalOptions, tab: string) {
     for (const game of blackGames) {
       gamesMap.set(game.id, game);
     }
-    let combinedGames = Array.from(gamesMap.values());
-    const combinedGamesCountBeforeLimit = combinedGames.length;
-    
+    const combinedGames = Array.from(gamesMap.values());
+    const _combinedGamesCountBeforeLimit = combinedGames.length;
+
     // Re-sort combined games according to the sort criteria
     // Both searches return sorted results, but we need to merge-sort them
     const sortField = options.sort || "averageElo";
     const sortDirection = options.direction || "desc";
     const sortMultiplier = sortDirection === "asc" ? 1 : -1;
-    
+
     combinedGames.sort((a, b) => {
       let aValue: number | string | null | undefined;
       let bValue: number | string | null | undefined;
-      
+
       switch (sortField) {
         case "id":
           aValue = a.id;
@@ -505,12 +501,12 @@ export async function searchPosition(options: LocalOptions, tab: string) {
           aValue = a.id;
           bValue = b.id;
       }
-      
+
       // Handle null/undefined values
       if (aValue == null && bValue == null) return 0;
       if (aValue == null) return sortMultiplier;
       if (bValue == null) return -sortMultiplier;
-      
+
       // Compare values
       if (typeof aValue === "number" && typeof bValue === "number") {
         return (aValue - bValue) * sortMultiplier;
@@ -520,13 +516,13 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       }
       return 0;
     });
-    
+
     // For "any color" with player, don't apply limit - show all combined games
     // The stats should reflect ALL games, not just the limited set
     // The backend already limits each search to 1000, so we get up to 2000 unique games
     // We should show all of them, not limit further
     const shouldApplyLimit = false; // Always show all combined games for "any color" with player
-    
+
     // Use stats based on whether we applied limit or not
     let finalOpenings: Opening[];
     if (shouldApplyLimit) {
@@ -536,7 +532,7 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       // Use original combined stats since we're showing all games
       finalOpenings = combinedOpenings;
     }
-    
+
     return [finalOpenings, combinedGames] as [Opening[], NormalizedGame[]];
   }
 

@@ -42,6 +42,7 @@ vi.mock("@/components/TreeStateContext", () => ({
 
 vi.mock("@/hooks/useResponsiveLayout", () => ({
   useResponsiveLayout: () => ({ layout: {} }),
+  getPlatform: () => "desktop",
 }));
 
 vi.mock("@/utils/chess", () => ({

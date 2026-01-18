@@ -418,10 +418,10 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 19.36% |
-| **Branches** | 14.61% |
-| **Functions** | 17.65% |
-| **Lines** | 20.41% |
+| **Statements** | 19.02% |
+| **Branches** | 14.38% |
+| **Functions** | 17.4% |
+| **Lines** | 20.06% |
 
 **Test Statistics:**
 - ✅ **177 test files** passing
@@ -571,19 +571,19 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
 | 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
-| 🇧🇾 **Беларуская (Belarusian)** | 🟡 89% | [View](./src/locales/be) |
-| 🇩🇪 **Deutsch (German)** | 🟡 89% | [View](./src/locales/de) |
-| 🇬🇧 **English UK** | 🟡 89% | [View](./src/locales/en-GB) |
-| 🇫🇷 **Français (French)** | 🟡 89% | [View](./src/locales/fr) |
-| 🇦🇲 **Հայերեն (Armenian)** | 🟡 89% | [View](./src/locales/hy) |
-| 🇮🇹 **Italiano (Italian)** | 🟡 89% | [View](./src/locales/it) |
-| 🇯🇵 **日本語 (Japanese)** | 🟡 89% | [View](./src/locales/ja) |
-| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 89% | [View](./src/locales/nb) |
-| 🇵🇱 **Polski (Polish)** | 🟡 89% | [View](./src/locales/pl) |
-| 🇵🇹 **Português (Portuguese)** | 🟡 89% | [View](./src/locales/pt) |
-| 🇷🇺 **Русский (Russian)** | 🟡 89% | [View](./src/locales/ru) |
-| 🇺🇦 **Українська (Ukrainian)** | 🟡 89% | [View](./src/locales/uk) |
 | 🇨🇳 **中文 (Chinese)** | 🟡 89% | [View](./src/locales/zh) |
+| 🇧🇾 **Беларуская (Belarusian)** | 🟡 88% | [View](./src/locales/be) |
+| 🇩🇪 **Deutsch (German)** | 🟡 88% | [View](./src/locales/de) |
+| 🇬🇧 **English UK** | 🟡 88% | [View](./src/locales/en-GB) |
+| 🇫🇷 **Français (French)** | 🟡 88% | [View](./src/locales/fr) |
+| 🇦🇲 **Հայերեն (Armenian)** | 🟡 88% | [View](./src/locales/hy) |
+| 🇮🇹 **Italiano (Italian)** | 🟡 88% | [View](./src/locales/it) |
+| 🇯🇵 **日本語 (Japanese)** | 🟡 88% | [View](./src/locales/ja) |
+| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 88% | [View](./src/locales/nb) |
+| 🇵🇱 **Polski (Polish)** | 🟡 88% | [View](./src/locales/pl) |
+| 🇵🇹 **Português (Portuguese)** | 🟡 88% | [View](./src/locales/pt) |
+| 🇷🇺 **Русский (Russian)** | 🟡 88% | [View](./src/locales/ru) |
+| 🇺🇦 **Українська (Ukrainian)** | 🟡 88% | [View](./src/locales/uk) |
 | 🇸🇦 **العربية (Arabic)** | 🟡 85% | [View](./src/locales/ar) |
 | 🇹🇷 **Türkçe (Turkish)** | 🟡 68% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->

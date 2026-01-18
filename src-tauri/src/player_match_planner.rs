@@ -15,8 +15,7 @@
 //! - Comments are in English per repository preference.
 //! - This module is backend-only and intended to be called via Tauri commands.
 
-use std::collections::{HashMap, VecDeque};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -96,7 +95,12 @@ pub struct PlanOptions {
     pub quick_eval_limits: EngineLimits,
     pub candidate_limits: EngineLimits,
 
+    /// Controls how quickly we fall back from exact-state evidence to backoff evidence.
+    /// Larger values => rely more on backoff unless exact has strong support.
     pub backoff_k: f64,
+
+    /// Controls how strongly we smooth probabilities toward the prior distribution (Dirichlet prior strength).
+    /// 0 => no prior smoothing (pure MLE on observed counts). Larger values => more conservative.
     pub smoothing_alpha: f64,
 }
 
@@ -120,6 +124,9 @@ impl PlanOptions {
             return Err(Error::PackageManager(
                 "smoothingAlpha must be a finite value >= 0".to_string(),
             ));
+        }
+        if !self.backoff_k.is_finite() || self.backoff_k <= 0.0 {
+            return Err(Error::PackageManager("backoffK must be a finite value > 0".to_string()));
         }
         Ok(())
     }
@@ -324,10 +331,37 @@ struct PolicyKey {
     ctx: ContextKey,
 }
 
+/// Weighted move counter. We store f64 so we can apply recency decay (and other weighting) cleanly.
 #[derive(Debug, Default, Clone)]
 struct MoveCounter {
-    total: u32,
-    counts: HashMap<String, u32>, // UCI -> count
+    total: f64,
+    counts: HashMap<String, f64>, // UCI -> weighted count
+}
+
+/// Weighted mean accumulator for remaining clock seconds.
+#[derive(Debug, Default, Clone, Copy)]
+struct ClockStats {
+    weighted_sum: f64,
+    weight_sum: f64,
+}
+
+impl ClockStats {
+    fn add(&mut self, seconds: f64, weight: f64) {
+        if !(seconds.is_finite() && seconds >= 0.0) {
+            return;
+        }
+        let w = if weight.is_finite() && weight > 0.0 { weight } else { 1.0 };
+        self.weighted_sum += seconds * w;
+        self.weight_sum += w;
+    }
+
+    fn mean_seconds(self) -> Option<f64> {
+        if self.weight_sum > 0.0 && self.weighted_sum.is_finite() {
+            Some(self.weighted_sum / self.weight_sum)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -338,6 +372,8 @@ struct PolicyModel {
     exact_global: HashMap<u64, MoveCounter>,
     /// Context-agnostic backoff counts keyed by abstract state hash.
     backoff_global: HashMap<u64, MoveCounter>,
+    /// Mean remaining clock seconds observed for the target player, keyed by context.
+    clock_by_ctx: HashMap<ContextKey, ClockStats>,
 }
 
 /// Lightweight UCI runner used by the planner.
@@ -434,12 +470,7 @@ struct PlayerMatchPlanner {
 }
 
 impl PlayerMatchPlanner {
-    fn new(
-        core_db_path: PathBuf,
-        analysis_db_path: PathBuf,
-        engine: PlannerEngine,
-        profile_id: String,
-    ) -> Result<Self> {
+    fn new(core_db_path: PathBuf, analysis_db_path: PathBuf, engine: PlannerEngine, profile_id: String) -> Result<Self> {
         let core_db = Connection::open(core_db_path)?;
         let analysis_db = if analysis_db_path.exists() {
             match Connection::open_with_flags(analysis_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
@@ -498,6 +529,7 @@ impl PlayerMatchPlanner {
         let match_hour = dt.time().hour() as u8;
 
         let time_control_bucket = bucket_time_control(&ctx.time_control);
+        let time_control = parse_time_control_params(&ctx.time_control);
         let opponent_elo_bucket = bucket_elo(ctx.our_elo);
 
         let root_side_to_move = if start_pos.turn() == shakmaty::Color::White {
@@ -569,7 +601,16 @@ impl PlayerMatchPlanner {
             if side == ctx.our_color {
                 stats.expanded_our += 1;
                 let our_edges = self
-                    .expand_our_turn(ctx.target_player_id, &pos, ctx.our_color, ctx_key, ply_from_start, &opts)
+                    .expand_our_turn(
+                        ctx.target_player_id,
+                        &pos,
+                        ctx.our_color,
+                        ctx_key,
+                        ply_from_start,
+                        time_control,
+                        ctx.our_elo,
+                        &opts,
+                    )
                     .await?;
 
                 for e in our_edges {
@@ -597,7 +638,16 @@ impl PlayerMatchPlanner {
             } else {
                 stats.expanded_opp += 1;
                 let opp_edges = self
-                    .expand_opponent_turn(ctx.target_player_id, &pos, ctx_key, ply_from_start, &opts, node.reach_prob)
+                    .expand_opponent_turn(
+                        ctx.target_player_id,
+                        &pos,
+                        ctx_key,
+                        ply_from_start,
+                        time_control,
+                        ctx.our_elo,
+                        &opts,
+                        node.reach_prob,
+                    )
                     .await?;
 
                 for e in opp_edges {
@@ -662,12 +712,13 @@ impl PlayerMatchPlanner {
         );
         let model = self.train_model_for_player_scoped(&profile_id, target_player_id)?;
         info!(
-            "ensure_model_trained.done: target_player_id={} exact_states={} backoff_states={} exact_global_states={} backoff_global_states={}",
+            "ensure_model_trained.done: target_player_id={} exact_states={} backoff_states={} exact_global_states={} backoff_global_states={} clock_ctx_keys={}",
             target_player_id,
             model.exact.len(),
             model.backoff.len(),
             model.exact_global.len(),
             model.backoff_global.len(),
+            model.clock_by_ctx.len(),
         );
         self.models.insert(target_player_id, model);
         Ok(())
@@ -708,8 +759,11 @@ impl PlayerMatchPlanner {
             games_skipped_no_moves: u64,
             plies_total: u64,
             plies_for_target: u64,
+            clock_samples: u64,
         }
         let mut stats = TrainStats::default();
+
+        let now = Utc::now().naive_utc();
 
         let mut stmt = self.core_db.prepare(
             r#"
@@ -762,12 +816,16 @@ impl PlayerMatchPlanner {
             let weekday = weekday_to_u8(dt.date().weekday());
             let hour_bucket = bucket_hour(dt.time().hour() as u8);
 
+            // Exponential recency weighting (half-life in days).
+            let game_w = recency_weight_days(dt, now, 90.0);
+
             let start_fen = row.start_fen.clone().unwrap_or_else(|| "startpos".to_string());
             let mut pos = chess_from_fen_or_start(&start_fen)?;
 
             // PRIMARY move source: Games.Moves BLOB from profile DB.
             // We attempt to extract UCI/SAN tokens from a mixed binary/text encoding.
-            let (mut uci_seq, mut source) = decode_moves_blob_to_uci_sequence(row.moves_blob.as_deref(), &pos);
+            let (mut uci_seq, mut uci_clocks, mut source) =
+                decode_moves_blob_to_uci_sequence(row.moves_blob.as_deref(), &pos);
 
             // Optional fallback: analyzed PGN if BLOB extraction yields nothing.
             if uci_seq.is_empty() {
@@ -775,6 +833,7 @@ impl PlayerMatchPlanner {
                     if let Ok(tokens) = parse_pgn_san_tokens(&pgn_text) {
                         if let Ok(v) = pgn_tokens_to_uci_sequence(&pos, &tokens) {
                             uci_seq = v;
+                            uci_clocks = vec![None; uci_seq.len()];
                             source = MovesSource::AnalysisPgn;
                         }
                     }
@@ -819,22 +878,25 @@ impl PlayerMatchPlanner {
                         ply_bucket: bucket_ply(ply),
                     };
 
+                    if let Some(t_rem) = uci_clocks.get(ply).copied().flatten() {
+                        model
+                            .clock_by_ctx
+                            .entry(ctx_key)
+                            .or_default()
+                            .add(t_rem, game_w);
+                        stats.clock_samples += 1;
+                    }
+
                     let exact_state_hash = pos_state_hash(&pos)?;
                     let backoff_state_hash = hash_u64(&abstract_state_signature(&pos, ply));
 
-                    let pk_exact = PolicyKey {
-                        state_hash: exact_state_hash,
-                        ctx: ctx_key,
-                    };
-                    let pk_backoff = PolicyKey {
-                        state_hash: backoff_state_hash,
-                        ctx: ctx_key,
-                    };
+                    let pk_exact = PolicyKey { state_hash: exact_state_hash, ctx: ctx_key };
+                    let pk_backoff = PolicyKey { state_hash: backoff_state_hash, ctx: ctx_key };
 
-                    bump_counter(model.exact.entry(pk_exact).or_default(), &uci_norm);
-                    bump_counter(model.backoff.entry(pk_backoff).or_default(), &uci_norm);
-                    bump_counter(model.exact_global.entry(exact_state_hash).or_default(), &uci_norm);
-                    bump_counter(model.backoff_global.entry(backoff_state_hash).or_default(), &uci_norm);
+                    bump_counter(model.exact.entry(pk_exact).or_default(), &uci_norm, game_w);
+                    bump_counter(model.backoff.entry(pk_backoff).or_default(), &uci_norm, game_w);
+                    bump_counter(model.exact_global.entry(exact_state_hash).or_default(), &uci_norm, game_w);
+                    bump_counter(model.backoff_global.entry(backoff_state_hash).or_default(), &uci_norm, game_w);
                 }
 
                 // Training is best-effort: skip any game that becomes inconsistent.
@@ -846,7 +908,7 @@ impl PlayerMatchPlanner {
         }
 
         info!(
-            "train_model_for_player_scoped.done: games_total={} games_with_moves_blob={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} plies_total={} plies_for_target={} exact_states={} backoff_states={}",
+            "train_model_for_player_scoped.done: games_total={} games_with_moves_blob={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} plies_total={} plies_for_target={} clock_samples={} clock_ctx_keys={} exact_states={} backoff_states={}",
             stats.games_total,
             stats.games_with_moves_blob,
             stats.games_decoded_blob_pgn,
@@ -855,6 +917,8 @@ impl PlayerMatchPlanner {
             stats.games_skipped_no_moves,
             stats.plies_total,
             stats.plies_for_target,
+            stats.clock_samples,
+            model.clock_by_ctx.len(),
             model.exact.len(),
             model.backoff.len(),
         );
@@ -869,29 +933,31 @@ impl PlayerMatchPlanner {
 
         // Some installs may have (profile_id, game_id), others only (game_id).
         // Try the profile_id query first; on error, fallback to game_id-only.
-        let q1 = db.query_row(
-            r#"
+        let q1 = db
+            .query_row(
+                r#"
             SELECT analyzed_pgn
             FROM game_analysis
             WHERE profile_id = ?1 AND game_id = ?2 AND analyzed_pgn IS NOT NULL
             "#,
-            params![profile_id, game_id.to_string()],
-            |r| r.get::<_, String>(0),
-        ).optional();
+                params![profile_id, game_id.to_string()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional();
 
         match q1 {
             Ok(v) => Ok(v),
             Err(_) => {
                 let q2 = db
                     .query_row(
-                    r#"
+                        r#"
                     SELECT analyzed_pgn
                     FROM game_analysis
                     WHERE game_id = ?1 AND analyzed_pgn IS NOT NULL
                     "#,
-                    params![game_id.to_string()],
-                    |r| r.get::<_, String>(0),
-                )
+                        params![game_id.to_string()],
+                        |r| r.get::<_, String>(0),
+                    )
                     .optional();
                 match q2 {
                     Ok(v) => Ok(v),
@@ -907,6 +973,8 @@ impl PlayerMatchPlanner {
         pos: &Chess,
         ctx_key: ContextKey,
         ply_from_start: usize,
+        time_control: TimeControlParams,
+        elo: i32,
         opts: &PlanOptions,
         parent_reach_prob: f64,
     ) -> Result<Vec<BookEdge>> {
@@ -914,7 +982,18 @@ impl PlayerMatchPlanner {
         let from_id = hash_u64(&state_key_from_fen(&fen_full));
 
         let exact_state_hash = pos_state_hash(pos)?;
-        let policy = self.get_opponent_policy(target_player_id, pos, exact_state_hash, ctx_key, ply_from_start, opts)?;
+        let policy = self
+            .get_opponent_policy(
+                target_player_id,
+                pos,
+                exact_state_hash,
+                ctx_key,
+                ply_from_start,
+                time_control,
+                elo,
+                opts,
+            )
+            .await?;
 
         if policy.used_uniform && ply_from_start <= 12 {
             warn!(
@@ -970,6 +1049,8 @@ impl PlayerMatchPlanner {
         our_color: PlayerColor,
         ctx_key: ContextKey,
         ply_from_start: usize,
+        time_control: TimeControlParams,
+        elo: i32,
         opts: &PlanOptions,
     ) -> Result<Vec<BookEdge>> {
         let fen_full = normalize_fen(pos)?;
@@ -981,6 +1062,7 @@ impl PlayerMatchPlanner {
         for line in lines {
             let our_uci = line.bestmove_uci.clone();
             let pos_after_our = apply_uci_and_pos(pos, &our_uci)?;
+            let fen_after_our = normalize_fen(&pos_after_our)?;
 
             let exact_hash_after_our = pos_state_hash(&pos_after_our)?;
 
@@ -994,8 +1076,11 @@ impl PlayerMatchPlanner {
                 exact_hash_after_our,
                 reply_ctx,
                 ply_from_start + 1,
+                time_control,
+                elo,
                 opts,
-            )?;
+            )
+            .await?;
 
             if opponent_policy.used_uniform && ply_from_start <= 11 {
                 warn!(
@@ -1009,29 +1094,49 @@ impl PlayerMatchPlanner {
                 );
             }
 
+            // Expected value over opponent replies, including a conservative tail-mass approximation.
+            // We do NOT renormalize within topK; instead we keep the remaining probability mass as "OTHER"
+            // and approximate it using eval(pos_after_our). This reduces bias when topK covers little mass.
             let mut ev_white: f64 = 0.0;
+            let mut ev2_white: f64 = 0.0;
             let mut mass: f64 = 0.0;
 
-            for (opp_uci, p, _count) in opponent_policy.moves.into_iter().take(opts.opponent_top_k) {
+            for (opp_uci, p, _count) in opponent_policy.moves.iter().take(opts.opponent_top_k).cloned() {
                 let pos_after_reply = apply_uci_and_pos(&pos_after_our, &opp_uci)?;
                 let fen_after_reply = normalize_fen(&pos_after_reply)?;
                 let score_cp_white = self.cached_eval_cp(&fen_after_reply, opts.quick_eval_limits).await? as f64;
                 ev_white += p * score_cp_white;
+                ev2_white += p * score_cp_white * score_cp_white;
                 mass += p;
             }
 
-            if mass > 0.0 && mass < 0.999 {
-                ev_white /= mass;
+            let tail_mass = (1.0 - mass).max(0.0);
+            if tail_mass > 1e-9 {
+                // Conservative baseline: evaluation of the position after our move (opponent to move).
+                // This avoids optimistic renormalization when topK omits substantial probability mass.
+                let baseline_white = self.cached_eval_cp(&fen_after_our, opts.quick_eval_limits).await? as f64;
+                ev_white += tail_mass * baseline_white;
+                ev2_white += tail_mass * baseline_white * baseline_white;
             }
 
+            // Mild risk penalty when the opponent model is uncertain:
+            // objective = EV - rho * stddev, where rho depends on effective sample size.
+            let var_white = (ev2_white - ev_white * ev_white).max(0.0);
+            let sigma_white = var_white.sqrt();
+
             let ev_our = score_from_our_perspective(ev_white, our_color);
-            scored.push((our_uci, ev_our));
+            let sigma = sigma_white; // sigma is unsigned; penalize uncertainty regardless of color.
+
+            let rho = risk_aversion_from_policy(&opponent_policy);
+            let obj = ev_our - rho * sigma;
+
+            scored.push((our_uci, obj));
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut edges = Vec::new();
-        if let Some((best_uci, best_ev)) = scored.into_iter().next() {
+        if let Some((best_uci, best_obj)) = scored.into_iter().next() {
             let to_fen = apply_uci_and_fen(pos, &best_uci)?;
             let to_id = hash_u64(&state_key_from_fen(&to_fen));
 
@@ -1041,7 +1146,7 @@ impl PlayerMatchPlanner {
                 uci: best_uci,
                 prob: 1.0,
                 kind: EdgeKind::OurMove,
-                ev_cp_from_our_perspective: Some(best_ev),
+                ev_cp_from_our_perspective: Some(best_obj),
                 predicted_prob: None,
             });
         }
@@ -1074,13 +1179,270 @@ impl PlayerMatchPlanner {
         Ok(lines)
     }
 
-    fn get_opponent_policy(
+    async fn bounded_rationality_blunder_adjust(
+        &mut self,
+        pos: &Chess,
+        legal_uci: &[String],
+        pi_counts: &HashMap<String, f64>,
+        ply_from_start: usize,
+        ctx_key: ContextKey,
+        time_control: TimeControlParams,
+        t_rem_est_sec: f64,
+        elo: i32,
+        opts: &PlanOptions,
+    ) -> Result<(HashMap<String, f64>, BrBlunderDiagnostics)> {
+        // Model constants (tunable). Kept internal to avoid changing any public API.
+        const ETA: f64 = 1.0 / 250.0;
+        const U_MAX: f64 = 8.0;
+
+        const M0: f64 = 30.0;
+        const C: f64 = 1.0;
+
+        // Bounded rationality temperature parameters.
+        const B0: f64 = 0.0;
+        const B_E: f64 = 0.8;
+        const B_R: f64 = 1.0;
+
+        // Blunder probability parameters.
+        const W0: f64 = -2.0;
+        const W_G: f64 = 2.0;
+        const W_R: f64 = 2.0;
+        const W_E: f64 = 0.8;
+
+        // Blunder conditional distribution parameters.
+        const DELTA0: f64 = 0.6;
+        const D_R: f64 = 1.0;
+        const D_E: f64 = 0.5;
+
+        const C0: f64 = 0.0;
+        const C_R: f64 = 1.0;
+        const C_E: f64 = 0.5;
+
+        const EVAL_BUDGET: usize = 8;
+        const EVAL_MASS_TARGET: f64 = 0.85;
+
+        let clamp_f64 = |x: f64, lo: f64, hi: f64| x.max(lo).min(hi);
+        let sigmoid = |x: f64| 1.0 / (1.0 + (-x).exp());
+
+        let sign = if pos.turn() == shakmaty::Color::White { 1.0 } else { -1.0 };
+
+        let fen_full = normalize_fen(pos)?;
+
+        // Evaluation budget: start with MultiPV from the engine at the current position.
+        let m_engine = opts.opponent_top_k.max(4).min(6);
+        let pv_lines = self.cached_multipv(&fen_full, opts.quick_eval_limits, m_engine).await?;
+
+        let mut eval_u: HashMap<String, f64> = HashMap::new();
+        let mut eval_count_pv = 0usize;
+        for line in pv_lines {
+            if eval_u.contains_key(&line.bestmove_uci) {
+                continue;
+            }
+            if !legal_uci.iter().any(|m| m == &line.bestmove_uci) {
+                continue;
+            }
+            let u = clamp_f64(sign * (line.score_cp as f64) * ETA, -U_MAX, U_MAX);
+            eval_u.insert(line.bestmove_uci, u);
+            eval_count_pv += 1;
+        }
+
+        // Additionally evaluate a few high-probability moves from pi_counts that are not in the PV set.
+        let mut by_prob: Vec<(String, f64)> = legal_uci
+            .iter()
+            .map(|m| (m.clone(), pi_counts.get(m).copied().unwrap_or(0.0)))
+            .collect();
+        by_prob.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut eval_count_extra = 0usize;
+        let mut mass_covered = 0.0;
+        for (uci, p) in by_prob {
+            if eval_count_extra >= EVAL_BUDGET {
+                break;
+            }
+            if mass_covered >= EVAL_MASS_TARGET {
+                break;
+            }
+            if eval_u.contains_key(&uci) {
+                mass_covered += p;
+                continue;
+            }
+            if p <= 0.0 {
+                break;
+            }
+
+            let to_fen = apply_uci_and_fen(pos, &uci)?;
+            let score_cp_white = self.cached_eval_cp(&to_fen, opts.quick_eval_limits).await?;
+            let u = clamp_f64(sign * (score_cp_white as f64) * ETA, -U_MAX, U_MAX);
+            eval_u.insert(uci, u);
+            eval_count_extra += 1;
+            mass_covered += p;
+        }
+
+        // Conservative baseline for unevaluated moves.
+        let u_other = if eval_u.is_empty() {
+            0.0
+        } else {
+            let mean_u = eval_u.values().copied().sum::<f64>() / (eval_u.len() as f64);
+            clamp_f64(mean_u - 0.3, -U_MAX, U_MAX)
+        };
+
+        // Compute best and second-best utility among evaluated moves.
+        let (u_best, u_second) = if eval_u.is_empty() {
+            (u_other, u_other)
+        } else {
+            let mut v: Vec<f64> = eval_u.values().copied().collect();
+            v.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+            let best = v[0];
+            let second = v.get(1).copied().unwrap_or(best);
+            (best, second)
+        };
+
+        let gap = clamp_f64((u_best - u_second).max(0.0), 0.0, U_MAX * 2.0);
+
+        // Time pressure model.
+        let base = time_control.base_sec as f64;
+        let inc = time_control.inc_sec as f64;
+        let ply_moves = (ply_from_start as f64) / 2.0;
+        let mu = inc + base / (M0 + C * ply_moves).max(1.0);
+        let t_rem = if t_rem_est_sec.is_finite() && t_rem_est_sec >= 0.0 {
+            t_rem_est_sec
+        } else {
+            base
+        };
+        let r = sigmoid((t_rem + 1.0).ln() - (mu + 1.0).ln());
+
+        // Elo normalization (reliable opponent-elo of the player facing the target).
+        let e_norm = (elo as f64 - 1500.0) / 400.0;
+
+        // Bounded rationality temperature (beta).
+        let beta = clamp_f64((B0 + B_E * e_norm + B_R * (r - 0.5)).exp(), 0.05, 10.0);
+
+        // Bounded rationality distribution: p_BR(m) ∝ pi_counts(m) * exp(beta * U(m)).
+        let mut max_x = f64::NEG_INFINITY;
+        for uci in legal_uci {
+            let u = eval_u.get(uci).copied().unwrap_or(u_other);
+            max_x = max_x.max(clamp_f64(beta * u, -80.0, 80.0));
+        }
+
+        let mut p_br: HashMap<String, f64> = HashMap::new();
+        let mut z_br = 0.0;
+        for uci in legal_uci {
+            let prior_p = pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0);
+            if prior_p <= 0.0 {
+                p_br.insert(uci.clone(), 0.0);
+                continue;
+            }
+            let u = eval_u.get(uci).copied().unwrap_or(u_other);
+            let x = clamp_f64(beta * u, -80.0, 80.0);
+            let w = prior_p * (x - max_x).exp();
+            if w.is_finite() && w > 0.0 {
+                z_br += w;
+                p_br.insert(uci.clone(), w);
+            } else {
+                p_br.insert(uci.clone(), 0.0);
+            }
+        }
+        if !(z_br.is_finite() && z_br > 0.0) {
+            // Degenerate: fall back to pi_counts.
+            p_br.clear();
+            for uci in legal_uci {
+                p_br.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+            }
+            normalize_dist_in_place(&mut p_br, legal_uci);
+        } else {
+            for uci in legal_uci {
+                let v = p_br.get(uci).copied().unwrap_or(0.0) / z_br;
+                p_br.insert(uci.clone(), if v.is_finite() { v.max(0.0) } else { 0.0 });
+            }
+            normalize_dist_in_place(&mut p_br, legal_uci);
+        }
+
+        // Blunder probability pi_B.
+        let pi_b_raw = sigmoid(W0 + W_G * gap + W_R * (0.5 - r) + W_E * (-e_norm));
+        let pi_b = clamp_f64(pi_b_raw, 0.0, 0.95);
+
+        // Blunder conditional distribution over sufficiently regretful moves.
+        let delta = clamp_f64(DELTA0 * (D_R * (0.5 - r) + D_E * (-e_norm)).exp(), 0.2, 4.0);
+        let gamma = clamp_f64((C0 + C_R * (r - 0.5) + C_E * e_norm).exp(), 0.1, 10.0);
+
+        let mut p_b: HashMap<String, f64> = HashMap::new();
+        let mut z_b = 0.0;
+        for uci in legal_uci {
+            let prior_p = pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0);
+            if prior_p <= 0.0 {
+                p_b.insert(uci.clone(), 0.0);
+                continue;
+            }
+            let u = eval_u.get(uci).copied().unwrap_or(u_other);
+            let regret = (u_best - u).max(0.0);
+            if regret + 1e-12 < delta {
+                p_b.insert(uci.clone(), 0.0);
+                continue;
+            }
+            let w = prior_p * (-gamma * regret).exp();
+            if w.is_finite() && w > 0.0 {
+                z_b += w;
+                p_b.insert(uci.clone(), w);
+            } else {
+                p_b.insert(uci.clone(), 0.0);
+            }
+        }
+
+        if !(z_b.is_finite() && z_b > 0.0) {
+            // Empty blunder set: fall back to a diffuse distribution (pi_counts).
+            p_b.clear();
+            for uci in legal_uci {
+                p_b.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+            }
+            normalize_dist_in_place(&mut p_b, legal_uci);
+        } else {
+            for uci in legal_uci {
+                let v = p_b.get(uci).copied().unwrap_or(0.0) / z_b;
+                p_b.insert(uci.clone(), if v.is_finite() { v.max(0.0) } else { 0.0 });
+            }
+            normalize_dist_in_place(&mut p_b, legal_uci);
+        }
+
+        // Final mixture.
+        let mut p_final: HashMap<String, f64> = HashMap::new();
+        for uci in legal_uci {
+            let a = p_br.get(uci).copied().unwrap_or(0.0);
+            let b = p_b.get(uci).copied().unwrap_or(0.0);
+            let v = (1.0 - pi_b) * a + pi_b * b;
+            p_final.insert(uci.clone(), if v.is_finite() { v.max(0.0) } else { 0.0 });
+        }
+        normalize_dist_in_place(&mut p_final, legal_uci);
+
+        let diag = BrBlunderDiagnostics {
+            ply_from_start,
+            time_control_bucket: ctx_key.time_control_bucket,
+            t_rem_est_sec: t_rem,
+            mu_est_sec: mu,
+            r,
+            beta,
+            pi_b,
+            gap,
+            delta,
+            gamma,
+            u_best,
+            u_second,
+            u_other,
+            eval_count_pv,
+            eval_count_extra,
+        };
+
+        Ok((p_final, diag))
+    }
+
+    async fn get_opponent_policy(
         &mut self,
         target_player_id: i64,
         pos: &Chess,
         exact_state_hash: u64,
         ctx_key: ContextKey,
         ply_from_start: usize,
+        time_control: TimeControlParams,
+        elo: i32,
         opts: &PlanOptions,
     ) -> Result<OpponentPolicy> {
         let cache_key = (target_player_id, exact_state_hash, ctx_key);
@@ -1088,113 +1450,202 @@ impl PlayerMatchPlanner {
             return Ok(v.clone());
         }
 
-        let model = self
-            .models
-            .get(&target_player_id)
-            .ok_or_else(|| Error::PackageManager("Model not trained".to_string()))?;
-
         let backoff_hash = hash_u64(&abstract_state_signature(pos, ply_from_start));
 
         let pk_exact = PolicyKey { state_hash: exact_state_hash, ctx: ctx_key };
         let pk_backoff = PolicyKey { state_hash: backoff_hash, ctx: ctx_key };
 
-        let exact_counter_ctx = model.exact.get(&pk_exact);
-        let backoff_counter_ctx = model.backoff.get(&pk_backoff);
-        let exact_counter_global = model.exact_global.get(&exact_state_hash);
-        let backoff_counter_global = model.backoff_global.get(&backoff_hash);
-
-        let exact_total_ctx = exact_counter_ctx.map(|c| c.total).unwrap_or(0);
-        let backoff_total_ctx = backoff_counter_ctx.map(|c| c.total).unwrap_or(0);
-        let exact_total_global = exact_counter_global.map(|c| c.total).unwrap_or(0);
-        let backoff_total_global = backoff_counter_global.map(|c| c.total).unwrap_or(0);
-
         let legal_uci = legal_moves_uci(pos);
 
-        let p_exact_ctx = probs_from_counter(exact_counter_ctx, &legal_uci, opts.smoothing_alpha);
-        let p_backoff_ctx = probs_from_counter(backoff_counter_ctx, &legal_uci, opts.smoothing_alpha);
-        let p_exact_global = probs_from_counter(exact_counter_global, &legal_uci, opts.smoothing_alpha);
-        let p_backoff_global = probs_from_counter(backoff_counter_global, &legal_uci, opts.smoothing_alpha);
+        // Hierarchical Bayesian posterior chain (no heuristic blending):
+        //
+        // p0 (uniform over legal moves)
+        //   -> update with backoff_global (alpha = smoothing_alpha)
+        //     -> update with exact_global   (alpha = backoff_k)      // how quickly exact overrides the backoff prior
+        //       -> update with backoff_ctx  (alpha = smoothing_alpha)
+        //         -> update with exact_ctx  (alpha = backoff_k)
+        //
+        // Each update is a Dirichlet posterior mean:
+        //   post(m) = (count(m) + K * prior(m)) / (N + K)
+        //
+        // This yields a true hierarchical posterior without ad-hoc convex blends.
 
-        // Context key includes several buckets (time, elo, weekday/hour, ply). That can fragment the data too much.
-        // We therefore blend context-specific counts with context-agnostic counts, preferring context only when it is well-sampled.
-        const CTX_BLEND_K: f64 = 200.0;
-        let w_exact_ctx = if exact_total_global == 0 {
-            1.0
-        } else {
-            (exact_total_ctx as f64) / (exact_total_ctx as f64 + CTX_BLEND_K)
+        let (
+            p_counts,
+            counts_by_uci,
+            exact_total_ctx,
+            backoff_total_ctx,
+            exact_total_global,
+            backoff_total_global,
+            used_uniform,
+            z_ctx,
+            z_global,
+            effective_n,
+            t_rem_est_sec,
+        ) = {
+            let model = self
+                .models
+                .get(&target_player_id)
+                .ok_or_else(|| Error::PackageManager("Model not trained".to_string()))?;
+
+            let exact_counter_ctx = model.exact.get(&pk_exact);
+            let backoff_counter_ctx = model.backoff.get(&pk_backoff);
+            let exact_counter_global = model.exact_global.get(&exact_state_hash);
+            let backoff_counter_global = model.backoff_global.get(&backoff_hash);
+
+            let exact_total_ctx = exact_counter_ctx.map(|c| c.total).unwrap_or(0.0);
+            let backoff_total_ctx = backoff_counter_ctx.map(|c| c.total).unwrap_or(0.0);
+            let exact_total_global = exact_counter_global.map(|c| c.total).unwrap_or(0.0);
+            let backoff_total_global = backoff_counter_global.map(|c| c.total).unwrap_or(0.0);
+
+            // Base prior: uniform over legal moves (full support).
+            let p_uniform = probs_from_counter(None, &legal_uci, 0.0);
+
+            // Level 1: backoff_global posterior.
+            let p_backoff_global = dirichlet_posterior(&p_uniform, backoff_counter_global, &legal_uci, opts.smoothing_alpha);
+
+            // Level 2: exact_global posterior (prior is backoff_global).
+            let p_exact_global = dirichlet_posterior(&p_backoff_global, exact_counter_global, &legal_uci, opts.backoff_k);
+
+            // Level 3: backoff_ctx posterior (prior is exact_global).
+            let p_backoff_ctx = dirichlet_posterior(&p_exact_global, backoff_counter_ctx, &legal_uci, opts.smoothing_alpha);
+
+            // Level 4: exact_ctx posterior (prior is backoff_ctx).
+            let p_counts = dirichlet_posterior(&p_backoff_ctx, exact_counter_ctx, &legal_uci, opts.backoff_k);
+
+            let used_uniform =
+                exact_total_ctx <= 0.0 && backoff_total_ctx <= 0.0 && exact_total_global <= 0.0 && backoff_total_global <= 0.0;
+
+            // For telemetry/debug visibility, keep a credibility-like scalar that indicates how much
+            // the exact-context evidence dominates its prior at the last step.
+            let z_ctx = if exact_total_ctx <= 0.0 {
+                0.0
+            } else {
+                exact_total_ctx / (exact_total_ctx + opts.backoff_k.max(1.0))
+            };
+
+            let z_global = if exact_total_global <= 0.0 {
+                0.0
+            } else {
+                exact_total_global / (exact_total_global + opts.backoff_k.max(1.0))
+            };
+
+            let effective_n = exact_total_ctx + backoff_total_ctx + 0.25 * (exact_total_global + backoff_total_global);
+
+            // Estimate remaining time from training clocks for this context (if available). This is a best-effort
+            // proxy when a live clock is not available at planning time.
+            let t_rem_est_sec = model
+                .clock_by_ctx
+                .get(&ctx_key)
+                .copied()
+                .and_then(|s| s.mean_seconds())
+                .unwrap_or(time_control.base_sec as f64);
+
+            let mut counts_by_uci: HashMap<String, u32> = HashMap::new();
+            for uci in &legal_uci {
+                let c = exact_counter_ctx
+                    .and_then(|ec| ec.counts.get(uci).copied())
+                    .or_else(|| exact_counter_global.and_then(|ec| ec.counts.get(uci).copied()))
+                    .unwrap_or(0.0);
+                counts_by_uci.insert(uci.clone(), c.round().max(0.0) as u32);
+            }
+
+            (
+                p_counts,
+                counts_by_uci,
+                exact_total_ctx,
+                backoff_total_ctx,
+                exact_total_global,
+                backoff_total_global,
+                used_uniform,
+                z_ctx,
+                z_global,
+                effective_n,
+                t_rem_est_sec,
+            )
         };
-        let w_backoff_ctx = if backoff_total_global == 0 {
-            1.0
-        } else {
-            (backoff_total_ctx as f64) / (backoff_total_ctx as f64 + CTX_BLEND_K)
-        };
 
-        let mut p_exact: HashMap<String, f64> = HashMap::new();
-        let mut p_backoff: HashMap<String, f64> = HashMap::new();
-        for uci in &legal_uci {
-            let pe = w_exact_ctx * p_exact_ctx.get(uci).copied().unwrap_or(0.0)
-                + (1.0 - w_exact_ctx) * p_exact_global.get(uci).copied().unwrap_or(0.0);
-            let pb = w_backoff_ctx * p_backoff_ctx.get(uci).copied().unwrap_or(0.0)
-                + (1.0 - w_backoff_ctx) * p_backoff_global.get(uci).copied().unwrap_or(0.0);
-            p_exact.insert(uci.clone(), pe);
-            p_backoff.insert(uci.clone(), pb);
-        }
+        // Apply bounded rationality + blunder mixture on top of the learned posterior.
+        let (p_adjusted, br_diag) = self
+            .bounded_rationality_blunder_adjust(
+                pos,
+                &legal_uci,
+                &p_counts,
+                ply_from_start,
+                ctx_key,
+                time_control,
+                t_rem_est_sec,
+                elo,
+                opts,
+            )
+            .await?;
 
-        let effective_exact_n = w_exact_ctx * (exact_total_ctx as f64) + (1.0 - w_exact_ctx) * (exact_total_global as f64);
-        let lambda = effective_exact_n / (effective_exact_n + opts.backoff_k.max(1.0));
-
+        // Sort by probability.
         let mut mixed: Vec<(String, f64)> = Vec::with_capacity(legal_uci.len());
         for uci in &legal_uci {
-            let pe = *p_exact.get(uci).unwrap_or(&0.0);
-            let pb = *p_backoff.get(uci).unwrap_or(&0.0);
-            mixed.push((uci.clone(), lambda * pe + (1.0 - lambda) * pb));
+            mixed.push((uci.clone(), p_adjusted.get(uci).copied().unwrap_or(0.0)));
         }
 
-        let z: f64 = mixed.iter().map(|(_, p)| p).sum();
-        let mut used_uniform = (exact_total_ctx == 0 && exact_total_global == 0) && (backoff_total_ctx == 0 && backoff_total_global == 0);
-        if z > 0.0 {
-            for (_, p) in mixed.iter_mut() {
-                *p /= z;
+        let zsum: f64 = mixed.iter().map(|(_, p)| p).sum();
+        if !(zsum.is_finite() && zsum > 0.0) {
+            // Degenerate: fall back to uniform.
+            mixed.clear();
+            let p = if legal_uci.is_empty() { 0.0 } else { 1.0 / legal_uci.len() as f64 };
+            for uci in &legal_uci {
+                mixed.push((uci.clone(), p));
             }
-        } else if !mixed.is_empty() {
-            let uniform_p = 1.0 / mixed.len() as f64;
+        } else {
             for (_, p) in mixed.iter_mut() {
-                *p = uniform_p;
+                *p = (*p / zsum).max(0.0);
             }
-            used_uniform = true;
         }
 
         mixed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut with_counts: Vec<(String, f64, u32)> = Vec::new();
         for (uci, p) in mixed {
-            let c = exact_counter_global
-                .and_then(|ec| ec.counts.get(&uci).copied())
-                .or_else(|| exact_counter_ctx.and_then(|ec| ec.counts.get(&uci).copied()))
-                .unwrap_or(0);
+            let c = counts_by_uci.get(&uci).copied().unwrap_or(0);
             with_counts.push((uci, p, c));
         }
 
         let policy = OpponentPolicy {
             moves: with_counts,
-            exact_total: exact_total_global,
-            backoff_total: backoff_total_global,
-            lambda,
+            // Keep these as GLOBAL totals (stable for logs/UI debug).
+            exact_total: exact_total_global.round().max(0.0) as u32,
+            backoff_total: backoff_total_global.round().max(0.0) as u32,
+            lambda: z_ctx,
             used_uniform,
+            effective_n,
         };
 
-        // Keep log visibility at the root-ish area where debugging is most valuable.
         if ply_from_start <= 12 {
             debug!(
-                "get_opponent_policy: ply={} legal_moves={} exact_total(ctx/global)={}/{} backoff_total(ctx/global)={}/{} lambda={:.3} used_uniform={} ctx={:?}",
+                "get_opponent_policy: ply={} legal_moves={} exact_total(ctx/global)={:.1}/{:.1} backoff_total(ctx/global)={:.1}/{:.1} z_ctx={:.3} z_global={:.3} used_uniform={} eff_n={:.1} br={{tc_bkt={} ply={} r={:.3} beta={:.3} pi_b={:.3} gap={:.3} delta={:.3} gamma={:.3} u_best={:.2} u_2nd={:.2} u_other={:.2} t_rem={:.1}s mu={:.1}s eval_pv={} eval_extra={}}} ctx={:?}",
                 ply_from_start,
                 legal_uci.len(),
                 exact_total_ctx,
                 exact_total_global,
                 backoff_total_ctx,
                 backoff_total_global,
-                lambda,
+                z_ctx,
+                z_global,
                 used_uniform,
+                effective_n,
+                br_diag.time_control_bucket,
+                br_diag.ply_from_start,
+                br_diag.r,
+                br_diag.beta,
+                br_diag.pi_b,
+                br_diag.gap,
+                br_diag.delta,
+                br_diag.gamma,
+                br_diag.u_best,
+                br_diag.u_second,
+                br_diag.u_other,
+                br_diag.t_rem_est_sec,
+                br_diag.mu_est_sec,
+                br_diag.eval_count_pv,
+                br_diag.eval_count_extra,
                 ctx_key
             );
         }
@@ -1211,6 +1662,27 @@ struct OpponentPolicy {
     backoff_total: u32,
     lambda: f64,
     used_uniform: bool,
+    effective_n: f64,
+}
+
+/// Internal diagnostics for the bounded-rationality + blunder adjustment. This is not exposed to the frontend.
+#[derive(Debug, Clone, Copy)]
+struct BrBlunderDiagnostics {
+    ply_from_start: usize,
+    time_control_bucket: u8,
+    t_rem_est_sec: f64,
+    mu_est_sec: f64,
+    r: f64,
+    beta: f64,
+    pi_b: f64,
+    gap: f64,
+    delta: f64,
+    gamma: f64,
+    u_best: f64,
+    u_second: f64,
+    u_other: f64,
+    eval_count_pv: usize,
+    eval_count_extra: usize,
 }
 
 // -----------------------------
@@ -1221,7 +1693,11 @@ fn score_to_cp(v: &ScoreValue) -> i32 {
     match *v {
         ScoreValue::Cp(x) => x,
         ScoreValue::Mate(m) => {
-            if m >= 0 { 100_000 } else { -100_000 }
+            if m >= 0 {
+                100_000
+            } else {
+                -100_000
+            }
         }
     }
 }
@@ -1251,6 +1727,20 @@ fn score_from_our_perspective(score_cp_white: f64, our_color: PlayerColor) -> f6
     match our_color {
         PlayerColor::White => score_cp_white,
         PlayerColor::Black => -score_cp_white,
+    }
+}
+
+fn risk_aversion_from_policy(p: &OpponentPolicy) -> f64 {
+    // Keep this intentionally mild to avoid surprising move choices.
+    // Increase penalty only when the policy is basically unknown / sparse.
+    if p.used_uniform {
+        0.20
+    } else if p.effective_n < 10.0 {
+        0.10
+    } else if p.effective_n < 25.0 {
+        0.05
+    } else {
+        0.0
     }
 }
 
@@ -1340,13 +1830,7 @@ fn write_pgn_from_node(
     let side_to_move = node_by_id
         .get(&node_id)
         .map(|n| n.side_to_move)
-        .unwrap_or_else(|| {
-            if pos.turn() == shakmaty::Color::White {
-                PlayerColor::White
-            } else {
-                PlayerColor::Black
-            }
-        });
+        .unwrap_or_else(|| if pos.turn() == shakmaty::Color::White { PlayerColor::White } else { PlayerColor::Black });
 
     let mut edges = edges_by_from.get(&node_id).cloned().unwrap_or_default();
     if edges.is_empty() {
@@ -1560,7 +2044,6 @@ fn pos_state_hash(pos: &Chess) -> Result<u64> {
 fn san_to_move(pos: &Chess, san: &str) -> Result<shakmaty::Move> {
     let cleaned = sanitize_san(san);
     let sp = SanPlus::from_str(&cleaned)?;
-    // shakmaty 0.27: SanPlus has .san, but we keep compatibility.
     Ok(sp.san.to_move(pos)?)
 }
 
@@ -1662,20 +2145,27 @@ enum MovesSource {
 ///
 /// If your `Moves` is fully binary (no ASCII SAN/UCI present), this will yield empty and you should
 /// plug in your real serializer/decoder here.
-fn decode_moves_blob_to_uci_sequence(moves_blob: Option<&[u8]>, start_pos: &Chess) -> (Vec<String>, MovesSource) {
-    let Some(bytes) = moves_blob else { return (Vec::new(), MovesSource::None); };
-    if bytes.is_empty() { return (Vec::new(), MovesSource::None); }
+fn decode_moves_blob_to_uci_sequence(
+    moves_blob: Option<&[u8]>,
+    start_pos: &Chess,
+) -> (Vec<String>, Vec<Option<f64>>, MovesSource) {
+    let Some(bytes) = moves_blob else {
+        return (Vec::new(), Vec::new(), MovesSource::None);
+    };
+    if bytes.is_empty() {
+        return (Vec::new(), Vec::new(), MovesSource::None);
+    }
 
     if let Some(seq) = decode_moves_blob_as_pgn(bytes, start_pos) {
-        return (seq, MovesSource::BlobPgn);
+        return (seq.clone(), vec![None; seq.len()], MovesSource::BlobPgn);
     }
 
     let soup = blob_to_ascii_soup(bytes);
-    let seq = extract_uci_from_ascii_soup(&soup, start_pos);
+    let (seq, clocks) = extract_uci_from_ascii_soup(&soup, start_pos);
     if seq.is_empty() {
-        (seq, MovesSource::None)
+        (seq, clocks, MovesSource::None)
     } else {
-        (seq, MovesSource::BlobSoup)
+        (seq, clocks, MovesSource::BlobSoup)
     }
 }
 
@@ -1707,17 +2197,52 @@ fn blob_to_ascii_soup(bytes: &[u8]) -> String {
     out
 }
 
+fn parse_clock_seconds(token: &str) -> Option<f64> {
+    let t = token
+        .trim()
+        .trim_end_matches(']')
+        .trim_end_matches('}')
+        .trim_matches('"')
+        .trim();
+
+    if t.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<&str> = t.split(':').collect();
+    match parts.len() {
+        3 => {
+            let h = parts[0].trim().parse::<f64>().ok()?;
+            let m = parts[1].trim().parse::<f64>().ok()?;
+            let s = parts[2].trim().parse::<f64>().ok()?;
+            Some(h * 3600.0 + m * 60.0 + s)
+        }
+        2 => {
+            let m = parts[0].trim().parse::<f64>().ok()?;
+            let s = parts[1].trim().parse::<f64>().ok()?;
+            Some(m * 60.0 + s)
+        }
+        1 => parts[0].trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
 /// Extracts UCI moves by walking the position and validating each candidate token.
 /// Supports either UCI tokens directly or SAN tokens convertible via shakmaty.
-fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> Vec<String> {
+fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> (Vec<String>, Vec<Option<f64>>) {
     let mut pos = start_pos.clone();
     let mut out: Vec<String> = Vec::new();
+    let mut clocks: Vec<Option<f64>> = Vec::new();
 
     let mut in_bracket_tag = false;
+    let mut expect_clock_value = false;
+    let mut last_move_idx: Option<usize> = None;
 
     for raw in s.split_whitespace() {
         let t = raw.trim();
-        if t.is_empty() { continue; }
+        if t.is_empty() {
+            continue;
+        }
 
         // Skip result markers.
         if t == "1-0" || t == "0-1" || t == "1/2-1/2" || t == "*" {
@@ -1729,8 +2254,35 @@ fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> Vec<String> {
             in_bracket_tag = true;
         }
         if in_bracket_tag {
+            // Extract clock tags when present: "[%clk H:MM:SS]". We attach the parsed time
+            // to the most recent move (clock appears after a move in PGN comments).
+            let inner = t.trim_start_matches('[').trim_end_matches(']');
+            let inner = inner.trim();
+
+            if inner.starts_with("%clk") {
+                let rest = inner.trim_start_matches("%clk").trim();
+                if !rest.is_empty() {
+                    if let Some(sec) = parse_clock_seconds(rest) {
+                        if let Some(idx) = last_move_idx {
+                            clocks[idx] = Some(sec);
+                        }
+                    }
+                    expect_clock_value = false;
+                } else {
+                    expect_clock_value = true;
+                }
+            } else if expect_clock_value {
+                if let Some(sec) = parse_clock_seconds(inner) {
+                    if let Some(idx) = last_move_idx {
+                        clocks[idx] = Some(sec);
+                    }
+                }
+                expect_clock_value = false;
+            }
+
             if t.ends_with(']') {
                 in_bracket_tag = false;
+                expect_clock_value = false;
             }
             continue;
         }
@@ -1746,7 +2298,9 @@ fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> Vec<String> {
             continue;
         }
         let cleaned = sanitize_san(t);
-        if cleaned.is_empty() { continue; }
+        if cleaned.is_empty() {
+            continue;
+        }
 
         // If it matches UCI shape, try UCI first.
         if looks_like_uci(&cleaned) {
@@ -1754,6 +2308,8 @@ fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> Vec<String> {
                 let u = mv.to_uci(CastlingMode::Standard).to_string();
                 pos.play_unchecked(&mv);
                 out.push(u);
+                clocks.push(None);
+                last_move_idx = Some(out.len().saturating_sub(1));
                 continue;
             }
         }
@@ -1763,11 +2319,13 @@ fn extract_uci_from_ascii_soup(s: &str, start_pos: &Chess) -> Vec<String> {
             let u = mv.to_uci(CastlingMode::Standard).to_string();
             pos.play_unchecked(&mv);
             out.push(u);
+            clocks.push(None);
+            last_move_idx = Some(out.len().saturating_sub(1));
             continue;
         }
     }
 
-    out
+    (out, clocks)
 }
 
 fn looks_like_uci(t: &str) -> bool {
@@ -1808,7 +2366,7 @@ fn pgn_tokens_to_uci_sequence(start_pos: &Chess, tokens: &[String]) -> Result<Ve
         } else {
             san_to_move(&pos, &cleaned).or_else(|_| uci_to_move(&pos, &cleaned))
         };
-        let Ok(mv) = mv else { break; };
+        let Ok(mv) = mv else { break };
 
         let uci = mv.to_uci(CastlingMode::Standard).to_string();
         pos.play_unchecked(&mv);
@@ -1822,11 +2380,14 @@ fn pgn_tokens_to_uci_sequence(start_pos: &Chess, tokens: &[String]) -> Result<Ve
 // Helpers: policy
 // -----------------------------
 
-fn bump_counter(counter: &mut MoveCounter, uci: &str) {
-    counter.total = counter.total.saturating_add(1);
-    *counter.counts.entry(uci.to_string()).or_insert(0) += 1;
+fn bump_counter(counter: &mut MoveCounter, uci: &str, weight: f64) {
+    let w = if weight.is_finite() && weight > 0.0 { weight } else { 1.0 };
+    counter.total += w;
+    *counter.counts.entry(uci.to_string()).or_insert(0.0) += w;
 }
 
+/// Converts a counter into a full-support distribution over `legal_moves`.
+/// Uses f64 weighted counts and Laplace-style additive smoothing (alpha).
 fn probs_from_counter(counter: Option<&MoveCounter>, legal_moves: &[String], alpha: f64) -> HashMap<String, f64> {
     let mut out: HashMap<String, f64> = HashMap::new();
     if legal_moves.is_empty() {
@@ -1836,12 +2397,12 @@ fn probs_from_counter(counter: Option<&MoveCounter>, legal_moves: &[String], alp
     let alpha = alpha.max(0.0);
 
     let (total, counts) = if let Some(c) = counter {
-        (c.total as f64, Some(&c.counts))
+        (c.total, Some(&c.counts))
     } else {
         (0.0, None)
     };
 
-    // If alpha is 0 and there is no data, fall back to uniform probability.
+    // If no evidence and alpha is 0, return uniform.
     if total <= 0.0 && alpha <= 0.0 {
         let p = 1.0 / n_legal;
         for uci in legal_moves {
@@ -1860,16 +2421,140 @@ fn probs_from_counter(counter: Option<&MoveCounter>, legal_moves: &[String], alp
     }
 
     for uci in legal_moves {
-        let c = counts.and_then(|m| m.get(uci)).copied().unwrap_or(0) as f64;
+        let c = counts.and_then(|m| m.get(uci)).copied().unwrap_or(0.0);
         let p = (c + alpha) / denom;
         out.insert(uci.clone(), p);
     }
     out
 }
 
+/// Dirichlet posterior mean:
+/// posterior(m) = (count(m) + prior_strength * prior(m)) / (total + prior_strength)
+fn dirichlet_posterior(
+    prior: &HashMap<String, f64>,
+    counter: Option<&MoveCounter>,
+    legal_moves: &[String],
+    prior_strength: f64,
+) -> HashMap<String, f64> {
+    let mut out: HashMap<String, f64> = HashMap::new();
+    if legal_moves.is_empty() {
+        return out;
+    }
+
+    let prior_strength = prior_strength.max(0.0);
+    let total = counter.map(|c| c.total).unwrap_or(0.0);
+
+    // If no local evidence, posterior is just the prior.
+    if total <= 0.0 {
+        for uci in legal_moves {
+            out.insert(uci.clone(), prior.get(uci).copied().unwrap_or(0.0));
+        }
+        normalize_dist_in_place(&mut out, legal_moves);
+        return out;
+    }
+
+    // If prior_strength is 0, posterior is MLE over local evidence (with no smoothing).
+    if prior_strength <= 0.0 {
+        let mut z = 0.0;
+        for uci in legal_moves {
+            let c = counter.and_then(|c| c.counts.get(uci)).copied().unwrap_or(0.0).max(0.0);
+            out.insert(uci.clone(), c);
+            z += c;
+        }
+        if z > 0.0 {
+            for v in out.values_mut() {
+                *v /= z;
+            }
+        } else {
+            // Degenerate: fall back to prior if somehow all counts are 0.
+            for uci in legal_moves {
+                out.insert(uci.clone(), prior.get(uci).copied().unwrap_or(0.0));
+            }
+            normalize_dist_in_place(&mut out, legal_moves);
+        }
+        return out;
+    }
+
+    let denom = total + prior_strength;
+    if denom <= 0.0 {
+        for uci in legal_moves {
+            out.insert(uci.clone(), prior.get(uci).copied().unwrap_or(0.0));
+        }
+        normalize_dist_in_place(&mut out, legal_moves);
+        return out;
+    }
+
+    for uci in legal_moves {
+        let c = counter.and_then(|c| c.counts.get(uci)).copied().unwrap_or(0.0).max(0.0);
+        let p0 = prior.get(uci).copied().unwrap_or(0.0).max(0.0);
+        let p = (c + prior_strength * p0) / denom;
+        out.insert(uci.clone(), p);
+    }
+
+    normalize_dist_in_place(&mut out, legal_moves);
+    out
+}
+
+fn normalize_dist_in_place(dist: &mut HashMap<String, f64>, legal_moves: &[String]) {
+    if legal_moves.is_empty() {
+        return;
+    }
+    let mut z = 0.0;
+    for uci in legal_moves {
+        z += dist.get(uci).copied().unwrap_or(0.0).max(0.0);
+    }
+    if z > 0.0 {
+        for uci in legal_moves {
+            let v = dist.get(uci).copied().unwrap_or(0.0).max(0.0) / z;
+            dist.insert(uci.clone(), v);
+        }
+    } else {
+        let p = 1.0 / legal_moves.len() as f64;
+        for uci in legal_moves {
+            dist.insert(uci.clone(), p);
+        }
+    }
+}
+
+fn recency_weight_days(game_dt: NaiveDateTime, now: NaiveDateTime, half_life_days: f64) -> f64 {
+    if !(half_life_days.is_finite() && half_life_days > 0.0) {
+        return 1.0;
+    }
+    let age_days = now
+        .date()
+        .signed_duration_since(game_dt.date())
+        .num_days()
+        .max(0) as f64;
+    // weight = 0.5^(age/half_life)
+    let w = 0.5_f64.powf(age_days / half_life_days);
+    if w.is_finite() && w > 0.0 { w } else { 1.0 }
+}
+
 // -----------------------------
 // Helpers: context
 // -----------------------------
+
+#[derive(Debug, Clone, Copy)]
+struct TimeControlParams {
+    base_sec: u32,
+    inc_sec: u32,
+}
+
+fn parse_time_control_params(tc: &str) -> TimeControlParams {
+    let s = tc.trim();
+    if s.is_empty() {
+        return TimeControlParams { base_sec: 0, inc_sec: 0 };
+    }
+
+    let (base, inc) = match s.split_once('+') {
+        Some((b, i)) => (b.trim(), i.trim()),
+        None => (s, "0"),
+    };
+
+    let base_sec = base.parse::<u32>().unwrap_or(0);
+    let inc_sec = inc.parse::<u32>().unwrap_or(0);
+    TimeControlParams { base_sec, inc_sec }
+}
 
 fn bucket_time_control(tc: &str) -> u8 {
     let s = tc.trim();

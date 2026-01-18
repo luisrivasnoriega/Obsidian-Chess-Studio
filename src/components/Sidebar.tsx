@@ -136,7 +136,6 @@ const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: strin
   { icon: IconGitBranch, labelKey: "features.sidebar.variants", url: "/variants" },
   { icon: IconPuzzle, labelKey: "features.sidebar.puzzles", url: "/puzzles" },
   { icon: LichessSideIcon, labelKey: "features.sidebar.tournaments", url: "/tournaments" },
-  { icon: IconSettings, labelKey: "features.sidebar.settings", url: "/settings" },
 ];
 
 // Mantener linksdata para compatibilidad

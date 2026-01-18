@@ -34,6 +34,7 @@ vi.mock("jotai", async (importOriginal) => {
 
 vi.mock("@/hooks/useResponsiveLayout", () => ({
   useResponsiveLayout: () => ({ layout: { databases: { density: "normal" } } }),
+  getPlatform: () => "desktop",
 }));
 
 vi.mock("@/components/CollapsibleGameInfo", () => ({

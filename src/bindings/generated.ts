@@ -1267,7 +1267,17 @@ export type PawnStructureStat = { structure: string; frequency: number; win_rate
 /**
  * Planning controls and safety bounds.
  */
-export type PlanOptions = { horizonPlies: bigint; opponentTopK: bigint; minBranchProb: number; maxNodes: bigint; ourMultipv: bigint; quickEvalLimits: EngineLimits; candidateLimits: EngineLimits; backoffK: number; smoothingAlpha: number }
+export type PlanOptions = { horizonPlies: bigint; opponentTopK: bigint; minBranchProb: number; maxNodes: bigint; ourMultipv: bigint; quickEvalLimits: EngineLimits; candidateLimits: EngineLimits; 
+/**
+ * Controls how quickly we fall back from exact-state evidence to backoff evidence.
+ * Larger values => rely more on backoff unless exact has strong support.
+ */
+backoffK: number; 
+/**
+ * Controls how strongly we smooth probabilities toward the prior distribution (Dirichlet prior strength).
+ * 0 => no prior smoothing (pure MLE on observed counts). Larger values => more conservative.
+ */
+smoothingAlpha: number }
 export type PlannerBuildBookRequest = { profileId: string; enginePath: string; 
 /**
  * Extra UCI options to apply (e.g. Hash, SyzygyPath). MultiPV is managed by the planner.

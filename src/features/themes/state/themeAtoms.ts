@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
+import { getPlatform } from "@/hooks/useResponsiveLayout";
 import { pieceSetAtom, primaryColorAtom } from "@/state/atoms";
 import { genID } from "@/utils/tabs";
 import { builtInThemes, getBuiltInThemeById } from "../data/builtInThemes";
@@ -34,8 +35,18 @@ export const cleanupDuplicateThemesAtom = atom(null, (get, set) => {
   }
 });
 
+// Get default theme based on platform
+// For mobile, use "default" theme; for desktop, use "oled"
+function getDefaultThemeId(): string {
+  if (typeof window === "undefined") {
+    return "oled"; // SSR fallback
+  }
+  const platform = getPlatform();
+  return platform === "mobile" ? "default" : "oled";
+}
+
 // Currently selected theme ID
-export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", "oled");
+export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", getDefaultThemeId());
 
 // Color scheme is separate from themes (light/dark/auto)
 export const colorSchemeAtom = atomWithStorage<"light" | "dark" | "auto">("color-scheme", "dark");
@@ -84,9 +95,17 @@ export const initializeThemeAtom = atom(null, (get, set) => {
   }
 
   // Then initialize the theme
-  const currentThemeId = get(currentThemeIdAtom);
+  let currentThemeId = get(currentThemeIdAtom);
   const allThemes = get(allThemesAtom);
   const currentPrimaryColor = get(primaryColorAtom);
+
+  // For mobile, if theme is "oled" or not set, use "default" theme
+  const platform = getPlatform();
+  const isMobile = platform === "mobile";
+  if (isMobile && (currentThemeId === "oled" || !currentThemeId)) {
+    currentThemeId = "default";
+    set(currentThemeIdAtom, "default");
+  }
 
   const theme = allThemes.find((t) => t.id === currentThemeId) || builtInThemes[0];
 

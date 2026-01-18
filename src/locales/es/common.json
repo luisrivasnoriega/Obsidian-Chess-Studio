@@ -1891,6 +1891,7 @@
     "invalidMove": "Movimiento inválido",
     "failedToCopyFen": "No se pudo copiar el FEN",
     "failedToCopyPgn": "No se pudo copiar el PGN",
+    "failedToGeneratePgn": "No se pudo generar el PGN",
     "failedToPasteFen": "No se pudo pegar el FEN",
     "failedToSaveGame": "No se pudo guardar la partida",
     "failedToImportPuzzleFile": "No se pudo importar el archivo de puzzles",
