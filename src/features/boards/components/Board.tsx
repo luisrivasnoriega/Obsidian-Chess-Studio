@@ -70,6 +70,7 @@ interface ChessboardProps {
   whiteTime?: number;
   blackTime?: number;
   practicing?: boolean;
+  showClock?: boolean;
   // Board controls props
   viewPawnStructure?: boolean;
   setViewPawnStructure?: (value: boolean) => void;
@@ -110,6 +111,7 @@ function Board({
   whiteTime,
   blackTime,
   practicing,
+  showClock = true,
   // Board controls props
   viewPawnStructure,
   setViewPawnStructure,
@@ -346,11 +348,12 @@ function Board({
   }, [arrows, currentNode.shapes, evalOpen, pos, showArrows, showConsecutiveArrows]);
 
   const hasClock =
-    whiteTime !== undefined ||
-    blackTime !== undefined ||
-    headers.time_control !== undefined ||
-    headers.white_time_control !== undefined ||
-    headers.black_time_control !== undefined;
+    showClock &&
+    (whiteTime !== undefined ||
+      blackTime !== undefined ||
+      headers.time_control !== undefined ||
+      headers.white_time_control !== undefined ||
+      headers.black_time_control !== undefined);
 
   function localChangeTabType() {
     setCurrentTab((t) => {

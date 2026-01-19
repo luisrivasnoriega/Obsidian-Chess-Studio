@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ManagedEventType = "otb_tournament";
+export type ManagedEventType = "otb_tournament" | "online_tournament" | "league";
 
 export type ManagedEvent = {
   id: number;
@@ -9,6 +9,7 @@ export type ManagedEvent = {
   location?: string | null;
   start_date?: string | null;
   end_date?: string | null;
+  time_control?: string | null;
 };
 
 export async function listManagedEvents(file: string): Promise<ManagedEvent[]> {
@@ -23,6 +24,7 @@ export async function upsertManagedEvent(
     location?: string | null;
     startDate?: string | null;
     endDate?: string | null;
+    timeControl?: string | null;
   },
 ): Promise<ManagedEvent> {
   return await invoke<ManagedEvent>("upsert_managed_event", {
@@ -33,6 +35,7 @@ export async function upsertManagedEvent(
       location: payload.location ?? null,
       startDate: payload.startDate ?? null,
       endDate: payload.endDate ?? null,
+      timeControl: payload.timeControl ?? null,
     },
   });
 }

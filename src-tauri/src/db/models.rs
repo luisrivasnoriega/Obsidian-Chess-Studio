@@ -121,6 +121,8 @@ pub struct Event {
     pub start_date: Option<String>,
     #[specta(optional)]
     pub end_date: Option<String>,
+    #[specta(optional)]
+    pub time_control: Option<String>,
 }
 
 #[derive(Insertable, Debug)]

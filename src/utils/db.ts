@@ -105,11 +105,6 @@ const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
   },
 ];
 
-export interface CompleteGame {
-  game: NormalizedGame;
-  currentMove: number[];
-}
-
 export type Speed = "UltraBullet" | "Bullet" | "Blitz" | "Rapid" | "Classical" | "Correspondence" | "Unknown";
 
 function normalizeRange(range?: [number, number] | null): [number, number] | undefined {

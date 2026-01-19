@@ -67,6 +67,9 @@ function BoardAnalysis() {
         ) {
           await saveTab(currentTab, store);
           setStoreSave();
+        } else if (currentTab?.source?.type === "db") {
+          await saveTab(currentTab, store);
+          setStoreSave();
         } else {
           if (!documentDir) {
             notifications.show({

@@ -35,8 +35,10 @@ import { useTranslation } from "react-i18next";
 import type { Event } from "@/bindings";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { stripAccountKey } from "@/utils/accountKeys";
+import { getChesscomGame } from "@/utils/chess.com/api";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
+import { getLichessGame } from "@/utils/lichess/api";
 import { getTimeControl } from "@/utils/timeControl";
 import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 
@@ -121,6 +123,29 @@ const _getTimeControlFromPgn = (pgn?: string | null): string | null => {
   if (!pgn) return null;
   const match = pgn.match(TIME_CONTROL_TAG_REGEX);
   return match?.[1] ?? null;
+};
+
+const _getTagFromPgn = (pgn: string, tag: string): string | null => {
+  const re = new RegExp(`\\[${tag}\\s+\\"([^\\"]+)\\"\\]`, "i");
+  const m = pgn.match(re);
+  return m?.[1] ? m[1] : null;
+};
+
+const _getResultFromPgn = (pgn: string): string | null => _getTagFromPgn(pgn, "Result");
+
+const _winnerFromResult = (result: string | null | undefined): "white" | "black" | undefined => {
+  const r = (result ?? "").trim();
+  if (r === "1-0") return "white";
+  if (r === "0-1") return "black";
+  return undefined;
+};
+
+const _chessComResultsFromPgn = (pgn: string): { white: string; black: string } => {
+  const r = (_getResultFromPgn(pgn) ?? "").trim();
+  if (r === "1-0") return { white: "win", black: "checkmated" };
+  if (r === "0-1") return { white: "checkmated", black: "win" };
+  if (r === "1/2-1/2") return { white: "agreed", black: "agreed" };
+  return { white: "referred", black: "referred" };
 };
 
 function getTimeControlLabel(
@@ -359,6 +384,99 @@ export function ProfileGamesTab({
       message: t("features.dashboard.openGameFailedMessage", "Failed to open the game link. Please try again."),
       color: "red",
     });
+  };
+
+  const handleAnalyzeRow = async (row: GamesHistoryRow, pgn: string | null) => {
+    const profileDisplayName = (profileUsernames?.[0] ?? "").trim() || t("common.player", { defaultValue: "Player" });
+    const inferredWhite = row.color === "white" ? profileDisplayName : row.opponent;
+    const inferredBlack = row.color === "white" ? row.opponent : profileDisplayName;
+
+    if (row.kind === "Local") {
+      const g = localGames.find((x) => x.id === row.gameKey);
+      if (g) onAnalyzeLocalGame(g);
+      return;
+    }
+
+    if (row.kind === "Chesscom") {
+      const existing = chessComGames.find((x) => x.url === row.gameKey);
+      if (existing?.pgn) {
+        if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+        else onAnalyzeChessComGame(existing);
+        return;
+      }
+
+      const url = row.externalUrl || row.gameKey;
+      const fetched = pgn?.trim() ? pgn : ((await getChesscomGame(url)) ?? "").trim();
+      if (!fetched) return;
+
+      const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
+      const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
+      const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+      const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+      const tc = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? "";
+      const results = _chessComResultsFromPgn(fetched);
+
+      const stub: ChessComGameWithEvent = {
+        url,
+        pgn: fetched,
+        time_control: tc,
+        end_time: Math.floor(row.timestampMs / 1000),
+        rated: true,
+        initial_setup: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        rules: "chess",
+        white: { rating: 0, result: results.white, username: stripAccountKey(white) },
+        black: { rating: 0, result: results.black, username: stripAccountKey(black) },
+        eventId: row.eventId ?? 0,
+        eventName: row.eventName ?? null,
+      };
+
+      if (profileId) onAnalyzeChessComGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+      else onAnalyzeChessComGame(stub);
+      return;
+    }
+
+    // Lichess
+    const existing = lichessGames.find((x) => x.id === row.gameKey);
+    if (existing?.pgn) {
+      if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+      else onAnalyzeLichessGame(existing);
+      return;
+    }
+
+    const gameId = row.gameKey;
+    const fetched = pgn?.trim() ? pgn : ((await getLichessGame(gameId)) ?? "").trim();
+    if (!fetched) return;
+
+    const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
+    const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
+    const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+    const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+    const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
+    const winner = _winnerFromResult(_getResultFromPgn(fetched));
+    const fen = _getTagFromPgn(fetched, "FEN") ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    const stub: DashboardLichessGame = {
+      id: gameId,
+      players: {
+        white: { user: { name: stripAccountKey(white) } },
+        black: { user: { name: stripAccountKey(black) } },
+      },
+      speed: row.timeControlCategory
+        ? getTimeControlLabel(t, row.timeControlCategory)
+        : t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+      timeControl,
+      createdAt: row.timestampMs,
+      winner,
+      status: "finished",
+      pgn: fetched,
+      lastFen: fen,
+      eventId: row.eventId ?? 0,
+      eventName: row.eventName ?? null,
+    };
+
+    if (profileId) onAnalyzeLichessGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+    else onAnalyzeLichessGame(stub);
   };
 
   // Favorite toggling & analyzed detection are handled per-row using backend-provided fields.
@@ -673,27 +791,9 @@ export function ProfileGamesTab({
                               size="xs"
                               variant="default"
                               leftSection={<IconChess size={16} />}
-                              onClick={() => {
-                                if (row.kind === "Local") {
-                                  const g = localGames.find((x) => x.id === row.gameKey);
-                                  if (g) onAnalyzeLocalGame(g);
-                                } else if (row.kind === "Chesscom") {
-                                  const g = chessComGames.find((x) => x.url === row.gameKey);
-                                  if (g && profileId) {
-                                    onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                                  } else if (g) {
-                                    onAnalyzeChessComGame(g);
-                                  }
-                                } else {
-                                  const g = lichessGames.find((x) => x.id === row.gameKey);
-                                  if (g && profileId) {
-                                    onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                                  } else if (g) {
-                                    onAnalyzeLichessGame(g);
-                                  }
-                                }
+                              onClick={async () => {
+                                await handleAnalyzeRow(row, pgn);
                               }}
-                              disabled={!pgn && row.kind !== "Local"}
                             >
                               {t("features.dashboard.analyze") || "Analyze"}
                             </Button>
@@ -703,27 +803,9 @@ export function ProfileGamesTab({
                             size="xs"
                             variant="default"
                             leftSection={<IconChess size={16} />}
-                            onClick={() => {
-                              if (row.kind === "Local") {
-                                const g = localGames.find((x) => x.id === row.gameKey);
-                                if (g) onAnalyzeLocalGame(g);
-                              } else if (row.kind === "Chesscom") {
-                                const g = chessComGames.find((x) => x.url === row.gameKey);
-                                if (g && profileId) {
-                                  onAnalyzeChessComGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                                } else if (g) {
-                                  onAnalyzeChessComGame(g);
-                                }
-                              } else {
-                                const g = lichessGames.find((x) => x.id === row.gameKey);
-                                if (g && profileId) {
-                                  onAnalyzeLichessGame(g, { profileId, profileDbGameId: row.analysisGameId });
-                                } else if (g) {
-                                  onAnalyzeLichessGame(g);
-                                }
-                              }
+                            onClick={async () => {
+                              await handleAnalyzeRow(row, pgn);
                             }}
-                            disabled={!pgn && row.kind !== "Local"}
                           >
                             {t("features.dashboard.analyze") || "Analyze"}
                           </Button>

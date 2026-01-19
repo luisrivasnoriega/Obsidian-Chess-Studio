@@ -22,11 +22,3 @@ pub fn extract_main_line_moves(
 
     Ok(moves)
 }
-
-/// Decode a single move from byte representation
-/// Simple version for efficient position searching
-#[allow(dead_code)]
-pub fn decode_move(byte: u8, chess: &Chess) -> Option<Move> {
-    let legal_moves = chess.legal_moves();
-    legal_moves.get(byte as usize).cloned()
-}

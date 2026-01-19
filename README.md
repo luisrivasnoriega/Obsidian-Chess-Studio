@@ -418,14 +418,14 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 19.02% |
-| **Branches** | 14.38% |
-| **Functions** | 17.4% |
-| **Lines** | 20.06% |
+| **Statements** | 20.68% |
+| **Branches** | 15.9% |
+| **Functions** | 18.2% |
+| **Lines** | 21.64% |
 
 **Test Statistics:**
-- ✅ **177 test files** passing
-- ✅ **316 tests** passing
+- ✅ **170 test files** passing
+- ✅ **303 tests** passing
 - ⏱️ Test execution time: ~0 seconds
 
 **Well-Tested Areas:**
@@ -571,7 +571,6 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
 | 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
-| 🇨🇳 **中文 (Chinese)** | 🟡 89% | [View](./src/locales/zh) |
 | 🇧🇾 **Беларуская (Belarusian)** | 🟡 88% | [View](./src/locales/be) |
 | 🇩🇪 **Deutsch (German)** | 🟡 88% | [View](./src/locales/de) |
 | 🇬🇧 **English UK** | 🟡 88% | [View](./src/locales/en-GB) |
@@ -584,8 +583,9 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 | 🇵🇹 **Português (Portuguese)** | 🟡 88% | [View](./src/locales/pt) |
 | 🇷🇺 **Русский (Russian)** | 🟡 88% | [View](./src/locales/ru) |
 | 🇺🇦 **Українська (Ukrainian)** | 🟡 88% | [View](./src/locales/uk) |
-| 🇸🇦 **العربية (Arabic)** | 🟡 85% | [View](./src/locales/ar) |
-| 🇹🇷 **Türkçe (Turkish)** | 🟡 68% | [View](./src/locales/tr) |
+| 🇨🇳 **中文 (Chinese)** | 🟡 88% | [View](./src/locales/zh) |
+| 🇸🇦 **العربية (Arabic)** | 🟡 84% | [View](./src/locales/ar) |
+| 🇹🇷 **Türkçe (Turkish)** | 🟡 67% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
 
 Want to help translate? See [CONTRIBUTING.md](./CONTRIBUTING.md).

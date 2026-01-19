@@ -443,8 +443,6 @@ function RootLayout() {
             });
           },
         ],
-        // Navigation - Additional
-        [keyMap.GO_TO_LEARN.keys, () => navigate({ to: "/learn" })],
         // File Operations
         [keyMap.OPEN_FILE.keys, openNewFile],
         [keyMap.APP_RELOAD.keys, () => location.reload()],
@@ -738,11 +736,6 @@ function RootLayout() {
             label: t("features.menu.goToEngines"),
             id: "go_engines",
             action: () => navigate({ to: "/engines" }),
-          },
-          {
-            label: t("features.menu.goToLearn"),
-            id: "go_learn",
-            action: () => navigate({ to: "/learn" }),
           },
           { label: "divider" },
           {

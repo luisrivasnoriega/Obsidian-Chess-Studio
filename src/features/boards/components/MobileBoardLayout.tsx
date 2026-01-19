@@ -31,6 +31,7 @@ interface MobileBoardLayoutProps {
   whiteTime?: number;
   blackTime?: number;
   practicing?: boolean;
+  showClock?: boolean;
 
   // Analysis props
   topBar?: boolean;
@@ -82,6 +83,7 @@ function MobileBoardLayout({
   whiteTime,
   blackTime,
   practicing,
+  showClock,
 
   // Analysis props
   topBar: _topBar = false,
@@ -216,6 +218,7 @@ function MobileBoardLayout({
           whiteTime={whiteTime}
           blackTime={blackTime}
           practicing={practicing}
+          showClock={showClock}
           // Board controls props
           viewPawnStructure={viewPawnStructure}
           setViewPawnStructure={setViewPawnStructure}

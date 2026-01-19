@@ -1092,7 +1092,7 @@ export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMov
 export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
-export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null }
+export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
@@ -1121,7 +1121,7 @@ export type EngineOption = { name: string; value: string }
  */
 export type EngineOptions = { fen: string; moves: string[]; extraOptions: EngineOption[] }
 export type EngineRequestDto = { name: string; path: string; extraOptions?: EngineOption[] }
-export type Event = { id: number; name: string | null; event_type?: string | null; location?: string | null; start_date?: string | null; end_date?: string | null }
+export type Event = { id: number; name: string | null; event_type?: string | null; location?: string | null; start_date?: string | null; end_date?: string | null; time_control?: string | null }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
 export type GameOutcome = "Won" | "Drawn" | "Lost"
@@ -1187,7 +1187,7 @@ export type LichessTournamentCreateRequest = { token: string;
  */
 form: ([string, string])[] }
 export type LineDto = { moves: MoveSpecDto[] }
-export type ManagedEventType = "otb_tournament"
+export type ManagedEventType = "otb_tournament" | "online_tournament" | "league"
 export type MasterGamesOptionsDto = { since?: string | null; until?: string | null; moves?: number | null; topGames?: number | null }
 /**
  * Match inputs we care about: when, time-control, colors, and starting position.

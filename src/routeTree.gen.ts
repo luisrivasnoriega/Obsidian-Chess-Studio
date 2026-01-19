@@ -20,14 +20,10 @@ import { Route as EnginesRouteImport } from './routes/engines'
 import { Route as AnalysisRouteImport } from './routes/analysis'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
-import { Route as LearnRouteRouteImport } from './routes/learn/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
-import { Route as LearnIndexRouteImport } from './routes/learn/index'
 import { Route as DatabasesIndexRouteImport } from './routes/databases/index'
 import { Route as SettingsKeyboardShortcutsRouteImport } from './routes/settings/keyboard-shortcuts'
-import { Route as LearnPracticeRouteImport } from './routes/learn/practice'
-import { Route as LearnLessonsRouteImport } from './routes/learn/lessons'
 import { Route as DatabasesDatabaseIdRouteImport } from './routes/databases/$databaseId'
 
 const VariantsRoute = VariantsRouteImport.update({
@@ -85,11 +81,6 @@ const SettingsRouteRoute = SettingsRouteRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LearnRouteRoute = LearnRouteRouteImport.update({
-  id: '/learn',
-  path: '/learn',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -99,11 +90,6 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => SettingsRouteRoute,
-} as any)
-const LearnIndexRoute = LearnIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => LearnRouteRoute,
 } as any)
 const DatabasesIndexRoute = DatabasesIndexRouteImport.update({
   id: '/databases/',
@@ -116,16 +102,6 @@ const SettingsKeyboardShortcutsRoute =
     path: '/keyboard-shortcuts',
     getParentRoute: () => SettingsRouteRoute,
   } as any)
-const LearnPracticeRoute = LearnPracticeRouteImport.update({
-  id: '/practice',
-  path: '/practice',
-  getParentRoute: () => LearnRouteRoute,
-} as any)
-const LearnLessonsRoute = LearnLessonsRouteImport.update({
-  id: '/lessons',
-  path: '/lessons',
-  getParentRoute: () => LearnRouteRoute,
-} as any)
 const DatabasesDatabaseIdRoute = DatabasesDatabaseIdRouteImport.update({
   id: '/databases/$databaseId',
   path: '/databases/$databaseId',
@@ -134,7 +110,6 @@ const DatabasesDatabaseIdRoute = DatabasesDatabaseIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/learn': typeof LearnRouteRouteWithChildren
   '/settings': typeof SettingsRouteRouteWithChildren
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
@@ -147,11 +122,8 @@ export interface FileRoutesByFullPath {
   '/tournaments': typeof TournamentsRoute
   '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
-  '/learn/lessons': typeof LearnLessonsRoute
-  '/learn/practice': typeof LearnPracticeRoute
   '/settings/keyboard-shortcuts': typeof SettingsKeyboardShortcutsRoute
   '/databases': typeof DatabasesIndexRoute
-  '/learn/': typeof LearnIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -167,17 +139,13 @@ export interface FileRoutesByTo {
   '/tournaments': typeof TournamentsRoute
   '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
-  '/learn/lessons': typeof LearnLessonsRoute
-  '/learn/practice': typeof LearnPracticeRoute
   '/settings/keyboard-shortcuts': typeof SettingsKeyboardShortcutsRoute
   '/databases': typeof DatabasesIndexRoute
-  '/learn': typeof LearnIndexRoute
   '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/learn': typeof LearnRouteRouteWithChildren
   '/settings': typeof SettingsRouteRouteWithChildren
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
@@ -190,18 +158,14 @@ export interface FileRoutesById {
   '/tournaments': typeof TournamentsRoute
   '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
-  '/learn/lessons': typeof LearnLessonsRoute
-  '/learn/practice': typeof LearnPracticeRoute
   '/settings/keyboard-shortcuts': typeof SettingsKeyboardShortcutsRoute
   '/databases/': typeof DatabasesIndexRoute
-  '/learn/': typeof LearnIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/learn'
     | '/settings'
     | '/accounts'
     | '/analysis'
@@ -214,11 +178,8 @@ export interface FileRouteTypes {
     | '/tournaments'
     | '/variants'
     | '/databases/$databaseId'
-    | '/learn/lessons'
-    | '/learn/practice'
     | '/settings/keyboard-shortcuts'
     | '/databases'
-    | '/learn/'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -234,16 +195,12 @@ export interface FileRouteTypes {
     | '/tournaments'
     | '/variants'
     | '/databases/$databaseId'
-    | '/learn/lessons'
-    | '/learn/practice'
     | '/settings/keyboard-shortcuts'
     | '/databases'
-    | '/learn'
     | '/settings'
   id:
     | '__root__'
     | '/'
-    | '/learn'
     | '/settings'
     | '/accounts'
     | '/analysis'
@@ -256,17 +213,13 @@ export interface FileRouteTypes {
     | '/tournaments'
     | '/variants'
     | '/databases/$databaseId'
-    | '/learn/lessons'
-    | '/learn/practice'
     | '/settings/keyboard-shortcuts'
     | '/databases/'
-    | '/learn/'
     | '/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  LearnRouteRoute: typeof LearnRouteRouteWithChildren
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   AccountsRoute: typeof AccountsRoute
   AnalysisRoute: typeof AnalysisRoute
@@ -361,13 +314,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/learn': {
-      id: '/learn'
-      path: '/learn'
-      fullPath: '/learn'
-      preLoaderRoute: typeof LearnRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -381,13 +327,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/'
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRouteRoute
-    }
-    '/learn/': {
-      id: '/learn/'
-      path: '/'
-      fullPath: '/learn/'
-      preLoaderRoute: typeof LearnIndexRouteImport
-      parentRoute: typeof LearnRouteRoute
     }
     '/databases/': {
       id: '/databases/'
@@ -403,20 +342,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsKeyboardShortcutsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
-    '/learn/practice': {
-      id: '/learn/practice'
-      path: '/practice'
-      fullPath: '/learn/practice'
-      preLoaderRoute: typeof LearnPracticeRouteImport
-      parentRoute: typeof LearnRouteRoute
-    }
-    '/learn/lessons': {
-      id: '/learn/lessons'
-      path: '/lessons'
-      fullPath: '/learn/lessons'
-      preLoaderRoute: typeof LearnLessonsRouteImport
-      parentRoute: typeof LearnRouteRoute
-    }
     '/databases/$databaseId': {
       id: '/databases/$databaseId'
       path: '/databases/$databaseId'
@@ -426,22 +351,6 @@ declare module '@tanstack/react-router' {
     }
   }
 }
-
-interface LearnRouteRouteChildren {
-  LearnLessonsRoute: typeof LearnLessonsRoute
-  LearnPracticeRoute: typeof LearnPracticeRoute
-  LearnIndexRoute: typeof LearnIndexRoute
-}
-
-const LearnRouteRouteChildren: LearnRouteRouteChildren = {
-  LearnLessonsRoute: LearnLessonsRoute,
-  LearnPracticeRoute: LearnPracticeRoute,
-  LearnIndexRoute: LearnIndexRoute,
-}
-
-const LearnRouteRouteWithChildren = LearnRouteRoute._addFileChildren(
-  LearnRouteRouteChildren,
-)
 
 interface SettingsRouteRouteChildren {
   SettingsKeyboardShortcutsRoute: typeof SettingsKeyboardShortcutsRoute
@@ -459,7 +368,6 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  LearnRouteRoute: LearnRouteRouteWithChildren,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   AccountsRoute: AccountsRoute,
   AnalysisRoute: AnalysisRoute,

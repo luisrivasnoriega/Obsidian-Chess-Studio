@@ -120,6 +120,9 @@ fn ensure_events_columns(conn: &mut SqliteConnection) -> std::result::Result<(),
     if !has_column("EndDate") {
         conn.batch_execute("ALTER TABLE Events ADD COLUMN EndDate TEXT")?;
     }
+    if !has_column("TimeControl") {
+        conn.batch_execute("ALTER TABLE Events ADD COLUMN TimeControl TEXT")?;
+    }
 
     Ok(())
 }
@@ -230,74 +233,6 @@ fn get_db_or_create(
     };
 
     Ok(pool.get()?)
-}
-
-#[allow(dead_code)]
-#[derive(Default, Debug, Serialize)]
-pub struct TempPlayer {
-    id: usize,
-    name: Option<String>,
-    rating: Option<i32>,
-}
-
-#[allow(dead_code)]
-pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
-    let pawn_home = get_pawn_home(game.position.board());
-
-    let white_id = if let Some(name) = &game.white_name {
-        create_player(db, name)?.id
-    } else {
-        0
-    };
-
-    let black_id = if let Some(name) = &game.black_name {
-        create_player(db, name)?.id
-    } else {
-        0
-    };
-
-    let event_id = if let Some(name) = &game.event_name {
-        create_event(db, name)?.id
-    } else {
-        0
-    };
-
-    let site_id = if let Some(name) = &game.site_name {
-        create_site(db, name)?.id
-    } else {
-        0
-    };
-
-    let ply_count = game.tree.count_main_line_moves() as i32;
-    let final_material = pgn::get_material_count(game.position.board());
-    let minimal_white_material = game.material_count.white.min(final_material.white) as i32;
-    let minimal_black_material = game.material_count.black.min(final_material.black) as i32;
-
-    let new_game = NewGame {
-        white_id,
-        black_id,
-        ply_count,
-        eco: game.eco.as_deref(),
-        round: game.round.as_deref(),
-        white_elo: game.white_elo,
-        black_elo: game.black_elo,
-        white_material: minimal_white_material,
-        black_material: minimal_black_material,
-        // max_rating: game.game.white.rating.max(game.game.black.rating),
-        date: game.date.as_deref(),
-        time: game.time.as_deref(),
-        time_control: game.time_control.as_deref(),
-        site_id,
-        event_id,
-        fen: game.fen.as_deref(),
-        result: game.result.as_deref(),
-        moves: game.moves.as_slice(),
-        pawn_home: pawn_home as i32,
-    };
-
-    let _inserted = core::add_game(db, new_game)?;
-
-    Ok(())
 }
 
 pub fn insert_to_db_with_event_override(
@@ -868,36 +803,9 @@ pub struct QueryOptions<SortT> {
     pub direction: SortDirection,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct GameQuery {
-    pub options: Option<QueryOptions<GameSort>>,
-    pub player1: Option<i32>,
-    pub player2: Option<i32>,
-    pub tournament_id: Option<i32>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
-    pub range1: Option<(i32, i32)>,
-    pub range2: Option<(i32, i32)>,
-    pub sides: Option<Sides>,
-    pub outcome: Option<String>,
-    pub position: Option<PositionQuery>,
-}
-
 // Helper functions for serializing/deserializing u64 as string for bigint compatibility
 mod bigint_serde {
-    use serde::{Deserializer, Serializer};
-
-    #[allow(dead_code)]
-    pub fn serialize<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(v) => serializer.serialize_str(&v.to_string()),
-            None => serializer.serialize_none(),
-        }
-    }
+    use serde::Deserializer;
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
     where
@@ -1659,12 +1567,18 @@ pub async fn get_tournaments(
 pub enum ManagedEventType {
     #[serde(rename = "otb_tournament")]
     OtbTournament,
+    #[serde(rename = "online_tournament")]
+    OnlineTournament,
+    #[serde(rename = "league")]
+    League,
 }
 
 impl ManagedEventType {
     fn as_str(&self) -> &'static str {
         match self {
             ManagedEventType::OtbTournament => "otb_tournament",
+            ManagedEventType::OnlineTournament => "online_tournament",
+            ManagedEventType::League => "league",
         }
     }
 }
@@ -1680,6 +1594,8 @@ pub struct CreateManagedEventPayload {
     pub start_date: Option<String>,
     #[specta(optional)]
     pub end_date: Option<String>,
+    #[specta(optional)]
+    pub time_control: Option<String>,
 }
 
 #[tauri::command]
@@ -1703,6 +1619,7 @@ pub async fn upsert_managed_event(
     let location = payload.location.as_ref().map(|s| s.trim().to_string());
     let start_date = payload.start_date.as_ref().map(|s| s.trim().to_string());
     let end_date = payload.end_date.as_ref().map(|s| s.trim().to_string());
+    let time_control = payload.time_control.as_ref().map(|s| s.trim().to_string());
 
     diesel::insert_into(events::table)
         .values((
@@ -1711,6 +1628,7 @@ pub async fn upsert_managed_event(
             events::location.eq(location.as_deref()),
             events::start_date.eq(start_date.as_deref()),
             events::end_date.eq(end_date.as_deref()),
+            events::time_control.eq(time_control.as_deref()),
         ))
         .on_conflict(events::name)
         .do_update()
@@ -1719,6 +1637,7 @@ pub async fn upsert_managed_event(
             events::location.eq(location.as_deref()),
             events::start_date.eq(start_date.as_deref()),
             events::end_date.eq(end_date.as_deref()),
+            events::time_control.eq(time_control.as_deref()),
         ))
         .execute(db)?;
 
@@ -1851,7 +1770,7 @@ pub async fn create_event_game(
     payload: CreateEventGamePayload,
     state: tauri::State<'_, AppState>,
 ) -> Result<i32> {
-    use crate::db::schema::games;
+    use crate::db::schema::{events, games};
 
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
     ensure_db_initialized(db)?;
@@ -1859,6 +1778,12 @@ pub async fn create_event_game(
     if event_id <= 0 {
         return Err(Error::InvalidInput("Invalid event id".to_string()));
     }
+
+    // Resolve event metadata for default site/time control.
+    let (event_type, event_time_control) = events::table
+        .filter(events::id.eq(event_id))
+        .select((events::event_type, events::time_control))
+        .first::<(Option<String>, Option<String>)>(db)?;
 
     let white_name = payload.white.trim().to_string();
     let black_name = payload.black.trim().to_string();
@@ -1870,7 +1795,13 @@ pub async fn create_event_game(
 
     let white_id = create_player(db, &white_name)?.id;
     let black_id = create_player(db, &black_name)?.id;
-    let site_id = create_site(db, "OTB")?.id;
+
+    let site_name = match event_type.as_deref() {
+        Some("online_tournament") => "Online",
+        Some("league") => "League",
+        _ => "OTB",
+    };
+    let site_id = create_site(db, site_name)?.id;
 
     let mut moves: Vec<u8> = Vec::new();
     GameTree::new().encode(&mut moves, None);
@@ -1899,7 +1830,7 @@ pub async fn create_event_game(
         white_material,
         black_material,
         result: Some(result_str.as_str()),
-        time_control: None,
+        time_control: event_time_control.as_deref(),
         eco: None,
         ply_count: 0,
         fen: None,

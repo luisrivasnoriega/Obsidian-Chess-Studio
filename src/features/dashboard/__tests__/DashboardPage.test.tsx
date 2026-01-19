@@ -62,9 +62,6 @@ vi.mock("../components/PuzzleStatsCard", () => ({
 vi.mock("../components/PuzzleVariantsCard", () => ({
   PuzzleVariantsCard: () => <div data-testid="PuzzleVariantsCard" />,
 }));
-vi.mock("../components/PlayerStatsModal", () => ({
-  PlayerStatsModal: () => <div data-testid="PlayerStatsModal" />,
-}));
 vi.mock("../components/AnalyzeAllModal", () => ({
   AnalyzeAllModal: () => <div data-testid="AnalyzeAllModal" />,
 }));
@@ -130,10 +127,6 @@ vi.mock("@/utils/accountPgnPaths", () => ({
 
 vi.mock("@/utils/accountKeys", () => ({
   getAccountKey: vi.fn().mockReturnValue("test-key"),
-}));
-
-vi.mock("@/utils/pgnAccountTags", () => ({
-  rewritePgnAccountTags: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@tauri-apps/api/path", () => ({

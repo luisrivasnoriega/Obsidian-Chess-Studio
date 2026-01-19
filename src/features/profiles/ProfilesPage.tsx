@@ -117,9 +117,9 @@ export default function ProfilesPage() {
   const { layout } = useResponsiveLayout();
   const queryClient = useQueryClient();
   const [profileQuery, setProfileQuery] = useState("");
-  const [detailsTab, setDetailsTab] = useState<
-    "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
-  >("database");
+  const [detailsTab, setDetailsTab] = useState<"database" | "overview" | "ratings" | "openings" | "pawnStructures">(
+    "database",
+  );
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
   const deletedSessionKeysRef = useRef<Set<string>>(new Set());
 
@@ -159,7 +159,6 @@ export default function ProfilesPage() {
       { value: "overview", label: t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" }) },
       { value: "ratings", label: t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" }) },
       { value: "openings", label: t("profiles.tabs.openings", { defaultValue: "Openings" }) },
-      { value: "stats", label: t("profiles.tabs.stats", { defaultValue: "Stats" }) },
       { value: "pawnStructures", label: t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" }) },
     ],
     [t],
@@ -1456,7 +1455,6 @@ export default function ProfilesPage() {
                       {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
                     </Tabs.Tab>
                     <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
-                    <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
                     <Tabs.Tab value="pawnStructures">
                       {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
                     </Tabs.Tab>
@@ -1522,11 +1520,6 @@ export default function ProfilesPage() {
                       showPlayerSelector={false}
                     />
                   </div>
-                </Tabs.Panel>
-                <Tabs.Panel value="stats" pt="sm">
-                  <Text size="sm" c="dimmed">
-                    {t("profiles.tabs.statsDesc", { defaultValue: "Stats content coming soon." })}
-                  </Text>
                 </Tabs.Panel>
                 <Tabs.Panel value="pawnStructures" pt="sm">
                   <Paper

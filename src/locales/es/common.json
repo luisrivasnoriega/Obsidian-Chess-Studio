@@ -654,15 +654,23 @@
         "createAndOpen": "Crear y abrir"
       },
       "create": {
-        "title": "Crear torneo OTB"
+        "title": "Crear evento"
       },
       "fields": {
         "name": "Nombre",
         "namePlaceholder": "Nombre del torneo",
+        "eventType": "Tipo de evento",
         "location": "Lugar",
         "locationPlaceholder": "Ciudad, sede, etc.",
+        "timeControl": "Control de tiempo",
+        "timeControlPlaceholder": "p. ej. 90+30",
         "startDate": "Fecha de inicio",
         "endDate": "Fecha de fin"
+      },
+      "eventTypes": {
+        "otbTournament": "Torneo OTB",
+        "onlineTournament": "Torneo online",
+        "league": "Liga"
       },
       "list": {
         "title": "Torneos registrados",
@@ -670,7 +678,9 @@
       },
       "table": {
         "name": "Nombre",
+        "eventType": "Tipo",
         "location": "Lugar",
+        "timeControl": "Control de tiempo",
         "startDate": "Inicio",
         "endDate": "Fin",
         "actions": "Acciones"
@@ -701,6 +711,15 @@
         "roundPlaceholder": "Ronda",
         "actions": "Acciones",
         "analyze": "Analizar",
+        "filters": {
+          "search": "Buscar",
+          "searchPlaceholder": "Nombre del jugador",
+          "round": "Ronda",
+          "result": "Resultado",
+          "resultAll": "Todas",
+          "fromDate": "Desde",
+          "toDate": "Hasta"
+        },
         "validation": {
           "whiteRequired": "El jugador de blancas es obligatorio",
           "blackRequired": "El jugador de negras es obligatorio"

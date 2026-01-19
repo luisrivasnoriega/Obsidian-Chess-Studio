@@ -98,6 +98,8 @@ diesel::table! {
         start_date -> Nullable<Text>,
         #[sql_name = "EndDate"]
         end_date -> Nullable<Text>,
+        #[sql_name = "TimeControl"]
+        time_control -> Nullable<Text>,
     }
 }
 

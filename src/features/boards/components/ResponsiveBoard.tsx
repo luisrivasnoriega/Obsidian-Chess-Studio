@@ -26,6 +26,7 @@ interface ResponsiveBoardProps {
   whiteTime?: number;
   blackTime?: number;
   practicing?: boolean;
+  showClock?: boolean;
   // Analysis props for mobile layout
   topBar?: boolean;
   editingCard?: React.ReactNode;
@@ -74,6 +75,7 @@ function ResponsiveBoard({
   whiteTime,
   blackTime,
   practicing,
+  showClock,
   // Analysis props for mobile layout
   topBar = false,
   editingCard,
@@ -190,6 +192,7 @@ function ResponsiveBoard({
             whiteTime={whiteTime}
             blackTime={blackTime}
             practicing={practicing}
+            showClock={showClock}
             topBar={topBar}
             editingCard={editingCard}
             isLoading={isLoading}
@@ -266,6 +269,7 @@ function ResponsiveBoard({
             whiteTime={whiteTime}
             blackTime={blackTime}
             practicing={practicing}
+            showClock={showClock}
             // Board controls props
             viewPawnStructure={viewPawnStructure}
             setViewPawnStructure={setViewPawnStructure}

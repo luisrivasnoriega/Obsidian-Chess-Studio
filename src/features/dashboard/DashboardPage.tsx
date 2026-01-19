@@ -35,7 +35,6 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
-import type { AnalysisResult } from "@/utils/playerMistakes";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
@@ -45,7 +44,6 @@ import type { TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { AnalyzeAllModal } from "./components/AnalyzeAllModal";
 import { GamesHistoryCard } from "./components/GamesHistoryCard";
-import { PlayerStatsModal } from "./components/PlayerStatsModal";
 import { PuzzleStatsCard } from "./components/PuzzleStatsCard";
 import { PuzzleVariantsCard } from "./components/PuzzleVariantsCard";
 import { QuickActionsGrid } from "./components/QuickActionsGrid";
@@ -228,11 +226,6 @@ export default function DashboardPage() {
     total: number;
     unanalyzed: number;
   } | null>(null);
-  const [playerStatsModalOpened, setPlayerStatsModalOpened] = useState(false);
-  const [playerStatsResult, setPlayerStatsResult] = useState<AnalysisResult | null>(null);
-  const [playerStatsDebugPgns, setPlayerStatsDebugPgns] = useState<string | null>(null);
-  const [playerStatsGameType, _setPlayerStatsGameType] = useState<"local" | "chesscom" | "lichess" | null>(null);
-  const [playerStatsAccountName, _setPlayerStatsAccountName] = useState<string | null>(null);
 
   // FIDE player information
   const [fidePlayer, setFidePlayer] = useState<{
@@ -1332,19 +1325,6 @@ export default function DashboardPage() {
             <PuzzleVariantsCard />
           </Grid.Col>
         </Grid>
-
-        <PlayerStatsModal
-          opened={playerStatsModalOpened}
-          onClose={() => {
-            setPlayerStatsModalOpened(false);
-            setPlayerStatsResult(null);
-            setPlayerStatsDebugPgns(null);
-          }}
-          result={playerStatsResult}
-          debugPgns={playerStatsDebugPgns || undefined}
-          statsGameType={playerStatsGameType || undefined}
-          statsAccountName={playerStatsAccountName || undefined}
-        />
 
         <AnalyzeAllModal
           opened={analyzeAllModalOpened}

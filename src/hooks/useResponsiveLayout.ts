@@ -60,9 +60,6 @@ type ResponsiveLayout = {
     density: DatabasesDensity;
     layoutType: LayoutType;
   };
-  learn: {
-    layoutType: LayoutType;
-  };
   engines: {
     layoutType: LayoutType;
   };
@@ -207,9 +204,6 @@ export const useResponsiveLayout: () => {
       databases: {
         density: databasesDensity,
         layoutType: databasesLayoutType,
-      },
-      learn: {
-        layoutType: twoColumnLayoutType,
       },
       engines: {
         layoutType: twoColumnLayoutType,

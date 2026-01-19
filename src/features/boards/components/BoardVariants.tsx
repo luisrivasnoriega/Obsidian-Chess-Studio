@@ -956,6 +956,7 @@ function BoardVariants() {
                 reload={reloadBoard}
                 addGame={addGame}
                 topBar={topBar}
+                showClock={false}
                 editingCard={
                   editingMode ? (
                     <EditingCard
@@ -1076,6 +1077,7 @@ function BoardVariants() {
           reload={reloadBoard}
           addGame={addGame}
           topBar={false}
+          showClock={false}
           editingCard={
             editingMode ? (
               <EditingCard

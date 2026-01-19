@@ -15,10 +15,12 @@
 //! - Comments are in English per repository preference.
 //! - This module is backend-only and intended to be called via Tauri commands.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc, Weekday};
 use log::{debug, info, warn};
@@ -41,6 +43,10 @@ use crate::chess::process::{parse_uci_attrs, EngineProcess};
 use crate::chess::types::{EngineOption, EngineOptions, GoMode, ScoreValue};
 use crate::error::{Error, Result};
 use crate::AppState;
+
+// IMPORTANT: We must explicitly terminate engine processes created by `EngineProcess::new`.
+// The `Child` handle is dropped inside `EngineProcess::new` (by design), so if we do not send `quit`,
+// the OS process can remain alive and accumulate, causing extreme slowdowns.
 
 // -----------------------------
 // Public API (types + command)
@@ -390,6 +396,7 @@ impl PlannerEngine {
 
     async fn multipv(&mut self, fen: &str, limits: EngineLimits, multipv: usize) -> Result<Vec<EngineLine>> {
         let go = to_go_mode(limits);
+        let max_wall = engine_wall_timeout(limits);
 
         let mut extra = self.uci_options.clone();
         upsert_uci_option(&mut extra, "MultiPV", &multipv.to_string());
@@ -401,6 +408,7 @@ impl PlannerEngine {
             moves: vec![],
             extra_options: extra,
         };
+        let fen_parsed: Fen = options.fen.parse()?;
 
         let (mut proc, mut reader) = EngineProcess::new(self.path.clone()).await?;
         proc.set_options(options.clone()).await?;
@@ -408,30 +416,56 @@ impl PlannerEngine {
 
         let mut last_best: Vec<crate::chess::types::BestMoves> = Vec::new();
 
-        while let Ok(Some(line)) = reader.next_line().await {
-            match vampirc_uci::parse_one(&line) {
-                vampirc_uci::UciMessage::Info(attrs) => {
-                    if let Ok(best_moves) = parse_uci_attrs(attrs, &options.fen.parse()?, &options.moves) {
-                        let multipv_idx = best_moves.multipv;
-                        let cur_depth = best_moves.depth;
+        // Bound total wall time to avoid a stuck engine query blocking the entire planner.
+        // On timeout, request the engine to stop and give it a short grace period to emit BestMove.
+        let read_result = tokio::time::timeout(max_wall, async {
+            while let Ok(Some(line)) = reader.next_line().await {
+                match vampirc_uci::parse_one(&line) {
+                    vampirc_uci::UciMessage::Info(attrs) => {
+                        if let Ok(best_moves) = parse_uci_attrs(attrs, &fen_parsed, &options.moves) {
+                            let multipv_idx = best_moves.multipv;
+                            let cur_depth = best_moves.depth;
 
-                        if multipv_idx as usize == proc.best_moves.len() + 1 {
-                            proc.best_moves.push(best_moves);
+                            if multipv_idx as usize == proc.best_moves.len() + 1 {
+                                proc.best_moves.push(best_moves);
 
-                            if multipv_idx == proc.real_multipv {
-                                if proc.best_moves.iter().all(|x| x.depth == cur_depth) && cur_depth >= proc.last_depth {
-                                    last_best = proc.best_moves.clone();
-                                    proc.last_depth = cur_depth;
+                                if multipv_idx == proc.real_multipv {
+                                    if proc.best_moves.iter().all(|x| x.depth == cur_depth) && cur_depth >= proc.last_depth {
+                                        last_best = proc.best_moves.clone();
+                                        proc.last_depth = cur_depth;
+                                    }
+                                    proc.best_moves.clear();
                                 }
-                                proc.best_moves.clear();
                             }
                         }
                     }
+                    vampirc_uci::UciMessage::BestMove { .. } => break,
+                    _ => {}
                 }
-                vampirc_uci::UciMessage::BestMove { .. } => break,
-                _ => {}
             }
+        })
+        .await;
+
+        if read_result.is_err() {
+            warn!(
+                "PlannerEngine.multipv: engine timeout (max_wall={:?}) fen_key={}",
+                max_wall,
+                state_key_from_fen(fen)
+            );
+            // Best-effort: ask engine to stop and read a bit more.
+            let _ = proc.stop().await;
+            let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                while let Ok(Some(line)) = reader.next_line().await {
+                    if matches!(vampirc_uci::parse_one(&line), vampirc_uci::UciMessage::BestMove { .. }) {
+                        break;
+                    }
+                }
+            })
+            .await;
         }
+
+        // Always terminate the engine process to avoid leaking OS processes.
+        let _ = proc.kill().await;
 
         let mut out: Vec<EngineLine> = Vec::new();
         for bm in last_best {
@@ -457,16 +491,37 @@ impl PlannerEngine {
     }
 }
 
+fn engine_wall_timeout(limits: EngineLimits) -> Duration {
+    // Time-based searches should finish around movetime; give some buffer for UCI I/O + engine cleanup.
+    if let Some(ms) = limits.time_ms {
+        return Duration::from_millis((ms as u64).saturating_add(1500).max(2500));
+    }
+    // Depth-based searches are less predictable; use a conservative scaling.
+    if let Some(depth) = limits.depth {
+        let ms = (depth as u64).saturating_mul(700).saturating_add(2500);
+        return Duration::from_millis(ms.min(30_000).max(3000));
+    }
+    // Default (planner fallback) should never be unbounded.
+    Duration::from_millis(10_000)
+}
+
 struct PlayerMatchPlanner {
     core_db: Connection,
     analysis_db: Option<Connection>,
     engine: PlannerEngine,
     profile_id: String,
 
-    models: HashMap<i64, PolicyModel>,
+    models: HashMap<i64, Arc<PolicyModel>>,
     eval_cache: HashMap<u64, i32>,
     multipv_cache: HashMap<(u64, u32, u32, usize), Vec<EngineLine>>,
     policy_cache: HashMap<(i64, u64, ContextKey), OpponentPolicy>,
+}
+
+type GlobalModelCacheKey = (String, i64);
+static GLOBAL_POLICY_MODEL_CACHE: OnceLock<Mutex<HashMap<GlobalModelCacheKey, Arc<PolicyModel>>>> = OnceLock::new();
+
+fn global_policy_model_cache() -> &'static Mutex<HashMap<GlobalModelCacheKey, Arc<PolicyModel>>> {
+    GLOBAL_POLICY_MODEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 impl PlayerMatchPlanner {
@@ -551,8 +606,10 @@ impl PlayerMatchPlanner {
             reach_prob: 1.0,
         });
 
-        let mut q: VecDeque<u64> = VecDeque::new();
-        q.push_back(root_node_id);
+        // Use a DFS-style stack to prioritize reaching the requested horizon depth.
+        // A pure BFS can spend the node budget on shallow breadth and never reach deep plies.
+        let mut stack: Vec<u64> = Vec::new();
+        stack.push(root_node_id);
 
         #[derive(Default)]
         struct BuildStats {
@@ -562,10 +619,11 @@ impl PlayerMatchPlanner {
             pruned_horizon: usize,
             pruned_reach: usize,
             node_cap_hits: usize,
+            max_ply_reached: usize,
         }
         let mut stats = BuildStats::default();
 
-        while let Some(nid) = q.pop_front() {
+        while let Some(nid) = stack.pop() {
             stats.popped += 1;
             if nodes.len() >= opts.max_nodes {
                 stats.node_cap_hits += 1;
@@ -574,13 +632,10 @@ impl PlayerMatchPlanner {
 
             let nidx = *node_index.get(&nid).unwrap();
             let node = nodes[nidx].clone();
+            stats.max_ply_reached = stats.max_ply_reached.max(node.ply_from_root);
 
             if node.ply_from_root >= opts.horizon_plies {
                 stats.pruned_horizon += 1;
-                continue;
-            }
-            if node.reach_prob < opts.min_branch_prob {
-                stats.pruned_reach += 1;
                 continue;
             }
 
@@ -631,7 +686,7 @@ impl PlayerMatchPlanner {
                             side_to_move: to_side,
                             reach_prob: node.reach_prob,
                         });
-                        q.push_back(e.to);
+                        stack.push(e.to);
                     }
                     edges.push(e);
                 }
@@ -650,9 +705,14 @@ impl PlayerMatchPlanner {
                     )
                     .await?;
 
-                for e in opp_edges {
+                // Always keep at least the most likely opponent move so the mainline can reach
+                // the requested horizon. Additional branches are pruned by (depth-adjusted) reach.
+                let mut to_push: Vec<u64> = Vec::new();
+                for (i, e) in opp_edges.into_iter().enumerate() {
                     let reach = node.reach_prob * e.prob;
-                    if reach < opts.min_branch_prob {
+                    let min_reach = min_reach_prob_at_depth(opts.min_branch_prob, node.ply_from_root + 1);
+                    if i > 0 && reach < min_reach {
+                        stats.pruned_reach += 1;
                         continue;
                     }
 
@@ -673,15 +733,20 @@ impl PlayerMatchPlanner {
                             side_to_move: to_side,
                             reach_prob: reach,
                         });
-                        q.push_back(e.to);
+                        to_push.push(e.to);
                     }
                     edges.push(e);
+                }
+
+                // DFS stack: push lower-prob nodes first so higher-prob nodes are expanded next.
+                for id in to_push.into_iter().rev() {
+                    stack.push(id);
                 }
             }
         }
 
         info!(
-            "PlayerMatchPlanner.build_book.done: nodes={} edges={} popped={} expanded_our={} expanded_opp={} pruned_horizon={} pruned_reach={} node_cap_hits={}",
+            "PlayerMatchPlanner.build_book.done: nodes={} edges={} popped={} expanded_our={} expanded_opp={} pruned_horizon={} pruned_reach={} node_cap_hits={} max_ply_reached={}/{}",
             nodes.len(),
             edges.len(),
             stats.popped,
@@ -689,7 +754,9 @@ impl PlayerMatchPlanner {
             stats.expanded_opp,
             stats.pruned_horizon,
             stats.pruned_reach,
-            stats.node_cap_hits
+            stats.node_cap_hits,
+            stats.max_ply_reached,
+            opts.horizon_plies
         );
 
         Ok(VariantBook {
@@ -704,13 +771,27 @@ impl PlayerMatchPlanner {
             debug!("ensure_model_trained: cache hit target_player_id={}", target_player_id);
             return Ok(());
         }
+
+        let global_key: GlobalModelCacheKey = (self.profile_id.clone(), target_player_id);
+        {
+            let cache = global_policy_model_cache().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(model) = cache.get(&global_key) {
+                info!(
+                    "ensure_model_trained: global cache hit profile_id={} target_player_id={}",
+                    self.profile_id, target_player_id
+                );
+                self.models.insert(target_player_id, Arc::clone(model));
+                return Ok(());
+            }
+        }
+
         let profile_id = self.profile_id.clone();
         let name = self.lookup_player_name(target_player_id).unwrap_or_else(|| "?".to_string());
         info!(
             "ensure_model_trained: training target_player_id={} name={} profile_id={}",
             target_player_id, name, profile_id
         );
-        let model = self.train_model_for_player_scoped(&profile_id, target_player_id)?;
+        let model = Arc::new(self.train_model_for_player_scoped(&profile_id, target_player_id)?);
         info!(
             "ensure_model_trained.done: target_player_id={} exact_states={} backoff_states={} exact_global_states={} backoff_global_states={} clock_ctx_keys={}",
             target_player_id,
@@ -720,6 +801,12 @@ impl PlayerMatchPlanner {
             model.backoff_global.len(),
             model.clock_by_ctx.len(),
         );
+
+        {
+            let mut cache = global_policy_model_cache().lock().unwrap_or_else(|e| e.into_inner());
+            cache.insert(global_key, Arc::clone(&model));
+        }
+
         self.models.insert(target_player_id, model);
         Ok(())
     }
@@ -757,6 +844,7 @@ impl PlayerMatchPlanner {
             games_decoded_blob_soup: u64,
             games_fallback_analysis_pgn: u64,
             games_skipped_no_moves: u64,
+            games_skipped_unparsed_blob: u64,
             plies_total: u64,
             plies_for_target: u64,
             clock_samples: u64,
@@ -792,7 +880,8 @@ impl PlayerMatchPlanner {
         for row_res in rows {
             let row = row_res?;
             stats.games_total += 1;
-            if row.moves_blob.as_deref().is_some_and(|b| !b.is_empty()) {
+            let has_moves_blob = row.moves_blob.as_deref().is_some_and(|b| !b.is_empty());
+            if has_moves_blob {
                 stats.games_with_moves_blob += 1;
             }
 
@@ -828,7 +917,9 @@ impl PlayerMatchPlanner {
                 decode_moves_blob_to_uci_sequence(row.moves_blob.as_deref(), &pos);
 
             // Optional fallback: analyzed PGN if BLOB extraction yields nothing.
-            if uci_seq.is_empty() {
+            // IMPORTANT: avoid hammering the analysis DB when the profile BLOB exists but couldn't be decoded.
+            // Analysis fallback is intended primarily for games where the profile DB does not contain Moves.
+            if uci_seq.is_empty() && !has_moves_blob {
                 if let Some(pgn_text) = self.load_analyzed_pgn_best_effort(profile_id, row.id)? {
                     if let Ok(tokens) = parse_pgn_san_tokens(&pgn_text) {
                         if let Ok(v) = pgn_tokens_to_uci_sequence(&pos, &tokens) {
@@ -841,7 +932,11 @@ impl PlayerMatchPlanner {
             }
 
             if uci_seq.is_empty() {
-                stats.games_skipped_no_moves += 1;
+                if has_moves_blob {
+                    stats.games_skipped_unparsed_blob += 1;
+                } else {
+                    stats.games_skipped_no_moves += 1;
+                }
                 continue;
             }
 
@@ -905,16 +1000,31 @@ impl PlayerMatchPlanner {
                     Err(_) => break,
                 };
             }
+
+            if stats.games_total % 2000 == 0 {
+                info!(
+                    "train_model_for_player_scoped.progress: games_total={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} skipped_unparsed_blob={} plies_for_target={} clock_samples={}",
+                    stats.games_total,
+                    stats.games_decoded_blob_pgn,
+                    stats.games_decoded_blob_soup,
+                    stats.games_fallback_analysis_pgn,
+                    stats.games_skipped_no_moves,
+                    stats.games_skipped_unparsed_blob,
+                    stats.plies_for_target,
+                    stats.clock_samples
+                );
+            }
         }
 
         info!(
-            "train_model_for_player_scoped.done: games_total={} games_with_moves_blob={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} plies_total={} plies_for_target={} clock_samples={} clock_ctx_keys={} exact_states={} backoff_states={}",
+            "train_model_for_player_scoped.done: games_total={} games_with_moves_blob={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} skipped_unparsed_blob={} plies_total={} plies_for_target={} clock_samples={} clock_ctx_keys={} exact_states={} backoff_states={}",
             stats.games_total,
             stats.games_with_moves_blob,
             stats.games_decoded_blob_pgn,
             stats.games_decoded_blob_soup,
             stats.games_fallback_analysis_pgn,
             stats.games_skipped_no_moves,
+            stats.games_skipped_unparsed_blob,
             stats.plies_total,
             stats.plies_for_target,
             stats.clock_samples,
@@ -997,13 +1107,23 @@ impl PlayerMatchPlanner {
 
         if policy.used_uniform && ply_from_start <= 12 {
             warn!(
-                "expand_opponent_turn: UNIFORM policy (no data) target_player_id={} ply={} exact_total={} backoff_total={} lambda={:.3}",
-                target_player_id, ply_from_start, policy.exact_total, policy.backoff_total, policy.lambda
+                "expand_opponent_turn: UNIFORM policy (no data) target_player_id={} ply={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
+                target_player_id,
+                ply_from_start,
+                policy.exact_total,
+                policy.backoff_total,
+                policy.lambda,
+                policy.effective_n
             );
         } else if parent_reach_prob >= 0.999 && ply_from_start <= 12 {
             info!(
-                "expand_opponent_turn: target_player_id={} ply={} exact_total={} backoff_total={} lambda={:.3}",
-                target_player_id, ply_from_start, policy.exact_total, policy.backoff_total, policy.lambda
+                "expand_opponent_turn: target_player_id={} ply={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
+                target_player_id,
+                ply_from_start,
+                policy.exact_total,
+                policy.backoff_total,
+                policy.lambda,
+                policy.effective_n
             );
             let top_dbg: Vec<String> = policy
                 .moves
@@ -1023,10 +1143,6 @@ impl PlayerMatchPlanner {
             // Keep `raw_p` as the actual model probability (do NOT renormalize within topK),
             // otherwise `min_branch_prob` becomes misleading and can admit low-probability moves.
             let prob = raw_p;
-            let reach = parent_reach_prob * raw_p;
-            if reach < opts.min_branch_prob {
-                continue;
-            }
 
             edges.push(BookEdge {
                 from: from_id,
@@ -1084,13 +1200,14 @@ impl PlayerMatchPlanner {
 
             if opponent_policy.used_uniform && ply_from_start <= 11 {
                 warn!(
-                    "expand_our_turn: UNIFORM policy for opponent replies target_player_id={} ply={} our_uci={} exact_total={} backoff_total={} lambda={:.3}",
+                    "expand_our_turn: UNIFORM policy for opponent replies target_player_id={} ply={} our_uci={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
                     target_player_id,
                     ply_from_start + 1,
                     our_uci,
                     opponent_policy.exact_total,
                     opponent_policy.backoff_total,
-                    opponent_policy.lambda
+                    opponent_policy.lambda,
+                    opponent_policy.effective_n
                 );
             }
 
@@ -1184,6 +1301,7 @@ impl PlayerMatchPlanner {
         pos: &Chess,
         legal_uci: &[String],
         pi_counts: &HashMap<String, f64>,
+        effective_n: f64,
         ply_from_start: usize,
         ctx_key: ContextKey,
         time_control: TimeControlParams,
@@ -1220,6 +1338,15 @@ impl PlayerMatchPlanner {
 
         const EVAL_BUDGET: usize = 8;
         const EVAL_MASS_TARGET: f64 = 0.85;
+
+        // When the learned policy is well supported and highly concentrated, prefer reproducing
+        // the opponent's demonstrated behavior over engine-guided reweighting.
+        const TRUST_EFFECTIVE_N_ANY: f64 = 250.0;
+        const TRUST_EFFECTIVE_N_PEAK: f64 = 25.0;
+        const TRUST_PEAK_PI: f64 = 0.70;
+
+        // Dampen engine influence as data becomes reliable.
+        const ENGINE_DAMP_N0: f64 = 30.0;
 
         let clamp_f64 = |x: f64, lo: f64, hi: f64| x.max(lo).min(hi);
         let sigmoid = |x: f64| 1.0 / (1.0 + (-x).exp());
@@ -1299,6 +1426,14 @@ impl PlayerMatchPlanner {
 
         let gap = clamp_f64((u_best - u_second).max(0.0), 0.0, U_MAX * 2.0);
 
+        // Peak mass of the learned policy. When the player's historical behavior is very concentrated
+        // (and supported by enough data), prefer reproducing it over engine-guided reweighting.
+        let mut peak_pi: f64 = 0.0;
+        for uci in legal_uci {
+            peak_pi = peak_pi.max(pi_counts.get(uci).copied().unwrap_or(0.0));
+        }
+        let uncertainty = clamp_f64(1.0 - peak_pi, 0.0, 1.0);
+
         // Time pressure model.
         let base = time_control.base_sec as f64;
         let inc = time_control.inc_sec as f64;
@@ -1315,7 +1450,58 @@ impl PlayerMatchPlanner {
         let e_norm = (elo as f64 - 1500.0) / 400.0;
 
         // Bounded rationality temperature (beta).
-        let beta = clamp_f64((B0 + B_E * e_norm + B_R * (r - 0.5)).exp(), 0.05, 10.0);
+        let eff_n = if effective_n.is_finite() {
+            effective_n.max(0.0)
+        } else {
+            0.0
+        };
+        let engine_scale = if eff_n > 0.0 {
+            1.0 / (1.0 + eff_n / ENGINE_DAMP_N0)
+        } else {
+            1.0
+        };
+
+        let beta_base = (B0 + B_E * e_norm + B_R * (r - 0.5)).exp();
+        let beta = clamp_f64(beta_base * uncertainty * engine_scale, 0.05, 10.0);
+
+        let trust_behavior = legal_uci.len() <= 1
+            || eff_n >= TRUST_EFFECTIVE_N_ANY
+            || (eff_n >= TRUST_EFFECTIVE_N_PEAK && peak_pi >= TRUST_PEAK_PI);
+
+        if trust_behavior {
+            let mut p_final: HashMap<String, f64> = HashMap::new();
+            for uci in legal_uci {
+                p_final.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+            }
+            normalize_dist_in_place(&mut p_final, legal_uci);
+
+            let diag = BrBlunderDiagnostics {
+                ply_from_start,
+                time_control_bucket: ctx_key.time_control_bucket,
+                t_rem_est_sec: t_rem,
+                mu_est_sec: mu,
+                r,
+                effective_n: eff_n,
+                peak_pi,
+                uncertainty,
+                used_engine_adjustment: false,
+                engine_scale,
+                beta_base,
+                beta: 0.0,
+                pi_b_base: 0.0,
+                pi_b: 0.0,
+                gap,
+                delta: 0.0,
+                gamma: 0.0,
+                u_best,
+                u_second,
+                u_other,
+                eval_count_pv,
+                eval_count_extra,
+            };
+
+            return Ok((p_final, diag));
+        }
 
         // Bounded rationality distribution: p_BR(m) ∝ pi_counts(m) * exp(beta * U(m)).
         let mut max_x = f64::NEG_INFINITY;
@@ -1357,9 +1543,9 @@ impl PlayerMatchPlanner {
             normalize_dist_in_place(&mut p_br, legal_uci);
         }
 
-        // Blunder probability pi_B.
-        let pi_b_raw = sigmoid(W0 + W_G * gap + W_R * (0.5 - r) + W_E * (-e_norm));
-        let pi_b = clamp_f64(pi_b_raw, 0.0, 0.95);
+        // Blunder probability pi_B (scaled down when the learned policy is confident / data-rich).
+        let pi_b_base = sigmoid(W0 + W_G * gap + W_R * (0.5 - r) + W_E * (-e_norm));
+        let pi_b = clamp_f64(pi_b_base * uncertainty.sqrt() * engine_scale, 0.0, 0.95);
 
         // Blunder conditional distribution over sufficiently regretful moves.
         let delta = clamp_f64(DELTA0 * (D_R * (0.5 - r) + D_E * (-e_norm)).exp(), 0.2, 4.0);
@@ -1419,7 +1605,14 @@ impl PlayerMatchPlanner {
             t_rem_est_sec: t_rem,
             mu_est_sec: mu,
             r,
+            effective_n: eff_n,
+            peak_pi,
+            uncertainty,
+            used_engine_adjustment: true,
+            engine_scale,
+            beta_base,
             beta,
+            pi_b_base,
             pi_b,
             gap,
             delta,
@@ -1571,6 +1764,7 @@ impl PlayerMatchPlanner {
                 pos,
                 &legal_uci,
                 &p_counts,
+                effective_n,
                 ply_from_start,
                 ctx_key,
                 time_control,
@@ -1620,7 +1814,7 @@ impl PlayerMatchPlanner {
 
         if ply_from_start <= 12 {
             debug!(
-                "get_opponent_policy: ply={} legal_moves={} exact_total(ctx/global)={:.1}/{:.1} backoff_total(ctx/global)={:.1}/{:.1} z_ctx={:.3} z_global={:.3} used_uniform={} eff_n={:.1} br={{tc_bkt={} ply={} r={:.3} beta={:.3} pi_b={:.3} gap={:.3} delta={:.3} gamma={:.3} u_best={:.2} u_2nd={:.2} u_other={:.2} t_rem={:.1}s mu={:.1}s eval_pv={} eval_extra={}}} ctx={:?}",
+                "get_opponent_policy: ply={} legal_moves={} exact_total(ctx/global)={:.1}/{:.1} backoff_total(ctx/global)={:.1}/{:.1} z_ctx={:.3} z_global={:.3} used_uniform={} eff_n={:.1} peak_pi={:.3} unc={:.3} br={{engine={} tc_bkt={} ply={} eff_n={:.1} r={:.3} eng_scale={:.3} beta_base={:.3} beta={:.3} pi_b_base={:.3} pi_b={:.3} gap={:.3} delta={:.3} gamma={:.3} u_best={:.2} u_2nd={:.2} u_other={:.2} t_rem={:.1}s mu={:.1}s eval_pv={} eval_extra={}}} ctx={:?}",
                 ply_from_start,
                 legal_uci.len(),
                 exact_total_ctx,
@@ -1631,10 +1825,17 @@ impl PlayerMatchPlanner {
                 z_global,
                 used_uniform,
                 effective_n,
+                br_diag.peak_pi,
+                br_diag.uncertainty,
+                br_diag.used_engine_adjustment,
                 br_diag.time_control_bucket,
                 br_diag.ply_from_start,
+                br_diag.effective_n,
                 br_diag.r,
+                br_diag.engine_scale,
+                br_diag.beta_base,
                 br_diag.beta,
+                br_diag.pi_b_base,
                 br_diag.pi_b,
                 br_diag.gap,
                 br_diag.delta,
@@ -1648,6 +1849,52 @@ impl PlayerMatchPlanner {
                 br_diag.eval_count_extra,
                 ctx_key
             );
+
+            let mut raw_sorted: Vec<(String, f64)> = legal_uci
+                .iter()
+                .map(|uci| (uci.clone(), p_counts.get(uci).copied().unwrap_or(0.0)))
+                .collect();
+            raw_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let top_raw_dbg: Vec<String> = raw_sorted
+                .iter()
+                .take(5)
+                .map(|(uci, p)| {
+                    let c = counts_by_uci.get(uci).copied().unwrap_or(0);
+                    format!("{uci} p={:.3} c={c}", p.max(0.0))
+                })
+                .collect();
+            debug!("get_opponent_policy.top_raw: {}", top_raw_dbg.join(" | "));
+
+            let top_final_dbg: Vec<String> = policy
+                .moves
+                .iter()
+                .take(5)
+                .map(|(uci, p, c)| format!("{uci} p={:.3} c={c}", p.max(0.0)))
+                .collect();
+            debug!("get_opponent_policy.top_final: {}", top_final_dbg.join(" | "));
+
+            if br_diag.used_engine_adjustment {
+                if let Some((raw_top_uci, raw_top_p)) = raw_sorted.first() {
+                    if *raw_top_p >= 0.70
+                        && !policy
+                            .moves
+                            .iter()
+                            .take(opts.opponent_top_k)
+                            .any(|(u, _, _)| u == raw_top_uci)
+                    {
+                        warn!(
+                            "get_opponent_policy: dominant empirical move dropped from topK raw_top={} raw_p={:.3} topK={} eff_n={:.1} peak_pi={:.3} unc={:.3}",
+                            raw_top_uci,
+                            raw_top_p,
+                            opts.opponent_top_k,
+                            effective_n,
+                            br_diag.peak_pi,
+                            br_diag.uncertainty
+                        );
+                    }
+                }
+            }
         }
 
         self.policy_cache.insert(cache_key, policy.clone());
@@ -1673,7 +1920,14 @@ struct BrBlunderDiagnostics {
     t_rem_est_sec: f64,
     mu_est_sec: f64,
     r: f64,
+    effective_n: f64,
+    peak_pi: f64,
+    uncertainty: f64,
+    used_engine_adjustment: bool,
+    engine_scale: f64,
+    beta_base: f64,
     beta: f64,
+    pi_b_base: f64,
     pi_b: f64,
     gap: f64,
     delta: f64,
@@ -2514,6 +2768,20 @@ fn normalize_dist_in_place(dist: &mut HashMap<String, f64>, legal_moves: &[Strin
             dist.insert(uci.clone(), p);
         }
     }
+}
+
+/// Returns an effective minimum reach probability for pruning at a given depth.
+///
+/// `min_branch_prob` is interpreted as the minimum reach at the root. As depth increases,
+/// we relax the threshold exponentially so the planner can still reach the requested horizon
+/// without requiring unrealistically large path probability mass.
+fn min_reach_prob_at_depth(min_branch_prob: f64, ply_from_root: usize) -> f64 {
+    if !(min_branch_prob.is_finite() && min_branch_prob > 0.0) {
+        return 0.0;
+    }
+    let fullmoves_from_root = (ply_from_root / 2) as i32;
+    let decay = 0.5_f64.powi(fullmoves_from_root.max(0));
+    (min_branch_prob * decay).max(0.0).min(1.0)
 }
 
 fn recency_weight_days(game_dt: NaiveDateTime, now: NaiveDateTime, half_life_days: f64) -> f64 {

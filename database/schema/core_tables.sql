@@ -15,7 +15,8 @@ CREATE TABLE Events (
     EventType TEXT,
     Location TEXT,
     StartDate TEXT,
-    EndDate TEXT
+    EndDate TEXT,
+    TimeControl TEXT
 );
 
 -- Sites table: Cannot use WITHOUT ROWID with AUTOINCREMENT

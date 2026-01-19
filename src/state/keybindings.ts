@@ -45,9 +45,6 @@ const baseKeys: Record<string, KeyDef> = {
   GO_TO_TOURNAMENTS: { name: "keybindings.goToTournaments", keys: "mod+alt+t" },
   IMPORT_BOARD: { name: "keybindings.importBoard", keys: "mod+i" },
 
-  // === Navigation - Additional ===
-  GO_TO_LEARN: { name: "keybindings.goToLearn", keys: "mod+shift+l" },
-
   // === Copy/Paste & PGN Operations ===
   COPY_FEN: { name: "keybindings.copyFen", keys: "mod+shift+f" },
   COPY_PGN: { name: "keybindings.copyPgn", keys: "mod+shift+c" },

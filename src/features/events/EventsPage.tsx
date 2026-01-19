@@ -7,10 +7,8 @@ import {
   Group,
   Loader,
   Modal,
-  ScrollArea,
   Select,
   Stack,
-  Table,
   Text,
   TextInput,
 } from "@mantine/core";
@@ -22,8 +20,10 @@ import { IconPlus, IconTrash } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commands, type GameQuery, type NormalizedGame } from "@/bindings";
 import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
 import { query_games } from "@/utils/db";
@@ -33,6 +33,7 @@ import {
   deleteManagedEvent,
   listManagedEvents,
   type ManagedEvent,
+  type ManagedEventType,
   upsertManagedEvent,
 } from "@/utils/managedEvents";
 import { getProfileDbPath } from "@/utils/profileDb";
@@ -41,7 +42,9 @@ import { unwrap } from "@/utils/unwrap";
 
 type CreateFormValues = {
   name: string;
+  eventType: ManagedEventType;
   location: string;
+  timeControl: string;
   startDate: Date | null;
   endDate: Date | null;
 };
@@ -69,14 +72,20 @@ export default function EventsPage() {
   );
 
   const [addGameModalOpened, setAddGameModalOpened] = useState(false);
-  const [listGamesModalOpened, setListGamesModalOpened] = useState(false);
   const [activeEvent, setActiveEvent] = useState<ManagedEvent | null>(null);
   const [isCreatingGame, setIsCreatingGame] = useState(false);
+  const [expandedEventIds, setExpandedEventIds] = useState<number[]>([]);
+  const [eventSortStatus, setEventSortStatus] = useState<DataTableSortStatus<ManagedEvent>>({
+    columnAccessor: "id",
+    direction: "asc",
+  });
 
   const form = useForm<CreateFormValues>({
     initialValues: {
       name: "",
+      eventType: "otb_tournament",
       location: "",
+      timeControl: "",
       startDate: null,
       endDate: null,
     },
@@ -126,29 +135,16 @@ export default function EventsPage() {
     staleTime: 30_000,
   });
 
-  const { data: gamesForActiveEvent, isLoading: isLoadingEventGames } = useQuery({
-    queryKey: ["managedEventGames", dbPath, activeEvent?.id],
-    queryFn: async () => {
-      if (!dbPath || !activeEvent?.id) return [];
-      const res = await query_games(dbPath, {
-        tournament_id: activeEvent.id,
-        options: { direction: "asc", sort: "date", skipCount: true, pageSize: 200 },
-      } as any);
-      return res.data;
-    },
-    enabled: !!dbPath && !!activeEvent?.id && listGamesModalOpened,
-    staleTime: 10_000,
-  });
-
   const handleCreate = async (values: CreateFormValues) => {
     if (!dbPath) return;
     try {
       await upsertManagedEvent(dbPath, {
         name: values.name.trim(),
-        eventType: "otb_tournament",
+        eventType: values.eventType,
         location: values.location.trim() || null,
         startDate: formatDateToPGN(values.startDate) ?? null,
         endDate: formatDateToPGN(values.endDate) ?? null,
+        timeControl: values.timeControl.trim() || null,
       });
 
       notifications.show({
@@ -173,11 +169,6 @@ export default function EventsPage() {
     setActiveEvent(event);
     gameForm.reset();
     setAddGameModalOpened(true);
-  };
-
-  const openListGamesModal = (event: ManagedEvent) => {
-    setActiveEvent(event);
-    setListGamesModalOpened(true);
   };
 
   const handleDeleteEvent = (event: ManagedEvent) => {
@@ -235,8 +226,11 @@ export default function EventsPage() {
       });
 
       const eventName = (activeEvent.name ?? "").trim() || t("features.events.unnamedEvent", "Unnamed event");
-      const site = "OTB";
-      const pgn = `[Event "${eventName}"]\n[Site "${site}"]\n[Date "${date ?? "????.??.??"}"]\n[Round "${
+      const eventType = (activeEvent.event_type ?? "otb_tournament") as ManagedEventType;
+      const site = eventType === "online_tournament" ? "Online" : eventType === "league" ? "League" : "OTB";
+      const timeControl = (activeEvent.time_control ?? "").trim();
+      const tcHeader = timeControl ? `\n[TimeControl "${timeControl}"]` : "";
+      const pgn = `[Event "${eventName}"]\n[Site "${site}"]${tcHeader}\n[Date "${date ?? "????.??.??"}"]\n[Round "${
         round ?? "?"
       }"]\n[White "${white}"]\n[Black "${black}"]\n[Result "${result}"]\n\n${result}`;
 
@@ -246,6 +240,9 @@ export default function EventsPage() {
         setActiveTab,
         pgn,
         srcInfo: { type: "db", db: dbPath, id: gameId },
+        initialAnalysisTab: "analysis",
+        initialAnalysisSubTab: "report",
+        initialNotationView: "report",
       });
       navigate({ to: "/analysis" });
 
@@ -265,7 +262,7 @@ export default function EventsPage() {
   const handleAnalyzeDbGame = async (gameId: number) => {
     if (!dbPath) return;
     try {
-      const game = unwrap(await (await import("@/bindings")).commands.getGame(dbPath, gameId));
+      const game = unwrap(await commands.getGame(dbPath, gameId));
       createTab({
         tab: { name: `${game.white} - ${game.black}`, type: "analysis" },
         setTabs,
@@ -273,6 +270,9 @@ export default function EventsPage() {
         pgn: game.moves,
         headers: game,
         srcInfo: { type: "db", db: dbPath, id: gameId },
+        initialAnalysisTab: "analysis",
+        initialAnalysisSubTab: "report",
+        initialNotationView: "report",
       });
       navigate({ to: "/analysis" });
     } catch (error) {
@@ -284,6 +284,35 @@ export default function EventsPage() {
       });
     }
   };
+
+  const eventTypeLabel = (event: ManagedEvent): string => {
+    const v = (event.event_type ?? "otb_tournament") as ManagedEventType;
+    if (v === "online_tournament") return t("features.events.eventTypes.onlineTournament", "Online Tournament");
+    if (v === "league") return t("features.events.eventTypes.league", "League");
+    return t("features.events.eventTypes.otbTournament", "OTB Tournament");
+  };
+
+  const sortedEvents = useMemo(() => {
+    const events = [...(managedEvents ?? [])];
+    const { columnAccessor, direction } = eventSortStatus;
+    const dir = direction === "desc" ? -1 : 1;
+
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    const strCmp = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity: "base" });
+
+    events.sort((a, b) => {
+      if (columnAccessor === "id") return (a.id - b.id) * dir;
+      if (columnAccessor === "name") return strCmp(str(a.name), str(b.name)) * dir;
+      if (columnAccessor === "event_type") return strCmp(eventTypeLabel(a), eventTypeLabel(b)) * dir;
+      if (columnAccessor === "location") return strCmp(str(a.location), str(b.location)) * dir;
+      if (columnAccessor === "time_control") return strCmp(str(a.time_control), str(b.time_control)) * dir;
+      if (columnAccessor === "start_date") return strCmp(str(a.start_date), str(b.start_date)) * dir;
+      if (columnAccessor === "end_date") return strCmp(str(a.end_date), str(b.end_date)) * dir;
+      return 0;
+    });
+
+    return events;
+  }, [eventSortStatus, eventTypeLabel, managedEvents]);
 
   return (
     <>
@@ -303,17 +332,41 @@ export default function EventsPage() {
             <Card withBorder>
               <form onSubmit={form.onSubmit(handleCreate)}>
                 <Stack gap="sm">
-                  <Text fw={600}>{t("features.events.create.title", "Create OTB tournament")}</Text>
+                  <Text fw={600}>{t("features.events.create.title", "Create event")}</Text>
                   <TextInput
                     label={t("features.events.fields.name", "Name")}
                     placeholder={t("features.events.fields.namePlaceholder", "Tournament name")}
                     required
                     {...form.getInputProps("name")}
                   />
+                  <Select
+                    label={t("features.events.fields.eventType", "Event type")}
+                    value={form.values.eventType}
+                    onChange={(value) =>
+                      form.setFieldValue("eventType", (value as ManagedEventType) ?? "otb_tournament")
+                    }
+                    data={[
+                      {
+                        value: "otb_tournament",
+                        label: t("features.events.eventTypes.otbTournament", "OTB Tournament"),
+                      },
+                      {
+                        value: "online_tournament",
+                        label: t("features.events.eventTypes.onlineTournament", "Online Tournament"),
+                      },
+                      { value: "league", label: t("features.events.eventTypes.league", "League") },
+                    ]}
+                    required
+                  />
                   <TextInput
                     label={t("features.events.fields.location", "Location")}
                     placeholder={t("features.events.fields.locationPlaceholder", "City, venue, etc.")}
                     {...form.getInputProps("location")}
+                  />
+                  <TextInput
+                    label={t("features.events.fields.timeControl", "Time control")}
+                    placeholder={t("features.events.fields.timeControlPlaceholder", "e.g. 90+30")}
+                    {...form.getInputProps("timeControl")}
                   />
                   <Group grow>
                     <DateInput
@@ -359,51 +412,94 @@ export default function EventsPage() {
               ) : !managedEvents || managedEvents.length === 0 ? (
                 <Text c="dimmed">{t("features.events.list.empty", "No tournaments yet.")}</Text>
               ) : (
-                <ScrollArea type="auto">
-                  <Table striped highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th style={{ width: 80 }}>ID</Table.Th>
-                        <Table.Th>{t("features.events.table.name", "Name")}</Table.Th>
-                        <Table.Th style={{ width: 180 }}>{t("features.events.table.location", "Location")}</Table.Th>
-                        <Table.Th style={{ width: 150 }}>{t("features.events.table.startDate", "Start")}</Table.Th>
-                        <Table.Th style={{ width: 150 }}>{t("features.events.table.endDate", "End")}</Table.Th>
-                        <Table.Th style={{ width: 220 }}>{t("features.events.table.actions", "Actions")}</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {managedEvents.map((event) => (
-                        <Table.Tr key={event.id}>
-                          <Table.Td>#{event.id}</Table.Td>
-                          <Table.Td>{event.name || "-"}</Table.Td>
-                          <Table.Td>{event.location || "-"}</Table.Td>
-                          <Table.Td>
-                            {event.start_date ? (event.start_date as string).replace(/\./g, "-") : "-"}
-                          </Table.Td>
-                          <Table.Td>{event.end_date ? (event.end_date as string).replace(/\./g, "-") : "-"}</Table.Td>
-                          <Table.Td>
-                            <Group gap="xs" wrap="nowrap">
-                              <Button size="xs" variant="default" onClick={() => openAddGamesModal(event)}>
-                                {t("features.events.actions.addGame", "Add game")}
-                              </Button>
-                              <Button size="xs" variant="default" onClick={() => openListGamesModal(event)}>
-                                {t("features.events.actions.listGames", "List games")}
-                              </Button>
-                              <ActionIcon
-                                size="lg"
-                                variant="subtle"
-                                color="red"
-                                onClick={() => handleDeleteEvent(event)}
-                              >
-                                <IconTrash size={16} />
-                              </ActionIcon>
-                            </Group>
-                          </Table.Td>
-                        </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                </ScrollArea>
+                <DataTable
+                  withTableBorder
+                  withColumnBorders
+                  highlightOnHover
+                  idAccessor="id"
+                  records={sortedEvents}
+                  sortStatus={eventSortStatus}
+                  onSortStatusChange={setEventSortStatus}
+                  rowExpansion={{
+                    allowMultiple: true,
+                    expanded: {
+                      recordIds: expandedEventIds,
+                      onRecordIdsChange: setExpandedEventIds,
+                    },
+                    content: ({ record }) =>
+                      dbPath && (
+                        <Box p="sm">
+                          <EventGamesTable dbPath={dbPath} eventId={record.id} onAnalyze={handleAnalyzeDbGame} />
+                        </Box>
+                      ),
+                  }}
+                  columns={[
+                    {
+                      accessor: "id",
+                      title: "ID",
+                      width: 80,
+                      sortable: true,
+                      render: (event) => `#${event.id}`,
+                    },
+                    {
+                      accessor: "name",
+                      title: t("features.events.table.name", "Name"),
+                      sortable: true,
+                      render: (event) => event.name || "-",
+                    },
+                    {
+                      accessor: "event_type",
+                      title: t("features.events.table.eventType", "Type"),
+                      width: 170,
+                      sortable: true,
+                      render: (event) => eventTypeLabel(event),
+                    },
+                    {
+                      accessor: "location",
+                      title: t("features.events.table.location", "Location"),
+                      width: 200,
+                      sortable: true,
+                      render: (event) => event.location || "-",
+                    },
+                    {
+                      accessor: "time_control",
+                      title: t("features.events.table.timeControl", "Time control"),
+                      width: 160,
+                      sortable: true,
+                      render: (event) => event.time_control || "-",
+                    },
+                    {
+                      accessor: "start_date",
+                      title: t("features.events.table.startDate", "Start"),
+                      width: 140,
+                      sortable: true,
+                      render: (event) => (event.start_date ? String(event.start_date).replace(/\./g, "-") : "-"),
+                    },
+                    {
+                      accessor: "end_date",
+                      title: t("features.events.table.endDate", "End"),
+                      width: 140,
+                      sortable: true,
+                      render: (event) => (event.end_date ? String(event.end_date).replace(/\./g, "-") : "-"),
+                    },
+                    {
+                      accessor: "actions",
+                      title: t("features.events.table.actions", "Actions"),
+                      width: 180,
+                      textAlign: "right",
+                      render: (event) => (
+                        <Group gap="xs" justify="flex-end" wrap="nowrap">
+                          <Button size="xs" variant="default" onClick={() => openAddGamesModal(event)}>
+                            {t("features.events.actions.addGame", "Add game")}
+                          </Button>
+                          <ActionIcon size="lg" variant="subtle" color="red" onClick={() => handleDeleteEvent(event)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
+                      ),
+                    },
+                  ]}
+                />
               )}
             </Card>
           </Stack>
@@ -473,67 +569,193 @@ export default function EventsPage() {
           </Stack>
         </form>
       </Modal>
-
-      <Modal
-        opened={listGamesModalOpened}
-        onClose={() => setListGamesModalOpened(false)}
-        title={t("features.events.listGames.title", "Tournament games")}
-        size="xl"
-      >
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Text fw={600}>{activeEvent?.name || "-"}</Text>
-            <Text c="dimmed" size="sm">
-              #{activeEvent?.id ?? "-"}
-            </Text>
-          </Group>
-
-          {isLoadingEventGames ? (
-            <Group justify="center" py="lg">
-              <Loader size="sm" />
-            </Group>
-          ) : !gamesForActiveEvent || gamesForActiveEvent.length === 0 ? (
-            <Text c="dimmed">{t("features.events.listGames.empty", "No games found.")}</Text>
-          ) : (
-            <ScrollArea type="auto" style={{ maxHeight: 520 }}>
-              <Table striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th style={{ width: 100 }}>ID</Table.Th>
-                    <Table.Th style={{ width: 200 }}>{t("features.events.games.white", "White")}</Table.Th>
-                    <Table.Th style={{ width: 200 }}>{t("features.events.games.black", "Black")}</Table.Th>
-                    <Table.Th style={{ width: 120 }}>{t("features.events.games.result", "Result")}</Table.Th>
-                    <Table.Th style={{ width: 150 }}>{t("features.events.games.date", "Date")}</Table.Th>
-                    <Table.Th style={{ width: 120 }}>{t("features.events.games.actions", "Actions")}</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {gamesForActiveEvent.map((g) => (
-                    <Table.Tr key={g.id}>
-                      <Table.Td>#{g.id}</Table.Td>
-                      <Table.Td>{g.white}</Table.Td>
-                      <Table.Td>{g.black}</Table.Td>
-                      <Table.Td>{g.result || "-"}</Table.Td>
-                      <Table.Td>{g.date ? (parseDate(g.date)?.toISOString().slice(0, 10) ?? g.date) : "-"}</Table.Td>
-                      <Table.Td>
-                        <Button size="xs" variant="default" onClick={() => void handleAnalyzeDbGame(g.id)}>
-                          {t("features.events.games.analyze", "Analyze")}
-                        </Button>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          )}
-
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setListGamesModalOpened(false)}>
-              {t("common.close", "Close")}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
     </>
+  );
+}
+
+function EventGamesTable({
+  dbPath,
+  eventId,
+  onAnalyze,
+}: {
+  dbPath: string;
+  eventId: number;
+  onAnalyze: (gameId: number) => void;
+}) {
+  const { t } = useTranslation();
+
+  const [search, setSearch] = useState("");
+  const [roundFilter, setRoundFilter] = useState("");
+  const [resultFilter, setResultFilter] = useState<"all" | CreateGameFormValues["result"]>("all");
+  const [fromDate, setFromDate] = useState<Date | null>(null);
+  const [toDate, setToDate] = useState<Date | null>(null);
+
+  const [sortStatus, setSortStatus] = useState<DataTableSortStatus<NormalizedGame>>({
+    columnAccessor: "date",
+    direction: "desc",
+  });
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["managedEventGames", dbPath, eventId],
+    queryFn: async () => {
+      const query = {
+        tournament_id: eventId,
+        options: {
+          skipCount: true,
+          sort: "id",
+          direction: "desc",
+        },
+      } satisfies GameQuery;
+
+      const res = await query_games(dbPath, query);
+      return res.data;
+    },
+    staleTime: 10_000,
+    enabled: !!dbPath && eventId > 0,
+  });
+
+  const filteredSorted = useMemo(() => {
+    const raw = data ?? [];
+    const s = search.trim().toLowerCase();
+    const r = roundFilter.trim().toLowerCase();
+
+    const from = fromDate ? new Date(fromDate) : null;
+    if (from) from.setHours(0, 0, 0, 0);
+    const to = toDate ? new Date(toDate) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+
+    let out = raw.filter((g) => {
+      if (s) {
+        const w = (g.white ?? "").toLowerCase();
+        const b = (g.black ?? "").toLowerCase();
+        if (!w.includes(s) && !b.includes(s)) return false;
+      }
+      if (r) {
+        const gr = (g.round ?? "").toLowerCase();
+        if (!gr.includes(r)) return false;
+      }
+      if (resultFilter !== "all") {
+        if ((g.result ?? "*") !== resultFilter) return false;
+      }
+
+      const dateStr = g.date ? String(g.date).replace(/\\./g, "-") : "";
+      const dt = dateStr ? parseDate(dateStr) : null;
+      if (from && dt && dt < from) return false;
+      if (to && dt && dt > to) return false;
+
+      return true;
+    });
+
+    const { columnAccessor, direction } = sortStatus;
+    const dir = direction === "desc" ? -1 : 1;
+
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    const strCmp = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity: "base", numeric: true });
+
+    const resultRank = (v: unknown) => {
+      const rr = str(v);
+      if (rr === "1-0") return 3;
+      if (rr === "1/2-1/2") return 2;
+      if (rr === "0-1") return 1;
+      return 0;
+    };
+
+    out = [...out].sort((a, b) => {
+      if (columnAccessor === "id") return ((a.id ?? 0) - (b.id ?? 0)) * dir;
+      if (columnAccessor === "white") return strCmp(str(a.white), str(b.white)) * dir;
+      if (columnAccessor === "black") return strCmp(str(a.black), str(b.black)) * dir;
+      if (columnAccessor === "round") return strCmp(str(a.round), str(b.round)) * dir;
+      if (columnAccessor === "result") return (resultRank(a.result) - resultRank(b.result)) * dir;
+      if (columnAccessor === "date") return strCmp(str(a.date), str(b.date)) * dir;
+      return 0;
+    });
+
+    return out;
+  }, [data, fromDate, resultFilter, roundFilter, search, sortStatus, toDate]);
+
+  return (
+    <Stack gap="sm">
+      <Group grow align="end">
+        <TextInput
+          label={t("features.events.games.filters.search", "Search")}
+          placeholder={t("features.events.games.filters.searchPlaceholder", "Player name")}
+          value={search}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+        />
+        <TextInput
+          label={t("features.events.games.filters.round", "Round")}
+          placeholder={t("features.events.games.roundPlaceholder", "Round")}
+          value={roundFilter}
+          onChange={(e) => setRoundFilter(e.currentTarget.value)}
+        />
+        <Select
+          label={t("features.events.games.filters.result", "Result")}
+          value={resultFilter}
+          onChange={(value) => setResultFilter((value as typeof resultFilter) ?? "all")}
+          data={[
+            { value: "all", label: t("features.events.games.filters.resultAll", "All") },
+            { value: "*", label: t("features.events.games.resultOngoing", "Ongoing (*)") },
+            { value: "1-0", label: t("chess.outcome.whiteWins", "White wins") },
+            { value: "0-1", label: t("chess.outcome.blackWins", "Black wins") },
+            { value: "1/2-1/2", label: t("chess.outcome.draw", "Draw") },
+          ]}
+        />
+        <DateInput
+          label={t("features.events.games.filters.fromDate", "From")}
+          valueFormat="YYYY-MM-DD"
+          clearable
+          value={fromDate}
+          onChange={(v) => setFromDate(parseDate(v) ?? null)}
+        />
+        <DateInput
+          label={t("features.events.games.filters.toDate", "To")}
+          valueFormat="YYYY-MM-DD"
+          clearable
+          value={toDate}
+          onChange={(v) => setToDate(parseDate(v) ?? null)}
+        />
+      </Group>
+
+      {error ? (
+        <Text c="red">{String(error)}</Text>
+      ) : (
+        <DataTable
+          withTableBorder
+          withColumnBorders
+          highlightOnHover
+          fetching={isLoading}
+          idAccessor="id"
+          records={filteredSorted}
+          sortStatus={sortStatus}
+          onSortStatusChange={setSortStatus}
+          noRecordsText={t("features.events.listGames.empty", "No games found.")}
+          columns={[
+            { accessor: "id", title: "ID", width: 80, sortable: true, render: (g) => `#${g.id}` },
+            { accessor: "round", title: t("features.events.games.round", "Round"), width: 90, sortable: true },
+            {
+              accessor: "date",
+              title: t("features.events.games.date", "Date"),
+              width: 140,
+              sortable: true,
+              render: (g) => (g.date ? String(g.date).replace(/\\./g, "-") : "-"),
+            },
+            { accessor: "white", title: t("features.events.games.white", "White"), sortable: true },
+            { accessor: "black", title: t("features.events.games.black", "Black"), sortable: true },
+            { accessor: "result", title: t("features.events.games.result", "Result"), width: 120, sortable: true },
+            {
+              accessor: "actions",
+              title: t("features.events.games.actions", "Actions"),
+              width: 120,
+              textAlign: "right",
+              render: (g) => (
+                <Button size="xs" variant="default" onClick={() => onAnalyze(g.id)}>
+                  {t("features.events.games.analyze", "Analyze")}
+                </Button>
+              ),
+            },
+          ]}
+        />
+      )}
+    </Stack>
   );
 }
