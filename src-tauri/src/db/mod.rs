@@ -35,7 +35,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::{fen::Fen, Board, CastlingMode, Chess, EnPassantMode, FromSetup, Piece, Position};
 use specta::Type;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Seek, Write};
 use std::{
     fs::{File, OpenOptions},
     path::PathBuf,
@@ -44,6 +44,7 @@ use std::{
 };
 use tauri::{path::BaseDirectory, Manager};
 use tauri::{Emitter, State};
+use zip::{write::SimpleFileOptions as ZipFileOptions, CompressionMethod, ZipWriter};
 
 use tauri_specta::Event as _;
 
@@ -2297,6 +2298,80 @@ impl PgnGame {
     }
 }
 
+fn sanitize_zip_component(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        return "Unknown".to_string();
+    }
+
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_sep = false;
+
+    for ch in s.chars() {
+        let allowed = ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.');
+        let mapped = if allowed { ch } else { '_' };
+        let is_sep = mapped == '_';
+
+        if is_sep {
+            if !last_was_sep {
+                out.push('_');
+            }
+            last_was_sep = true;
+        } else {
+            out.push(mapped);
+            last_was_sep = false;
+        }
+    }
+
+    let trimmed = out.trim_matches(&['_', '.'][..]).to_string();
+    if trimmed.is_empty() {
+        "Unknown".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn zip_filename_for_game(white: Option<&str>, black: Option<&str>, date: Option<&str>, result: Option<&str>) -> String {
+    let white = sanitize_zip_component(white.unwrap_or("WhiteUser"));
+    let black = sanitize_zip_component(black.unwrap_or("BlackUser"));
+    let date = sanitize_zip_component(date.unwrap_or("UnknownDate"));
+    let result = sanitize_zip_component(result.unwrap_or("*"));
+    format!("{white}_{black}_{date}_{result}.pgn")
+}
+
+fn export_pgn_games_to_zip<W: Write + Seek>(zip: &mut ZipWriter<W>, games: Vec<PgnGame>) -> Result<()> {
+    let options = ZipFileOptions::default()
+        .compression_method(CompressionMethod::Deflated);
+
+    let mut used: HashMap<String, u32> = HashMap::new();
+
+    for g in games {
+        let mut pgn_buf: Vec<u8> = Vec::new();
+        g.write(&mut pgn_buf)?;
+
+        let base_name = zip_filename_for_game(
+            g.white.as_deref(),
+            g.black.as_deref(),
+            g.date.as_deref(),
+            g.result.as_deref(),
+        );
+
+        let entry_name = match used.get(&base_name).copied() {
+            None => base_name.clone(),
+            Some(n) => {
+                let stem = base_name.trim_end_matches(".pgn");
+                format!("{stem}_{}.pgn", n + 1)
+            }
+        };
+        *used.entry(base_name).or_insert(0) += 1;
+
+        zip.start_file(entry_name, options.clone())?;
+        zip.write_all(&pgn_buf)?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn export_to_pgn(
@@ -2391,10 +2466,11 @@ pub async fn export_position_games_to_pgn(
         .truncate(true)
         .open(dest_file)?;
 
-    let mut writer = BufWriter::new(file);
+    let writer = BufWriter::new(file);
+    let mut zip = ZipWriter::new(writer);
 
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
-    games::table
+    let pgn_games = games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
         .inner_join(black_players.on(games::black_id.eq(black_players.field(players::id))))
         .inner_join(events::table.on(games::event_id.eq(events::id)))
@@ -2403,7 +2479,7 @@ pub async fn export_position_games_to_pgn(
         .load_iter::<(Game, Player, Player, Event, Site), DefaultLoadingMode>(db)?
         .flatten()
         .map(|(game, white, black, event, site)| {
-            let pgn = PgnGame {
+            Ok(PgnGame {
                 event: event.name,
                 site: site.name,
                 date: game.date,
@@ -2426,13 +2502,12 @@ pub async fn export_position_games_to_pgn(
                         .flatten(),
                 )?
                 .to_string(),
-            };
-
-            pgn.write(&mut writer)?;
-
-            Ok(())
+            })
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<PgnGame>>>()?;
+
+    export_pgn_games_to_zip(&mut zip, pgn_games)?;
+    let _ = zip.finish()?;
 
     Ok(())
 }
@@ -2457,10 +2532,11 @@ pub async fn export_selected_games_to_pgn(
         .truncate(true)
         .open(dest_file)?;
 
-    let mut writer = BufWriter::new(file);
+    let writer = BufWriter::new(file);
+    let mut zip = ZipWriter::new(writer);
 
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
-    games::table
+    let pgn_games = games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
         .inner_join(black_players.on(games::black_id.eq(black_players.field(players::id))))
         .inner_join(events::table.on(games::event_id.eq(events::id)))
@@ -2469,7 +2545,7 @@ pub async fn export_selected_games_to_pgn(
         .load_iter::<(Game, Player, Player, Event, Site), DefaultLoadingMode>(db)?
         .flatten()
         .map(|(game, white, black, event, site)| {
-            let pgn = PgnGame {
+            Ok(PgnGame {
                 event: event.name,
                 site: site.name,
                 date: game.date,
@@ -2492,13 +2568,12 @@ pub async fn export_selected_games_to_pgn(
                         .flatten(),
                 )?
                 .to_string(),
-            };
-
-            pgn.write(&mut writer)?;
-
-            Ok(())
+            })
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<PgnGame>>>()?;
+
+    export_pgn_games_to_zip(&mut zip, pgn_games)?;
+    let _ = zip.finish()?;
 
     Ok(())
 }

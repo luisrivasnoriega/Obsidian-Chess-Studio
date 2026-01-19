@@ -146,8 +146,8 @@ function GamesTable({
         .substring(0, 50);
 
       const destFile = await save({
-        filters: [{ name: "PGN", extensions: ["pgn"] }],
-        defaultPath: `${fenFilename}.pgn`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        defaultPath: `${fenFilename}-${games.length}.zip`,
       });
 
       if (!destFile) {
@@ -155,7 +155,8 @@ function GamesTable({
         return;
       }
 
-      const result = await commands.exportPositionGamesToPgn(databasePath, fen, destFile);
+      const gameIdsArray = games.map((g) => g.id);
+      const result = await commands.exportSelectedGamesToPgn(databasePath, gameIdsArray, destFile);
       if (result.status === "error") {
         notifications.show({
           title: t("common.error"),
@@ -180,8 +181,8 @@ function GamesTable({
     setExporting(true);
     try {
       const destFile = await save({
-        filters: [{ name: "PGN", extensions: ["pgn"] }],
-        defaultPath: `selected-games-${selectedGameIds.size}.pgn`,
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+        defaultPath: `selected-games-${selectedGameIds.size}.zip`,
       });
 
       if (!destFile) {

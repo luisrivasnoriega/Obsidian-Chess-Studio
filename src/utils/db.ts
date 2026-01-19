@@ -368,18 +368,17 @@ export async function searchPosition(options: LocalOptions, tab: string) {
   // Convert result to wanted_result format (undefined for "any" to omit from payload)
   const wantedResult = options.result === "any" ? undefined : options.result;
 
-  // If color is "any" and there's a player, we need to search for both white and black
-  // and combine the results since the backend doesn't support OR queries
-  if (options.color === "any" && options.player !== null) {
-    // Request maximum games from each search (backend limits to 1000 per search)
-    // We'll combine all results without applying the limit to show all games
-    const searchLimit = 1000; // Backend maximum per search
-    // Build base payload
+  const selectedPlayers = Array.isArray((options as unknown as { players?: unknown }).players)
+    ? (options as unknown as { players: number[] }).players.filter((n) => Number.isFinite(n)).map((n) => Math.trunc(n))
+    : [];
+
+  // If multiple players are selected, we issue one query per player and merge the results.
+  // Note: this can over-count stats when a single game matches multiple selected players
+  // (e.g. a game between two selected players). Avoiding that requires backend OR/IN support.
+  if (selectedPlayers.length > 0) {
+    const searchLimit = 1000; // backend maximum per search
     const basePayload = {
-      position: {
-        fen,
-        type_: type,
-      },
+      position: { fen, type_: type },
       game_details_limit: String(searchLimit) as unknown as bigint,
       options: {
         skipCount: true,
@@ -391,74 +390,49 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       ...(wantedResult ? { wanted_result: wantedResult } : {}),
     };
 
-    // Search for player as white
-    const whitePayload = {
-      ...basePayload,
-      player1: options.player,
-    };
-
-    // Search for player as black
-    const blackPayload = {
-      ...basePayload,
-      player2: options.player,
-    };
-
-    // Execute both searches in parallel
-    const [whiteRes, blackRes] = await Promise.all([
-      commands.searchPosition(options.path, whitePayload, tab),
-      commands.searchPosition(options.path, blackPayload, tab),
-    ]);
-
-    // Handle errors
-    if (whiteRes.status === "error" && whiteRes.error !== "Search stopped") {
-      unwrap(whiteRes);
-      throw new Error(whiteRes.error);
-    }
-    if (blackRes.status === "error" && blackRes.error !== "Search stopped") {
-      unwrap(blackRes);
-      throw new Error(blackRes.error);
+    const payloads: Array<Record<string, unknown>> = [];
+    if (options.color === "any") {
+      for (const p of selectedPlayers) payloads.push({ ...basePayload, player1: p });
+      for (const p of selectedPlayers) payloads.push({ ...basePayload, player2: p });
+    } else if (options.color === "white") {
+      for (const p of selectedPlayers) payloads.push({ ...basePayload, player1: p });
+    } else if (options.color === "black") {
+      for (const p of selectedPlayers) payloads.push({ ...basePayload, player2: p });
     }
 
-    // Combine openings stats
-    const whiteOpenings = whiteRes.status === "ok" ? whiteRes.data[0] : [];
-    const blackOpenings = blackRes.status === "ok" ? blackRes.data[0] : [];
-    const whiteGames = whiteRes.status === "ok" ? whiteRes.data[1] : [];
-    const blackGames = blackRes.status === "ok" ? blackRes.data[1] : [];
+    const results = await Promise.all(payloads.map((p) => commands.searchPosition(options.path!, p as any, tab)));
 
-    // Merge openings by move (combine stats)
+    for (const res of results) {
+      if (res.status === "error" && res.error !== "Search stopped") {
+        unwrap(res);
+        throw new Error(res.error);
+      }
+    }
+
     const openingsMap = new Map<string, { move: string; white: number; black: number; draw: number }>();
+    const gamesMap = new Map<number, NormalizedGame>();
 
-    for (const opening of whiteOpenings) {
-      const existing = openingsMap.get(opening.move) || { move: opening.move, white: 0, black: 0, draw: 0 };
-      existing.white += opening.white;
-      existing.black += opening.black;
-      existing.draw += opening.draw;
-      openingsMap.set(opening.move, existing);
-    }
+    for (const res of results) {
+      if (res.status !== "ok") continue;
+      const [openings, games] = res.data;
 
-    for (const opening of blackOpenings) {
-      const existing = openingsMap.get(opening.move) || { move: opening.move, white: 0, black: 0, draw: 0 };
-      existing.white += opening.white;
-      existing.black += opening.black;
-      existing.draw += opening.draw;
-      openingsMap.set(opening.move, existing);
+      for (const opening of openings) {
+        const existing = openingsMap.get(opening.move) || { move: opening.move, white: 0, black: 0, draw: 0 };
+        existing.white += opening.white;
+        existing.black += opening.black;
+        existing.draw += opening.draw;
+        openingsMap.set(opening.move, existing);
+      }
+
+      for (const game of games) {
+        gamesMap.set(game.id, game);
+      }
     }
 
     const combinedOpenings = Array.from(openingsMap.values());
-
-    // Combine games (deduplicate by game ID)
-    const gamesMap = new Map<number, NormalizedGame>();
-    for (const game of whiteGames) {
-      gamesMap.set(game.id, game);
-    }
-    for (const game of blackGames) {
-      gamesMap.set(game.id, game);
-    }
     const combinedGames = Array.from(gamesMap.values());
-    const _combinedGamesCountBeforeLimit = combinedGames.length;
 
     // Re-sort combined games according to the sort criteria
-    // Both searches return sorted results, but we need to merge-sort them
     const sortField = options.sort || "averageElo";
     const sortDirection = options.direction || "desc";
     const sortMultiplier = sortDirection === "asc" ? 1 : -1;
@@ -497,38 +471,16 @@ export async function searchPosition(options: LocalOptions, tab: string) {
           bValue = b.id;
       }
 
-      // Handle null/undefined values
       if (aValue == null && bValue == null) return 0;
       if (aValue == null) return sortMultiplier;
       if (bValue == null) return -sortMultiplier;
 
-      // Compare values
-      if (typeof aValue === "number" && typeof bValue === "number") {
-        return (aValue - bValue) * sortMultiplier;
-      }
-      if (typeof aValue === "string" && typeof bValue === "string") {
-        return aValue.localeCompare(bValue) * sortMultiplier;
-      }
+      if (typeof aValue === "number" && typeof bValue === "number") return (aValue - bValue) * sortMultiplier;
+      if (typeof aValue === "string" && typeof bValue === "string") return aValue.localeCompare(bValue) * sortMultiplier;
       return 0;
     });
 
-    // For "any color" with player, don't apply limit - show all combined games
-    // The stats should reflect ALL games, not just the limited set
-    // The backend already limits each search to 1000, so we get up to 2000 unique games
-    // We should show all of them, not limit further
-    const shouldApplyLimit = false; // Always show all combined games for "any color" with player
-
-    // Use stats based on whether we applied limit or not
-    let finalOpenings: Opening[];
-    if (shouldApplyLimit) {
-      // Recalculate openings stats from limited games to ensure stats reflect only returned games
-      finalOpenings = recalculateOpeningsFromGames(combinedGames, fen);
-    } else {
-      // Use original combined stats since we're showing all games
-      finalOpenings = combinedOpenings;
-    }
-
-    return [finalOpenings, combinedGames] as [Opening[], NormalizedGame[]];
+    return [combinedOpenings, combinedGames.slice(0, 1000)] as [Opening[], NormalizedGame[]];
   }
 
   // Build payload matching GameQueryJs type exactly
@@ -546,8 +498,6 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       sort: (options.sort || "averageElo") as "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count",
       direction: (options.direction || "desc") as "asc" | "desc",
     },
-    ...(options.color === "white" && options.player !== null ? { player1: options.player } : {}),
-    ...(options.color === "black" && options.player !== null ? { player2: options.player } : {}),
     ...(options.start_date ? { start_date: options.start_date } : {}),
     ...(options.end_date ? { end_date: options.end_date } : {}),
     ...(wantedResult ? { wanted_result: wantedResult } : {}),

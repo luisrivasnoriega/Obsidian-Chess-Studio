@@ -39,7 +39,7 @@ export type LocalOptions = {
   path: string | null;
   fen: string;
   type: "exact" | "partial";
-  player: number | null;
+  players: number[];
   color: "white" | "black" | "any";
   start_date?: string;
   end_date?: string;
@@ -267,7 +267,7 @@ function DatabasePanel() {
     db === "local" ? localOptions.fen : debouncedFen, // include fen for all DBs to refetch on board move
     db === "local" ? localOptions.path : null, // include path to refetch when database changes
     db === "local" ? localOptions.type : null,
-    db === "local" ? localOptions.player : null,
+    db === "local" ? localOptions.players : null,
     db === "local" ? localOptions.color : null,
     db === "local" ? localOptions.start_date : null,
     db === "local" ? localOptions.end_date : null,

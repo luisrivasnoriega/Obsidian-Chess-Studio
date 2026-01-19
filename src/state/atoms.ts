@@ -240,7 +240,7 @@ const localOptionsFamily = atomFamily((_tab: string) =>
     path: null,
     type: "exact",
     fen: "",
-    player: null,
+    players: [],
     color: "any",
     result: "any",
   }),

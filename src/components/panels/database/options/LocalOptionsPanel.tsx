@@ -1,15 +1,13 @@
 import { Box, Button, Group, NativeSelect, SegmentedControl, Stack, Text } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
-import { notifications } from "@mantine/notifications";
 import { parseSquare } from "chessops";
 import { EMPTY_BOARD_FEN, makeFen, parseFen } from "chessops/fen";
 import { useAtom } from "jotai";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
 import { Chessground } from "@/components/Chessground";
 import PiecesGrid from "@/features/boards/components/PiecesGrid";
-import { PlayerSearchInput } from "@/features/databases/components/PlayerSearchInput";
+import { MultiPlayerSearchInput } from "@/features/databases/components/MultiPlayerSearchInput";
 import { currentLocalOptionsAtom } from "@/state/atoms";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 
@@ -17,7 +15,6 @@ function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
   const boardRef = useRef(null);
   const [options, setOptions] = useAtom(currentLocalOptionsAtom);
   const { t } = useTranslation();
-  const [downloadingCache, setDownloadingCache] = useState(false);
   const setSimilarStructure = async (fen: string) => {
     const setup = parseFen(fen).unwrap();
     for (const square of setup.board.pawn.complement()) {
@@ -33,11 +30,11 @@ function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
         <Group>
           <Text fw="bold">{t("databaseOptions.player")}:</Text>
           {options.path && (
-            <PlayerSearchInput
+            <MultiPlayerSearchInput
               label={t("databaseOptions.search")}
-              value={options.player ?? undefined}
+              value={options.players}
               file={options.path}
-              setValue={(v) => setOptions((q) => ({ ...q, player: v || null }))}
+              setValue={(players) => setOptions((q) => ({ ...q, players }))}
             />
           )}
         </Group>
@@ -178,55 +175,6 @@ function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
           />
         </Box>
       </Group>
-
-      <Stack
-        gap="xs"
-        mt="md"
-        p="md"
-        style={{ border: "1px solid var(--mantine-color-default-border)", borderRadius: "var(--mantine-radius-sm)" }}
-      >
-        <Text fw="bold" size="sm">
-          {t("databaseOptions.downloadPositionCache")}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {t("databaseOptions.downloadPositionCacheDesc")}
-        </Text>
-        <Button
-          variant="light"
-          onClick={async () => {
-            setDownloadingCache(true);
-            try {
-              const result = await commands.downloadPositionCache();
-              if (result.status === "error") {
-                notifications.show({
-                  title: t("common.error"),
-                  message: result.error,
-                  color: "red",
-                });
-              } else {
-                notifications.show({
-                  title: t("common.success"),
-                  message: t("databaseOptions.positionCacheDownloaded"),
-                  color: "green",
-                });
-              }
-            } catch (error) {
-              notifications.show({
-                title: t("common.error"),
-                message: error instanceof Error ? error.message : t("errors.unknownError"),
-                color: "red",
-              });
-            } finally {
-              setDownloadingCache(false);
-            }
-          }}
-          disabled={downloadingCache}
-          loading={downloadingCache}
-          size="sm"
-        >
-          {t("databaseOptions.downloadPositionCache")}
-        </Button>
-      </Stack>
     </Stack>
   );
 }
