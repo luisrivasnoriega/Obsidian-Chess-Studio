@@ -1,0 +1,295 @@
+import { ActionIcon, Avatar, Badge, Group, Pagination, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { IconStarFilled } from "@tabler/icons-react";
+import { useAtomValue } from "jotai";
+import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { AnalysisPreview } from "@/components/AnalysisPreview";
+import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
+import { getAnalyzedGamesBulk } from "@/utils/analyzedGames";
+import type { FavoriteGame } from "@/utils/favoriteGames";
+import type { GameRecord } from "@/utils/gameRecords";
+import type { ChessComGameWithEvent, DashboardLichessGame } from "../types";
+
+interface FavoriteGamesTabProps {
+  localGames: GameRecord[];
+  chessComGames: ChessComGameWithEvent[];
+  lichessGames: DashboardLichessGame[];
+  favoriteGames: FavoriteGame[];
+  chessComUsernames: string[];
+  lichessUsernames: string[];
+  onAnalyzeLocalGame: (game: GameRecord) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
+  onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
+  onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
+}
+
+type FavoriteGameItem =
+  | { type: "local"; game: GameRecord }
+  | { type: "chesscom"; game: ChessComGameWithEvent }
+  | { type: "lichess"; game: DashboardLichessGame };
+
+export function FavoriteGamesTab({
+  localGames,
+  chessComGames,
+  lichessGames,
+  favoriteGames,
+  onAnalyzeLocalGame,
+  onAnalyzeChessComGame,
+  onAnalyzeLichessGame,
+  onToggleFavoriteLocal,
+  onToggleFavoriteChessCom,
+  onToggleFavoriteLichess,
+}: FavoriteGamesTabProps) {
+  const { t } = useTranslation();
+  const currentThemeId = useAtomValue(currentThemeIdAtom);
+  const isAcademiaMaya = currentThemeId === "academia-maya";
+  const [analyzedPgns, setAnalyzedPgns] = useState<Map<string, string>>(new Map());
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 25;
+
+  // Combine all favorite games from all sources
+  const favoriteGameItems = useMemo<FavoriteGameItem[]>(() => {
+    const items: FavoriteGameItem[] = [];
+
+    // Add local favorite games
+    favoriteGames
+      .filter((f) => f.source === "local")
+      .forEach((favorite) => {
+        const game = localGames.find((g) => g.id === favorite.gameId);
+        if (game) {
+          items.push({ type: "local", game });
+        }
+      });
+
+    // Add Chess.com favorite games
+    favoriteGames
+      .filter((f) => f.source === "chesscom")
+      .forEach((favorite) => {
+        const game = chessComGames.find((g) => g.url === favorite.gameId);
+        if (game) {
+          items.push({ type: "chesscom", game });
+        }
+      });
+
+    // Add Lichess favorite games
+    favoriteGames
+      .filter((f) => f.source === "lichess")
+      .forEach((favorite) => {
+        const game = lichessGames.find((g) => g.id === favorite.gameId);
+        if (game) {
+          items.push({ type: "lichess", game });
+        }
+      });
+
+    // Sort by timestamp (most recent first)
+    return items.sort((a, b) => {
+      const timeA =
+        a.type === "local" ? a.game.timestamp : a.type === "chesscom" ? a.game.end_time * 1000 : a.game.createdAt;
+      const timeB =
+        b.type === "local" ? b.game.timestamp : b.type === "chesscom" ? b.game.end_time * 1000 : b.game.createdAt;
+      return timeB - timeA;
+    });
+  }, [favoriteGames, localGames, chessComGames, lichessGames]);
+
+  // Paginate games
+  const paginatedGames = useMemo(() => {
+    const start = (page - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    return favoriteGameItems.slice(start, end);
+  }, [favoriteGameItems, page]);
+
+  // Load analyzed PGNs for preview (only for the visible page)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAnalyzedPgns = async () => {
+      if (paginatedGames.length === 0) return;
+
+      const idsToLoad: string[] = [];
+      for (const item of paginatedGames) {
+        const id = item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
+        if (!analyzedPgns.has(id)) idsToLoad.push(id);
+      }
+      if (idsToLoad.length === 0) return;
+
+      const analyzed = await getAnalyzedGamesBulk(idsToLoad);
+      if (cancelled) return;
+
+      setAnalyzedPgns((prev) => {
+        const next = new Map(prev);
+        for (const item of paginatedGames) {
+          const gameId = item.type === "local" ? item.game.id : item.type === "chesscom" ? item.game.url : item.game.id;
+          if (next.has(gameId)) continue;
+          const analyzedPgn = analyzed.get(gameId);
+          const fallbackPgn = item.type === "local" ? item.game.pgn : item.game.pgn;
+          if (analyzedPgn) {
+            next.set(gameId, analyzedPgn);
+          } else if (fallbackPgn) {
+            next.set(gameId, fallbackPgn);
+          }
+        }
+        return next;
+      });
+    };
+
+    loadAnalyzedPgns().catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [paginatedGames, analyzedPgns]);
+
+  const totalPages = Math.ceil(favoriteGameItems.length / itemsPerPage);
+
+  // Reset to page 1 when games change
+  useEffect(() => {
+    setPage(1);
+  }, []);
+
+  // Calculate current time once per render
+  const now = useMemo(() => Date.now(), []);
+
+  const handleToggleFavorite = async (item: FavoriteGameItem) => {
+    if (item.type === "local" && onToggleFavoriteLocal) {
+      await onToggleFavoriteLocal(item.game.id);
+    } else if (item.type === "chesscom" && onToggleFavoriteChessCom) {
+      await onToggleFavoriteChessCom(item.game.url);
+    } else if (item.type === "lichess" && onToggleFavoriteLichess) {
+      await onToggleFavoriteLichess(item.game.id);
+    }
+  };
+
+  const handleAnalyze = (item: FavoriteGameItem) => {
+    if (item.type === "local") {
+      onAnalyzeLocalGame(item.game);
+    } else if (item.type === "chesscom") {
+      onAnalyzeChessComGame(item.game);
+    } else {
+      onAnalyzeLichessGame(item.game);
+    }
+  };
+
+  if (favoriteGameItems.length === 0) {
+    return (
+      <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
+        <Text c="dimmed">{t("features.dashboard.noFavorites") || "No favorite games yet"}</Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
+        <Table striped highlightOnHover>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Source</Table.Th>
+              <Table.Th>Color</Table.Th>
+              <Table.Th>Opponent</Table.Th>
+              <Table.Th>Result</Table.Th>
+              <Table.Th>Date</Table.Th>
+              <Table.Th>Favorite</Table.Th>
+              <Table.Th>Actions</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {paginatedGames.map((item) => {
+              let opponent: string;
+              let result: string;
+              let timestamp: number;
+              let gameId: string;
+              let source: string;
+
+              if (item.type === "local") {
+                const isUserWhite = item.game.white.type === "human";
+                const opp = isUserWhite ? item.game.black : item.game.white;
+                opponent = opp.name ?? (opp.engine ? `${t("features.dashboard.engine")} (${opp.engine})` : "?");
+                result = item.game.result;
+                timestamp = item.game.timestamp;
+                gameId = item.game.id;
+                source = "Local";
+              } else if (item.type === "chesscom") {
+                opponent = item.game.black?.username ?? "?";
+                result = item.game.white?.result ?? "*";
+                timestamp = item.game.end_time * 1000;
+                gameId = item.game.url;
+                source = "Chess.com";
+              } else {
+                opponent = item.game.players.black?.user?.name ?? "?";
+                result = item.game.winner === "white" ? "1-0" : item.game.winner === "black" ? "0-1" : "*";
+                timestamp = item.game.createdAt;
+                gameId = item.game.id;
+                source = "Lichess";
+              }
+
+              const diffMs = now - timestamp;
+              let dateStr = "";
+              if (diffMs < 60 * 60 * 1000) {
+                dateStr = `${Math.floor(diffMs / (60 * 1000))}m ago`;
+              } else if (diffMs < 24 * 60 * 60 * 1000) {
+                dateStr = `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`;
+              } else {
+                dateStr = `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
+              }
+
+              const pgn = analyzedPgns.get(gameId);
+
+              return (
+                <Table.Tr key={`${item.type}-${gameId}`}>
+                  <Table.Td>
+                    <Badge variant="light">{source}</Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs">
+                      <Avatar size={24} radius="xl">
+                        {opponent[0]?.toUpperCase()}
+                      </Avatar>
+                      <Text>{opponent}</Text>
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge color={result === "1-0" || result === "0-1" ? (isAcademiaMaya ? "green" : "teal") : "gray"}>
+                      {result}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="sm">{dateStr}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <ActionIcon
+                      variant="subtle"
+                      color="yellow"
+                      onClick={() => handleToggleFavorite(item)}
+                      title={t("features.dashboard.removeFavorite") || "Remove from favorites"}
+                    >
+                      <IconStarFilled size={16} />
+                    </ActionIcon>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs">
+                      {pgn && <AnalysisPreview pgn={pgn}>{null}</AnalysisPreview>}
+                      <Text
+                        size="sm"
+                        style={{ cursor: "pointer", textDecoration: "underline" }}
+                        onClick={() => handleAnalyze(item)}
+                      >
+                        {t("features.dashboard.analyze") || "Analyze"}
+                      </Text>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </ScrollArea>
+      {totalPages > 1 && (
+        <Group justify="center" mt="md">
+          <Pagination value={page} onChange={setPage} total={totalPages} />
+        </Group>
+      )}
+    </Stack>
+  );
+}

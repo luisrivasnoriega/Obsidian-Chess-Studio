@@ -1,0 +1,837 @@
+import {
+  ActionIcon,
+  Autocomplete,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Group,
+  Loader,
+  Menu,
+  Pagination,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Tooltip,
+} from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
+import {
+  IconChess,
+  IconChevronDown,
+  IconExternalLink,
+  IconSortAscending,
+  IconSortDescending,
+  IconStar,
+  IconStarFilled,
+  IconTrash,
+} from "@tabler/icons-react";
+import { invoke } from "@tauri-apps/api/core";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { Event } from "@/bindings";
+import { AnalysisPreview } from "@/components/AnalysisPreview";
+import { stripAccountKey } from "@/utils/accountKeys";
+import { getChesscomGame } from "@/utils/chess.com/api";
+import type { FavoriteGame } from "@/utils/favoriteGames";
+import type { GameRecord } from "@/utils/gameRecords";
+import { getLichessGame } from "@/utils/lichess/api";
+import { getTimeControl } from "@/utils/timeControl";
+import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
+
+type OnlineGameStats = {
+  accuracy: number;
+  acpl: number;
+  estimatedElo?: number;
+};
+
+type GamesHistoryKind = "Local" | "Chesscom" | "Lichess";
+
+type GamesHistoryRow = {
+  kind: GamesHistoryKind;
+  gameKey: string;
+  analysisGameId: string;
+  externalUrl: string | null;
+  opponent: string;
+  color: "white" | "black";
+  outcome: "win" | "loss" | "draw" | "unknown";
+  pgn: string | null;
+  accuracy: number | null;
+  acpl: number | null;
+  estimatedElo: number | null;
+  moves: number;
+  timeControl: string | null;
+  timeControlCategory: TimeControlCategory | null;
+  timestampMs: number;
+  eventId: number | null;
+  eventName: string | null;
+  isAnalyzed: boolean;
+};
+
+type GamesHistoryResponse = {
+  rows: GamesHistoryRow[];
+  totalCount: number;
+};
+
+function _getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
+  const trimmed = (timeControl ?? "").trim();
+  const lower = trimmed.toLowerCase();
+
+  // Handle common textual categories (some PGNs store "blitz"/"rapid" instead of seconds).
+  if (lower.includes("ultra")) return "ultra_bullet";
+  if (lower.includes("bullet")) return "bullet";
+  if (lower.includes("blitz")) return "blitz";
+  if (lower.includes("rapid")) return "rapid";
+  if (lower.includes("classical")) return "classical";
+  if (lower.includes("correspondence")) return "correspondence";
+
+  // Special cases used by our existing categorizer.
+  if (website === "Chess.com" && lower.startsWith("1/")) return "daily";
+  if (website === "Lichess" && trimmed === "-") return "correspondence";
+
+  return getTimeControl(website, trimmed);
+}
+
+function isFavorite(favorites: FavoriteGame[], source: FavoriteGame["source"], id: string) {
+  return favorites.some((f) => f.source === source && f.gameId === id);
+}
+
+function _resultOutcome(color: "white" | "black", result: string): "win" | "loss" | "draw" | "unknown" {
+  const r = (result ?? "").trim().toLowerCase();
+  if (!r) return "unknown";
+  if (r === "draw") return "draw";
+  if (r === "win") return "win";
+  if (r === "loss" || r === "lose") return "loss";
+  if (r === "1/2-1/2" || r === "½-½" || r === "0.5-0.5") return "draw";
+  if (r === "1-0") return color === "white" ? "win" : "loss";
+  if (r === "0-1") return color === "black" ? "win" : "loss";
+  return "unknown";
+}
+const EVENT_TAG_REGEX = /\[Event\s+"([^"]+)"\]/i;
+const _getEventNameFromPgn = (pgn: string | null | undefined, fallback: string) => {
+  if (!pgn) return fallback;
+  const match = pgn.match(EVENT_TAG_REGEX);
+  if (match?.[1]) return match[1];
+  return fallback;
+};
+
+const TIME_CONTROL_TAG_REGEX = /\[TimeControl\s+"([^"]+)"\]/i;
+const _getTimeControlFromPgn = (pgn?: string | null): string | null => {
+  if (!pgn) return null;
+  const match = pgn.match(TIME_CONTROL_TAG_REGEX);
+  return match?.[1] ?? null;
+};
+
+const _getTagFromPgn = (pgn: string, tag: string): string | null => {
+  const re = new RegExp(`\\[${tag}\\s+\\"([^\\"]+)\\"\\]`, "i");
+  const m = pgn.match(re);
+  return m?.[1] ? m[1] : null;
+};
+
+const _getResultFromPgn = (pgn: string): string | null => _getTagFromPgn(pgn, "Result");
+
+const _winnerFromResult = (result: string | null | undefined): "white" | "black" | undefined => {
+  const r = (result ?? "").trim();
+  if (r === "1-0") return "white";
+  if (r === "0-1") return "black";
+  return undefined;
+};
+
+const _chessComResultsFromPgn = (pgn: string): { white: string; black: string } => {
+  const r = (_getResultFromPgn(pgn) ?? "").trim();
+  if (r === "1-0") return { white: "win", black: "checkmated" };
+  if (r === "0-1") return { white: "checkmated", black: "win" };
+  if (r === "1/2-1/2") return { white: "agreed", black: "agreed" };
+  return { white: "referred", black: "referred" };
+};
+
+function getTimeControlLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  value: TimeControlCategory,
+) {
+  switch (value) {
+    case "ultra_bullet":
+      return t("chess.timeControl.ultraBullet", { defaultValue: "UltraBullet" });
+    case "bullet":
+      return t("chess.timeControl.bullet", { defaultValue: "Bullet" });
+    case "blitz":
+      return t("chess.timeControl.blitz", { defaultValue: "Blitz" });
+    case "rapid":
+      return t("chess.timeControl.rapid", { defaultValue: "Rapid" });
+    case "classical":
+      return t("chess.timeControl.classical", { defaultValue: "Classical" });
+    case "correspondence":
+      return t("chess.timeControl.correspondence", { defaultValue: "Correspondence" });
+    case "daily":
+      return t("chess.timeControl.daily", { defaultValue: "Daily" });
+  }
+}
+
+export function ProfileGamesTab({
+  profileId,
+  selectedOpponentId,
+  gameHistoryLimit,
+  localGames,
+  chessComGames,
+  lichessGames,
+  profileUsernames,
+  isLoadingOnline = false,
+  onAnalyzeLocalGame,
+  onAnalyzeChessComGame,
+  onAnalyzeLichessGame,
+  onDeleteLocalGame,
+  onToggleFavoriteLocal,
+  onToggleFavoriteChessCom,
+  onToggleFavoriteLichess,
+  onAnalyzeAll,
+  favoriteGames = [],
+  eventFilterId,
+  onEventFilterChange,
+  eventOptions,
+  isLoadingEventOptions = false,
+  onEventSearchChange,
+  eventSearchValue,
+  profileDbPath,
+  onOpponentSelected,
+  timeControlCategory,
+  onTimeControlCategoryChange,
+}: {
+  profileId: string | null;
+  selectedOpponentId: number | null;
+  gameHistoryLimit: number;
+  localGames: GameRecord[];
+  chessComGames: ChessComGameWithEvent[];
+  lichessGames: DashboardLichessGame[];
+  profileUsernames: string[];
+  isLoadingOnline?: boolean;
+  onAnalyzeLocalGame: (game: GameRecord) => void;
+  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onDeleteLocalGame?: (gameId: string) => void;
+  onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
+  onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
+  onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
+  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
+  favoriteGames?: FavoriteGame[];
+  eventFilterId: number | null;
+  onEventFilterChange: (eventId: number | null) => void;
+  eventOptions: Event[];
+  isLoadingEventOptions?: boolean;
+  onEventSearchChange: (value: string) => void;
+  eventSearchValue: string;
+  profileDbPath: string | null;
+  onOpponentSelected: (opponentName: string | null) => void;
+  timeControlCategory: TimeControlCategory | null;
+  onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
+}) {
+  const { t } = useTranslation();
+  const _usernamesLower = useMemo(() => {
+    const set = new Set<string>();
+    for (const username of profileUsernames) {
+      const raw = (username ?? "").toLowerCase();
+      if (raw) set.add(raw);
+      const stripped = stripAccountKey(username).toLowerCase();
+      if (stripped) set.add(stripped);
+    }
+    return set;
+  }, [profileUsernames]);
+
+  const [rows, setRows] = useState<GamesHistoryRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 25;
+  const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [opponentFilter, setOpponentFilter] = useState("");
+  const [resultFilter, setResultFilter] = useState<string | null>(null);
+  const [opponentOptions, setOpponentOptions] = useState<string[]>([]);
+  const [isLoadingOpponentOptions, setIsLoadingOpponentOptions] = useState(false);
+  const [debouncedOpponentFilter] = useDebouncedValue(opponentFilter, 250);
+  const selectedOpponentRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const query = debouncedOpponentFilter.trim();
+    if (!profileId || query.length < 3) {
+      setOpponentOptions([]);
+      setIsLoadingOpponentOptions(false);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      setIsLoadingOpponentOptions(true);
+      try {
+        const options =
+          (await invoke<string[]>("dashboard_search_profile_opponents", {
+            profileId,
+            query,
+            profileUsernames,
+          })) ?? [];
+        if (!cancelled) {
+          setOpponentOptions(options);
+        }
+      } catch {
+        if (!cancelled) setOpponentOptions([]);
+      } finally {
+        if (!cancelled) setIsLoadingOpponentOptions(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedOpponentFilter, profileId, profileUsernames]);
+
+  useEffect(() => {
+    if (!profileId) {
+      setRows([]);
+      setTotalCount(0);
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      const res = (await invoke<GamesHistoryResponse>("dashboard_get_games_history_rows", {
+        req: {
+          profileId,
+          profileUsernames,
+          gameHistoryLimit,
+          page,
+          pageSize: itemsPerPage,
+          eventFilterId,
+          selectedOpponentId,
+          opponentContains: opponentFilter.trim() || null,
+          timeControlCategory,
+          resultFilter,
+          sortBy: sortBy ?? "date",
+          sortDirection,
+        },
+      })) ?? { rows: [], totalCount: 0 };
+
+      if (cancelled) return;
+      setRows(res.rows ?? []);
+      setTotalCount(res.totalCount ?? 0);
+    };
+    void run().catch(() => {
+      if (!cancelled) {
+        setRows([]);
+        setTotalCount(0);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    profileId,
+    profileUsernames,
+    gameHistoryLimit,
+    page,
+    eventFilterId,
+    opponentFilter,
+    timeControlCategory,
+    resultFilter,
+    sortBy,
+    sortDirection,
+    selectedOpponentId,
+  ]);
+
+  const handleSort = (field: "elo" | "date") => {
+    if (sortBy === field) setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    else {
+      setSortBy(field);
+      setSortDirection("desc");
+    }
+    setPage(1);
+  };
+
+  const totalPages = Math.ceil(totalCount / itemsPerPage);
+  const now = useMemo(() => Date.now(), []);
+  const analyzeAllOptions = useMemo(() => {
+    const totalCount = localGames.length + chessComGames.length + lichessGames.length;
+    return [
+      { type: "all" as const, label: "All", count: totalCount },
+      { type: "local" as const, label: "Local", count: localGames.length },
+      { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
+      { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
+    ];
+  }, [localGames.length, chessComGames.length, lichessGames.length]);
+
+  const handleOpenGame = async (url: string | null) => {
+    if (!url) return;
+    try {
+      await openUrl(url, "inAppBrowser");
+      return;
+    } catch {}
+
+    try {
+      await openUrl(url);
+      return;
+    } catch {}
+
+    try {
+      await openPath(url);
+      return;
+    } catch {}
+
+    try {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    } catch {}
+
+    notifications.show({
+      title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
+      message: t("features.dashboard.openGameFailedMessage", "Failed to open the game link. Please try again."),
+      color: "red",
+    });
+  };
+
+  const handleAnalyzeRow = async (row: GamesHistoryRow, pgn: string | null) => {
+    const profileDisplayName = (profileUsernames?.[0] ?? "").trim() || t("common.player", { defaultValue: "Player" });
+    const inferredWhite = row.color === "white" ? profileDisplayName : row.opponent;
+    const inferredBlack = row.color === "white" ? row.opponent : profileDisplayName;
+
+    if (row.kind === "Local") {
+      const g = localGames.find((x) => x.id === row.gameKey);
+      if (g) onAnalyzeLocalGame(g);
+      return;
+    }
+
+    if (row.kind === "Chesscom") {
+      const existing = chessComGames.find((x) => x.url === row.gameKey);
+      if (existing?.pgn) {
+        if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+        else onAnalyzeChessComGame(existing);
+        return;
+      }
+
+      const url = row.externalUrl || row.gameKey;
+      const fetched = pgn?.trim() ? pgn : ((await getChesscomGame(url)) ?? "").trim();
+      if (!fetched) return;
+
+      const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
+      const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
+      const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+      const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+      const tc = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? "";
+      const results = _chessComResultsFromPgn(fetched);
+
+      const stub: ChessComGameWithEvent = {
+        url,
+        pgn: fetched,
+        time_control: tc,
+        end_time: Math.floor(row.timestampMs / 1000),
+        rated: true,
+        initial_setup: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        rules: "chess",
+        white: { rating: 0, result: results.white, username: stripAccountKey(white) },
+        black: { rating: 0, result: results.black, username: stripAccountKey(black) },
+        eventId: row.eventId ?? 0,
+        eventName: row.eventName ?? null,
+      };
+
+      if (profileId) onAnalyzeChessComGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+      else onAnalyzeChessComGame(stub);
+      return;
+    }
+
+    // Lichess
+    const existing = lichessGames.find((x) => x.id === row.gameKey);
+    if (existing?.pgn) {
+      if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+      else onAnalyzeLichessGame(existing);
+      return;
+    }
+
+    const gameId = row.gameKey;
+    const fetched = pgn?.trim() ? pgn : ((await getLichessGame(gameId)) ?? "").trim();
+    if (!fetched) return;
+
+    const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
+    const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
+    const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+    const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+    const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
+    const winner = _winnerFromResult(_getResultFromPgn(fetched));
+    const fen = _getTagFromPgn(fetched, "FEN") ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    const stub: DashboardLichessGame = {
+      id: gameId,
+      players: {
+        white: { user: { name: stripAccountKey(white) } },
+        black: { user: { name: stripAccountKey(black) } },
+      },
+      speed: row.timeControlCategory
+        ? getTimeControlLabel(t, row.timeControlCategory)
+        : t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+      timeControl,
+      createdAt: row.timestampMs,
+      winner,
+      status: "finished",
+      pgn: fetched,
+      lastFen: fen,
+      eventId: row.eventId ?? 0,
+      eventName: row.eventName ?? null,
+    };
+
+    if (profileId) onAnalyzeLichessGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+    else onAnalyzeLichessGame(stub);
+  };
+
+  // Favorite toggling & analyzed detection are handled per-row using backend-provided fields.
+
+  if (isLoadingOnline) {
+    return (
+      <Stack gap="xs" align="center" justify="center" style={{ minHeight: "200px" }}>
+        <Loader size="md" />
+        <Text size="sm" c="dimmed">
+          Loading...
+        </Text>
+      </Stack>
+    );
+  }
+
+  if (!profileId) {
+    return (
+      <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
+        <Text c="dimmed">{t("features.dashboard.noGames") || "No games yet"}</Text>
+      </Stack>
+    );
+  }
+  if (totalCount === 0) {
+    return (
+      <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
+        <Text c="dimmed">{t("features.dashboard.noGames") || "No games yet"}</Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <Group gap="xs">
+        <Select
+          placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
+          value={eventFilterId != null ? String(eventFilterId) : undefined}
+          onChange={(value) => onEventFilterChange(value ? Number(value) : null)}
+          data={[...eventOptions]
+            .sort((a, b) => {
+              // Sort by date (most recent first)
+              // Use end_date if available, otherwise start_date
+              const getDate = (event: Event): string | null => {
+                return event.end_date || event.start_date || null;
+              };
+
+              const dateA = getDate(a);
+              const dateB = getDate(b);
+
+              // Events with dates come first
+              if (dateA && !dateB) return -1;
+              if (!dateA && dateB) return 1;
+
+              // Both have dates: compare (descending - most recent first)
+              if (dateA && dateB) {
+                return dateB.localeCompare(dateA);
+              }
+
+              // Neither has date: sort by ID (descending - most recent first)
+              return b.id - a.id;
+            })
+            .map((event) => ({
+              value: String(event.id),
+              label: `#${event.id} - ${(event.name ?? "").trim() || t("features.dashboard.unnamedEvent", "Unnamed event")}`,
+            }))}
+          searchable
+          clearable
+          size="sm"
+          maxDropdownHeight={240}
+          nothingFoundMessage={t("features.dashboard.noEventsMatch", "No events match")}
+          rightSection={isLoadingEventOptions ? <Loader size="xs" /> : undefined}
+          searchValue={eventSearchValue}
+          onSearchChange={onEventSearchChange}
+          style={{ minWidth: 200, maxWidth: 280 }}
+        />
+        <Autocomplete
+          placeholder={t("features.dashboard.filterByOpponent", "Filter by opponent")}
+          value={opponentFilter}
+          onChange={(value) => {
+            setOpponentFilter(value);
+            const trimmed = value.trim();
+            if (!trimmed) {
+              selectedOpponentRef.current = null;
+              onOpponentSelected(null);
+              return;
+            }
+
+            if (selectedOpponentRef.current && trimmed !== selectedOpponentRef.current) {
+              selectedOpponentRef.current = null;
+              onOpponentSelected(null);
+            }
+          }}
+          onBlur={() => {
+            const trimmed = opponentFilter.trim();
+            if (trimmed.length < 3) return;
+            if (selectedOpponentRef.current === trimmed) return;
+
+            const exact = opponentOptions.find((o) => o.toLowerCase() === trimmed.toLowerCase());
+            if (!exact) return;
+
+            selectedOpponentRef.current = exact;
+            setOpponentFilter(exact);
+            onOpponentSelected(exact);
+          }}
+          onOptionSubmit={(value) => {
+            selectedOpponentRef.current = value.trim() || null;
+            setOpponentFilter(value);
+            onOpponentSelected(value);
+          }}
+          data={opponentOptions}
+          limit={25}
+          maxDropdownHeight={240}
+          rightSection={isLoadingOpponentOptions ? <Loader size="xs" /> : undefined}
+          style={{ flex: 1 }}
+          size="sm"
+        />
+        <Select
+          placeholder={t("features.dashboard.filterByResult", "Filter by result")}
+          value={resultFilter}
+          onChange={setResultFilter}
+          data={[
+            { value: "win", label: t("features.dashboard.win", "Win") },
+            { value: "loss", label: t("features.dashboard.loss", "Loss") },
+            { value: "draw", label: t("chess.draw", "Draw") },
+          ]}
+          clearable
+          size="sm"
+          style={{ width: 150 }}
+        />
+        <Select
+          placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
+          value={timeControlCategory ?? undefined}
+          onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
+          data={(["ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"] as const).map(
+            (value) => ({
+              value,
+              label: getTimeControlLabel(t, value),
+            }),
+          )}
+          clearable
+          searchable
+          size="sm"
+          style={{ width: 180 }}
+        />
+      </Group>
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
+        <Table striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th style={{ width: 105 }}>Source</Table.Th>
+              <Table.Th style={{ width: 180 }}>Opponent</Table.Th>
+              <Table.Th style={{ width: 70 }}>Color</Table.Th>
+              <Table.Th style={{ width: 85 }}>Result</Table.Th>
+              <Table.Th style={{ width: 90 }}>Accuracy</Table.Th>
+              <Table.Th style={{ width: 80 }}>ACPL</Table.Th>
+              <Table.Th style={{ width: 110, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("elo")}>
+                <Group gap="xs" wrap="nowrap">
+                  {t("dashboard.estimatedElo")}
+                  {sortBy === "elo" &&
+                    (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
+                </Group>
+              </Table.Th>
+              <Table.Th style={{ width: 75 }}>Moves</Table.Th>
+              <Table.Th style={{ width: 95 }}>{t("dashboard.tableHeaders.timeControl")}</Table.Th>
+              <Table.Th style={{ width: 95, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
+                <Group gap="xs" wrap="nowrap">
+                  Date
+                  {sortBy === "date" &&
+                    (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
+                </Group>
+              </Table.Th>
+              <Table.Th style={{ width: 85 }}>Favorite</Table.Th>
+              <Table.Th style={{ width: 200, textAlign: "left" }}>
+                {onAnalyzeAll && (
+                  <Menu position="bottom-start" withinPortal>
+                    <Menu.Target>
+                      <Button size="xs" variant="light" rightSection={<IconChevronDown size={14} />}>
+                        Analyze All
+                      </Button>
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      {analyzeAllOptions.map((option) => (
+                        <Menu.Item
+                          key={option.type}
+                          disabled={option.count === 0}
+                          onClick={() => onAnalyzeAll(option.type)}
+                        >
+                          {option.label} ({option.count})
+                        </Menu.Item>
+                      ))}
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
+              </Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {rows.length === 0 ? (
+              <Table.Tr>
+                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
+                  <Text c="dimmed">{t("features.dashboard.noGamesMatchFilters", "No games match the filters")}</Text>
+                </Table.Td>
+              </Table.Tr>
+            ) : (
+              rows.map((row) => {
+                const pgn = row.pgn ?? null;
+                const diffMs = now - row.timestampMs;
+                const dateStr =
+                  diffMs < 60 * 60 * 1000
+                    ? `${Math.floor(diffMs / (60 * 1000))}m ago`
+                    : diffMs < 24 * 60 * 60 * 1000
+                      ? `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`
+                      : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
+
+                const favoriteSource =
+                  row.kind === "Local" ? "local" : row.kind === "Chesscom" ? "chesscom" : "lichess";
+                const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
+
+                return (
+                  <Table.Tr key={`${row.kind}:${row.gameKey}`}>
+                    <Table.Td>
+                      <Badge
+                        variant="light"
+                        color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}
+                      >
+                        {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td style={{ width: 180 }}>
+                      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                        <Avatar size={24} radius="xl">
+                          {(row.opponent || "?")[0]?.toUpperCase()}
+                        </Avatar>
+                        <Text truncate style={{ minWidth: 0 }}>
+                          {row.opponent}
+                        </Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Box
+                        aria-label={row.color}
+                        style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: 999,
+                          backgroundColor: row.color === "white" ? "#ffffff" : "#000000",
+                          border: row.color === "white" ? "1px solid #666666" : "1px solid #000000",
+                          marginLeft: 4,
+                        }}
+                      />
+                    </Table.Td>
+                    <Table.Td style={{ width: 85 }}>
+                      {(() => {
+                        const label =
+                          row.outcome === "win"
+                            ? "Win"
+                            : row.outcome === "loss"
+                              ? "Loss"
+                              : row.outcome === "draw"
+                                ? "Draw"
+                                : "-";
+                        const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
+                        return (
+                          <Badge variant="light" color={color}>
+                            {label}
+                          </Badge>
+                        );
+                      })()}
+                    </Table.Td>
+                    <Table.Td>{row.accuracy ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
+                    <Table.Td>{row.acpl ? Math.round(row.acpl) : "-"}</Table.Td>
+                    <Table.Td>{row.estimatedElo ? Math.round(row.estimatedElo) : "-"}</Table.Td>
+                    <Table.Td>{row.moves || "-"}</Table.Td>
+                    <Table.Td>
+                      {row.timeControl?.trim()
+                        ? (() => {
+                            const category = row.timeControlCategory ?? null;
+                            return category ? getTimeControlLabel(t, category) : "-";
+                          })()
+                        : "-"}
+                    </Table.Td>
+                    <Table.Td>{dateStr}</Table.Td>
+                    <Table.Td>
+                      <ActionIcon
+                        variant="subtle"
+                        onClick={async () => {
+                          if (row.kind === "Local" && onToggleFavoriteLocal)
+                            return await onToggleFavoriteLocal(row.gameKey);
+                          if (row.kind === "Chesscom" && onToggleFavoriteChessCom)
+                            return await onToggleFavoriteChessCom(row.gameKey);
+                          if (row.kind === "Lichess" && onToggleFavoriteLichess)
+                            return await onToggleFavoriteLichess(row.gameKey);
+                        }}
+                        disabled={
+                          (row.kind === "Local" && !onToggleFavoriteLocal) ||
+                          (row.kind === "Chesscom" && !onToggleFavoriteChessCom) ||
+                          (row.kind === "Lichess" && !onToggleFavoriteLichess)
+                        }
+                      >
+                        {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
+                      </ActionIcon>
+                    </Table.Td>
+                    <Table.Td style={{ textAlign: "left" }}>
+                      <Group gap="xs" wrap="nowrap" justify="flex-start">
+                        {row.kind === "Local" && onDeleteLocalGame && (
+                          <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        )}
+                        {row.isAnalyzed && pgn ? (
+                          <AnalysisPreview pgn={pgn}>
+                            <Button
+                              size="xs"
+                              variant="default"
+                              leftSection={<IconChess size={16} />}
+                              onClick={async () => {
+                                await handleAnalyzeRow(row, pgn);
+                              }}
+                            >
+                              {t("features.dashboard.analyze") || "Analyze"}
+                            </Button>
+                          </AnalysisPreview>
+                        ) : (
+                          <Button
+                            size="xs"
+                            variant="default"
+                            leftSection={<IconChess size={16} />}
+                            onClick={async () => {
+                              await handleAnalyzeRow(row, pgn);
+                            }}
+                          >
+                            {t("features.dashboard.analyze") || "Analyze"}
+                          </Button>
+                        )}
+                        {row.kind !== "Local" && (
+                          <Tooltip label={t("features.dashboard.openGame", "Open game")}>
+                            <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
+                              <IconExternalLink size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })
+            )}
+          </Table.Tbody>
+        </Table>
+      </ScrollArea>
+
+      {totalPages > 1 && (
+        <Group justify="center" mt="xs">
+          <Pagination value={page} onChange={setPage} total={totalPages} size="sm" />
+        </Group>
+      )}
+    </Stack>
+  );
+}

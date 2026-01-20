@@ -1,0 +1,596 @@
+import {
+  Alert,
+  Button,
+  Center,
+  Divider,
+  Group,
+  Loader,
+  Modal,
+  Paper,
+  ScrollArea,
+  Stack,
+  Tabs,
+  Text,
+  TextInput,
+} from "@mantine/core";
+import { useForm } from "@mantine/form";
+import { notifications } from "@mantine/notifications";
+import { IconAlertCircle } from "@tabler/icons-react";
+import { useNavigate } from "@tanstack/react-router";
+import { listen } from "@tauri-apps/api/event";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
+import { open } from "@tauri-apps/plugin-dialog";
+import { remove } from "@tauri-apps/plugin-fs";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { commands, type DatabaseInfo, events, type PuzzleDatabaseInfo } from "@/bindings";
+import FileInput from "@/components/FileInput";
+import ProgressButton from "@/components/ProgressButton";
+import { type SuccessDatabaseInfo, setDbSource, useDefaultDatabases } from "@/utils/db";
+import { capitalize } from "@/utils/format";
+import { getPuzzleDatabases } from "@/utils/puzzles";
+import { unwrap } from "@/utils/unwrap";
+
+const DB_EXTENSIONS = ["pgn", "pgn.zst"];
+
+interface DatabaseFormValues extends Partial<Extract<DatabaseInfo, { type: "success" }>> {
+  title: string;
+  description?: string;
+  file: string;
+  filename: string;
+}
+
+interface AddDatabaseProps {
+  databases: DatabaseInfo[];
+  opened: boolean;
+  setOpened: (opened: boolean) => void;
+  setLoading: Dispatch<SetStateAction<boolean>>;
+  setDatabases: () => void;
+  puzzleDbs?: PuzzleDatabaseInfo[];
+  setPuzzleDbs?: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
+  redirectTo?: string;
+}
+
+interface DatabaseCardProps {
+  setDatabases: () => void;
+  database: SuccessDatabaseInfo;
+  databaseId: number;
+  initInstalled: boolean;
+}
+
+interface PuzzleDbCardProps {
+  setPuzzleDbs: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
+  puzzleDb: PuzzleDatabaseInfo & { downloadLink: string };
+  databaseId: number;
+  initInstalled: boolean;
+}
+
+const extractFilename = (path: string): string => {
+  return path.split(/(\\|\/)/g).pop() || "";
+};
+
+const generateTitleFromFilename = (filename: string): string => {
+  const nameWithoutExt = filename.replace(/\.(pgn|csv|db|db3)(.zst)?$/i, "");
+  return capitalize(nameWithoutExt.replaceAll(/[_-]/g, " "));
+};
+
+const useFormValidation = (databases: DatabaseInfo[], _puzzleDbs: PuzzleDatabaseInfo[] = []) => {
+  const { t } = useTranslation();
+
+  const validateDatabaseTitle = useCallback(
+    (value: string | undefined) => {
+      if (!value) return t("common.requireName");
+      if (databases.find((e) => e.type === "success" && e.title === value)) {
+        return t("common.nameAlreadyUsed");
+      }
+      return null;
+    },
+    [databases, t],
+  );
+
+  const validateFile = useCallback(
+    (value: string | undefined) => {
+      if (!value) return t("common.requirePath");
+      return null;
+    },
+    [t],
+  );
+
+  return { validateDatabaseTitle, validateFile };
+};
+
+const useDatabaseOperations = (
+  setLoading: Dispatch<SetStateAction<boolean>>,
+  setDatabases: () => void,
+  _setPuzzleDbs?: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>,
+) => {
+  const convertDatabase = useCallback(
+    async (path: string, title: string, description?: string) => {
+      try {
+        setLoading(true);
+        const dbPath = await resolve(await appDataDir(), "db", `${title}.db3`);
+        unwrap(await commands.convertPgn(path, dbPath, null, title, description ?? null));
+        await setDbSource(dbPath, "external");
+        setDatabases();
+      } finally {
+        setLoading(false);
+      }
+    },
+    [setLoading, setDatabases],
+  );
+
+  return { convertDatabase };
+};
+
+function AddDatabase({
+  databases,
+  opened,
+  setOpened,
+  setLoading,
+  setDatabases,
+  puzzleDbs,
+  setPuzzleDbs,
+  redirectTo,
+}: AddDatabaseProps) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+
+  const { validateDatabaseTitle, validateFile } = useFormValidation(databases, []);
+  const { convertDatabase } = useDatabaseOperations(setLoading, setDatabases, setPuzzleDbs);
+
+  const { defaultDatabases, error, isLoading } = useDefaultDatabases(opened);
+
+  const [_importing, _setImporting] = useState(false);
+  const [_importError, setImportError] = useState<string | null>(null);
+
+  const databaseForm = useForm<DatabaseFormValues>({
+    initialValues: {
+      title: "",
+      description: "",
+      file: "",
+      filename: "",
+      indexed: false,
+    },
+    validate: {
+      title: validateDatabaseTitle,
+      file: validateFile,
+    },
+  });
+
+  const handleDatabaseSubmit = useCallback(
+    async (values: DatabaseFormValues) => {
+      if (values.file && values.title) {
+        try {
+          await convertDatabase(values.file, values.title, values.description);
+          setOpened(false);
+          databaseForm.reset();
+
+          if (redirectTo) {
+            navigate({ to: redirectTo });
+          }
+        } catch (error) {
+          notifications.show({
+            title: t("common.error"),
+            message: error instanceof Error ? error.message : t("errors.unknownError"),
+            color: "red",
+          });
+        }
+      }
+    },
+    [convertDatabase, setOpened, databaseForm, redirectTo, navigate, t],
+  );
+
+  const handleDatabaseFileSelect = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        {
+          name: "PGN file",
+          extensions: DB_EXTENSIONS,
+        },
+      ],
+    });
+
+    if (!selected || typeof selected === "object") return;
+
+    const filename = extractFilename(selected);
+    databaseForm.setFieldValue("file", selected);
+    databaseForm.setFieldValue("filename", filename);
+
+    if (!databaseForm.values.title && filename) {
+      databaseForm.setFieldValue("title", generateTitleFromFilename(filename));
+    }
+  }, [databaseForm]);
+
+  const [positionCacheInstalled, setPositionCacheInstalled] = useState(false);
+
+  // Check if position cache was installed (not just generated on-the-fly)
+  // Position Cache is stored in AppData root, NOT in the db folder
+  // We check for a marker file that is only created when the pre-calculated cache is downloaded
+  // This distinguishes it from a cache that was generated automatically during searches
+  useEffect(() => {
+    const checkPositionCache = async () => {
+      try {
+        const { appDataDir, resolve } = await import("@tauri-apps/api/path");
+        const { exists } = await import("@tauri-apps/plugin-fs");
+        const appDataDirPath = await appDataDir();
+        // Check for the marker file that indicates the pre-calculated cache was installed
+        // This file is only created by download_position_cache, not by automatic cache generation
+        const markerPath = await resolve(appDataDirPath, "position_cache.installed");
+        const markerExists = await exists(markerPath);
+        // Only mark as installed if the marker file exists
+        setPositionCacheInstalled(markerExists);
+      } catch {
+        // On error, assume not installed
+        setPositionCacheInstalled(false);
+      }
+    };
+
+    if (opened) {
+      checkPositionCache();
+    }
+  }, [opened]);
+
+  const installedDatabaseTitles = useMemo(
+    () =>
+      new Set(
+        databases
+          .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
+          .map((db) => db.title),
+      ),
+    [databases],
+  );
+
+  const handleModalClose = useCallback(() => {
+    setOpened(false);
+    setImportError(null);
+    databaseForm.reset();
+  }, [setOpened, databaseForm]);
+
+  return (
+    <Modal opened={opened} onClose={handleModalClose} title={t("features.databases.add.title")} size="lg">
+      <Stack gap="md">
+        <Tabs defaultValue="web">
+          <Tabs.List grow>
+            <Tabs.Tab value="web">{t("features.databases.add.web")}</Tabs.Tab>
+            <Tabs.Tab value="local">{t("common.local")}</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="web" pt="xs">
+            {isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
+            ) : (
+              <ScrollArea.Autosize h={500} offsetScrollbars>
+                <Stack>
+                  {defaultDatabases?.map((db, i) => (
+                    <DatabaseCard
+                      key={`${db.title}-${i}`}
+                      database={db}
+                      databaseId={i}
+                      setDatabases={setDatabases}
+                      initInstalled={
+                        // Position Cache is stored in AppData root, NOT in db folder
+                        // So it should be checked separately, not via installedDatabaseTitles
+                        db.title === "Position Cache" ? positionCacheInstalled : installedDatabaseTitles.has(db.title)
+                      }
+                    />
+                  ))}
+                  {error && (
+                    <Alert icon={<IconAlertCircle size="1rem" />} title={t("common.error")} color="red">
+                      {t("features.databases.add.errorFetch")}
+                    </Alert>
+                  )}
+                </Stack>
+              </ScrollArea.Autosize>
+            )}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="local" pt="xs">
+            <form onSubmit={databaseForm.onSubmit(handleDatabaseSubmit)}>
+              <Stack>
+                <TextInput label={t("common.name")} withAsterisk {...databaseForm.getInputProps("title")} />
+
+                <TextInput label={t("common.description")} {...databaseForm.getInputProps("description")} />
+
+                <FileInput
+                  label={t("common.pgnFile")}
+                  description={t("features.databases.add.clickToSelectPGN")}
+                  onClick={handleDatabaseFileSelect}
+                  filename={databaseForm.values.filename || null}
+                  error={databaseForm.errors.file}
+                />
+
+                <Button fullWidth type="submit">
+                  {t("common.convert", "Convert")}
+                </Button>
+              </Stack>
+            </form>
+          </Tabs.Panel>
+        </Tabs>
+      </Stack>
+    </Modal>
+  );
+}
+
+function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: DatabaseCardProps) {
+  const { t } = useTranslation();
+  const [inProgress, setInProgress] = useState<boolean>(false);
+  const [isInstalled, setIsInstalled] = useState(initInstalled);
+
+  // Update installed state when initInstalled changes
+  useEffect(() => {
+    setIsInstalled(initInstalled);
+  }, [initInstalled]);
+
+  const downloadDatabase = useCallback(
+    async (id: number, url: string, name: string) => {
+      try {
+        setInProgress(true);
+        // Special handling for Position Cache - it goes to AppData, not db folder
+        if (name === "Position Cache") {
+          const result = await commands.downloadPositionCache();
+          if (result.status === "error") {
+            throw new Error(result.error);
+          }
+        } else {
+          const path = await resolve(await appDataDir(), "db", `${name}.db3`);
+          await commands.downloadFile(`db_${id}`, url, path, null, null, null);
+          await setDbSource(path, "local");
+        }
+        setDatabases();
+        // Update installed state for Position Cache
+        if (name === "Position Cache") {
+          setIsInstalled(true);
+        }
+      } catch (error) {
+        notifications.show({
+          title: t("common.error"),
+          message: error instanceof Error ? error.message : t("errors.unknownError"),
+          color: "red",
+        });
+      } finally {
+        setInProgress(false);
+      }
+    },
+    [setDatabases, t],
+  );
+
+  const handleDownload = useCallback(() => {
+    downloadDatabase(databaseId, database.downloadLink || "", database.title || "");
+  }, [downloadDatabase, databaseId, database.downloadLink, database.title]);
+
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+        {t("features.databases.add.title", "DATABASE")}
+      </Text>
+      <Text fw="bold" mb="xs">
+        {database.title}
+      </Text>
+
+      <Text size="xs" c="dimmed" mb="md">
+        {database.description}
+      </Text>
+
+      <Divider mb="md" />
+
+      <Group justify="space-between" mb="md">
+        <Stack gap={0} align="center">
+          <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+            {t("common.size")}
+          </Text>
+          <Text size="xs">{t("units.bytes", { bytes: database.storage_size ?? 0 })}</Text>
+        </Stack>
+        <Stack gap={0} align="center">
+          <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+            {t("features.databases.card.games")}
+          </Text>
+          <Text size="xs">{t("units.count", { count: database.game_count })}</Text>
+        </Stack>
+        <Stack gap={0} align="center">
+          <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+            {t("features.databases.card.players")}
+          </Text>
+          <Text size="xs">{t("units.count", { count: database.player_count })}</Text>
+        </Stack>
+      </Group>
+
+      <ProgressButton
+        id={database.title === "Position Cache" ? "db_position_cache" : `db_${databaseId}`}
+        progressEvent={events.downloadProgress}
+        initInstalled={isInstalled}
+        labels={{
+          completed: t("common.installed"),
+          action: t("common.install"),
+          inProgress: t("common.downloading"),
+          finalizing: t("common.extracting"),
+        }}
+        onClick={handleDownload}
+        inProgress={inProgress}
+        setInProgress={setInProgress}
+      />
+    </Paper>
+  );
+}
+
+function _PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: PuzzleDbCardProps) {
+  const { t } = useTranslation();
+  const [inProgress, setInProgress] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [willImport, setWillImport] = useState<boolean>(false); // Flag to indicate we will import after download
+
+  // Check if it's a CSV file (needs import) or a database file (direct download)
+  const isCsvFile = puzzleDb.downloadLink?.endsWith(".csv") || puzzleDb.downloadLink?.endsWith(".csv.zst");
+
+  // Listen to import progress events for CSV files
+  useEffect(() => {
+    if (!isCsvFile) return;
+
+    const unlistenPromise = listen<[number, number]>("import_puzzle_progress", (event) => {
+      const [processed, total] = event.payload;
+
+      // If total is 0, we're still processing (unknown total)
+      // If processed === total and total > 0, import is complete
+      if (total > 0 && processed === total) {
+        // Import is complete
+        setIsImporting(false);
+      } else if (processed > 0) {
+        // Import is in progress
+        setIsImporting(true);
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [isCsvFile]);
+
+  // Combined progress state: true if downloading OR importing
+  const combinedInProgress = inProgress || isImporting || willImport;
+
+  const downloadDatabase = useCallback(
+    async (id: number, url: string, name: string) => {
+      try {
+        setInProgress(true);
+        setIsImporting(false);
+        setWillImport(isCsvFile); // Set flag early for CSV files
+
+        if (isCsvFile) {
+          // For CSV files, download to a temp location first, then import
+          const tempPath = await resolve(
+            await appDataDir(),
+            "puzzles",
+            `${name}_temp${url.endsWith(".zst") ? ".csv.zst" : ".csv"}`,
+          );
+          const dbPath = await resolve(await appDataDir(), "puzzles", `${name}.db3`);
+
+          try {
+            await commands.downloadFile(`puzzle_db_${id}`, url, tempPath, null, null, null);
+
+            // Set importing state BEFORE starting import to prevent ProgressButton from
+            // setting inProgress to false when download finishes
+            setWillImport(false); // Clear flag, now we're actually importing
+            setIsImporting(true);
+
+            // Import the downloaded CSV file
+            await commands.importPuzzleFile(tempPath, dbPath, name, puzzleDb.description || null);
+          } catch (error) {
+            // If import fails, remove the database file if it was created
+            try {
+              const { exists, remove: removeFile } = await import("@tauri-apps/plugin-fs");
+              if (await exists(dbPath)) {
+                await removeFile(dbPath);
+              }
+            } catch {}
+            setIsImporting(false);
+            setWillImport(false);
+            throw error;
+          } finally {
+            // Clean up temp file
+            try {
+              await remove(tempPath);
+            } catch {}
+          }
+        } else {
+          // For database files, download directly
+          const path = await resolve(await appDataDir(), "puzzles", `${name}.db3`);
+          const result = await commands.downloadFile(`puzzle_db_${id}`, url, path, null, null, null);
+          if (result.status === "error") {
+            throw new Error(result.error);
+          }
+          const validationResult = await commands.validatePuzzleDatabase(path);
+          if (validationResult.status === "error") {
+            // Remove the invalid file
+            try {
+              const { remove: removeFile } = await import("@tauri-apps/plugin-fs");
+              await removeFile(path);
+            } catch {}
+            throw new Error(validationResult.error);
+          }
+        }
+
+        await setPuzzleDbs(await getPuzzleDatabases());
+      } finally {
+        // Ensure all states are cleared when everything is done
+        setInProgress(false);
+        setIsImporting(false);
+        setWillImport(false);
+      }
+    },
+    [setPuzzleDbs, puzzleDb.description, isCsvFile],
+  );
+
+  const handleDownload = useCallback(async () => {
+    try {
+      if (!puzzleDb.downloadLink) {
+        throw new Error("No download link provided");
+      }
+      await downloadDatabase(databaseId, puzzleDb.downloadLink, puzzleDb.title);
+    } catch (error) {
+      notifications.show({
+        title: t("common.error"),
+        message: error instanceof Error ? error.message : String(error),
+        color: "red",
+        autoClose: 10000,
+      });
+    }
+  }, [downloadDatabase, databaseId, puzzleDb.downloadLink, puzzleDb.title, t]);
+
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+        {t("features.databases.add.title").toUpperCase()}
+      </Text>
+      <Text fw="bold" mb="xs">
+        {puzzleDb.title}
+      </Text>
+
+      <Text size="xs" c="dimmed" mb="md">
+        {puzzleDb.description}
+      </Text>
+
+      <Divider mb="md" />
+
+      <Group justify="space-between" mb="md">
+        <Stack gap={0} align="center">
+          <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+            {t("common.size").toUpperCase()}
+          </Text>
+          <Text size="xs">{t("units.bytes", { bytes: puzzleDb.storageSize })}</Text>
+        </Stack>
+        <Stack gap={0} align="center">
+          <Text tt="uppercase" c="dimmed" fw={700} size="xs">
+            {t("features.files.fileType.puzzle").toUpperCase()}
+          </Text>
+          <Text size="xs">{t("units.count", { count: puzzleDb.puzzleCount })}</Text>
+        </Stack>
+      </Group>
+
+      <ProgressButton
+        id={`puzzle_db_${databaseId}`}
+        progressEvent={events.downloadProgress}
+        initInstalled={initInstalled}
+        labels={{
+          completed: t("common.installed"),
+          action: t("common.install"),
+          inProgress: isCsvFile && isImporting ? t("common.importing") : t("common.downloading"),
+          finalizing: isCsvFile && isImporting ? t("common.importing") : t("common.extracting"),
+        }}
+        onClick={handleDownload}
+        inProgress={combinedInProgress}
+        setInProgress={(value) => {
+          // For CSV files, prevent ProgressButton from setting inProgress to false
+          // when download finishes, because we still need to import
+          // For non-CSV files, allow normal behavior
+          if (!isCsvFile || (!isImporting && !willImport)) {
+            setInProgress(value);
+          }
+        }}
+      />
+    </Paper>
+  );
+}
+
+export default AddDatabase;

@@ -1,0 +1,22 @@
+{
+  "accounts.processing": "processing",
+  "dashboard.openGameFailedTitle": "Could not open game",
+  "dashboard.openGameFailedMessage": "Failed to open the game link. Please try again.",
+  "features.databases.onlineTournament.addButton": "Add Online Tournament",
+  "features.databases.onlineTournament.title": "Import Online Tournament",
+  "features.databases.onlineTournament.urlLabel": "Tournament URL",
+  "features.databases.onlineTournament.urlPlaceholder": "Paste a Lichess broadcast URL",
+  "features.databases.onlineTournament.nameLabel": "Name (optional)",
+  "features.databases.onlineTournament.namePlaceholder": "Leave empty to use the URL title",
+  "features.databases.onlineTournament.import": "Import",
+  "features.databases.onlineTournament.missingUrl": "Tournament URL is required",
+  "features.databases.onlineTournament.success": "Tournament imported successfully",
+  "keybindings.goToDashboard": "Go to Dashboard",
+  "keybindings.goToProfiles": "Go to Profiles",
+  "keybindings.goToDatabases": "Go to Databases",
+  "keybindings.goToEngines": "Go to Engines",
+  "keybindings.goToFiles": "Go to Files",
+  "keybindings.goToTournaments": "Go to Tournaments",
+  "keybindings.goToAccounts": "Go to Accounts",
+  "keybindings.goToLearn": "Go to Learn"
+}

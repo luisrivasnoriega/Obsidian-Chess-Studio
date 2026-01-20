@@ -1,0 +1,93 @@
+import { Group, Select } from "@mantine/core";
+import { useAtomValue } from "jotai";
+import { useEffect, useMemo, useState } from "react";
+import { sessionsAtom } from "@/state/atoms";
+
+interface WebsiteAccountSelectorProps {
+  playerName: string;
+  onWebsiteChange: (website: string | null) => void;
+  onAccountChange: (account: string | null) => void;
+  allowAll: boolean;
+}
+
+const ALL_WEBSITES_VALUE = "__ALL_WEBSITES__";
+
+const WebsiteAccountSelector = ({
+  playerName,
+  onWebsiteChange,
+  onAccountChange,
+  allowAll,
+}: WebsiteAccountSelectorProps) => {
+  const sessions = useAtomValue(sessionsAtom);
+
+  const websites = useMemo(() => {
+    const list: Array<{ value: string; label: string }> = [];
+    if (allowAll) {
+      list.push({ value: ALL_WEBSITES_VALUE, label: "All websites" });
+    }
+    if (sessions.some((s) => s.player === playerName && s.chessCom?.username)) {
+      list.push({ value: "Chess.com", label: "Chess.com" });
+    }
+    if (sessions.some((s) => s.player === playerName && s.lichess?.username)) {
+      list.push({ value: "Lichess", label: "Lichess" });
+    }
+    return list;
+  }, [allowAll, playerName, sessions]);
+
+  const defaultWebsiteValue = websites[0]?.value ?? null;
+
+  const [website, setWebsite] = useState<string | null>(defaultWebsiteValue);
+  const [account, setAccount] = useState<string | null>("All accounts");
+
+  useEffect(() => {
+    setWebsite(defaultWebsiteValue);
+    setAccount("All accounts");
+  }, [defaultWebsiteValue]);
+
+  useEffect(() => {
+    onWebsiteChange(website === ALL_WEBSITES_VALUE ? null : website);
+  }, [website, onWebsiteChange]);
+
+  useEffect(() => {
+    onAccountChange(account);
+  }, [account, onAccountChange]);
+
+  const accounts = ["All accounts"].concat(
+    sessions
+      .filter(
+        (s) =>
+          s.player === playerName &&
+          ((website === "Chess.com" && s.chessCom?.username) || (website === "Lichess" && s.lichess?.username)),
+      )
+      .map((s) => s.chessCom?.username || s.lichess?.username)
+      .filter((username): username is string => username !== undefined && username !== null),
+  );
+
+  return (
+    <Group grow>
+      <Select
+        pt="lg"
+        label="Website"
+        value={website}
+        onChange={(value) => {
+          setWebsite(value);
+          setAccount("All accounts");
+        }}
+        data={websites}
+        allowDeselect={false}
+      />
+      {website !== ALL_WEBSITES_VALUE && (
+        <Select
+          pt="lg"
+          label="Account"
+          value={account}
+          onChange={(value) => setAccount(value)}
+          data={accounts}
+          allowDeselect={false}
+        />
+      )}
+    </Group>
+  );
+};
+
+export default WebsiteAccountSelector;
