@@ -31,6 +31,7 @@ import {
   currentTabAtom,
   deckAtomFamily,
   enableBoardScrollAtom,
+  enginesAtom,
   eraseDrawablesOnClickAtom,
   moveInputAtom,
   showArrowsAtom,
@@ -165,6 +166,21 @@ function Board({
   const showCoordinates = useAtomValue(showCoordinatesAtom);
   const isBlindfold = useAtomValue(blindfoldAtom);
   const setBlindfold = useSetAtom(blindfoldAtom);
+  const engines = useAtomValue(enginesAtom);
+  const _activeTab = useAtomValue(currentTabAtom);
+
+  // Check if any enabled engine has UCI_ShowWDL activated
+  // We check the engine's default settings, and also check if the score has WDL data
+  // (which only exists if UCI_ShowWDL is active and the engine is running)
+  const hasUCI_ShowWDL = useMemo(() => {
+    const loadedEngines = engines.filter((e) => e.loaded);
+    const hasInSettings = loadedEngines.some((engine) => {
+      return engine.settings?.some((s) => s.name === "UCI_ShowWDL" && (s.value === true || s.value === "true"));
+    });
+    // Also check if current score has WDL data (indicates UCI_ShowWDL is active)
+    const hasWDLInScore = currentNode.score?.wdl != null;
+    return hasInSettings || hasWDLInScore;
+  }, [engines, currentNode.score]);
 
   const dests: Map<SquareName, SquareName[]> = useMemo(() => {
     if (!pos) return new Map();
@@ -619,7 +635,7 @@ function Board({
             height: hideClockSpaces ? "100%" : undefined,
             overflow: "hidden",
           }}
-          gap="sm"
+          gap="md"
         >
           {currentNode.annotations.length > 0 && currentNode.move && square !== undefined && (
             <Box pl="2.5rem" w="100%" h="100%" pos="absolute">
@@ -629,14 +645,13 @@ function Board({
             </Box>
           )}
           {!hideEvalBar && layout.chessBoard.layoutType !== "mobile" && (
-            <Box
-              h="100%"
-              style={{
-                width: 25,
-              }}
-              onClick={() => setEvalOpen((prevState) => !prevState)}
-            >
-              <EvalBar score={currentNode.score?.value || null} orientation={orientation} turn={turn} />
+            <Box h="100%" onClick={() => setEvalOpen((prevState) => !prevState)}>
+              <EvalBar
+                score={currentNode.score ?? null}
+                orientation={orientation}
+                turn={turn}
+                showWDL={hasUCI_ShowWDL}
+              />
             </Box>
           )}
           <Box

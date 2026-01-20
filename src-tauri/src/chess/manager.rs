@@ -56,7 +56,6 @@ impl<'a> EngineManager<'a> {
     ) -> Result<Option<(f32, Vec<super::types::BestMoves>)>, Error> {
         let path = resolve_engine_path(&engine, &app);
         let key = (tab.clone(), engine.clone());
-
         // If an engine process already exists for this key, reuse or update it.
         if self.state.engine_processes.contains_key(&key) {
             {
@@ -69,16 +68,23 @@ impl<'a> EngineManager<'a> {
                         process.last_best_moves.clone(),
                     )));
                 }
+                // If already reconfiguring, skip this request to avoid race conditions
+                if process.reconfiguring {
+                    return Ok(None);
+                }
+                // Mark as reconfiguring to prevent concurrent reconfigurations
+                process.reconfiguring = true;
                 // Otherwise, stop and reconfigure the engine.
                 process.stop().await?;
             }
-            // OPTIMIZED: Reduced wait time from 50ms to 20ms for faster engine restart
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            // Wait for engine to process stop command and settle
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             {
                 let process = self.state.engine_processes.get_mut(&key).unwrap();
                 let mut process = process.lock().await;
                 process.set_options(options.clone()).await?;
                 process.go(&go_mode).await?;
+                process.reconfiguring = false;
             }
             return Ok(None);
         }
@@ -108,16 +114,28 @@ impl<'a> EngineManager<'a> {
                 nonzero_ext::nonzero!(10u32),
             ));
             while let Ok(Some(line)) = reader.next_line().await {
-                // REMOVED: Excessive logging that slows down engine communication
                 if let Some(proc_arc) = engines_map.get(&key_cloned) {
                     let mut proc = proc_arc.lock().await;
                     match vampirc_uci::parse_one(&line) {
                         vampirc_uci::UciMessage::Info(attrs) => {
-                            if let Ok(best_moves) = super::process::parse_uci_attrs(
+                            // Skip processing if engine is reconfiguring or not running
+                            // This prevents processing residual messages from previous searches
+                            if proc.reconfiguring || !proc.running {
+                                continue;
+                            }
+                            // Also skip if message has WDL but no PV in the line (residual message from stopped search)
+                            let has_wdl_in_line = line.contains("wdl") || line.contains("WDL");
+                            let has_pv_in_line = line.contains(" pv ");
+                            if has_wdl_in_line && !has_pv_in_line {
+                                continue;
+                            }
+                            let parse_result = super::process::parse_uci_attrs_with_line(
                                 attrs,
                                 &proc.options.fen.parse().unwrap(),
                                 &proc.options.moves,
-                            ) {
+                                Some(&line),
+                            );
+                            if let Ok(best_moves) = parse_result {
                                 let multipv = best_moves.multipv;
                                 let cur_depth = best_moves.depth;
                                 let cur_nodes = best_moves.nodes;
@@ -125,10 +143,10 @@ impl<'a> EngineManager<'a> {
                                     proc.best_moves.push(best_moves);
                                     if multipv == proc.real_multipv {
                                         // Only emit if all lines are at the same depth and rate limit allows.
-                                        if proc.best_moves.iter().all(|x| x.depth == cur_depth)
-                                            && cur_depth >= proc.last_depth
-                                            && lim.check().is_ok()
-                                        {
+                                        let all_same_depth = proc.best_moves.iter().all(|x| x.depth == cur_depth);
+                                        let depth_ok = cur_depth >= proc.last_depth;
+                                        let rate_limit_ok = lim.check().is_ok();
+                                        if all_same_depth && depth_ok && rate_limit_ok {
                                             let progress = match proc.go_mode {
                                                 GoMode::Depth(depth) => {
                                                     (cur_depth as f64 / depth as f64) * 100.0

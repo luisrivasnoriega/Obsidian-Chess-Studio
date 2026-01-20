@@ -1,14 +1,14 @@
 import type { Color, Piece } from "@lichess-org/chessground/types";
 import { Box, Stack } from "@mantine/core";
 import { useAtom, useAtomValue } from "jotai";
-import { memo, Suspense, useCallback, useContext, useEffect, useState } from "react";
+import { memo, Suspense, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import MoveControls from "@/components/MoveControls";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { currentEvalOpenAtom, currentTabAtom, currentTabSelectedAtom } from "@/state/atoms";
+import { currentEvalOpenAtom, currentTabAtom, currentTabSelectedAtom, enginesAtom } from "@/state/atoms";
 import Board from "./Board";
 import EvalBar from "./EvalBar";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
@@ -121,7 +121,7 @@ function MobileBoardLayout({
   const showAnalysisPanel = !hideAnalysisPanel && currentTabType !== "play";
   const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
   const store = useContext(TreeStateContext)!;
-  const score = useStore(store, (s) => s.currentNode().score?.value ?? null);
+  const score = useStore(store, (s) => s.currentNode().score ?? null);
   const turn = useStore(store, (s) => {
     const fen = s.currentNode().fen;
     const field = typeof fen === "string" ? fen.split(" ")[1] : null;
@@ -132,6 +132,20 @@ function MobileBoardLayout({
   const currentTab = useAtomValue(currentTabAtom);
   const [, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
   const [mobilePanelsTab, setMobilePanelsTab] = useState<string | null>("analysis");
+  const engines = useAtomValue(enginesAtom);
+
+  // Check if any enabled engine has UCI_ShowWDL activated
+  // We check the engine's default settings, and also check if the score has WDL data
+  // (which only exists if UCI_ShowWDL is active and the engine is running)
+  const hasUCI_ShowWDL = useMemo(() => {
+    const loadedEngines = engines.filter((e) => e.loaded);
+    const hasInSettings = loadedEngines.some((engine) => {
+      return engine.settings?.some((s) => s.name === "UCI_ShowWDL" && (s.value === true || s.value === "true"));
+    });
+    // Also check if current score has WDL data (indicates UCI_ShowWDL is active)
+    const hasWDLInScore = score?.wdl != null;
+    return hasInSettings || hasWDLInScore;
+  }, [engines, score]);
   const showRepertoirePanels =
     currentTab?.source?.type === "file" &&
     (currentTab.source.metadata?.type === "repertoire" || currentTab.source.metadata?.type === "variants");
@@ -252,7 +266,7 @@ function MobileBoardLayout({
           }}
           onClick={() => setEvalOpen((v) => !v)}
         >
-          <EvalBar score={score} orientation={orientation} turn={turn} layout="horizontal" />
+          <EvalBar score={score} orientation={orientation} turn={turn} layout="horizontal" showWDL={hasUCI_ShowWDL} />
         </Box>
       )}
 

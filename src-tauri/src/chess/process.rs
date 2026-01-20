@@ -28,6 +28,7 @@ pub struct EngineProcess {
     pub options: EngineOptions,
     pub go_mode: GoMode,
     pub running: bool,
+    pub reconfiguring: bool,
     pub real_multipv: u16,
     pub logs: Vec<EngineLog>,
     pub start: Instant,
@@ -79,6 +80,7 @@ impl EngineProcess {
                 real_multipv: 0,
                 go_mode: GoMode::Infinite,
                 running: false,
+                reconfiguring: false,
                 start: Instant::now(),
             },
             comm.stdout_lines,
@@ -126,6 +128,12 @@ impl EngineProcess {
 
         if options.fen != self.options.fen || options.moves != self.options.moves {
             self.set_position(&options.fen, &options.moves).await?;
+        }
+        // Send isready after setting options to ensure engine is ready
+        let has_uci_showwdl = options.extra_options.iter().any(|o| o.name == "UCI_ShowWDL");
+        if has_uci_showwdl {
+            self.stdin.write_all(b"isready\n").await?;
+            self.logs.push(EngineLog::Gui("isready\n".to_string()));
         }
         self.last_depth = 0;
         self.options = options.clone();
@@ -213,6 +221,7 @@ fn invert_score(score: Score) -> Score {
 /// * `attrs` - UCI info attributes from the engine.
 /// * `fen` - FEN string for the position.
 /// * `moves` - List of moves leading to the position.
+/// * `original_line` - Optional original UCI line for manual PV parsing if needed.
 ///
 /// # Returns
 /// `BestMoves` struct with parsed data.
@@ -223,6 +232,17 @@ pub fn parse_uci_attrs(
     attrs: Vec<UciInfoAttribute>,
     fen: &Fen,
     moves: &Vec<String>,
+) -> Result<BestMoves, Error> {
+    parse_uci_attrs_with_line(attrs, fen, moves, None)
+}
+
+/// Parse UCI info attributes into a `BestMoves` struct for the current position.
+/// This version accepts an optional original line for manual PV parsing.
+pub fn parse_uci_attrs_with_line(
+    attrs: Vec<UciInfoAttribute>,
+    fen: &Fen,
+    moves: &Vec<String>,
+    original_line: Option<&str>,
 ) -> Result<BestMoves, Error> {
     let mut best_moves = BestMoves::default();
 
@@ -237,6 +257,32 @@ pub fn parse_uci_attrs(
     }
     let turn = pos.turn();
 
+    fn parse_wdl_value(value: &str) -> Option<(u32, u32, u32)> {
+        let mut iter = value.split_whitespace();
+        let w = iter.next()?.parse::<u32>().ok()?;
+        let d = iter.next()?.parse::<u32>().ok()?;
+        let l = iter.next()?.parse::<u32>().ok()?;
+        Some((w, d, l))
+    }
+
+    // First pass: collect WDL value if present (it may come before or after Score)
+    let mut wdl_value: Option<(u32, u32, u32)> = None;
+    let mut has_pv = false;
+    for a in &attrs {
+        if let UciInfoAttribute::Pv(_) = a {
+            has_pv = true;
+        }
+        if let UciInfoAttribute::Any(name, value) = a {
+            if name.eq_ignore_ascii_case("wdl") {
+                if let Some(wdl) = parse_wdl_value(value) {
+                    wdl_value = Some(wdl);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Second pass: process all attributes, preserving WDL when setting Score
     for a in attrs {
         match a {
             UciInfoAttribute::Pv(m) => {
@@ -261,22 +307,56 @@ pub fn parse_uci_attrs(
                 best_moves.multipv = multipv;
             }
             UciInfoAttribute::Score { cp, mate, .. } => {
+                // Preserve WDL value found in first pass
                 best_moves.score = if let Some(mate) = mate {
                     Score {
                         value: ScoreValue::Mate(mate as i32),
-                        wdl: None,
+                        wdl: wdl_value,
                     }
                 } else {
                     Score {
                         value: ScoreValue::Cp(cp.unwrap_or(0)),
-                        wdl: None,
+                        wdl: wdl_value,
                     }
                 };
             }
-            _ => (),
+            UciInfoAttribute::Any(name, value) if name.eq_ignore_ascii_case("wdl") => {
+                // This is already handled in first pass, but set it here too for safety
+                if let Some(wdl) = parse_wdl_value(&value) {
+                    best_moves.score.wdl = Some(wdl);
+                }
+            }
+            _ => {}
         }
     }
 
+    // If no PV was found in attributes but we have WDL, try to parse PV manually from original line
+    if best_moves.san_moves.is_empty() && best_moves.score.wdl.is_some() && original_line.is_some() {
+        if let Some(line) = original_line {
+            // Try to extract PV from line like "info ... pv e2e4 d7d5 ..."
+            if let Some(pv_start) = line.find(" pv ") {
+                let pv_part = &line[pv_start + 4..];
+                let pv_moves: Vec<&str> = pv_part.split_whitespace().collect();
+                let mut pos_for_pv = match fen.clone().into_position(CastlingMode::Chess960) {
+                    Ok(p) => p,
+                    Err(e) => e.ignore_too_much_material()?,
+                };
+                for m in moves {
+                    let uci = UciMove::from_ascii(m.as_bytes())?;
+                    let mv = uci.to_move(&pos_for_pv)?;
+                    pos_for_pv.play_unchecked(&mv);
+                }
+                for pv_move_str in pv_moves {
+                    let uci = UciMove::from_ascii(pv_move_str.as_bytes())?;
+                    let mv = uci.to_move(&pos_for_pv)?;
+                    let san = SanPlus::from_move_and_play_unchecked(&mut pos_for_pv, &mv);
+                    best_moves.san_moves.push(san.to_string());
+                    best_moves.uci_moves.push(uci.to_string());
+                }
+            }
+        }
+    }
+    
     if best_moves.san_moves.is_empty() {
         return Err(Error::NoMovesFound);
     }

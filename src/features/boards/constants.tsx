@@ -10,9 +10,9 @@ export const MOSAIC_PORTAL_IDS = {
 export type ViewId = "left" | "topRight" | "bottomRight";
 
 export const MOSAIC_PANE_CONSTRAINTS = {
-  MINIMUM_PERCENTAGE: 20,
-  MAXIMUM_PERCENTAGE: 50,
-  DEFAULT_SPLIT_PERCENTAGE: 50,
+  MINIMUM_PERCENTAGE: 10,
+  MAXIMUM_PERCENTAGE: 80,
+  DEFAULT_SPLIT_PERCENTAGE: 47,
 } as const;
 
 export const MOSAIC_RIGHT_COLUMN_SPLIT = 55;
@@ -41,6 +41,7 @@ export const DEFAULT_MOSAIC_LAYOUT: MosaicNode<ViewId> = {
     second: MOSAIC_PORTAL_IDS.BOTTOM_RIGHT as ViewId,
     splitPercentage: MOSAIC_RIGHT_COLUMN_SPLIT,
   },
+  splitPercentage: MOSAIC_PANE_CONSTRAINTS.DEFAULT_SPLIT_PERCENTAGE,
 };
 
 export const CUSTOM_EVENTS = {
