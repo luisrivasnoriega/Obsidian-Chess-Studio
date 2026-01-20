@@ -1,16 +1,74 @@
+# EditorConfig is awesome: https://EditorConfig.org
+# This file is used by Biome and most modern editors
+
 root = true
 
+# Default settings for all files
 [*]
+charset = utf-8
 end_of_line = lf
 indent_style = space
+indent_size = 2
 insert_final_newline = true
 trim_trailing_whitespace = true
+max_line_length = 120
 
-[*.{jsx,tsx}]
+# JavaScript and TypeScript files
+[*.{js,jsx,ts,tsx}]
 indent_size = 2
+max_line_length = 120
 
-[*.ts]
+# JSON files
+[*.json]
+indent_size = 2
+max_line_length = 120
+
+# Translation files (wider line width for long keys)
+[src/locales/**/*.json]
+max_line_length = 200
+[src/locales/**/*.ts]
+max_line_length = 200
+
+# Markdown files
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = 120
+
+# YAML files
+[*.{yml,yaml}]
+indent_size = 2
+max_line_length = 120
+
+# Rust files
+[*.rs]
 indent_size = 4
+max_line_length = 100
 
-[{*.json}]
+# Shell scripts
+[*.{sh,bash}]
 indent_size = 2
+max_line_length = 120
+
+# Configuration files
+[*.{toml,ini}]
+indent_size = 2
+max_line_length = 120
+
+# SQL files
+[*.sql]
+indent_size = 2
+max_line_length = 120
+
+# CSS files
+[*.css]
+indent_size = 2
+max_line_length = 120
+
+# HTML files
+[*.{html,htm}]
+indent_size = 2
+max_line_length = 120
+
+# Makefile (tabs required)
+[Makefile]
+indent_style = tab

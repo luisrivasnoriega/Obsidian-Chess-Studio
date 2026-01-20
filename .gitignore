@@ -7,30 +7,78 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Project-specific
+agents.md
+OCS.code-workspace
+fide-html-snippet.html
+
+# Dependencies
 node_modules
-coverage
+
+# Build outputs
 dist
 dist-ssr
 *.local
 .next
 tsconfig.tsbuildinfo
 
+# Coverage reports
+coverage
+*.lcov
+coverage-rust.lcov
+
+# Icons directory
+ocs_icons
+
 # Editor directories and files
+.vscode
 .vscode/*
 !.vscode/extensions.json
 .idea
+*.iml
+.cursor
+
+# OS-specific files
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Editor backup files
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
 
 # Root env files (secrets)
 .env
 .env.*
-src-tauri/binaries/ 
+
+# Tauri
 src-tauri/binaries/
+src-tauri/target/
+src-tauri/gen/schemas
+
+# Vite cache
+.vite/
+.vite-cache/
+node_modules/.vite/
+
+# Vitest cache
+.vitest/
+
+# Biome cache
+.biome/
 
 # Playwright
 /test-results/
@@ -38,3 +86,16 @@ src-tauri/binaries/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+target_tmp*/
+
+# Android build artifacts
+*.apk
+*.aab
+*.ap_
+local.properties
+.gradle/
+build/
+
+# Other package managers (if not used)
+yarn.lock
+package-lock.json
