@@ -14,8 +14,9 @@ function isTabMode(tab: Tab, mode: EntryMode): boolean {
   return tab.type === mode;
 }
 
-export function getRouteForTab(tab: Tab | null | undefined): "/play" | "/analysis" | "/puzzles" | "/profiles" {
+export function getRouteForTab(tab: Tab | null | undefined): string {
   if (!tab) return "/analysis";
+  if (tab.route) return tab.route;
   if (tab.type === "play") return "/play";
   if (tab.type === "puzzles") return "/puzzles";
   if (tab.type === "profiles") return "/profiles";

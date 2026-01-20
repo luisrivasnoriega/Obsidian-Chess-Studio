@@ -418,10 +418,10 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 20.68% |
-| **Branches** | 15.9% |
-| **Functions** | 18.2% |
-| **Lines** | 21.64% |
+| **Statements** | 20.65% |
+| **Branches** | 15.86% |
+| **Functions** | 18.11% |
+| **Lines** | 21.61% |
 
 **Test Statistics:**
 - ✅ **170 test files** passing
@@ -571,21 +571,21 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
 | 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
-| 🇧🇾 **Беларуская (Belarusian)** | 🟡 88% | [View](./src/locales/be) |
-| 🇩🇪 **Deutsch (German)** | 🟡 88% | [View](./src/locales/de) |
-| 🇬🇧 **English UK** | 🟡 88% | [View](./src/locales/en-GB) |
-| 🇫🇷 **Français (French)** | 🟡 88% | [View](./src/locales/fr) |
-| 🇦🇲 **Հայերեն (Armenian)** | 🟡 88% | [View](./src/locales/hy) |
-| 🇮🇹 **Italiano (Italian)** | 🟡 88% | [View](./src/locales/it) |
-| 🇯🇵 **日本語 (Japanese)** | 🟡 88% | [View](./src/locales/ja) |
-| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 88% | [View](./src/locales/nb) |
-| 🇵🇱 **Polski (Polish)** | 🟡 88% | [View](./src/locales/pl) |
-| 🇵🇹 **Português (Portuguese)** | 🟡 88% | [View](./src/locales/pt) |
-| 🇷🇺 **Русский (Russian)** | 🟡 88% | [View](./src/locales/ru) |
-| 🇺🇦 **Українська (Ukrainian)** | 🟡 88% | [View](./src/locales/uk) |
-| 🇨🇳 **中文 (Chinese)** | 🟡 88% | [View](./src/locales/zh) |
-| 🇸🇦 **العربية (Arabic)** | 🟡 84% | [View](./src/locales/ar) |
-| 🇹🇷 **Türkçe (Turkish)** | 🟡 67% | [View](./src/locales/tr) |
+| 🇧🇾 **Беларуская (Belarusian)** | 🟡 87% | [View](./src/locales/be) |
+| 🇩🇪 **Deutsch (German)** | 🟡 87% | [View](./src/locales/de) |
+| 🇬🇧 **English UK** | 🟡 87% | [View](./src/locales/en-GB) |
+| 🇫🇷 **Français (French)** | 🟡 87% | [View](./src/locales/fr) |
+| 🇦🇲 **Հայերեն (Armenian)** | 🟡 87% | [View](./src/locales/hy) |
+| 🇮🇹 **Italiano (Italian)** | 🟡 87% | [View](./src/locales/it) |
+| 🇯🇵 **日本語 (Japanese)** | 🟡 87% | [View](./src/locales/ja) |
+| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 87% | [View](./src/locales/nb) |
+| 🇵🇱 **Polski (Polish)** | 🟡 87% | [View](./src/locales/pl) |
+| 🇵🇹 **Português (Portuguese)** | 🟡 87% | [View](./src/locales/pt) |
+| 🇷🇺 **Русский (Russian)** | 🟡 87% | [View](./src/locales/ru) |
+| 🇺🇦 **Українська (Ukrainian)** | 🟡 87% | [View](./src/locales/uk) |
+| 🇨🇳 **中文 (Chinese)** | 🟡 87% | [View](./src/locales/zh) |
+| 🇸🇦 **العربية (Arabic)** | 🟡 83% | [View](./src/locales/ar) |
+| 🇹🇷 **Türkçe (Turkish)** | 🟡 66% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
 
 Want to help translate? See [CONTRIBUTING.md](./CONTRIBUTING.md).

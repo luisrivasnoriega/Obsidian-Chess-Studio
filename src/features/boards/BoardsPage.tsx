@@ -240,5 +240,7 @@ const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
         </TreeStateProvider>
       </Box>
     ))
+    .with("database", () => <Box />)
+    .with("route", () => <Box />)
     .exhaustive();
 };

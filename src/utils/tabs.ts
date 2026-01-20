@@ -26,9 +26,10 @@ export type EntitySourceMetadata = z.infer<typeof entitySourceMetadataSchema>;
 export const tabSchema = z.object({
   name: z.string(),
   value: z.string(),
-  type: z.enum(["new", "play", "analysis", "puzzles", "profiles"]),
+  type: z.enum(["new", "play", "analysis", "puzzles", "profiles", "database", "route"]),
   gameNumber: z.number().nullish(),
   source: entitySourceMetadataSchema.nullish(),
+  route: z.string().optional(),
   meta: z
     .object({
       timeControl: z.object({

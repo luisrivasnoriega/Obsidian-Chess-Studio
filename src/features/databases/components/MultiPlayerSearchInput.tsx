@@ -43,7 +43,7 @@ export function MultiPlayerSearchInput({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, value.join(",")]);
+  }, [file, knownNamesById.has, value.filter]);
 
   const selectData = useMemo(() => {
     const merged = new Map<string, string>();
@@ -105,4 +105,3 @@ export function MultiPlayerSearchInput({
     />
   );
 }
-

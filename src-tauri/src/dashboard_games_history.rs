@@ -363,6 +363,34 @@ fn load_local_games(app: &AppHandle, profile_id: &str, limit: usize) -> Result<V
     Ok(records)
 }
 
+fn normalize_https_url(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return Some(s.to_string());
+    }
+    // Handle values like "lichess.org/..." stored in Sites.Name.
+    if s.starts_with("lichess.org/") || s.starts_with("www.chess.com/") || s.starts_with("chess.com/") {
+        return Some(format!("https://{}", s));
+    }
+    None
+}
+
+fn load_profile_player_id(conn: &Connection) -> Option<i32> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    value.and_then(|v| v.trim().parse::<i32>().ok()).filter(|v| *v > 0)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn dashboard_get_games_history_rows(
@@ -386,6 +414,11 @@ pub async fn dashboard_get_games_history_rows(
 
     // 2) Load online games (single query; later we split by platform).
     let db_path = parse_profile_db_path(&app, &profile_id)?;
+    let profile_player_id: Option<i32> = (|| {
+        let conn = Connection::open(&db_path).ok()?;
+        load_profile_player_id(&conn)
+    })();
+
     let mut q = GameQueryJs::default();
     q.options = Some(QueryOptions {
         skip_count: true,
@@ -456,7 +489,13 @@ pub async fn dashboard_get_games_history_rows(
         let mut external_url: Option<String> = None;
 
         if let Some(site) = site_tag.as_deref() {
-            if let Some(id) = extract_lichess_id_from_site(site) {
+            let site_lower = site.to_lowercase();
+            if site_lower.contains("lichess.org/broadcast/") {
+                kind = Some(GamesHistoryKind::Lichess);
+                // Not a Lichess *game* URL; keep internal key and use the broadcast URL for "open".
+                external_key = g.id.to_string();
+                external_url = normalize_https_url(site);
+            } else if let Some(id) = extract_lichess_id_from_site(site) {
                 kind = Some(GamesHistoryKind::Lichess);
                 external_key = id.clone();
                 external_url = Some(format!("https://lichess.org/{}", id));
@@ -476,7 +515,7 @@ pub async fn dashboard_get_games_history_rows(
                     external_key = id.clone();
                     external_url = Some(format!("https://lichess.org/{}", id));
                 } else {
-                    external_url = Some(format!("https://lichess.org/{}", external_key));
+                    external_url = normalize_https_url(&g.site);
                 }
             } else if site_lower.contains("chess.com") {
                 kind = Some(GamesHistoryKind::Chesscom);
@@ -498,11 +537,25 @@ pub async fn dashboard_get_games_history_rows(
         let black_raw = g.black.clone();
         let white_name = strip_account_key(&white_raw).to_string();
         let black_name = strip_account_key(&black_raw).to_string();
-        let is_user_white =
-            usernames_lower.contains(&white_raw.to_lowercase()) || usernames_lower.contains(&white_name.to_lowercase());
-        let is_user_black =
-            usernames_lower.contains(&black_raw.to_lowercase()) || usernames_lower.contains(&black_name.to_lowercase());
-        let user_is_white = is_user_white || (!is_user_black);
+        let user_is_white = if let Some(pid) = profile_player_id {
+            if g.white_id == pid {
+                true
+            } else if g.black_id == pid {
+                false
+            } else {
+                let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
+                    || usernames_lower.contains(&white_name.to_lowercase());
+                let is_user_black = usernames_lower.contains(&black_raw.to_lowercase())
+                    || usernames_lower.contains(&black_name.to_lowercase());
+                is_user_white || (!is_user_black)
+            }
+        } else {
+            let is_user_white =
+                usernames_lower.contains(&white_raw.to_lowercase()) || usernames_lower.contains(&white_name.to_lowercase());
+            let is_user_black =
+                usernames_lower.contains(&black_raw.to_lowercase()) || usernames_lower.contains(&black_name.to_lowercase());
+            is_user_white || (!is_user_black)
+        };
         let user_color = if user_is_white { "white" } else { "black" };
         let opponent = if user_is_white { black_name } else { white_name };
 
@@ -872,6 +925,10 @@ pub async fn dashboard_search_profile_opponents(
 
     let usernames_lower = usernames_lower_set(&profile_usernames);
     let db_path = parse_profile_db_path(&app, &profile_id)?;
+    let profile_player_id: Option<i32> = (|| {
+        let conn = Connection::open(&db_path).ok()?;
+        load_profile_player_id(&conn)
+    })();
 
     let pq = PlayerQuery {
         options: QueryOptions {
@@ -888,6 +945,9 @@ pub async fn dashboard_search_profile_opponents(
     let res = get_players(db_path, pq, state).await?;
     let mut out: Vec<String> = Vec::new();
     for p in res.data {
+        if profile_player_id.map(|pid| p.id == pid).unwrap_or(false) {
+            continue;
+        }
         let Some(name_raw) = p.name else {
             continue;
         };
@@ -972,4 +1032,3 @@ pub fn dashboard_resolve_profile_db_game_id(
 
     Ok(id.map(|v| v.to_string()))
 }
-

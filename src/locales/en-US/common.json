@@ -1468,6 +1468,25 @@
         "clickToSelectPGN": "Click to select the PGN file",
         "convert": "Convert"
       },
+      "onlineTournament": {
+        "addButton": "Add Online Tournament",
+        "title": "Import Online Tournament",
+        "urlLabel": "Tournament URL",
+        "urlPlaceholder": "Paste a Lichess broadcast URL",
+        "nameLabel": "Name (optional)",
+        "namePlaceholder": "Leave empty to use the URL title",
+        "import": "Import",
+        "missingUrl": "Tournament URL is required",
+        "success": "Tournament imported successfully"
+      },
+      "merge": {
+        "title": "Merge",
+        "profile": "Profile",
+        "player": "Player",
+        "confirm": "Merge games",
+        "success": "Merged {{count}} games into the profile",
+        "noProfiles": "No profiles found. Create one first."
+      },
       "settings": {
         "referenceDatabase": "Reference Database",
         "referenceDatabaseShort": "Reference",
@@ -1500,6 +1519,11 @@
         "locals": "Locals",
         "lichess": "Lichess",
         "chesscom": "Chess.com"
+      },
+      "sourceType": {
+        "local": "Local",
+        "online": "Online",
+        "external": "External"
       }
     },
     "files": {

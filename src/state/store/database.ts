@@ -6,7 +6,7 @@ import type { SuccessDatabaseInfo } from "@/utils/db";
 
 export interface DatabaseViewStore {
   database?: SuccessDatabaseInfo;
-  activeTab: "games" | "players" | "tournaments";
+  activeTab: "games" | "players" | "tournaments" | "merge";
   games: {
     isFilterExpanded: boolean;
     query: GameQuery;

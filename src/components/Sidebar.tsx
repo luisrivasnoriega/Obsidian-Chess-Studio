@@ -16,7 +16,7 @@ import {
   IconUpload,
   IconUserCircle,
 } from "@tabler/icons-react";
-import { Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
+import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
 import { useAtom } from "jotai";
 import type { ComponentType } from "react";
@@ -33,25 +33,27 @@ interface NavbarLinkProps {
   icon: SidebarIcon;
   label: string;
   url: string;
-  active?: boolean;
+  onClick?: () => void;
 }
 
-function NavbarLink({ url, icon: Icon, label }: NavbarLinkProps) {
+function NavbarLink({ url, icon: Icon, label, onClick }: NavbarLinkProps) {
   const matchesRoute = useMatchRoute();
   const { layout } = useResponsiveLayout();
   const isFooter = layout.sidebar.position === "footer";
   const isActive = matchesRoute({ to: url, fuzzy: url !== "/" });
   return (
     <Tooltip label={label} position={isFooter ? "top" : "right"}>
-      <Link
-        to={url}
+      <button
+        type="button"
+        onClick={onClick}
         className={cx(classes.link, {
           [classes.active]: isActive,
         })}
         data-position={isFooter ? "footer" : "navbar"}
+        style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
       >
         <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
-      </Link>
+      </button>
     </Tooltip>
   );
 }
@@ -142,13 +144,29 @@ const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: strin
 export const linksdata = [...primaryLinks, ...secondaryLinksData, ...tertiaryLinksData];
 
 export function SideBar() {
-  const matchesRoute = useMatchRoute();
+  const _matchesRoute = useMatchRoute();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const { layout } = useResponsiveLayout();
   const isFooterNav = layout.sidebar.position === "footer";
+  const openRouteTab = async (route: string, name: string) => {
+    const existing = tabs.find((tab) => tab.route === route);
+    if (existing) {
+      setActiveTab(existing.value);
+      navigate({ to: route as any });
+      return;
+    }
+
+    await createTab({
+      tab: { name, type: "route", route },
+      setTabs,
+      setActiveTab,
+    });
+    navigate({ to: route as any });
+  };
+
   const openTabAndNavigate = async ({
     tab,
     route,
@@ -198,7 +216,14 @@ export function SideBar() {
         />
       );
     }
-    return <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />;
+    return (
+      <NavbarLink
+        {...link}
+        label={t(`features.sidebar.${link.label}`)}
+        key={link.label}
+        onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
+      />
+    );
   });
 
   // Acciones principales: Play, Analysis, Puzzles
@@ -243,12 +268,22 @@ export function SideBar() {
 
   // Sección secundaria: Databases, Engines, Files
   const secondaryNavLinks = secondaryLinksData.map((link) => (
-    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
+    <NavbarLink
+      {...link}
+      label={t(`features.sidebar.${link.label}`)}
+      key={link.label}
+      onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
+    />
   ));
 
   // Sección terciaria: Tournaments
   const tertiaryNavLinks = tertiaryLinksData.map((link) => (
-    <NavbarLink {...link} label={t(`features.sidebar.${link.label}`)} key={link.label} />
+    <NavbarLink
+      {...link}
+      label={t(`features.sidebar.${link.label}`)}
+      key={link.label}
+      onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
+    />
   ));
 
   if (isFooterNav) {
@@ -264,7 +299,55 @@ export function SideBar() {
       >
         <Group justify="center" gap="sm" wrap="nowrap">
           {mobileFooterLinks.map((link) => (
-            <NavbarLink url={link.url} icon={link.icon} label={t(link.labelKey)} key={link.url} />
+            <NavbarLink
+              url={link.url}
+              icon={link.icon}
+              label={t(link.labelKey)}
+              key={link.url}
+              onClick={() => {
+                if (link.url === "/play") {
+                  void openTabAndNavigate({
+                    tab: { name: t("features.tabs.playBoard.title"), type: "play" },
+                    route: "/play",
+                  });
+                  return;
+                }
+                if (link.url === "/analysis") {
+                  void openTabAndNavigate({
+                    tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
+                    initialAnalysisTab: "analysis",
+                    initialAnalysisSubTab: "report",
+                    initialNotationView: "report" as const,
+                    route: "/analysis",
+                  });
+                  return;
+                }
+                if (link.url === "/puzzles") {
+                  void openTabAndNavigate({
+                    tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
+                    route: "/puzzles",
+                  });
+                  return;
+                }
+                if (link.url === "/profiles") {
+                  const existingProfileTab = tabs.find((t) => t.type === "profiles");
+                  if (existingProfileTab) {
+                    setActiveTab(existingProfileTab.value);
+                    navigate({ to: "/profiles" });
+                  } else {
+                    void createTab({
+                      tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
+                      setTabs,
+                      setActiveTab,
+                    });
+                    navigate({ to: "/profiles" });
+                  }
+                  return;
+                }
+
+                void openRouteTab(link.url, t(link.labelKey));
+              }}
+            />
           ))}
         </Group>
       </div>
@@ -302,28 +385,18 @@ export function SideBar() {
 
         {/* Sección final: Keyboard Shortcuts y Settings */}
         <Stack justify="flex-end" gap={0} mt="auto" visibleFrom="sm">
-          <Tooltip label={t("features.sidebar.keyboardShortcuts")} position="right">
-            <Link
-              to="/settings/keyboard-shortcuts"
-              className={cx(classes.link, {
-                [classes.active]: matchesRoute({ to: "/settings/keyboard-shortcuts", fuzzy: true }),
-              })}
-              data-position="navbar"
-            >
-              <IconKeyboard size="1.5rem" stroke={1.5} />
-            </Link>
-          </Tooltip>
-          <Tooltip label={t("features.sidebar.settings")} position="right">
-            <Link
-              to="/settings"
-              className={cx(classes.link, {
-                [classes.active]: matchesRoute({ to: "/settings", fuzzy: true }),
-              })}
-              data-position="navbar"
-            >
-              <IconSettings size="1.5rem" stroke={1.5} />
-            </Link>
-          </Tooltip>
+          <NavbarLink
+            url="/settings/keyboard-shortcuts"
+            icon={IconKeyboard}
+            label={t("features.sidebar.keyboardShortcuts")}
+            onClick={() => void openRouteTab("/settings/keyboard-shortcuts", t("features.sidebar.keyboardShortcuts"))}
+          />
+          <NavbarLink
+            url="/settings"
+            icon={IconSettings}
+            label={t("features.sidebar.settings")}
+            onClick={() => void openRouteTab("/settings", t("features.sidebar.settings"))}
+          />
         </Stack>
       </Stack>
     </AppShellSection>

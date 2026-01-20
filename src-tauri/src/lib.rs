@@ -59,11 +59,13 @@ use crate::db::{
     delete_indexes, download_position_cache, export_position_games_to_pgn,
     export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
     get_players_game_info, get_tournaments, init_profile_db, merge_player_site_stats,
-    merge_years_data, precache_openings, search_position, get_account_sync_state,
+    merge_years_data, precache_openings, search_position, import_online_tournament, get_account_sync_state,
     upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
     get_account_import_stats, sync_account_games_to_profile_db,
     upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
     create_event_game,
+    get_db_source, set_db_source,
+    merge_profile_event_from_db_player,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
 use crate::fs::{set_file_as_executable, DownloadProgress};
@@ -190,7 +192,11 @@ pub async fn run() {
             update_game,
             search_position,
             precache_openings,
+            import_online_tournament,
             download_position_cache,
+            set_db_source,
+            get_db_source,
+            merge_profile_event_from_db_player,
             get_players,
             get_puzzle_db_info,
             get_puzzle_rating_range,

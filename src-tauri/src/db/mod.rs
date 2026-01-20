@@ -47,6 +47,8 @@ use tauri::{Emitter, State};
 use zip::{write::SimpleFileOptions as ZipFileOptions, CompressionMethod, ZipWriter};
 
 use tauri_specta::Event as _;
+use std::time::{SystemTime, UNIX_EPOCH};
+use regex::Regex;
 
 #[allow(unused_imports)]
 pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Outcome, Puzzle};
@@ -3197,4 +3199,469 @@ pub async fn calculate_earliest_date_from_range(
     tauri::async_runtime::spawn_blocking(move || calculate_earliest_date(date_range, &rating_dates))
         .await
         .unwrap_or(None)
+}
+
+fn sanitize_db_filename_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else if ch.is_whitespace() {
+            out.push('_');
+        }
+        // Drop any other characters.
+    }
+
+    // Avoid empty/degenerate filenames.
+    let trimmed = out.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "database".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn slug_to_title(slug: &str) -> String {
+    let words = slug
+        .split(|c: char| c == '-' || c == '_' || c.is_whitespace())
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if words.is_empty() {
+        "Online tournament".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+fn parse_lichess_broadcast_url(url: &str) -> Result<(String, String)> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| Error::PackageManager(format!("Invalid URL: {e}")))?;
+
+    if parsed.scheme() != "https" {
+        return Err(Error::PackageManager(
+            "Only https:// URLs are supported".to_string(),
+        ));
+    }
+
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    if host != "lichess.org" {
+        return Err(Error::PackageManager(
+            "Only lichess.org URLs are supported".to_string(),
+        ));
+    }
+
+    let segments = parsed
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    // Example:
+    // https://lichess.org/broadcast/<slug>/<broadcastId>
+    if segments.len() >= 3 && segments[0] == "broadcast" {
+        let slug = segments[1].to_string();
+        let id = segments[2].to_string();
+        if id.is_empty() {
+            return Err(Error::PackageManager(
+                "Missing broadcast id in URL".to_string(),
+            ));
+        }
+        return Ok((id, slug));
+    }
+
+    Err(Error::PackageManager(
+        "Unsupported online tournament URL".to_string(),
+    ))
+}
+
+fn truncate_for_error(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_string()
+    } else {
+        format!("{}…", &text[..max_len])
+    }
+}
+
+fn extract_broadcast_ids_from_group_html(html: &str) -> Vec<String> {
+    // The group page contains a list of cards:
+    // <a href="/broadcast/<slug>/<broadcastId>" class="relay-card ...">
+    //
+    // We extract the final path segment as the broadcastId.
+    let re =
+        Regex::new(r#"href="/broadcast/[^"]+/([A-Za-z0-9]{8})""#).expect("valid regex");
+
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for cap in re.captures_iter(html) {
+        if let Some(m) = cap.get(1) {
+            let id = m.as_str().to_string();
+            if seen.insert(id.clone()) {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
+async fn download_lichess_broadcast_pgn(
+    client: &reqwest::Client,
+    broadcast_id: &str,
+) -> Result<Option<Vec<u8>>> {
+    let pgn_url = format!("https://lichess.org/api/broadcast/{broadcast_id}.pgn");
+    let res = client
+        .get(&pgn_url)
+        .header(
+            reqwest::header::ACCEPT,
+            "application/x-chess-pgn, text/plain, */*",
+        )
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        return Err(Error::PackageManager(format!(
+            "Failed to download broadcast PGN ({status}): {}",
+            truncate_for_error(&text, 600)
+        )));
+    }
+
+    let bytes = res.bytes().await?;
+    let bytes = bytes.to_vec();
+
+    // Lichess occasionally returns HTML (e.g. an error page) with a 200.
+    // Ensure we fail loudly instead of creating an empty/broken database.
+    let looks_like_pgn = {
+        let mut i = 0usize;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        bytes.get(i) == Some(&b'[') || bytes.windows(6).take(2048).any(|w| w == b"[Event")
+    };
+    if !looks_like_pgn {
+        let snippet = String::from_utf8_lossy(&bytes);
+        return Err(Error::PackageManager(format!(
+            "Lichess returned non-PGN content for broadcast {broadcast_id}: {}",
+            truncate_for_error(&snippet, 600)
+        )));
+    }
+
+    Ok(Some(bytes))
+}
+
+fn upsert_info_value(db: &mut SqliteConnection, name: &str, value: &str) -> Result<()> {
+    diesel::insert_into(info::table)
+        .values((info::name.eq(name), info::value.eq(value)))
+        .on_conflict(info::name)
+        .do_update()
+        .set(info::value.eq(value))
+        .execute(db)?;
+    Ok(())
+}
+
+fn normalize_db_source(source: &str) -> Option<&'static str> {
+    match source.trim().to_ascii_lowercase().as_str() {
+        "local" => Some("local"),
+        "online" => Some("online"),
+        "external" => Some("external"),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn import_online_tournament(
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let (broadcast_id, slug) = parse_lichess_broadcast_url(&url)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent("Obsidian Chess Studio")
+        .build()?;
+
+    // The incoming URL can be either:
+    // - a group page (listing many broadcasts), e.g. .../broadcast/<group>/<groupId>
+    // - a single broadcast page (a specific round), e.g. .../broadcast/<round>/<roundId>
+    //
+    // Only the *roundId* works with `/api/broadcast/{id}.pgn`.
+    // For group pages, we scrape the group HTML for all child broadcast IDs and
+    // download each one via the API, concatenating PGNs together.
+    let pgn_bytes: Vec<u8> = match download_lichess_broadcast_pgn(&client, &broadcast_id).await? {
+        Some(bytes) => bytes,
+        None => {
+            // Treat `broadcast_id` as a group id, fetch the group HTML and extract child IDs.
+            let group_html = client.get(&url).send().await?.text().await?;
+            let ids = extract_broadcast_ids_from_group_html(&group_html);
+            if ids.is_empty() {
+                return Err(Error::PackageManager(
+                    "Could not find any broadcasts on the provided page".to_string(),
+                ));
+            }
+
+            // Safety: cap the number of broadcasts to avoid extremely large imports.
+            let max_ids = 200usize;
+            let ids = ids.into_iter().take(max_ids).collect::<Vec<_>>();
+
+            let mut combined: Vec<u8> = Vec::new();
+            for id in ids {
+                let Some(bytes) = download_lichess_broadcast_pgn(&client, &id).await? else {
+                    return Err(Error::PackageManager(format!(
+                        "Failed to download broadcast PGN (404): {id}"
+                    )));
+                };
+                if !combined.is_empty() {
+                    combined.extend_from_slice(b"\n\n");
+                }
+                combined.extend_from_slice(&bytes);
+            }
+
+            combined
+        }
+    };
+
+    if pgn_bytes.is_empty() {
+        return Err(Error::PackageManager(
+            "Downloaded PGN is empty".to_string(),
+        ));
+    }
+
+    let inferred_title = slug_to_title(&slug);
+    let db_title = title
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .unwrap_or(inferred_title);
+
+    let db_description = description
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| format!("Imported from {url}"));
+
+    let mut base = sanitize_db_filename_component(&slug);
+    if base.len() > 50 {
+        base.truncate(50);
+    }
+    let filename = format!("{base}_{broadcast_id}.db3");
+    let db_rel = PathBuf::from("db").join(&filename);
+    let db_path = app.path().resolve(db_rel, BaseDirectory::AppData)?;
+    if db_path.exists() {
+        return Err(Error::PackageManager(format!(
+            "Database already exists: {filename}"
+        )));
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_pgn_path = std::env::temp_dir()
+        .join(format!("ocs_lichess_broadcast_{broadcast_id}_{ts}.pgn"));
+
+    std::fs::write(&temp_pgn_path, &pgn_bytes)?;
+
+    let convert_res = convert_pgn_impl(
+        temp_pgn_path.clone(),
+        db_path.clone(),
+        None,
+        app.clone(),
+        db_title,
+        Some(db_description),
+        &state,
+    );
+
+    let _ = std::fs::remove_file(&temp_pgn_path);
+    convert_res?;
+
+    // Mark DB source so the frontend can display/filter it.
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    upsert_info_value(db, "Source", "online")?;
+
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_db_source(file: PathBuf, source: String, state: tauri::State<'_, AppState>) -> Result<()> {
+    let Some(source_norm) = normalize_db_source(&source) else {
+        return Err(Error::PackageManager("Invalid database source".to_string()));
+    };
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    upsert_info_value(db, "Source", source_norm)?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_db_source(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<Option<String>> {
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+
+    let res: std::result::Result<Info, _> = info::table.filter(info::name.eq("Source")).first(db);
+    match res {
+        Ok(info_row) => Ok(info_row.value),
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn merge_profile_event_from_db_player(
+    profile_db_file: PathBuf,
+    source_db_file: PathBuf,
+    player_id: i32,
+    event_name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<i32> {
+    use crate::db::schema::{events as events_tbl, games as games_tbl, players as players_tbl, sites as sites_tbl};
+
+    if player_id <= 0 {
+        return Err(Error::InvalidInput("Invalid player id".to_string()));
+    }
+
+    let name = event_name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::InvalidInput("Event name cannot be empty".to_string()));
+    }
+
+    // Open profile DB and ensure schema.
+    let profile_db = &mut get_db_or_create(
+        &state,
+        profile_db_file.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(profile_db)?;
+
+    // Create/update managed event in profile DB.
+    diesel::insert_into(events_tbl::table)
+        .values((
+            events_tbl::name.eq(&name),
+            events_tbl::event_type.eq(Some(ManagedEventType::OnlineTournament.as_str())),
+        ))
+        .on_conflict(events_tbl::name)
+        .do_update()
+        .set(events_tbl::event_type.eq(Some(ManagedEventType::OnlineTournament.as_str())))
+        .execute(profile_db)?;
+
+    let event_id = events_tbl::table
+        .filter(events_tbl::name.eq(&name))
+        .select(events_tbl::id)
+        .first::<i32>(profile_db)?;
+
+    // Open source DB.
+    let source_db = &mut get_db_or_create(
+        &state,
+        source_db_file.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+
+    let source_player_name: String = players_tbl::table
+        .filter(players_tbl::id.eq(player_id))
+        .select(players_tbl::name)
+        .first::<Option<String>>(source_db)?
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if source_player_name.is_empty() {
+        return Err(Error::InvalidInput(
+            "Selected player has no name".to_string(),
+        ));
+    }
+
+    // Load all games for the selected player.
+    let (white_players, black_players) = diesel::alias!(players_tbl as white, players_tbl as black);
+    let rows = games_tbl::table
+        .inner_join(white_players.on(games_tbl::white_id.eq(white_players.field(players_tbl::id))))
+        .inner_join(black_players.on(games_tbl::black_id.eq(black_players.field(players_tbl::id))))
+        .inner_join(events_tbl::table.on(games_tbl::event_id.eq(events_tbl::id)))
+        .inner_join(sites_tbl::table.on(games_tbl::site_id.eq(sites_tbl::id)))
+        .filter(games_tbl::white_id.eq(player_id).or(games_tbl::black_id.eq(player_id)))
+        .load::<(Game, Player, Player, Event, Site)>(source_db)?;
+
+    let mut inserted_total: i32 = 0;
+
+    // Insert games into profile DB overriding event_id.
+    profile_db.transaction::<_, Error, _>(|profile_db| {
+        for (game, white, black, event, site) in rows.iter() {
+            let mut pgn_bytes: Vec<u8> = Vec::new();
+            {
+                let mut writer = BufWriter::new(&mut pgn_bytes);
+
+                let pgn_game = PgnGame {
+                    event: event.name.clone(),
+                    site: site.name.clone(),
+                    date: game.date.clone(),
+                    round: game.round.clone(),
+                    white: white.name.clone(),
+                    black: black.name.clone(),
+                    result: game.result.clone(),
+                    time_control: game.time_control.clone(),
+                    eco: game.eco.clone(),
+                    white_elo: game.white_elo.map(|e| e.to_string()),
+                    black_elo: game.black_elo.map(|e| e.to_string()),
+                    ply_count: game.ply_count.map(|e| e.to_string()),
+                    fen: game.fen.clone(),
+                    moves: GameTree::from_bytes(
+                        &game.moves,
+                        game.fen
+                            .as_deref()
+                            .and_then(|fen| Fen::from_ascii(fen.as_bytes()).ok())
+                            .and_then(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok()),
+                    )?
+                    .to_string(),
+                };
+
+                pgn_game.write(&mut writer)?;
+                writer.flush()?;
+            }
+
+            let mut importer = Importer::new(None);
+            for temp in BufferedReader::new_cursor(&pgn_bytes)
+                .into_iter(&mut importer)
+                .flatten()
+                .flatten()
+            {
+                let inserted = insert_to_db_with_event_override(profile_db, &temp, event_id)?;
+                if inserted {
+                    inserted_total += 1;
+                }
+            }
+        }
+        Ok(())
+    })?;
+
+    // Store the selected player as the profile "main player" for correct opponent detection in dashboards.
+    #[derive(diesel::QueryableByName)]
+    struct PlayerIdRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "ID")]
+        id: i32,
+    }
+    let rows: Vec<PlayerIdRow> = diesel::sql_query(
+        "SELECT ID FROM Players WHERE lower(Name) = lower(?1) LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Text, _>(source_player_name.clone())
+    .load(profile_db)?;
+    if let Some(pid) = rows.first().map(|r| r.id) {
+        upsert_info_value(profile_db, "ProfilePlayerId", &pid.to_string())?;
+        upsert_info_value(profile_db, "ProfilePlayerName", &source_player_name)?;
+    }
+
+    Ok(inserted_total)
 }

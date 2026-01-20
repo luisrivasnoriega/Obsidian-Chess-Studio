@@ -497,12 +497,44 @@ async precacheOpenings(databasePath: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async importOnlineTournament(url: string, title: string | null, description: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_online_tournament", { url, title, description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Download pre-calculated position cache database
  */
 async downloadPositionCache() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("download_position_cache") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setDbSource(file: string, source: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_db_source", { file, source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getDbSource(file: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_db_source", { file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mergeProfileEventFromDbPlayer(profileDbFile: string, sourceDbFile: string, playerId: number, eventName: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("merge_profile_event_from_db_player", { profileDbFile, sourceDbFile, playerId, eventName }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

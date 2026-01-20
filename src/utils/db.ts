@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { BaseDirectory, readDir } from "@tauri-apps/plugin-fs";
 import { makeFen } from "chessops/fen";
@@ -107,6 +108,8 @@ const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
 
 export type Speed = "UltraBullet" | "Bullet" | "Blitz" | "Rapid" | "Classical" | "Correspondence" | "Unknown";
 
+export type DatabaseSource = "local" | "online" | "external";
+
 function normalizeRange(range?: [number, number] | null): [number, number] | undefined {
   if (!range || range[1] - range[0] === 3000) {
     return undefined;
@@ -188,15 +191,29 @@ export async function getDatabases(): Promise<DatabaseInfo[]> {
     .map((r) => (r as PromiseFulfilledResult<DatabaseInfo>).value);
 }
 
+export async function importOnlineTournament(input: {
+  url: string;
+  title: string | null;
+  description: string | null;
+}): Promise<void> {
+  await invoke("import_online_tournament", input);
+}
+
+export async function setDbSource(file: string, source: DatabaseSource): Promise<void> {
+  await invoke("set_db_source", { file, source });
+}
+
 async function getDatabase(name: string): Promise<DatabaseInfo> {
   const appDataDirPath = await appDataDir();
   const path = await resolve(appDataDirPath, "db", name);
   const res = await commands.getDbInfo(path);
+  const source = await invoke<DatabaseSource | null>("get_db_source", { file: path }).catch(() => null);
   if (res.status === "ok") {
     return {
       type: "success",
       ...res.data,
       file: path,
+      ...(source ? { source } : {}),
     };
   }
   return {
@@ -205,6 +222,7 @@ async function getDatabase(name: string): Promise<DatabaseInfo> {
     file: path,
     error: res.error,
     indexed: false,
+    ...(source ? { source } : {}),
   };
 }
 
@@ -241,7 +259,7 @@ export interface Opening {
  * Recalculate opening stats from limited games.
  * This ensures stats reflect only the games that are actually returned (after limit is applied).
  */
-function recalculateOpeningsFromGames(games: NormalizedGame[], currentFen: string): Opening[] {
+function _recalculateOpeningsFromGames(games: NormalizedGame[], currentFen: string): Opening[] {
   const openingsMap = new Map<string, { move: string; white: number; black: number; draw: number }>();
 
   // Parse current position - normalize FEN by removing move counters for comparison
@@ -476,7 +494,8 @@ export async function searchPosition(options: LocalOptions, tab: string) {
       if (bValue == null) return -sortMultiplier;
 
       if (typeof aValue === "number" && typeof bValue === "number") return (aValue - bValue) * sortMultiplier;
-      if (typeof aValue === "string" && typeof bValue === "string") return aValue.localeCompare(bValue) * sortMultiplier;
+      if (typeof aValue === "string" && typeof bValue === "string")
+        return aValue.localeCompare(bValue) * sortMultiplier;
       return 0;
     });
 

@@ -9,6 +9,7 @@ import {
   Loader,
   Paper,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Skeleton,
   Stack,
@@ -21,9 +22,17 @@ import {
 import { useDebouncedValue, useToggle } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconArrowRight, IconDatabase, IconPlus, IconPuzzle, IconRefresh, IconStar } from "@tabler/icons-react";
+import {
+  IconArrowRight,
+  IconDatabase,
+  IconPlus,
+  IconPuzzle,
+  IconRefresh,
+  IconStar,
+  IconWorld,
+} from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { useAtom } from "jotai";
@@ -36,11 +45,13 @@ import GenericCard from "@/components/GenericCard";
 import * as classes from "@/components/GenericCard/styles.css";
 import GenericHeader, { type SortState } from "@/components/GenericHeader";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { referenceDbAtom } from "@/state/atoms";
+import { activeTabAtom, referenceDbAtom, tabsAtom } from "@/state/atoms";
 import { useActiveDatabaseViewStore } from "@/state/store/database";
-import { getDatabases, type SuccessDatabaseInfo } from "@/utils/db";
+import { type DatabaseSource, getDatabases, type SuccessDatabaseInfo } from "@/utils/db";
+import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 import AddDatabase from "./components/modals/AddDatabase";
+import AddOnlineTournament from "./components/modals/AddOnlineTournament";
 import { PlayerSearchInput } from "./components/PlayerSearchInput";
 
 type Progress = {
@@ -104,15 +115,19 @@ export default function DatabasesPage() {
 
   const [progress, setProgress] = useState<Progress | null>(null);
   const [open, setOpen] = useState(false);
+  const [openOnlineTournament, setOpenOnlineTournament] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortState>({ field: "name", direction: "asc" });
   const [convertLoading, setConvertLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [sourceFilter, setSourceFilter] = useState<"all" | DatabaseSource>("all");
 
   const setActiveDatabase = useActiveDatabaseViewStore((store) => store.setDatabase);
   const [referenceDatabase, setReferenceDatabase] = useAtom(referenceDbAtom);
+  const [, _setTabs] = useAtom(tabsAtom);
+  const [, _setActiveTab] = useAtom(activeTabAtom);
 
   const { layout } = useResponsiveLayout();
 
@@ -167,8 +182,31 @@ export default function DatabasesPage() {
   const isReference = referenceDatabase === selectedDatabase?.file;
 
   const filteredDatabases = useMemo(() => {
-    return filterAndSortDatabases(unifiedDatabases, query, sortBy, t);
-  }, [unifiedDatabases, query, sortBy, t]);
+    const base = filterAndSortDatabases(unifiedDatabases, query, sortBy, t);
+    if (sourceFilter === "all") return base;
+    return base.filter((db) => {
+      const src = (db as unknown as { source?: DatabaseSource }).source ?? "external";
+      return src === sourceFilter;
+    });
+  }, [unifiedDatabases, query, sortBy, t, sourceFilter]);
+
+  const availableSources = useMemo(() => {
+    const counts: Record<DatabaseSource, number> = { local: 0, online: 0, external: 0 };
+    for (const db of unifiedDatabases) {
+      if (!isSuccessDatabase(db)) continue;
+      const src = (db as unknown as { source?: DatabaseSource }).source ?? "external";
+      counts[src] += 1;
+    }
+    const sources = (Object.keys(counts) as DatabaseSource[]).filter((s) => counts[s] > 0);
+    return { sources, counts };
+  }, [unifiedDatabases]);
+
+  useEffect(() => {
+    if (sourceFilter === "all") return;
+    if (!availableSources.sources.includes(sourceFilter)) {
+      setSourceFilter("all");
+    }
+  }, [availableSources.sources, sourceFilter]);
 
   const handleDatabaseDoubleClick = useCallback(
     (database: UnifiedDatabase) => {
@@ -218,24 +256,56 @@ export default function DatabasesPage() {
         viewMode={viewMode}
         setViewMode={setViewMode}
         pageKey="databases"
-        filters={
-          progress &&
-          convertLoading && (
-            <Group align="center" justify="space-between" maw={200}>
-              <Text fz="xs">{progress.total} games</Text>
-              <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
-            </Group>
-          )
-        }
         actions={
-          <Button
-            onClick={() => setOpen(true)}
-            loading={convertLoading}
-            size="xs"
-            leftSection={<IconPlus size="1rem" />}
-          >
-            {t("common.addNew")}
-          </Button>
+          <Group gap="xs">
+            <Button
+              onClick={() => setOpen(true)}
+              loading={convertLoading}
+              size="xs"
+              variant="light"
+              leftSection={<IconPlus size="1rem" />}
+            >
+              {t("common.addNew")}
+            </Button>
+            <Button
+              onClick={() => setOpenOnlineTournament(true)}
+              loading={convertLoading}
+              size="xs"
+              variant="light"
+              leftSection={<IconWorld size="1rem" />}
+            >
+              {t("features.databases.onlineTournament.addButton")}
+            </Button>
+          </Group>
+        }
+        filters={
+          <Group align="center" justify="space-between" maw={480} wrap="nowrap">
+            {progress && convertLoading && (
+              <Group align="center" justify="space-between" maw={200}>
+                <Text fz="xs">{progress.total} games</Text>
+                <Text fz="xs">{(progress.total / progress.elapsed).toFixed(1)} games/s</Text>
+              </Group>
+            )}
+            {availableSources.sources.length > 1 && (
+              <SegmentedControl
+                size="xs"
+                value={sourceFilter}
+                onChange={(v) => setSourceFilter(v as "all" | DatabaseSource)}
+                data={[
+                  { label: t("common.all"), value: "all" },
+                  ...(availableSources.counts.local > 0
+                    ? [{ label: t("features.databases.sourceType.local"), value: "local" }]
+                    : []),
+                  ...(availableSources.counts.online > 0
+                    ? [{ label: t("features.databases.sourceType.online"), value: "online" }]
+                    : []),
+                  ...(availableSources.counts.external > 0
+                    ? [{ label: t("features.databases.sourceType.external"), value: "external" }]
+                    : []),
+                ]}
+              />
+            )}
+          </Group>
         }
       />
       <Box px="md" pb="md">
@@ -280,6 +350,13 @@ export default function DatabasesPage() {
         puzzleDbs={[]}
         setPuzzleDbs={() => {}}
         redirectTo={search.redirect}
+      />
+
+      <AddOnlineTournament
+        opened={openOnlineTournament}
+        onClose={() => setOpenOnlineTournament(false)}
+        onImported={mutate}
+        setLoading={setConvertLoading}
       />
     </>
   );
@@ -569,9 +646,19 @@ interface DatabaseBadgesProps {
 
 function DatabaseBadges({ database, isReference }: DatabaseBadgesProps) {
   const { t } = useTranslation();
+  const source = (database as unknown as { source?: DatabaseSource }).source ?? "external";
 
   return (
     <Group>
+      {isSuccessDatabase(database) && (
+        <Badge
+          color={source === "online" ? "violet" : source === "local" ? "cyan" : "orange"}
+          variant="light"
+          size="xs"
+        >
+          {t(`features.databases.sourceType.${source}`)}
+        </Badge>
+      )}
       {isSuccessDatabase(database) && database.indexed && (
         <Badge color="teal" variant="light" size="xs">
           {t("features.databases.settings.indexed")}
@@ -619,7 +706,10 @@ export function DatabaseDetails({
   refreshPuzzleDatabases,
 }: DatabaseDetailsProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const setActiveDatabase = useActiveDatabaseViewStore((store) => store.setDatabase);
+  const [, setTabs] = useAtom(tabsAtom);
+  const [, setActiveTab] = useAtom(activeTabAtom);
 
   if (!selectedDatabase) {
     return (
@@ -687,11 +777,24 @@ export function DatabaseDetails({
           <div>
             {isGameDatabase(selectedDatabase) && (
               <Button
-                component={Link}
-                to="/databases/$databaseId"
-                // @ts-expect-error
-                params={{ databaseId: selectedDatabase.title }}
-                onClick={() => setActiveDatabase(selectedDatabase)}
+                onClick={() => {
+                  const dbSource = (selectedDatabase as unknown as { source?: DatabaseSource }).source ?? null;
+                  const baseRoute = `/databases/${encodeURIComponent(selectedDatabase.title)}`;
+                  const route = dbSource === "online" ? `${baseRoute}?flow=online` : baseRoute;
+
+                  setActiveDatabase(selectedDatabase);
+                  onSelect(null);
+                  void createTab({
+                    tab: {
+                      name: selectedDatabase.title,
+                      type: "database",
+                      route,
+                    },
+                    setTabs,
+                    setActiveTab,
+                  });
+                  navigate({ to: route as any });
+                }}
                 fullWidth
                 variant="filled"
                 size="lg"

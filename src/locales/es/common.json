@@ -1245,6 +1245,17 @@
     },
     "engines": {
       "title": "Motores",
+      "onlineTournament": {
+        "addButton": "Agregar torneo online",
+        "title": "Importar torneo online",
+        "urlLabel": "URL del torneo",
+        "urlPlaceholder": "Pega una URL de broadcast de Lichess",
+        "nameLabel": "Nombre (opcional)",
+        "namePlaceholder": "Deja vacío para usar el título de la URL",
+        "import": "Importar",
+        "missingUrl": "La URL del torneo es obligatoria",
+        "success": "Torneo importado correctamente"
+      },
       "settings": {
         "noEngine": "Ningún motor seleccionado",
         "searchSettings": "Configuración de búsqueda",
@@ -1301,6 +1312,14 @@
         "clickToSelectPGN": "Haga clic para seleccionar el archivo PGN",
         "convert": "Convertir"
       },
+      "merge": {
+        "title": "Fusionar",
+        "profile": "Perfil",
+        "player": "Jugador",
+        "confirm": "Fusionar partidas",
+        "success": "Se fusionaron {{count}} partidas en el perfil",
+        "noProfiles": "No hay perfiles. Crea uno primero."
+      },
       "settings": {
         "referenceDatabase": "Base de datos de referencia",
         "referenceDatabaseShort": "Referencia",
@@ -1333,6 +1352,11 @@
         "locals": "Locales",
         "lichess": "Lichess",
         "chesscom": "Chess.com"
+      },
+      "sourceType": {
+        "local": "Local",
+        "online": "Online",
+        "external": "Externa"
       }
     },
     "files": {

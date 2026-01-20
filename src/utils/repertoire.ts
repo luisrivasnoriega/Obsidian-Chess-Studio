@@ -73,7 +73,7 @@ export async function openingReport({
         type: "exact",
         fen: item.node.fen,
         color: "white",
-        player: null,
+        players: [],
         result: "any",
       },
       "opening",

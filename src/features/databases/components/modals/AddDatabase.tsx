@@ -26,7 +26,7 @@ import { useTranslation } from "react-i18next";
 import { commands, type DatabaseInfo, events, type PuzzleDatabaseInfo } from "@/bindings";
 import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
-import { type SuccessDatabaseInfo, useDefaultDatabases } from "@/utils/db";
+import { type SuccessDatabaseInfo, setDbSource, useDefaultDatabases } from "@/utils/db";
 import { capitalize } from "@/utils/format";
 import { getPuzzleDatabases } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
@@ -110,6 +110,7 @@ const useDatabaseOperations = (
         setLoading(true);
         const dbPath = await resolve(await appDataDir(), "db", `${title}.db3`);
         unwrap(await commands.convertPgn(path, dbPath, null, title, description ?? null));
+        await setDbSource(dbPath, "external");
         setDatabases();
       } finally {
         setLoading(false);
@@ -336,6 +337,7 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
         } else {
           const path = await resolve(await appDataDir(), "db", `${name}.db3`);
           await commands.downloadFile(`db_${id}`, url, path, null, null, null);
+          await setDbSource(path, "local");
         }
         setDatabases();
         // Update installed state for Position Cache
