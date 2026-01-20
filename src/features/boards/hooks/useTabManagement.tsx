@@ -156,9 +156,10 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
                 return null;
               }
               if (index === prevTabs.length - 1) {
-                return newTabs[index - 1].value;
+                const prevIndex = index - 1;
+                return prevIndex >= 0 && newTabs[prevIndex] ? newTabs[prevIndex].value : (newTabs[0]?.value ?? null);
               }
-              return newTabs[index].value;
+              return newTabs[index]?.value ?? newTabs[0]?.value ?? null;
             }
             return currentActiveTab;
           });

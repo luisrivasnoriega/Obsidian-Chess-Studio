@@ -267,11 +267,7 @@ pub fn parse_uci_attrs_with_line(
 
     // First pass: collect WDL value if present (it may come before or after Score)
     let mut wdl_value: Option<(u32, u32, u32)> = None;
-    let mut has_pv = false;
     for a in &attrs {
-        if let UciInfoAttribute::Pv(_) = a {
-            has_pv = true;
-        }
         if let UciInfoAttribute::Any(name, value) = a {
             if name.eq_ignore_ascii_case("wdl") {
                 if let Some(wdl) = parse_wdl_value(value) {

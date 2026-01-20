@@ -1,11 +1,13 @@
 import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
 import { IconChess, IconUpload } from "@tabler/icons-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useAtomValue } from "jotai";
+import { open } from "@tauri-apps/plugin-dialog";
+import { useAtom, useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import { welcomeCardImageAtom } from "@/state/atoms";
 
 interface WelcomeCardProps {
   isFirstOpen: boolean;
@@ -38,6 +40,8 @@ export function WelcomeCard({
   const { layout } = useResponsiveLayout();
   const [imageError, setImageError] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
+  const [customImageUrl, setCustomImageUrl] = useState<string | undefined>(undefined);
+  const [welcomeCardImage, setWelcomeCardImage] = useAtom(welcomeCardImageAtom);
   const isCompact = layout.settings.layoutType === "mobile";
   const photoSize = isCompact ? 96 : 140;
   const heroImageSize = isCompact ? 180 : 280;
@@ -70,14 +74,61 @@ export function WelcomeCard({
     }
   }, [fideInfo?.photo]);
 
+  // Convert custom image path to URL if needed
+  useEffect(() => {
+    if (!welcomeCardImage) {
+      setCustomImageUrl(undefined);
+      return;
+    }
+
+    // If it's already a URL (http, https, or tauri://), use it directly
+    if (
+      welcomeCardImage.startsWith("http://") ||
+      welcomeCardImage.startsWith("https://") ||
+      welcomeCardImage.startsWith("tauri://") ||
+      welcomeCardImage.startsWith("data:") ||
+      welcomeCardImage.startsWith("blob:")
+    ) {
+      setCustomImageUrl(welcomeCardImage);
+      return;
+    }
+
+    try {
+      const url = convertFileSrc(welcomeCardImage);
+      setCustomImageUrl(url);
+    } catch {
+      setCustomImageUrl(welcomeCardImage);
+    }
+  }, [welcomeCardImage]);
+
   // Determine theme-based background image
   const isAcademiaMaya = currentThemeId === "academia-maya";
-  const backgroundImageSrc = isAcademiaMaya ? "/academia.maya.png" : "/chess-play.png";
+  const defaultBackgroundImageSrc = isAcademiaMaya ? "/academia.maya.png" : "/chess-play.png";
+  const backgroundImageSrc = customImageUrl || defaultBackgroundImageSrc;
   const backgroundImageAlt = isAcademiaMaya ? "Academia Maya" : "Chess play";
 
   const handleImageError = () => {
     if (isAcademiaMaya && !imageError) {
       setImageError(true);
+    }
+  };
+
+  const handleImageClick = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "Image",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+          },
+        ],
+      });
+      if (selected && typeof selected === "string") {
+        setWelcomeCardImage(selected);
+      }
+    } catch (error) {
+      console.error("Error selecting image:", error);
     }
   };
 
@@ -239,6 +290,9 @@ export function WelcomeCard({
                 width={heroImageSize}
                 height={heroImageSize}
                 fit="contain"
+                style={{ cursor: "pointer" }}
+                onClick={handleImageClick}
+                title={t("features.dashboard.welcome.clickToChangeImage")}
               />
             </Box>
           )}
@@ -251,8 +305,10 @@ export function WelcomeCard({
               alt={backgroundImageAlt}
               radius="lg"
               onError={handleImageError}
-              style={{ width: "100%", height: heroImageSize }}
+              style={{ width: "100%", height: heroImageSize, cursor: "pointer" }}
               fit="cover"
+              onClick={handleImageClick}
+              title={t("features.dashboard.welcome.clickToChangeImage")}
             />
           </Box>
         )}

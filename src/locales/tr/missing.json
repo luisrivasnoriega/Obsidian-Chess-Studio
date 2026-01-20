@@ -249,6 +249,7 @@
   "features.dashboard.defaultLichessEvent": "Lichess Game",
   "features.dashboard.analyzingPawnStructures": "Analyzing pawn structures...",
   "features.dashboard.onlyUnanalyzedGamesWithCounts": "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
+  "features.dashboard.welcome.clickToChangeImage": "Click to change image",
   "features.board.actions.togglePawnStructureView": "Toggle Pawn Structure View",
   "features.board.actions.takeSnapshot": "Take Snapshot",
   "features.board.actions.analyzeGame": "Analyze game",

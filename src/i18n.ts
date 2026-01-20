@@ -36,6 +36,23 @@ let lang = localStorage.getItem("lang");
 if (lang) {
   lang = lang.replace("_", "-");
   localStorage.setItem("lang", lang);
+} else {
+  // On first run, try to detect from browser/system locale as a temporary fallback
+  // This will be refined by the Tauri command in App.tsx which will set localStorage
+  const browserLang = navigator.language || navigator.languages?.[0] || "en-US";
+  const browserLangLower = browserLang.toLowerCase();
+
+  // Map browser locale to supported locale (temporary, not saved to localStorage yet)
+  if (browserLangLower.startsWith("es")) {
+    lang = "es-ES";
+  } else if (browserLangLower.startsWith("en")) {
+    lang = "en-US";
+  } else {
+    // For other locales, default to English for now
+    // The Tauri command in App.tsx will refine this
+    lang = "en-US";
+  }
+  // Note: We don't save to localStorage here - App.tsx will do that after Tauri detection
 }
 
 const resources = {

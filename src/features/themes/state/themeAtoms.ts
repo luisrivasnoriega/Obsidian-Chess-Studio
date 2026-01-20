@@ -1,6 +1,5 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import { getPlatform } from "@/hooks/useResponsiveLayout";
 import { pieceSetAtom, primaryColorAtom } from "@/state/atoms";
 import { genID } from "@/utils/tabs";
 import { builtInThemes, getBuiltInThemeById } from "../data/builtInThemes";
@@ -36,13 +35,12 @@ export const cleanupDuplicateThemesAtom = atom(null, (get, set) => {
 });
 
 // Get default theme based on platform
-// For mobile, use "default" theme; for desktop, use "oled"
+// Always use "default" theme for fresh installations
 function getDefaultThemeId(): string {
   if (typeof window === "undefined") {
-    return "oled"; // SSR fallback
+    return "default"; // SSR fallback
   }
-  const platform = getPlatform();
-  return platform === "mobile" ? "default" : "oled";
+  return "default";
 }
 
 // Currently selected theme ID
@@ -99,10 +97,10 @@ export const initializeThemeAtom = atom(null, (get, set) => {
   const allThemes = get(allThemesAtom);
   const currentPrimaryColor = get(primaryColorAtom);
 
-  // For mobile, if theme is "oled" or not set, use "default" theme
-  const platform = getPlatform();
-  const isMobile = platform === "mobile";
-  if (isMobile && (currentThemeId === "oled" || !currentThemeId)) {
+  // Detect fresh installation: if theme is "oled" (old default) or not set, and there are no custom themes,
+  // this is likely a fresh install, so use "default" theme
+  const isFreshInstall = (currentThemeId === "oled" || !currentThemeId) && customThemes.length === 0;
+  if (isFreshInstall) {
     currentThemeId = "default";
     set(currentThemeIdAtom, "default");
   }
@@ -267,7 +265,7 @@ export const deleteThemeAtom = atom(null, (get, set, id: string) => {
   // If the deleted theme was active, switch to default
   const currentThemeId = get(currentThemeIdAtom);
   if (currentThemeId === id) {
-    set(currentThemeIdAtom, "oled");
+    set(currentThemeIdAtom, "default");
   }
 
   return true;

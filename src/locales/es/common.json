@@ -981,7 +981,8 @@
         "desc": "¿Listo para hacer tu mejor jugada?",
         "fideTitle": "Título FIDE",
         "worldRank": "Ranking Mundial",
-        "nationalRank": "Ranking Nacional"
+        "nationalRank": "Ranking Nacional",
+        "clickToChangeImage": "Haz clic para cambiar la imagen"
       },
       "showing": "Mostrando"
     },

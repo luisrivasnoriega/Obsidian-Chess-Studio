@@ -1153,7 +1153,8 @@
         "desc": "Ready to make your next best move?",
         "fideTitle": "FIDE Title",
         "worldRank": "World Rank",
-        "nationalRank": "National Rank"
+        "nationalRank": "National Rank",
+        "clickToChangeImage": "Click to change image"
       }
     },
     "tabs": {

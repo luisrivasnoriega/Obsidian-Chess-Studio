@@ -264,6 +264,80 @@ function useAppInitialization() {
         error(`Failed to minimize window at startup: ${e}`);
       }
 
+      // Detect system locale on first run and set language accordingly
+      try {
+        const hasLang = localStorage.getItem("lang");
+        if (!hasLang) {
+          info("No language set in localStorage, detecting system locale...");
+          const localeResult = await commands.getSystemLocale();
+          let systemLocale: string | null = null;
+
+          if (localeResult.status === "ok") {
+            systemLocale = localeResult.data;
+          } else {
+            error(`System locale detection returned error: ${localeResult.error}`);
+          }
+
+          if (systemLocale) {
+            const localeLower = systemLocale.toLowerCase();
+            let detectedLang: string;
+            // Detect Spanish variants (es-MX, es-ES, es, etc.)
+            if (localeLower.startsWith("es")) {
+              detectedLang = "es-ES";
+              info(`Detected Spanish locale (${systemLocale}), setting language to es-ES`);
+            }
+            // Detect English variants (en-US, en-GB, en, etc.)
+            else if (localeLower.startsWith("en")) {
+              detectedLang = "en-US";
+              info(`Detected English locale (${systemLocale}), setting language to en-US`);
+            }
+            // For other locales, default to English
+            else {
+              detectedLang = "en-US";
+              info(`Detected locale ${systemLocale}, defaulting to en-US`);
+            }
+            localStorage.setItem("lang", detectedLang);
+            i18n.changeLanguage(detectedLang);
+          } else {
+            // If system locale detection returns null, use browser locale as fallback
+            const browserLang = navigator.language || navigator.languages?.[0] || "en-US";
+            const browserLangLower = browserLang.toLowerCase();
+            let fallbackLang: string;
+            if (browserLangLower.startsWith("es")) {
+              fallbackLang = "es-ES";
+            } else if (browserLangLower.startsWith("en")) {
+              fallbackLang = "en-US";
+            } else {
+              fallbackLang = "en-US";
+            }
+            localStorage.setItem("lang", fallbackLang);
+            i18n.changeLanguage(fallbackLang);
+            info(`System locale detection returned null, using browser locale (${browserLang}) -> ${fallbackLang}`);
+          }
+        } else {
+          info(`Language already set in localStorage: ${hasLang}`);
+        }
+      } catch (e) {
+        error(`Failed to detect system locale: ${e}`);
+        // If detection fails, ensure we have a language set
+        const hasLang = localStorage.getItem("lang");
+        if (!hasLang) {
+          const browserLang = navigator.language || navigator.languages?.[0] || "en-US";
+          const browserLangLower = browserLang.toLowerCase();
+          let fallbackLang: string;
+          if (browserLangLower.startsWith("es")) {
+            fallbackLang = "es-ES";
+          } else if (browserLangLower.startsWith("en")) {
+            fallbackLang = "en-US";
+          } else {
+            fallbackLang = "en-US";
+          }
+          localStorage.setItem("lang", fallbackLang);
+          i18n.changeLanguage(fallbackLang);
+          info(`Using browser locale as fallback after error: ${browserLang} -> ${fallbackLang}`);
+        }
+      }
+
       await handleCommandLineFile();
       await commands.screenCapture();
 

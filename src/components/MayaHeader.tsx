@@ -87,6 +87,7 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const openBoards = useCallback(
     (tabValue?: string) => {
       const tab = tabValue ? (tabs.find((t) => t.value === tabValue) ?? null) : activeTabData;
+      if (!tab) return;
       navigate({ to: getRouteForTab(tab) });
     },
     [activeTabData, navigate, tabs],

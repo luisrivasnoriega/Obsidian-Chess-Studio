@@ -138,6 +138,7 @@ pub struct AppState {
 pub async fn run() {
     let specta_builder = tauri_specta::Builder::new()
         .commands(tauri_specta::collect_commands!(
+            get_system_locale,
             app::platform::screen_capture,
             find_fide_player,
             fetch_fide_profile_html,
@@ -298,6 +299,46 @@ fn is_bmi2_compatible() -> bool {
 #[specta::specta]
 fn memory_size() -> u64 {
     sysinfo::System::new_all().total_memory() / (1024 * 1024)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_system_locale() -> Result<Option<String>, String> {
+    // Try to get locale from environment variables (works on most platforms)
+    // Priority: LC_ALL > LC_MESSAGES > LANG
+    let locale = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_MESSAGES"))
+        .or_else(|_| std::env::var("LANG"))
+        .ok();
+
+    // On Windows, if env vars don't work, try to get from system
+    #[cfg(windows)]
+    {
+        if locale.is_none() {
+            // Try to get from Windows registry via environment
+            // Windows 10+ sets some locale-related env vars
+            if let Ok(lang) = std::env::var("LOCALE") {
+                return Ok(Some(lang));
+            }
+            // Try PowerShell command as fallback
+            use std::process::Command;
+            if let Ok(output) = Command::new("powershell")
+                .args(["-Command", "[System.Globalization.CultureInfo]::CurrentCulture.Name"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(locale_str) = String::from_utf8(output.stdout) {
+                        let locale_str = locale_str.trim().to_string();
+                        if !locale_str.is_empty() {
+                            return Ok(Some(locale_str));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(locale)
 }
 
 fn validate_external_url(url: &str) -> Result<reqwest::Url, String> {

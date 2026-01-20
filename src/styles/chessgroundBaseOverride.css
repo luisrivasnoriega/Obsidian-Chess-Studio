@@ -151,11 +151,14 @@ piece.fading {
 
 .cg-wrap coords.files {
   bottom: 1%;
-  left: 4.5%;
+  left: 0;
   flex-flow: row;
   width: 100%;
   height: 1rem;
   text-align: center;
+  padding-left: 4.5%;
+  padding-right: 0;
+  box-sizing: border-box;
 }
 
 .cg-wrap coords.files.black {
@@ -164,6 +167,11 @@ piece.fading {
 
 .cg-wrap coords coord {
   flex: 1 1 auto;
+}
+
+.cg-wrap coords.files coord {
+  flex: 0 0 12.5%;
+  max-width: 12.5%;
 }
 
 .cg-wrap coords.ranks coord {
