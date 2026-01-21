@@ -1,4 +1,4 @@
-import { appLogDir } from "@tauri-apps/api/path";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { logger } from "@/utils/logger";
 
 function formatValue(value: unknown): string {
@@ -45,8 +45,9 @@ export function debugNavLog(...args: unknown[]): void {
 export async function debugNavLogPaths(): Promise<void> {
   if (!isDebugNavEnabled()) return;
   try {
-    const dir = await appLogDir();
-    debugNavLog("appLogDir:", dir);
+    const appData = await appDataDir();
+    const logDir = await resolve(appData, "logs");
+    debugNavLog("appLogDir:", logDir);
   } catch (e) {
     debugNavLog("appLogDir error:", e);
   }

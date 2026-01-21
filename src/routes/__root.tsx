@@ -5,7 +5,7 @@ import { notifications } from "@mantine/notifications";
 import { Spotlight, spotlight } from "@mantine/spotlight";
 import { createRootRouteWithContext, Outlet, useNavigate } from "@tanstack/react-router";
 import { Menu } from "@tauri-apps/api/menu";
-import { appLogDir, resolve } from "@tauri-apps/api/path";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -481,7 +481,8 @@ function RootLayout() {
 
   const handleOpenLogs = useCallback(async () => {
     try {
-      const logDir = await appLogDir();
+      const appData = await appDataDir();
+      const logDir = await resolve(appData, "logs");
       const logPath = await resolve(logDir, APP_CONSTANTS.LOG_FILENAME);
 
       notifications.show({

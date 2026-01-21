@@ -58,7 +58,7 @@ function ReportModal({
       localEngines.length === 0
         ? ""
         : !reportSettings.engine || !localEngines.some((l) => l.path === reportSettings.engine)
-          ? localEngines[0]?.path ?? ""
+          ? (localEngines[0]?.path ?? "")
           : reportSettings.engine;
 
     form.setValues({ ...reportSettings, engine });

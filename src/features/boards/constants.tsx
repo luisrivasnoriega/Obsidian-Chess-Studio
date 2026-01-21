@@ -12,7 +12,7 @@ export type ViewId = "left" | "topRight" | "bottomRight";
 export const MOSAIC_PANE_CONSTRAINTS = {
   MINIMUM_PERCENTAGE: 10,
   MAXIMUM_PERCENTAGE: 80,
-  DEFAULT_SPLIT_PERCENTAGE: 47,
+  DEFAULT_SPLIT_PERCENTAGE: 52.5,
 } as const;
 
 export const MOSAIC_RIGHT_COLUMN_SPLIT = 55;

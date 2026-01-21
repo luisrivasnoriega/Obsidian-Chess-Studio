@@ -39,6 +39,56 @@ pub async fn screen_capture(window: Window) -> Result<(), String> {
     Ok(())
 }
 
+/// Gets the AppData directory path for logs (Roaming on Windows)
+/// This matches BaseDirectory::AppData behavior but is needed before app initialization
+fn get_app_data_log_dir() -> std::path::PathBuf {
+    const APP_IDENTIFIER: &str = "com.ocs";
+    
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            // APPDATA on Windows points to Roaming (AppData\Roaming)
+            let mut path = std::path::PathBuf::from(appdata);
+            path.push(APP_IDENTIFIER);
+            path.push("logs");
+            return path;
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let mut path = std::path::PathBuf::from(home);
+            path.push("Library");
+            path.push("Application Support");
+            path.push(APP_IDENTIFIER);
+            path.push("logs");
+            return path;
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
+            let mut path = std::path::PathBuf::from(xdg_data_home);
+            path.push(APP_IDENTIFIER);
+            path.push("logs");
+            return path;
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let mut path = std::path::PathBuf::from(home);
+            path.push(".local");
+            path.push("share");
+            path.push(APP_IDENTIFIER);
+            path.push("logs");
+            return path;
+        }
+    }
+    
+    // Fallback to temp directory if we can't determine the proper location
+    std::env::temp_dir()
+}
+
 /// Gets the log level from environment variable or defaults to Info
 fn get_log_level() -> LevelFilter {
     match std::env::var("RUST_LOG").as_deref() {
@@ -73,6 +123,10 @@ pub fn setup_tauri_plugins(
     specta_builder: &tauri_specta::Builder,
 ) -> tauri::Builder<tauri::Wry> {
     let log_level = get_log_level();
+    
+    // Get AppData directory path for logs (Roaming on Windows)
+    let log_dir = get_app_data_log_dir();
+    
     let builder = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -81,7 +135,8 @@ pub fn setup_tauri_plugins(
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                        path: log_dir,
                         file_name: Some("obsidian-chess-studio".to_string()),
                     }),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),

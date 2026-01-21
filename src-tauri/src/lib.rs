@@ -273,6 +273,29 @@ pub async fn run() {
         )
         .expect("Failed to export types");
 
+    // Configure WebView2 to use Roaming (AppData) instead of LocalAppData
+    // This must be set BEFORE creating the Tauri builder
+    #[cfg(target_os = "windows")]
+    {
+        if std::env::var("WEBVIEW2_USER_DATA_FOLDER").is_err() {
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                // APPDATA on Windows points to Roaming (AppData\Roaming)
+                let mut webview_data_folder = std::path::PathBuf::from(appdata);
+                webview_data_folder.push("com.ocs");
+                webview_data_folder.push("EBWebView");
+                
+                // Create the directory if it doesn't exist
+                if let Some(parent) = webview_data_folder.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                
+                // Set the environment variable for WebView2
+                std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", webview_data_folder.to_string_lossy().as_ref());
+                log::info!("WebView2 user data folder set to: {}", webview_data_folder.display());
+            }
+        }
+    }
+    
     let builder = tauri::Builder::default();
     let builder = app::platform::setup_tauri_plugins(builder, &specta_builder);
 

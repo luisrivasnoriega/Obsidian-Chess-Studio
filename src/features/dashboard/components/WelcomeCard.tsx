@@ -1,7 +1,6 @@
 import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
 import { IconChess, IconUpload } from "@tabler/icons-react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
