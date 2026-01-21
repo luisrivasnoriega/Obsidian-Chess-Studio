@@ -89,7 +89,7 @@ use crate::{
         delete_duplicated_games, edit_db_info, get_db_info, get_game, get_games, get_players,
         merge_players, set_profile_metadata, update_game,
     },
-    fs::{download_file, file_exists, get_file_metadata},
+    fs::{download_file, file_exists, get_file_metadata, save_welcome_card_image},
     opening::{
         get_opening_from_fen, get_opening_from_name, get_opening_info_from_fen,
         search_opening_name,
@@ -159,6 +159,7 @@ pub async fn run() {
             get_engine_config,
             file_exists,
             get_file_metadata,
+            save_welcome_card_image,
             merge_players,
             convert_pgn,
             init_profile_db,

@@ -1,6 +1,7 @@
 import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
 import { IconChess, IconUpload } from "@tabler/icons-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
@@ -93,6 +94,28 @@ export function WelcomeCard({
       return;
     }
 
+    // If it's a relative path (starts with welcome-card-image/), resolve it relative to AppData
+    if (welcomeCardImage.startsWith("welcome-card-image/")) {
+      // Resolve the path relative to AppData
+      import("@tauri-apps/api/path").then(({ resolve, appDataDir }) => {
+        appDataDir()
+          .then((base) => resolve(base, welcomeCardImage))
+          .then((fullPath) => {
+            try {
+              const url = convertFileSrc(fullPath);
+              setCustomImageUrl(url);
+            } catch {
+              setCustomImageUrl(welcomeCardImage);
+            }
+          })
+          .catch(() => {
+            setCustomImageUrl(welcomeCardImage);
+          });
+      });
+      return;
+    }
+
+    // Otherwise, treat as absolute path
     try {
       const url = convertFileSrc(welcomeCardImage);
       setCustomImageUrl(url);
@@ -125,7 +148,16 @@ export function WelcomeCard({
         ],
       });
       if (selected && typeof selected === "string") {
-        setWelcomeCardImage(selected);
+        // Use the command to copy the image to AppData
+        try {
+          const relativePath = await invoke<string>("save_welcome_card_image", {
+            sourcePath: selected,
+          });
+          // Save the relative path (e.g., "welcome-card-image/custom-image.png")
+          setWelcomeCardImage(relativePath);
+        } catch (error) {
+          console.error("Error saving image:", error);
+        }
       }
     } catch (error) {
       console.error("Error selecting image:", error);

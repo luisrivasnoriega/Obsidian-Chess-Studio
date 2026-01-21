@@ -155,7 +155,11 @@ export function SideBar() {
     const existing = tabs.find((tab) => tab.route === route);
     if (existing) {
       setActiveTab(existing.value);
-      navigate({ to: route as any });
+      try {
+        navigate({ to: route as any });
+      } catch (error) {
+        console.error("Navigation error in openRouteTab:", error);
+      }
       return;
     }
 
@@ -164,7 +168,18 @@ export function SideBar() {
       setTabs,
       setActiveTab,
     });
-    navigate({ to: route as any });
+    try {
+      // Use requestAnimationFrame to ensure router is ready
+      requestAnimationFrame(() => {
+        try {
+          navigate({ to: route as any });
+        } catch (error) {
+          console.error("Navigation error in openRouteTab (after createTab):", error);
+        }
+      });
+    } catch (error) {
+      console.error("Navigation error in openRouteTab:", error);
+    }
   };
 
   const openTabAndNavigate = async ({
@@ -188,7 +203,18 @@ export function SideBar() {
       initialAnalysisSubTab,
       initialNotationView,
     });
-    navigate({ to: route });
+    try {
+      // Use requestAnimationFrame to ensure router is ready
+      requestAnimationFrame(() => {
+        try {
+          navigate({ to: route });
+        } catch (error) {
+          console.error("Navigation error in openTabAndNavigate:", error);
+        }
+      });
+    } catch (error) {
+      console.error("Navigation error in openTabAndNavigate:", error);
+    }
   };
 
   // Sección principal: Dashboard y Profiles
@@ -203,14 +229,28 @@ export function SideBar() {
             const existingProfileTab = tabs.find((t) => t.type === "profiles");
             if (existingProfileTab) {
               setActiveTab(existingProfileTab.value);
-              navigate({ to: "/profiles" });
+              try {
+                navigate({ to: "/profiles" });
+              } catch (error) {
+                console.error("Navigation error in profiles link:", error);
+              }
             } else {
               void createTab({
                 tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
                 setTabs,
                 setActiveTab,
               });
-              navigate({ to: "/profiles" });
+              try {
+                requestAnimationFrame(() => {
+                  try {
+                    navigate({ to: "/profiles" });
+                  } catch (error) {
+                    console.error("Navigation error in profiles link (after createTab):", error);
+                  }
+                });
+              } catch (error) {
+                console.error("Navigation error in profiles link:", error);
+              }
             }
           }}
         />
@@ -333,14 +373,28 @@ export function SideBar() {
                   const existingProfileTab = tabs.find((t) => t.type === "profiles");
                   if (existingProfileTab) {
                     setActiveTab(existingProfileTab.value);
-                    navigate({ to: "/profiles" });
+                    try {
+                      navigate({ to: "/profiles" });
+                    } catch (error) {
+                      console.error("Navigation error in footer profiles link:", error);
+                    }
                   } else {
                     void createTab({
                       tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
                       setTabs,
                       setActiveTab,
                     });
-                    navigate({ to: "/profiles" });
+                    try {
+                      requestAnimationFrame(() => {
+                        try {
+                          navigate({ to: "/profiles" });
+                        } catch (error) {
+                          console.error("Navigation error in footer profiles link (after createTab):", error);
+                        }
+                      });
+                    } catch (error) {
+                      console.error("Navigation error in footer profiles link:", error);
+                    }
                   }
                   return;
                 }
@@ -361,7 +415,11 @@ export function SideBar() {
       icon={IconUpload}
       label={t("maya.nav.importGame")}
       onClick={() => {
-        navigate({ to: "/analysis" });
+        try {
+          navigate({ to: "/analysis" });
+        } catch (error) {
+          console.error("Navigation error in import link:", error);
+        }
         modals.openContextModal({ modal: "importModal", innerProps: {} });
       }}
     />

@@ -26,10 +26,12 @@ export function getRouteForTab(tab: Tab | null | undefined): string {
 export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const routerState = useRouterState();
+  const routerState = useRouterState({
+    select: (s) => s.location?.pathname ?? "",
+  });
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const currentPath = routerState.location.pathname;
+  const currentPath = routerState;
 
   const active = useMemo(() => tabs.find((tab) => tab.value === activeTab) ?? null, [activeTab, tabs]);
   const ensureKey = `${mode}:${tabs.length}:${activeTab ?? ""}`;

@@ -216,6 +216,14 @@ async getFileMetadata(path: string) : Promise<Result<FileMetadata, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async saveWelcomeCardImage(sourcePath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_welcome_card_image", { sourcePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mergePlayers(file: string, player1: number, player2: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("merge_players", { file, player1, player2 }) };

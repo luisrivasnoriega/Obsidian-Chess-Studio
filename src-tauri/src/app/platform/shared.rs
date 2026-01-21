@@ -27,6 +27,7 @@ const REQUIRED_DIRS: &[(BaseDirectory, &str)] = &[
     (BaseDirectory::AppData, "puzzles"),
     (BaseDirectory::AppData, "documents"),
     (BaseDirectory::AppData, "logs"),
+    (BaseDirectory::AppData, "welcome-card-image"),
 ];
 
 const REQUIRED_FILES: &[(BaseDirectory, &str, &str)] = &[

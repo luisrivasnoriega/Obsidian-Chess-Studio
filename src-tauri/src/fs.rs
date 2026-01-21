@@ -629,6 +629,54 @@ pub async fn get_file_metadata(path: String) -> Result<FileMetadata, Error> {
     })
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn save_welcome_card_image(
+    source_path: String,
+    app: tauri::AppHandle,
+) -> Result<String, Error> {
+    use std::fs;
+    use tauri::path::BaseDirectory;
+
+    let source = Path::new(&source_path);
+    if !source.exists() {
+        return Err(Error::PackageManager(format!(
+            "Source file does not exist: {}",
+            source.display()
+        )));
+    }
+
+    // Get the file extension
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("png");
+
+    // Create destination path in AppData/welcome-card-image/
+    let dest_dir = app
+        .path()
+        .resolve("welcome-card-image", BaseDirectory::AppData)
+        .map_err(|e| {
+            Error::PackageManager(format!("Failed to resolve app data directory: {}", e))
+        })?;
+
+    // Ensure directory exists
+    fs::create_dir_all(&dest_dir).map_err(|e| {
+        Error::PackageManager(format!("Failed to create directory: {}", e))
+    })?;
+
+    // Use a fixed filename: custom-image.{ext}
+    let dest_path = dest_dir.join(format!("custom-image.{}", extension));
+
+    // Copy the file
+    fs::copy(source, &dest_path).map_err(|e| {
+        Error::PackageManager(format!("Failed to copy file: {}", e))
+    })?;
+
+    // Return the relative path that can be used with BaseDirectory::AppData
+    Ok(format!("welcome-card-image/custom-image.{}", extension))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

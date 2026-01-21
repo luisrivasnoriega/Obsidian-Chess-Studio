@@ -109,6 +109,7 @@
     "@vanilla-extract/css": "^1.18.0",
     "@vanilla-extract/vite-plugin": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.16",
+    "baseline-browser-mapping": "^2.9.16",
     "jsdom": "^27.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
