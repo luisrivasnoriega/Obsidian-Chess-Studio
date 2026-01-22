@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtomValue } from "jotai";
-import { memo, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import EvalChart from "@/components/EvalChart";
@@ -35,12 +35,28 @@ function ReportPanel() {
   const setInProgress = useStore(store, (s) => s.setReportInProgress);
 
   const [reportingMode, toggleReportingMode] = useToggle();
+  // Create a truly stable callback using useRef to store the latest function
+  const toggleRef = useRef(toggleReportingMode);
+  toggleRef.current = toggleReportingMode;
+  const memoizedToggle = useCallback(() => {
+    toggleRef.current();
+  }, []); // Empty deps - this callback never changes
 
   const [stats, setStats] = useState(() => getGameStats(root));
 
   // Avoid recalculating stats on every tree mutation while the engine is actively analyzing.
   // Compute on idle/debounced to keep the UI responsive.
+  const prevRootRef = useRef(root);
+  const prevStatsRef = useRef(stats);
+
   useEffect(() => {
+    // Skip if root hasn't actually changed (reference equality check)
+    if (prevRootRef.current === root && !inProgress) {
+      return;
+    }
+
+    prevRootRef.current = root;
+
     let cancelled = false;
     let timeoutId: number | null = null;
 
@@ -48,7 +64,15 @@ function ReportPanel() {
       if (cancelled) return;
       try {
         const next = getGameStats(root);
-        if (!cancelled) setStats(next);
+
+        // Only update if stats actually changed (deep comparison)
+        if (!cancelled) {
+          const statsChanged = JSON.stringify(next) !== JSON.stringify(prevStatsRef.current);
+          if (statsChanged) {
+            prevStatsRef.current = next;
+            setStats(next);
+          }
+        }
       } catch {
         // ignore
       }
@@ -422,7 +446,7 @@ function ReportPanel() {
             </div>
           </Group>
           <Paper withBorder p="md">
-            <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
+            <EvalChart isAnalysing={inProgress} startAnalysis={memoizedToggle} />
           </Paper>
           <ReportGameStats {...stats} />
         </Stack>

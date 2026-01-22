@@ -6,7 +6,7 @@ import { getMatches } from "@tauri-apps/plugin-cli";
 import { attachConsole, error, info } from "@tauri-apps/plugin-log";
 import { useAtom, useAtomValue } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isFailedToFetchError, startNetworkCooldown } from "@/utils/networkCooldown";
 import {
@@ -489,57 +489,109 @@ export default function App() {
     rootElement.classList.toggle("rtl", direction === "rtl");
   }, []);
 
+  // Use ref to prevent infinite loop from state updates triggering this effect
+  const isProcessingProfilesRef = useRef(false);
+  const lastProcessedHashRef = useRef<string>("");
+
   useEffect(() => {
-    const res = ensureProfilesInitialized({ sessions, profiles, activeProfileId });
+    // Prevent re-entry if we're already processing
+    if (isProcessingProfilesRef.current) {
+      return;
+    }
 
-    const profilesChanged =
-      res.profiles.length !== profiles.length ||
-      res.profiles.some((p, i) => p.id !== profiles[i]?.id || p.name !== profiles[i]?.name);
-
-    // More robust comparison for sessions - check by unique key instead of index
-    // Only update if there are actual changes (profile updates, etc.)
-    // Don't restore sessions that were deleted (i.e., sessions in res.sessions that don't exist in current sessions)
-    const currentSessionKeys = new Set(
-      sessions.map((s) => {
+    // Create a stable hash of the current state to detect actual changes
+    const currentHash = JSON.stringify({
+      profiles: profiles.map((p) => ({ id: p.id, name: p.name })),
+      sessions: sessions.map((s) => {
         const platform = s.lichess ? "lichess" : "chesscom";
         const username = s.lichess?.username ?? s.chessCom?.username ?? "";
-        return `${s.profileId ?? ""}:${platform}:${username}`;
+        return {
+          profileId: s.profileId,
+          player: s.player,
+          key: `${s.profileId ?? ""}:${platform}:${username}`,
+        };
       }),
-    );
-
-    // Filter out any sessions from res.sessions that don't exist in current sessions
-    // This prevents restoring deleted sessions
-    const filteredResSessions = res.sessions.filter((s) => {
-      const platform = s.lichess ? "lichess" : "chesscom";
-      const username = s.lichess?.username ?? s.chessCom?.username ?? "";
-      const key = `${s.profileId ?? ""}:${platform}:${username}`;
-      return currentSessionKeys.has(key);
+      activeProfileId,
     });
 
-    const sessionsChanged =
-      filteredResSessions.length !== sessions.length ||
-      filteredResSessions.some((s) => {
+    // Skip if nothing has actually changed
+    if (lastProcessedHashRef.current === currentHash) {
+      return;
+    }
+
+    isProcessingProfilesRef.current = true;
+
+    try {
+      const res = ensureProfilesInitialized({ sessions, profiles, activeProfileId });
+
+      // Deep comparison for profiles - check if any profile actually changed
+      const profilesChanged =
+        res.profiles.length !== profiles.length ||
+        res.profiles.some((p, i) => {
+          const existing = profiles[i];
+          return !existing || existing.id !== p.id || existing.name !== p.name;
+        });
+
+      // More robust comparison for sessions - check by unique key instead of index
+      // Only update if there are actual changes (profile updates, etc.)
+      // Don't restore sessions that were deleted (i.e., sessions in res.sessions that don't exist in current sessions)
+      const currentSessionKeys = new Set(
+        sessions.map((s) => {
+          const platform = s.lichess ? "lichess" : "chesscom";
+          const username = s.lichess?.username ?? s.chessCom?.username ?? "";
+          return `${s.profileId ?? ""}:${platform}:${username}`;
+        }),
+      );
+
+      // Filter out any sessions from res.sessions that don't exist in current sessions
+      // This prevents restoring deleted sessions
+      const filteredResSessions = res.sessions.filter((s) => {
         const platform = s.lichess ? "lichess" : "chesscom";
         const username = s.lichess?.username ?? s.chessCom?.username ?? "";
-        const sessionKey = `${s.profileId ?? ""}:${platform}:${username}`;
-        const existing = sessions.find((existing) => {
-          const existingPlatform = existing.lichess ? "lichess" : "chesscom";
-          const existingUsername = existing.lichess?.username ?? existing.chessCom?.username ?? "";
-          const existingKey = `${existing.profileId ?? ""}:${existingPlatform}:${existingUsername}`;
-          return existingKey === sessionKey;
-        });
-        // Only consider it changed if profile/player name changed, not if it's a new session
-        if (!existing) return false;
-        return existing.profileId !== s.profileId || existing.player !== s.player;
+        const key = `${s.profileId ?? ""}:${platform}:${username}`;
+        return currentSessionKeys.has(key);
       });
 
-    if (profilesChanged) setProfiles(res.profiles);
-    // Only update sessions if there are actual meaningful changes (profile updates)
-    // Don't restore deleted sessions
-    if (sessionsChanged) {
-      setSessions(filteredResSessions);
+      const sessionsChanged =
+        filteredResSessions.length !== sessions.length ||
+        filteredResSessions.some((s) => {
+          const platform = s.lichess ? "lichess" : "chesscom";
+          const username = s.lichess?.username ?? s.chessCom?.username ?? "";
+          const sessionKey = `${s.profileId ?? ""}:${platform}:${username}`;
+          const existing = sessions.find((existing) => {
+            const existingPlatform = existing.lichess ? "lichess" : "chesscom";
+            const existingUsername = existing.lichess?.username ?? existing.chessCom?.username ?? "";
+            const existingKey = `${existing.profileId ?? ""}:${existingPlatform}:${existingUsername}`;
+            return existingKey === sessionKey;
+          });
+          // Only consider it changed if profile/player name changed, not if it's a new session
+          if (!existing) return false;
+          return existing.profileId !== s.profileId || existing.player !== s.player;
+        });
+
+      // Only update state if there are actual changes
+      if (profilesChanged) {
+        setProfiles(res.profiles);
+      }
+
+      // Only update sessions if there are actual meaningful changes (profile updates)
+      // Don't restore deleted sessions
+      if (sessionsChanged) {
+        setSessions(filteredResSessions);
+      }
+
+      if (res.activeProfileId !== activeProfileId) {
+        setActiveProfileId(res.activeProfileId);
+      }
+
+      // Update hash after processing to prevent immediate re-trigger
+      lastProcessedHashRef.current = currentHash;
+    } finally {
+      // Reset the processing flag after a microtask to allow state updates to complete
+      Promise.resolve().then(() => {
+        isProcessingProfilesRef.current = false;
+      });
     }
-    if (res.activeProfileId !== activeProfileId) setActiveProfileId(res.activeProfileId);
   }, [activeProfileId, profiles, sessions, setActiveProfileId, setProfiles, setSessions]);
 
   // Auto-register bundled engines (e.g., Stockfish on Android) on app startup

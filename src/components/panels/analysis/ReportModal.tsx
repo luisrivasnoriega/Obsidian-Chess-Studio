@@ -1,5 +1,6 @@
 import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack } from "@mantine/core";
 import { useForm } from "@mantine/form";
+import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
 import { memo, useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -53,7 +54,22 @@ function ReportModal({
     },
   });
 
+  // Store previous values to prevent infinite loop
+  const prevLocalEnginesRef = useRef(localEngines);
+  const prevReportSettingsRef = useRef(reportSettings);
+
   useEffect(() => {
+    const localEnginesChanged = !equal(prevLocalEnginesRef.current, localEngines);
+    const reportSettingsChanged = !equal(prevReportSettingsRef.current, reportSettings);
+
+    // Only update if something actually changed
+    if (!localEnginesChanged && !reportSettingsChanged) {
+      return;
+    }
+
+    prevLocalEnginesRef.current = localEngines;
+    prevReportSettingsRef.current = reportSettings;
+
     const engine =
       localEngines.length === 0
         ? ""
@@ -61,8 +77,11 @@ function ReportModal({
           ? (localEngines[0]?.path ?? "")
           : reportSettings.engine;
 
-    form.setValues({ ...reportSettings, engine });
-  }, [localEngines, reportSettings, form.setValues]);
+    // Only update form if engine actually changed
+    if (engine !== form.values.engine) {
+      form.setValues({ ...reportSettings, engine });
+    }
+  }, [localEngines, reportSettings, form]);
 
   const handleStop = async () => {
     if (analysisEngineRef.current) {

@@ -466,14 +466,15 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
           }
         }),
       ),
-    addAnalysis: (analysis) =>
+    addAnalysis: (analysis) => {
       set(
         produce((state) => {
           state.dirty = true;
           state.saveVersion += 1;
           addAnalysis(state, analysis);
         }),
-      ),
+      );
+    },
     setReportProgress: (value: number) => {
       set(
         produce((state: Draft<TreeStoreState>) => {

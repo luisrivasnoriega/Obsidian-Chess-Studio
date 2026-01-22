@@ -229,46 +229,9 @@ function EngineListener({
               name: s.name,
               value: s.value?.toString() || "",
             })) ?? [];
-          // #region agent log
-          const uciShowWDL = options.find((o) => o.name === "UCI_ShowWDL");
-          if (uciShowWDL) {
-            fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                location: "EvalListener.tsx:228",
-                message: "UCI_ShowWDL option found in frontend",
-                data: { name: uciShowWDL.name, value: uciShowWDL.value, type: typeof uciShowWDL.value },
-                timestamp: Date.now(),
-                sessionId: "debug-session",
-                runId: "run1",
-                hypothesisId: "E",
-              }),
-            }).catch(() => {});
-          }
-          // #endregion
           if (chess960 && !options.find((o) => o.name === "UCI_Chess960")) {
             options.push({ name: "UCI_Chess960", value: "true" });
           }
-          // #region agent log
-          fetch("http://127.0.0.1:7242/ingest/05233578-039d-40ec-b565-a863091bb3cf", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              location: "EvalListener.tsx:235",
-              message: "Calling getBestMoves",
-              data: {
-                optionsCount: options.length,
-                hasUCI_ShowWDL: !!options.find((o) => o.name === "UCI_ShowWDL"),
-                uciShowWDLValue: options.find((o) => o.name === "UCI_ShowWDL")?.value || "",
-              },
-              timestamp: Date.now(),
-              sessionId: "debug-session",
-              runId: "run1",
-              hypothesisId: "E",
-            }),
-          }).catch(() => {});
-          // #endregion
           getBestMoves(activeTab!, settings.go, {
             moves: searchingMoves,
             fen: searchingFen,
