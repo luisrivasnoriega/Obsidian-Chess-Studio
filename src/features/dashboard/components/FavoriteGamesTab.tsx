@@ -1,4 +1,5 @@
 import { ActionIcon, Avatar, Badge, Group, Pagination, ScrollArea, Stack, Table, Text } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { IconStarFilled } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
@@ -43,6 +44,7 @@ export function FavoriteGamesTab({
   onToggleFavoriteLichess,
 }: FavoriteGamesTabProps) {
   const { t } = useTranslation();
+  const isMobile = useMediaQuery("(max-width: 48em)");
   const currentThemeId = useAtomValue(currentThemeIdAtom);
   const isAcademiaMaya = currentThemeId === "academia-maya";
   const [analyzedPgns, setAnalyzedPgns] = useState<Map<string, string>>(new Map());
@@ -180,8 +182,25 @@ export function FavoriteGamesTab({
   }
 
   return (
-    <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
+    <Stack
+      gap="xs"
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+        ...(isMobile && { minHeight: "650px" }),
+      }}
+    >
+      <ScrollArea
+        style={{
+          flex: 1,
+          minHeight: 0,
+          ...(isMobile && { minHeight: "550px" }),
+        }}
+        type="auto"
+      >
         <Table striped highlightOnHover>
           <Table.Thead>
             <Table.Tr>

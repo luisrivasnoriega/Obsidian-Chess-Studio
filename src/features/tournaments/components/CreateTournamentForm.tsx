@@ -1,4 +1,5 @@
 import { Button, Card, Checkbox, Group, NumberInput, Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconPlus } from "@tabler/icons-react";
 import { useState } from "react";
@@ -13,6 +14,7 @@ interface CreateTournamentFormProps {
 
 export function CreateTournamentForm({ lichessToken, accountName, onTemplateSaved }: CreateTournamentFormProps) {
   const { t } = useTranslation();
+  const _isMobile = useMediaQuery("(max-width: 48em)");
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -126,7 +128,7 @@ export function CreateTournamentForm({ lichessToken, accountName, onTemplateSave
   };
 
   return (
-    <Card withBorder p="md" style={{ height: "calc(100vh - 190px)", overflowY: "auto" }}>
+    <Card withBorder radius="md" p="md">
       <Stack gap="md">
         <Text size="lg" fw={600}>
           {t("features.tournaments.createTab.title", "Create Tournament Template")}

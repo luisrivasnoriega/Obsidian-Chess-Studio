@@ -1,4 +1,5 @@
 import { Card, Group, Select, Tabs } from "@mantine/core";
+import { useMediaQuery } from "@mantine/hooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Event } from "@/bindings";
@@ -74,9 +75,11 @@ export function GamesHistoryCard({
   onTimeControlCategoryChange,
 }: GamesHistoryCardProps) {
   const { t } = useTranslation();
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   // Default height in pixels
   const DEFAULT_HEIGHT = 400;
+  const MOBILE_MIN_HEIGHT = 800;
   const MIN_HEIGHT = 200;
   const MAX_HEIGHT = 800;
 
@@ -88,6 +91,13 @@ export function GamesHistoryCard({
     }
     return DEFAULT_HEIGHT;
   });
+
+  // Update height when mobile state changes to ensure minimum height
+  useEffect(() => {
+    if (isMobile && height < MOBILE_MIN_HEIGHT) {
+      setHeight(MOBILE_MIN_HEIGHT);
+    }
+  }, [isMobile, height]);
 
   const [isResizing, setIsResizing] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -115,10 +125,11 @@ export function GamesHistoryCard({
       if (!isResizing) return;
 
       const deltaY = e.clientY - resizeStartY.current;
-      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, resizeStartHeight.current + deltaY));
+      const minAllowedHeight = isMobile ? MOBILE_MIN_HEIGHT : MIN_HEIGHT;
+      const newHeight = Math.max(minAllowedHeight, Math.min(MAX_HEIGHT, resizeStartHeight.current + deltaY));
       setHeight(newHeight);
     },
-    [isResizing],
+    [isResizing, isMobile],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -149,6 +160,7 @@ export function GamesHistoryCard({
       radius="md"
       style={{
         height: `${height}px`,
+        ...(isMobile && { minHeight: `${MOBILE_MIN_HEIGHT}px` }),
         position: "relative",
         display: "flex",
         flexDirection: "column",

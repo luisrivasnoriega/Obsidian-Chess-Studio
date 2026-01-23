@@ -1,5 +1,5 @@
 import { Box, Center, Group, Paper, Popover, Stack, Text, useMantineTheme } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -324,8 +324,14 @@ function AnalysisPreviewContent({ pgn }: { pgn: string }) {
 
 export function AnalysisPreview({ pgn, children }: AnalysisPreviewProps) {
   const [opened, { open, close }] = useDisclosure(false);
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   if (!pgn) {
+    return <>{children}</>;
+  }
+
+  // En móvil, no mostrar el hover preview, solo renderizar los children
+  if (isMobile) {
     return <>{children}</>;
   }
 

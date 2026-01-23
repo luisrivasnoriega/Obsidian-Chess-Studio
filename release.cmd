@@ -212,16 +212,6 @@ echo.
 echo ========================================
 echo Step 9: Pushing to remote...
 echo ========================================
-echo WARNING: This will push commits and tags to the remote repository.
-set /p PUSH="Push to remote? (y/N): "
-if /i not "!PUSH!"=="y" (
-  echo Release preparation complete, but not pushed to remote.
-  echo To push manually, run:
-  echo   git push
-  echo   git push origin v%NEW_VERSION%
-  exit /b 0
-)
-
 git push
 if errorlevel 1 (
   echo ERROR: Failed to push commits!

@@ -16,7 +16,7 @@ import {
   Text,
   Tooltip,
 } from "@mantine/core";
-import { useDebouncedValue } from "@mantine/hooks";
+import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   IconChess,
@@ -228,6 +228,7 @@ export function ProfileGamesTab({
   onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
 }) {
   const { t } = useTranslation();
+  const isMobile = useMediaQuery("(max-width: 48em)");
   const _usernamesLower = useMemo(() => {
     const set = new Set<string>();
     for (const username of profileUsernames) {
@@ -508,7 +509,17 @@ export function ProfileGamesTab({
   }
 
   return (
-    <Stack gap="xs" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+    <Stack
+      gap="xs"
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        minHeight: 0,
+        ...(isMobile && { minHeight: "650px" }),
+      }}
+    >
       <Group gap="xs">
         <Select
           placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
@@ -621,7 +632,14 @@ export function ProfileGamesTab({
           style={{ width: 180 }}
         />
       </Group>
-      <ScrollArea style={{ flex: 1, minHeight: 0 }} type="auto">
+      <ScrollArea
+        style={{
+          flex: 1,
+          minHeight: 0,
+          ...(isMobile && { minHeight: "550px" }),
+        }}
+        type="auto"
+      >
         <Table striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>

@@ -7,6 +7,7 @@ import {
   Group,
   Loader,
   Modal,
+  ScrollArea,
   Select,
   Stack,
   Text,
@@ -14,6 +15,7 @@ import {
 } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
 import { useForm } from "@mantine/form";
+import { useMediaQuery } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
@@ -61,6 +63,7 @@ export default function EventsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const _isMobile = useMediaQuery("(max-width: 48em)");
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
 
@@ -318,193 +321,204 @@ export default function EventsPage() {
     <>
       <GenericHeader title={t("features.sidebar.events", "Events")} pageKey="events" showViewToggle={false} />
 
-      <Box px="md" pb="md">
-        {!activeProfile ? (
-          <Card withBorder>
-            <Text>{t("features.events.noProfile", "Select a profile to manage events.")}</Text>
-          </Card>
-        ) : isLoadingDbPath ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" />
-          </Group>
-        ) : (
-          <Stack gap="md">
-            <Card withBorder>
-              <form onSubmit={form.onSubmit(handleCreate)}>
-                <Stack gap="sm">
-                  <Text fw={600}>{t("features.events.create.title", "Create event")}</Text>
-                  <TextInput
-                    label={t("features.events.fields.name", "Name")}
-                    placeholder={t("features.events.fields.namePlaceholder", "Tournament name")}
-                    required
-                    {...form.getInputProps("name")}
-                  />
-                  <Select
-                    label={t("features.events.fields.eventType", "Event type")}
-                    value={form.values.eventType}
-                    onChange={(value) =>
-                      form.setFieldValue("eventType", (value as ManagedEventType) ?? "otb_tournament")
-                    }
-                    data={[
-                      {
-                        value: "otb_tournament",
-                        label: t("features.events.eventTypes.otbTournament", "OTB Tournament"),
-                      },
-                      {
-                        value: "online_tournament",
-                        label: t("features.events.eventTypes.onlineTournament", "Online Tournament"),
-                      },
-                      { value: "league", label: t("features.events.eventTypes.league", "League") },
-                    ]}
-                    required
-                  />
-                  <TextInput
-                    label={t("features.events.fields.location", "Location")}
-                    placeholder={t("features.events.fields.locationPlaceholder", "City, venue, etc.")}
-                    {...form.getInputProps("location")}
-                  />
-                  <TextInput
-                    label={t("features.events.fields.timeControl", "Time control")}
-                    placeholder={t("features.events.fields.timeControlPlaceholder", "e.g. 90+30")}
-                    {...form.getInputProps("timeControl")}
-                  />
-                  <Group grow>
-                    <DateInput
-                      label={t("features.events.fields.startDate", "Start date")}
-                      valueFormat="YYYY-MM-DD"
-                      clearable
-                      value={form.values.startDate}
-                      onChange={(v) => form.setFieldValue("startDate", parseDate(v) ?? null)}
-                    />
-                    <DateInput
-                      label={t("features.events.fields.endDate", "End date")}
-                      valueFormat="YYYY-MM-DD"
-                      clearable
-                      value={form.values.endDate}
-                      onChange={(v) => form.setFieldValue("endDate", parseDate(v) ?? null)}
-                    />
-                  </Group>
-                  <Group justify="flex-end">
-                    <Button type="submit" leftSection={<IconPlus size={16} />}>
-                      {t("common.create", "Create")}
-                    </Button>
-                  </Group>
-                </Stack>
-              </form>
-            </Card>
-
-            <Divider />
-
-            <Card withBorder>
-              <Group justify="space-between" mb="xs">
-                <Text fw={600}>{t("features.events.list.title", "Registered tournaments")}</Text>
-                <Text c="dimmed" size="sm">
-                  {activeProfile.displayName || activeProfile.name}
-                </Text>
+      <Stack flex={1} style={{ minHeight: 0 }}>
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack px="md" pb="xl">
+            {!activeProfile ? (
+              <Card withBorder>
+                <Text>{t("features.events.noProfile", "Select a profile to manage events.")}</Text>
+              </Card>
+            ) : isLoadingDbPath ? (
+              <Group justify="center" py="xl">
+                <Loader size="sm" />
               </Group>
+            ) : (
+              <Stack gap="md">
+                <Card withBorder>
+                  <form onSubmit={form.onSubmit(handleCreate)}>
+                    <Stack gap="sm">
+                      <Text fw={600}>{t("features.events.create.title", "Create event")}</Text>
+                      <TextInput
+                        label={t("features.events.fields.name", "Name")}
+                        placeholder={t("features.events.fields.namePlaceholder", "Tournament name")}
+                        required
+                        {...form.getInputProps("name")}
+                      />
+                      <Select
+                        label={t("features.events.fields.eventType", "Event type")}
+                        value={form.values.eventType}
+                        onChange={(value) =>
+                          form.setFieldValue("eventType", (value as ManagedEventType) ?? "otb_tournament")
+                        }
+                        data={[
+                          {
+                            value: "otb_tournament",
+                            label: t("features.events.eventTypes.otbTournament", "OTB Tournament"),
+                          },
+                          {
+                            value: "online_tournament",
+                            label: t("features.events.eventTypes.onlineTournament", "Online Tournament"),
+                          },
+                          { value: "league", label: t("features.events.eventTypes.league", "League") },
+                        ]}
+                        required
+                      />
+                      <TextInput
+                        label={t("features.events.fields.location", "Location")}
+                        placeholder={t("features.events.fields.locationPlaceholder", "City, venue, etc.")}
+                        {...form.getInputProps("location")}
+                      />
+                      <TextInput
+                        label={t("features.events.fields.timeControl", "Time control")}
+                        placeholder={t("features.events.fields.timeControlPlaceholder", "e.g. 90+30")}
+                        {...form.getInputProps("timeControl")}
+                      />
+                      <Group grow>
+                        <DateInput
+                          label={t("features.events.fields.startDate", "Start date")}
+                          valueFormat="YYYY-MM-DD"
+                          clearable
+                          value={form.values.startDate}
+                          onChange={(v) => form.setFieldValue("startDate", parseDate(v) ?? null)}
+                        />
+                        <DateInput
+                          label={t("features.events.fields.endDate", "End date")}
+                          valueFormat="YYYY-MM-DD"
+                          clearable
+                          value={form.values.endDate}
+                          onChange={(v) => form.setFieldValue("endDate", parseDate(v) ?? null)}
+                        />
+                      </Group>
+                      <Group justify="flex-end">
+                        <Button type="submit" leftSection={<IconPlus size={16} />}>
+                          {t("common.create", "Create")}
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </form>
+                </Card>
 
-              {eventsError ? (
-                <Text c="red">{String(eventsError)}</Text>
-              ) : isLoadingEvents ? (
-                <Group justify="center" py="lg">
-                  <Loader size="sm" />
-                </Group>
-              ) : !managedEvents || managedEvents.length === 0 ? (
-                <Text c="dimmed">{t("features.events.list.empty", "No tournaments yet.")}</Text>
-              ) : (
-                <DataTable
-                  withTableBorder
-                  withColumnBorders
-                  highlightOnHover
-                  idAccessor="id"
-                  records={sortedEvents}
-                  sortStatus={eventSortStatus}
-                  onSortStatusChange={setEventSortStatus}
-                  rowExpansion={{
-                    allowMultiple: true,
-                    expanded: {
-                      recordIds: expandedEventIds,
-                      onRecordIdsChange: setExpandedEventIds,
-                    },
-                    content: ({ record }) =>
-                      dbPath && (
-                        <Box p="sm">
-                          <EventGamesTable dbPath={dbPath} eventId={record.id} onAnalyze={handleAnalyzeDbGame} />
-                        </Box>
-                      ),
-                  }}
-                  columns={[
-                    {
-                      accessor: "id",
-                      title: "ID",
-                      width: 80,
-                      sortable: true,
-                      render: (event) => `#${event.id}`,
-                    },
-                    {
-                      accessor: "name",
-                      title: t("features.events.table.name", "Name"),
-                      sortable: true,
-                      render: (event) => event.name || "-",
-                    },
-                    {
-                      accessor: "event_type",
-                      title: t("features.events.table.eventType", "Type"),
-                      width: 170,
-                      sortable: true,
-                      render: (event) => eventTypeLabel(event),
-                    },
-                    {
-                      accessor: "location",
-                      title: t("features.events.table.location", "Location"),
-                      width: 200,
-                      sortable: true,
-                      render: (event) => event.location || "-",
-                    },
-                    {
-                      accessor: "time_control",
-                      title: t("features.events.table.timeControl", "Time control"),
-                      width: 160,
-                      sortable: true,
-                      render: (event) => event.time_control || "-",
-                    },
-                    {
-                      accessor: "start_date",
-                      title: t("features.events.table.startDate", "Start"),
-                      width: 140,
-                      sortable: true,
-                      render: (event) => (event.start_date ? String(event.start_date).replace(/\./g, "-") : "-"),
-                    },
-                    {
-                      accessor: "end_date",
-                      title: t("features.events.table.endDate", "End"),
-                      width: 140,
-                      sortable: true,
-                      render: (event) => (event.end_date ? String(event.end_date).replace(/\./g, "-") : "-"),
-                    },
-                    {
-                      accessor: "actions",
-                      title: t("features.events.table.actions", "Actions"),
-                      width: 180,
-                      textAlign: "right",
-                      render: (event) => (
-                        <Group gap="xs" justify="flex-end" wrap="nowrap">
-                          <Button size="xs" variant="default" onClick={() => openAddGamesModal(event)}>
-                            {t("features.events.actions.addGame", "Add game")}
-                          </Button>
-                          <ActionIcon size="lg" variant="subtle" color="red" onClick={() => handleDeleteEvent(event)}>
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </Group>
-                      ),
-                    },
-                  ]}
-                />
-              )}
-            </Card>
+                <Divider />
+
+                <Card withBorder radius="md" p="md">
+                  <Group justify="space-between" mb="xs">
+                    <Text fw={600}>{t("features.events.list.title", "Registered tournaments")}</Text>
+                    <Text c="dimmed" size="sm">
+                      {activeProfile.displayName || activeProfile.name}
+                    </Text>
+                  </Group>
+
+                  {eventsError ? (
+                    <Text c="red">{String(eventsError)}</Text>
+                  ) : isLoadingEvents ? (
+                    <Group justify="center" py="lg">
+                      <Loader size="sm" />
+                    </Group>
+                  ) : !managedEvents || managedEvents.length === 0 ? (
+                    <Text c="dimmed">{t("features.events.list.empty", "No tournaments yet.")}</Text>
+                  ) : (
+                    <Box style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", maxWidth: "100%" }}>
+                      <DataTable
+                        withTableBorder
+                        withColumnBorders
+                        highlightOnHover
+                        idAccessor="id"
+                        records={sortedEvents}
+                        sortStatus={eventSortStatus}
+                        onSortStatusChange={setEventSortStatus}
+                        rowExpansion={{
+                          allowMultiple: true,
+                          expanded: {
+                            recordIds: expandedEventIds,
+                            onRecordIdsChange: setExpandedEventIds,
+                          },
+                          content: ({ record }) =>
+                            dbPath && (
+                              <Box p="sm">
+                                <EventGamesTable dbPath={dbPath} eventId={record.id} onAnalyze={handleAnalyzeDbGame} />
+                              </Box>
+                            ),
+                        }}
+                        columns={[
+                          {
+                            accessor: "id",
+                            title: "ID",
+                            width: 80,
+                            sortable: true,
+                            render: (event) => `#${event.id}`,
+                          },
+                          {
+                            accessor: "name",
+                            title: t("features.events.table.name", "Name"),
+                            sortable: true,
+                            render: (event) => event.name || "-",
+                          },
+                          {
+                            accessor: "event_type",
+                            title: t("features.events.table.eventType", "Type"),
+                            width: 170,
+                            sortable: true,
+                            render: (event) => eventTypeLabel(event),
+                          },
+                          {
+                            accessor: "location",
+                            title: t("features.events.table.location", "Location"),
+                            width: 200,
+                            sortable: true,
+                            render: (event) => event.location || "-",
+                          },
+                          {
+                            accessor: "time_control",
+                            title: t("features.events.table.timeControl", "Time control"),
+                            width: 160,
+                            sortable: true,
+                            render: (event) => event.time_control || "-",
+                          },
+                          {
+                            accessor: "start_date",
+                            title: t("features.events.table.startDate", "Start"),
+                            width: 140,
+                            sortable: true,
+                            render: (event) => (event.start_date ? String(event.start_date).replace(/\./g, "-") : "-"),
+                          },
+                          {
+                            accessor: "end_date",
+                            title: t("features.events.table.endDate", "End"),
+                            width: 140,
+                            sortable: true,
+                            render: (event) => (event.end_date ? String(event.end_date).replace(/\./g, "-") : "-"),
+                          },
+                          {
+                            accessor: "actions",
+                            title: t("features.events.table.actions", "Actions"),
+                            width: 180,
+                            textAlign: "right",
+                            render: (event) => (
+                              <Group gap="xs" justify="flex-end" wrap="nowrap">
+                                <Button size="xs" variant="default" onClick={() => openAddGamesModal(event)}>
+                                  {t("features.events.actions.addGame", "Add game")}
+                                </Button>
+                                <ActionIcon
+                                  size="lg"
+                                  variant="subtle"
+                                  color="red"
+                                  onClick={() => handleDeleteEvent(event)}
+                                >
+                                  <IconTrash size={16} />
+                                </ActionIcon>
+                              </Group>
+                            ),
+                          },
+                        ]}
+                      />
+                    </Box>
+                  )}
+                </Card>
+              </Stack>
+            )}
           </Stack>
-        )}
-      </Box>
+        </ScrollArea>
+      </Stack>
 
       <Modal
         opened={addGameModalOpened}
@@ -583,6 +597,7 @@ function EventGamesTable({
   onAnalyze: (gameId: number) => void;
 }) {
   const { t } = useTranslation();
+  const isMobile = useMediaQuery("(max-width: 48em)");
 
   const [search, setSearch] = useState("");
   const [roundFilter, setRoundFilter] = useState("");
@@ -718,6 +733,45 @@ function EventGamesTable({
 
       {error ? (
         <Text c="red">{String(error)}</Text>
+      ) : isMobile ? (
+        <ScrollArea style={{ maxHeight: "400px" }} type="auto">
+          <DataTable
+            withTableBorder
+            withColumnBorders
+            highlightOnHover
+            fetching={isLoading}
+            idAccessor="id"
+            records={filteredSorted}
+            sortStatus={sortStatus}
+            onSortStatusChange={setSortStatus}
+            noRecordsText={t("features.events.listGames.empty", "No games found.")}
+            columns={[
+              { accessor: "id", title: "ID", width: 80, sortable: true, render: (g) => `#${g.id}` },
+              { accessor: "round", title: t("features.events.games.round", "Round"), width: 90, sortable: true },
+              {
+                accessor: "date",
+                title: t("features.events.games.date", "Date"),
+                width: 140,
+                sortable: true,
+                render: (g) => (g.date ? String(g.date).replace(/\\./g, "-") : "-"),
+              },
+              { accessor: "white", title: t("features.events.games.white", "White"), sortable: true },
+              { accessor: "black", title: t("features.events.games.black", "Black"), sortable: true },
+              { accessor: "result", title: t("features.events.games.result", "Result"), width: 120, sortable: true },
+              {
+                accessor: "actions",
+                title: t("features.events.games.actions", "Actions"),
+                width: 120,
+                textAlign: "right",
+                render: (g) => (
+                  <Button size="xs" variant="default" onClick={() => onAnalyze(g.id)}>
+                    {t("features.events.games.analyze", "Analyze")}
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        </ScrollArea>
       ) : (
         <DataTable
           withTableBorder

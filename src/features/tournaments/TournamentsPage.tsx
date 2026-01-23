@@ -1,4 +1,4 @@
-import { Box, Tabs } from "@mantine/core";
+import { ScrollArea, Stack, Tabs } from "@mantine/core";
 import { IconPlus, IconSearch } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
@@ -45,32 +45,36 @@ export default function TournamentsPage() {
         showViewToggle={false}
       />
 
-      <Box px="md" pb="md">
-        <Tabs value={activeTab} onChange={(v) => setActiveTab(v || "search")}>
-          <Tabs.List>
-            <Tabs.Tab value="search" leftSection={<IconSearch size={16} />}>
-              {t("features.tournaments.search", "Search")}
-            </Tabs.Tab>
-            <Tabs.Tab value="create" leftSection={<IconPlus size={16} />}>
-              {t("features.tournaments.create", "Create")}
-            </Tabs.Tab>
-          </Tabs.List>
+      <Stack flex={1} style={{ minHeight: 0 }}>
+        <ScrollArea h="100%" offsetScrollbars>
+          <Stack px="md" pb="xl">
+            <Tabs value={activeTab} onChange={(v) => setActiveTab(v || "search")}>
+              <Tabs.List>
+                <Tabs.Tab value="search" leftSection={<IconSearch size={16} />}>
+                  {t("features.tournaments.search", "Search")}
+                </Tabs.Tab>
+                <Tabs.Tab value="create" leftSection={<IconPlus size={16} />}>
+                  {t("features.tournaments.create", "Create")}
+                </Tabs.Tab>
+              </Tabs.List>
 
-          <Tabs.Panel value="search" pt="md">
-            <TournamentList lichessToken={lichessToken} accountName={accountName} key={refreshKey} />
-          </Tabs.Panel>
+              <Tabs.Panel value="search" pt="md">
+                <TournamentList lichessToken={lichessToken} accountName={accountName} key={refreshKey} />
+              </Tabs.Panel>
 
-          <Tabs.Panel value="create" pt="md">
-            <CreateTournamentForm
-              lichessToken={lichessToken}
-              accountName={accountName}
-              onTemplateSaved={() => {
-                setRefreshKey((prev) => prev + 1);
-              }}
-            />
-          </Tabs.Panel>
-        </Tabs>
-      </Box>
+              <Tabs.Panel value="create" pt="md">
+                <CreateTournamentForm
+                  lichessToken={lichessToken}
+                  accountName={accountName}
+                  onTemplateSaved={() => {
+                    setRefreshKey((prev) => prev + 1);
+                  }}
+                />
+              </Tabs.Panel>
+            </Tabs>
+          </Stack>
+        </ScrollArea>
+      </Stack>
     </>
   );
 }
