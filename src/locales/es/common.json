@@ -358,6 +358,18 @@
       "lastActivity": "Última Actividad",
       "saveChanges": "Guardar cambios",
       "cancelEdit": "Cancelar edición"
+    },
+    "verification": {
+      "title": "Verificación de cuenta requerida",
+      "message": "Esta cuenta requiere verificación. Por favor ingrese sus credenciales:",
+      "description": "Ingrese las credenciales para usuarios Obsidian Premium para verificar esta cuenta:",
+      "verificationUsername": "Usuario Obsidian Premium",
+      "verificationUsernamePlaceholder": "Ingrese su usuario Obsidian Premium",
+      "password": "Contraseña Obsidian Premium",
+      "passwordPlaceholder": "Ingrese su contraseña Obsidian Premium",
+      "validate": "Validar",
+      "missingCredentials": "Se requieren nombre de usuario y contraseña.",
+      "invalidCredentials": "Credenciales inválidas. No se puede proceder con la descarga de la cuenta."
     }
   },
   "practice": {

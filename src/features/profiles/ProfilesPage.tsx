@@ -59,7 +59,12 @@ import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
+import { verifyAccount, validateCredentials, type Platform } from "@/utils/accountVerification";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
+import {
+  AccountVerificationModal,
+  type AccountVerificationResult,
+} from "./components/modals/AccountVerificationModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {
@@ -121,6 +126,7 @@ export default function ProfilesPage() {
     "database",
   );
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
+  const syncingAccountIdsRef = useRef<Set<string>>(new Set());
   const deletedSessionKeysRef = useRef<Set<string>>(new Set());
 
   const [profiles, setProfiles] = useAtom(profilesAtom);
@@ -135,7 +141,12 @@ export default function ProfilesPage() {
 
   const [modalOpened, modal] = useDisclosure(false);
   const [accountModalOpened, accountModal] = useDisclosure(false);
+  const [verificationModalOpened, verificationModal] = useDisclosure(false);
   const [addAccountDefaultProfileId, setAddAccountDefaultProfileId] = useState<string | null>(null);
+  const [pendingAccountPayload, setPendingAccountPayload] = useState<{
+    payload: AddProfileAccountPayload;
+    platform: Platform;
+  } | null>(null);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftFideId, setDraftFideId] = useState("");
@@ -379,6 +390,12 @@ export default function ProfilesPage() {
         if (platform !== "lichess" && platform !== "chesscom") return "continue";
         const id = `sync:${profile.id}:${platform}:${username}`;
 
+        // Prevent duplicate syncs for the same account
+        if (syncingAccountIdsRef.current.has(id)) {
+          return "continue"; // Already syncing, skip
+        }
+        syncingAccountIdsRef.current.add(id);
+
         const showToasts = !(await shouldSuppressAccountSyncToasts({
           profileId: profile.id,
           platform,
@@ -510,6 +527,7 @@ export default function ProfilesPage() {
           if (showToasts) {
             syncNotificationIdsRef.current.delete(id);
           }
+          syncingAccountIdsRef.current.delete(id);
           setSyncingAccountIds((prev) => {
             const next = new Set(prev);
             next.delete(id);
@@ -892,7 +910,13 @@ export default function ProfilesPage() {
       void (async () => {
         const username = session.lichess?.username ?? session.chessCom?.username ?? "account";
         const meta = sessionMeta(session);
-        const id = `sync:${profile.id}:${username}`;
+        const id = `sync:${profile.id}:${meta.platform}:${username}`;
+
+        // Prevent duplicate syncs for the same account
+        if (syncingAccountIdsRef.current.has(id)) {
+          return; // Already syncing, skip
+        }
+        syncingAccountIdsRef.current.add(id);
 
         const showToasts =
           meta.platform === "lichess" || meta.platform === "chesscom"
@@ -902,12 +926,6 @@ export default function ProfilesPage() {
                 username,
               }))
             : true;
-
-        setSyncingAccountIds((prev) => {
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
 
         if (showToasts) {
           notifications.show({
@@ -934,6 +952,7 @@ export default function ProfilesPage() {
             syncNotificationIdsRef.current.delete(id);
           }
           backgroundSyncRetryAttemptsRef.current.delete(id);
+          syncingAccountIdsRef.current.delete(id);
           setSyncingAccountIds((prev) => {
             const next = new Set(prev);
             next.delete(id);
@@ -1064,13 +1083,27 @@ export default function ProfilesPage() {
   }, []);
 
   const addAccountToProfile = useCallback(
-    async (payload: AddProfileAccountPayload) => {
+    async (payload: AddProfileAccountPayload, skipVerification = false) => {
       const profile = profiles.find((p) => p.id === payload.profileId) ?? null;
       if (!profile) return;
 
       const now = Date.now();
       const profileName = profile.name;
 
+      // Verify account if not skipping verification
+      if (!skipVerification) {
+        const platform: Platform = payload.website === "lichess" ? "Lichess" : "Chesscom";
+        const isVerified = await verifyAccount(platform, payload.username);
+
+        if (!isVerified) {
+          // Show verification modal
+          setPendingAccountPayload({ payload, platform });
+          verificationModal.open();
+          return;
+        }
+      }
+
+      // Continue with account addition
       if (payload.website === "chesscom") {
         const stats = await getChessComAccount(payload.username);
         if (!stats) return;
@@ -1105,7 +1138,50 @@ export default function ProfilesPage() {
       upsertSession(session);
       startBackgroundSync(profile, session);
     },
-    [profiles, startBackgroundSync, upsertSession],
+    [profiles, startBackgroundSync, upsertSession, verificationModal],
+  );
+
+  const handleVerificationResult = useCallback(
+    async (result: AccountVerificationResult) => {
+      if (!pendingAccountPayload) return;
+
+      if (!result.validated) {
+        // User cancelled
+        setPendingAccountPayload(null);
+        return;
+      }
+
+      if (!result.username || !result.password) {
+        notifications.show({
+          title: t("common.error", { defaultValue: "Error" }),
+          message: t("accounts.verification.missingCredentials", {
+            defaultValue: "Username and password are required.",
+          }),
+          color: "red",
+        });
+        setPendingAccountPayload(null);
+        return;
+      }
+
+      // Validate credentials
+      const isValid = await validateCredentials(result.username, result.password);
+      if (!isValid) {
+        notifications.show({
+          title: t("common.error", { defaultValue: "Error" }),
+          message: t("accounts.verification.invalidCredentials", {
+            defaultValue: "Invalid credentials. Cannot proceed with account download.",
+          }),
+          color: "red",
+        });
+        setPendingAccountPayload(null);
+        return;
+      }
+
+      // Credentials are valid, continue with account addition
+      setPendingAccountPayload(null);
+      await addAccountToProfile(pendingAccountPayload.payload, true);
+    },
+    [pendingAccountPayload, addAccountToProfile, t],
   );
 
   useEffect(() => {
@@ -1600,9 +1676,19 @@ export default function ProfilesPage() {
         defaultProfileId={addAccountDefaultProfileId ?? activeProfileId ?? profiles[0]?.id ?? null}
         disabled={isAccountSyncRunning}
         onAdd={(payload) => {
-          void addAccountToProfile(payload);
+          void addAccountToProfile(payload, false);
         }}
       />
+
+      {pendingAccountPayload && (
+        <AccountVerificationModal
+          opened={verificationModalOpened}
+          onClose={verificationModal.close}
+          platform={pendingAccountPayload.payload.website}
+          username={pendingAccountPayload.payload.username}
+          onValidate={handleVerificationResult}
+        />
+      )}
     </>
   );
 }
