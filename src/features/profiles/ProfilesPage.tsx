@@ -47,6 +47,7 @@ import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessi
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { getAccountSyncState } from "@/utils/accountSyncState";
+import { type Platform, validateCredentials, verifyAccount } from "@/utils/accountVerification";
 import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
 import { parseDate } from "@/utils/format";
@@ -59,12 +60,8 @@ import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
-import { verifyAccount, validateCredentials, type Platform } from "@/utils/accountVerification";
+import { AccountVerificationModal, type AccountVerificationResult } from "./components/modals/AccountVerificationModal";
 import { AddProfileAccountModal, type AddProfileAccountPayload } from "./components/modals/AddProfileAccountModal";
-import {
-  AccountVerificationModal,
-  type AccountVerificationResult,
-} from "./components/modals/AccountVerificationModal";
 import PawnStructuresPanel from "./components/PersonalCardPanels/PawnStructuresPanel";
 
 function sessionMeta(session: { lichess?: { username: string }; chessCom?: { username: string } }) {

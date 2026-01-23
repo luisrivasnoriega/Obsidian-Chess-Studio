@@ -1,13 +1,13 @@
 import type { Color, Piece } from "@lichess-org/chessground/types";
-import { Box, Group, Stack, Text } from "@mantine/core";
+import { Box, Group, Stack } from "@mantine/core";
 import { useAtom, useAtomValue } from "jotai";
 import { memo, Suspense, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import ShowMaterial from "@/components/ShowMaterial";
 import MoveControls from "@/components/MoveControls";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
+import ShowMaterial from "@/components/ShowMaterial";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentEvalOpenAtom, currentTabAtom, currentTabSelectedAtom, enginesAtom } from "@/state/atoms";
 import { getMaterialDiff } from "@/utils/chess";
@@ -224,37 +224,34 @@ function MobileBoardLayout({
           position: "relative",
         }}
       >
-        {materialDiff !== null && (() => {
-          // Top of board: show advantage of the side at the top
-          // If orientation is "white", top is black, so show if black has advantage (diff < 0)
-          // If orientation is "black", top is white, so show if white has advantage (diff > 0)
-          const topColor = orientation === "white" ? "black" : "white";
-          const topHasAdvantage = orientation === "white" ? materialDiff.diff < 0 : materialDiff.diff > 0;
-          
-          return topHasAdvantage ? (
-            <Box
-              style={{
-                position: "absolute",
-                top: "-1.75rem",
-                left: 0,
-                right: 0,
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                pointerEvents: "none",
-                zIndex: 1,
-              }}
-            >
-              <Group justify="center" gap="md" px="0.75rem">
-                <ShowMaterial
-                  diff={materialDiff.diff}
-                  pieces={materialDiff.pieces}
-                  color={topColor}
-                />
-              </Group>
-            </Box>
-          ) : null;
-        })()}
+        {materialDiff !== null &&
+          (() => {
+            // Top of board: show advantage of the side at the top
+            // If orientation is "white", top is black, so show if black has advantage (diff < 0)
+            // If orientation is "black", top is white, so show if white has advantage (diff > 0)
+            const topColor = orientation === "white" ? "black" : "white";
+            const topHasAdvantage = orientation === "white" ? materialDiff.diff < 0 : materialDiff.diff > 0;
+
+            return topHasAdvantage ? (
+              <Box
+                style={{
+                  position: "absolute",
+                  top: "-1.75rem",
+                  left: 0,
+                  right: 0,
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  pointerEvents: "none",
+                  zIndex: 1,
+                }}
+              >
+                <Group justify="center" gap="md" px="0.75rem">
+                  <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={topColor} />
+                </Group>
+              </Box>
+            ) : null;
+          })()}
         <Board
           dirty={dirty}
           editingMode={editingMode}
@@ -307,23 +304,20 @@ function MobileBoardLayout({
           </Box>
         )}
 
-        {materialDiff !== null && (() => {
-          // Bottom of board: show advantage of the side at the bottom
-          // If orientation is "white", bottom is white, so show if white has advantage (diff > 0)
-          // If orientation is "black", bottom is black, so show if black has advantage (diff < 0)
-          const bottomColor = orientation;
-          const bottomHasAdvantage = orientation === "white" ? materialDiff.diff > 0 : materialDiff.diff < 0;
-          
-          return bottomHasAdvantage ? (
-            <Group justify="center" gap="md" style={{ minHeight: "1.5rem", width: "100%", padding: "0.25rem 0" }}>
-              <ShowMaterial
-                diff={materialDiff.diff}
-                pieces={materialDiff.pieces}
-                color={bottomColor}
-              />
-            </Group>
-          ) : null;
-        })()}
+        {materialDiff !== null &&
+          (() => {
+            // Bottom of board: show advantage of the side at the bottom
+            // If orientation is "white", bottom is white, so show if white has advantage (diff > 0)
+            // If orientation is "black", bottom is black, so show if black has advantage (diff < 0)
+            const bottomColor = orientation;
+            const bottomHasAdvantage = orientation === "white" ? materialDiff.diff > 0 : materialDiff.diff < 0;
+
+            return bottomHasAdvantage ? (
+              <Group justify="center" gap="md" style={{ minHeight: "1.5rem", width: "100%", padding: "0.25rem 0" }}>
+                <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={bottomColor} />
+              </Group>
+            ) : null;
+          })()}
       </Stack>
 
       {!hideFooterControls && (

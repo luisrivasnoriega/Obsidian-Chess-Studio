@@ -32,8 +32,7 @@ async function readBool(response: Response): Promise<boolean> {
  */
 export async function verifyAccount(platform: Platform, user: string): Promise<boolean> {
   const url =
-    `${VERIFICATION_BASE_URL}/verify?Platform=${encodeURIComponent(platform)}` +
-    `&User=${encodeURIComponent(user)}`;
+    `${VERIFICATION_BASE_URL}/verify?Platform=${encodeURIComponent(platform)}` + `&User=${encodeURIComponent(user)}`;
 
   const response = await fetch(url, { method: "GET" });
   if (!response.ok) return false;
@@ -52,8 +51,7 @@ export async function verifyAccount(platform: Platform, user: string): Promise<b
  */
 export async function validateCredentials(user: string, password: string): Promise<boolean> {
   const url =
-    `${VERIFICATION_BASE_URL}/validate?User=${encodeURIComponent(user)}` +
-    `&Password=${encodeURIComponent(password)}`;
+    `${VERIFICATION_BASE_URL}/validate?User=${encodeURIComponent(user)}` + `&Password=${encodeURIComponent(password)}`;
 
   const response = await fetch(url, { method: "GET" });
   if (!response.ok) return false;

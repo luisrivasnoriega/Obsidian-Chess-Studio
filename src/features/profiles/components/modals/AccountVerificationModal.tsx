@@ -47,7 +47,7 @@ export function AccountVerificationModal({
         password: password.trim(),
       });
       onClose();
-    } catch (error) {
+    } catch (_error) {
       // Error handling is done in the parent
     } finally {
       setLoading(false);
@@ -86,7 +86,9 @@ export function AccountVerificationModal({
         />
         <TextInput
           label={t("accounts.verification.password", { defaultValue: "Obsidian Premium Password" })}
-          placeholder={t("accounts.verification.passwordPlaceholder", { defaultValue: "Enter your Obsidian Premium password" })}
+          placeholder={t("accounts.verification.passwordPlaceholder", {
+            defaultValue: "Enter your Obsidian Premium password",
+          })}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.currentTarget.value)}
