@@ -188,7 +188,7 @@ function MobileBoardLayout({
   return (
     <Stack gap="xs" align="stretch">
       {showAnalysisPanel && (
-        <Box>
+        <Box style={{ paddingBottom: "0.75rem" }}>
           <Suspense fallback={<ResponsiveSkeleton type="default" />}>
             <ResponsiveAnalysisPanels
               currentTab={mobilePanelsTab}

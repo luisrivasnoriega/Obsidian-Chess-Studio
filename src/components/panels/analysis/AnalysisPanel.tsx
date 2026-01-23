@@ -2,6 +2,7 @@ import { Draggable, Droppable } from "@hello-pangea/dnd";
 import {
   Accordion,
   ActionIcon,
+  Box,
   Button,
   Card,
   Group,
@@ -254,6 +255,7 @@ function AnalysisPanel() {
                   overflowX: "auto",
                   gap: "0.5rem",
                   paddingBottom: "0.25rem",
+                  justifyContent: "center",
                 }
               : undefined
           }
@@ -270,6 +272,7 @@ function AnalysisPanel() {
             onScrollPositionChange={() => document.dispatchEvent(new Event("analysis-panel-scroll"))}
             style={{ flex: 1, minHeight: 0 }}
           >
+            <Box style={isCompact ? { display: "flex", flexDirection: "column", alignItems: "center" } : undefined}>
             {pos && (getPiecesCount(pos) <= 7 || (getPiecesCount(pos) === 8 && hasCaptures(pos))) && (
               <>
                 <TablebaseInfo fen={currentNodeFen} turn={pos.turn} />
@@ -277,8 +280,13 @@ function AnalysisPanel() {
               </>
             )}
             {loadedEngines.length > 1 && (
-              <Paper withBorder p="xs" flex={1}>
-                <Group w="100%">
+              <Paper
+                withBorder
+                p="xs"
+                flex={1}
+                style={isCompact ? { width: "100%", display: "flex", justifyContent: "center" } : undefined}
+              >
+                <Group w="100%" justify={isCompact ? "center" : "flex-start"}>
                   <Stack w="6rem" gap="xs">
                     <Text ta="center" fw="bold">
                       {t("features.board.analysis.summary")}
@@ -301,7 +309,7 @@ function AnalysisPanel() {
                 </Group>
               </Paper>
             )}
-            <Stack mt="sm">
+            <Stack mt="sm" style={isCompact ? { width: "100%", alignItems: "center" } : undefined}>
               <Accordion
                 variant="separated"
                 multiple
@@ -318,6 +326,7 @@ function AnalysisPanel() {
                     padding: "0.3rem",
                   },
                 }}
+                style={isCompact ? { width: "100%" } : undefined}
               >
                 <Droppable droppableId="engines-droppable" direction="vertical">
                   {(provided) => (
@@ -349,9 +358,9 @@ function AnalysisPanel() {
                   )}
                 </Droppable>
               </Accordion>
-              <Group gap="xs">
+              <Group gap="xs" justify={isCompact ? "center" : "flex-start"}>
                 <Button
-                  flex={1}
+                  flex={isCompact ? undefined : 1}
                   variant="default"
                   onClick={() => {
                     navigate({ to: "/engines" });
@@ -373,6 +382,7 @@ function AnalysisPanel() {
                 </Popover>
               </Group>
             </Stack>
+            </Box>
           </ScrollArea>
         </Tabs.Panel>
         <Tabs.Panel value="report" pt="xs" style={panelStyle}>

@@ -1,5 +1,5 @@
 import { ActionIcon, Box, Collapse, Group, Paper, Select, Stack, Tabs, Text } from "@mantine/core";
-import { useToggle } from "@mantine/hooks";
+import { useMediaQuery, useToggle } from "@mantine/hooks";
 import {
   IconChevronDown,
   IconChevronUp,
@@ -56,6 +56,7 @@ function ResponsiveAnalysisPanels({
 }: ResponsiveAnalysisPanelsProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
+  const isMobile = useMediaQuery("(max-width: 48em)");
   const [isCollapsed, toggleCollapsed] = useToggle([false, true]);
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
 
@@ -205,6 +206,7 @@ function ResponsiveAnalysisPanels({
               input: {
                 border: "none",
                 background: "transparent",
+                textAlign: "center",
               },
               section: {
                 border: "none",
@@ -213,7 +215,18 @@ function ResponsiveAnalysisPanels({
             }}
           />
         ) : (
-          <Tabs.List grow mb="1rem">
+          <Tabs.List
+            grow={!isMobile}
+            mb="1rem"
+            style={
+              isMobile
+                ? {
+                    justifyContent: "center",
+                    display: "flex",
+                  }
+                : undefined
+            }
+          >
             {!isPuzzle && (
               <Tabs.Tab value="analysis" leftSection={<IconZoomCheck size="1rem" />}>
                 {t("features.board.tabs.analysis")}
