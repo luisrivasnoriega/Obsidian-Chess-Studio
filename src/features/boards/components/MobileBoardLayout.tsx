@@ -1,14 +1,16 @@
 import type { Color, Piece } from "@lichess-org/chessground/types";
-import { Box, Stack } from "@mantine/core";
+import { Box, Group, Stack, Text } from "@mantine/core";
 import { useAtom, useAtomValue } from "jotai";
 import { memo, Suspense, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import ShowMaterial from "@/components/ShowMaterial";
 import MoveControls from "@/components/MoveControls";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentEvalOpenAtom, currentTabAtom, currentTabSelectedAtom, enginesAtom } from "@/state/atoms";
+import { getMaterialDiff } from "@/utils/chess";
 import Board from "./Board";
 import EvalBar from "./EvalBar";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
@@ -121,6 +123,7 @@ function MobileBoardLayout({
   const showAnalysisPanel = !hideAnalysisPanel && currentTabType !== "play";
   const hideClockSpacesResolved = hideClockSpaces || currentTabType !== "play";
   const store = useContext(TreeStateContext)!;
+  const currentNode = useStore(store, (s) => s.currentNode());
   const score = useStore(store, (s) => s.currentNode().score ?? null);
   const turn = useStore(store, (s) => {
     const fen = s.currentNode().fen;
@@ -128,6 +131,10 @@ function MobileBoardLayout({
     return (field === "b" ? "black" : "white") as Color;
   });
   const orientation = useStore(store, (s) => (s.headers.orientation ?? "white") as Color);
+  // Calculate materialDiff directly like in desktop Board component
+  // Ensure fen is a string
+  const fenString = typeof currentNode.fen === "string" ? currentNode.fen : String(currentNode.fen || "");
+  const materialDiff = getMaterialDiff(fenString);
   const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
   const currentTab = useAtomValue(currentTabAtom);
   const [, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
@@ -214,8 +221,40 @@ function MobileBoardLayout({
           height: "100vw",
           width: "100%",
           maxWidth: "100vw",
+          position: "relative",
         }}
       >
+        {materialDiff !== null && (() => {
+          // Top of board: show advantage of the side at the top
+          // If orientation is "white", top is black, so show if black has advantage (diff < 0)
+          // If orientation is "black", top is white, so show if white has advantage (diff > 0)
+          const topColor = orientation === "white" ? "black" : "white";
+          const topHasAdvantage = orientation === "white" ? materialDiff.diff < 0 : materialDiff.diff > 0;
+          
+          return topHasAdvantage ? (
+            <Box
+              style={{
+                position: "absolute",
+                top: "-1.75rem",
+                left: 0,
+                right: 0,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                pointerEvents: "none",
+                zIndex: 1,
+              }}
+            >
+              <Group justify="center" gap="md" px="0.75rem">
+                <ShowMaterial
+                  diff={materialDiff.diff}
+                  pieces={materialDiff.pieces}
+                  color={topColor}
+                />
+              </Group>
+            </Box>
+          ) : null;
+        })()}
         <Board
           dirty={dirty}
           editingMode={editingMode}
@@ -256,19 +295,36 @@ function MobileBoardLayout({
         />
       </Box>
 
-      {!hideEvalBar && (
-        <Box
-          style={{
-            width: "100%",
-            paddingLeft: "0.75rem",
-            paddingRight: "0.75rem",
-            marginTop: "0.5rem",
-          }}
-          onClick={() => setEvalOpen((v) => !v)}
-        >
-          <EvalBar score={score} orientation={orientation} turn={turn} layout="horizontal" showWDL={hasUCI_ShowWDL} />
-        </Box>
-      )}
+      <Stack gap="xs" mt="0.5rem" px="0.75rem" style={{ width: "100%" }}>
+        {!hideEvalBar && (
+          <Box
+            style={{
+              width: "100%",
+            }}
+            onClick={() => setEvalOpen((v) => !v)}
+          >
+            <EvalBar score={score} orientation={orientation} turn={turn} layout="horizontal" showWDL={hasUCI_ShowWDL} />
+          </Box>
+        )}
+
+        {materialDiff !== null && (() => {
+          // Bottom of board: show advantage of the side at the bottom
+          // If orientation is "white", bottom is white, so show if white has advantage (diff > 0)
+          // If orientation is "black", bottom is black, so show if black has advantage (diff < 0)
+          const bottomColor = orientation;
+          const bottomHasAdvantage = orientation === "white" ? materialDiff.diff > 0 : materialDiff.diff < 0;
+          
+          return bottomHasAdvantage ? (
+            <Group justify="center" gap="md" style={{ minHeight: "1.5rem", width: "100%", padding: "0.25rem 0" }}>
+              <ShowMaterial
+                diff={materialDiff.diff}
+                pieces={materialDiff.pieces}
+                color={bottomColor}
+              />
+            </Group>
+          ) : null;
+        })()}
+      </Stack>
 
       {!hideFooterControls && (
         <MoveControls
