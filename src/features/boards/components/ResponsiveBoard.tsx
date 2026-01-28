@@ -1,6 +1,5 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import { Box, Stack } from "@mantine/core";
-import { useElementSize } from "@mantine/hooks";
 import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
@@ -107,7 +106,6 @@ function ResponsiveBoard({
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
-  const { ref: containerRef } = useElementSize();
   const { isInitializing, initializationError, retry } = useSimulatedInit();
 
   // Get responsive layout properties
@@ -141,7 +139,6 @@ function ResponsiveBoard({
   if (isInitializing) {
     return (
       <Box
-        ref={containerRef}
         style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}
       >
         <ResponsiveLoadingWrapper isLoading={true}>
@@ -155,7 +152,6 @@ function ResponsiveBoard({
   if (initializationError) {
     return (
       <Box
-        ref={containerRef}
         style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}
       >
         <Stack align="center" gap="md">
@@ -172,7 +168,6 @@ function ResponsiveBoard({
   if (boardDimensions.isMobileLayout) {
     return (
       <Box
-        ref={containerRef}
         style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}
       >
         <ResponsiveLoadingWrapper isLoading={false}>
@@ -229,7 +224,6 @@ function ResponsiveBoard({
   // Desktop layout - use original Board component
   return (
     <Box
-      ref={containerRef}
       style={{
         width: "100%",
         height: "100%",

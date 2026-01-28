@@ -1,7 +1,7 @@
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Piece } from "@lichess-org/chessground/types";
 import { Box, Group, Portal, Text, useMantineTheme } from "@mantine/core";
-import { useElementSize, useHotkeys } from "@mantine/hooks";
+import { useHotkeys } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
@@ -10,7 +10,7 @@ import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import { makeSan } from "chessops/san";
 import domtoimage from "dom-to-image";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
@@ -136,8 +136,41 @@ function Board({
 }: ChessboardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
-  const { ref: boardAreaRef, width: boardAreaWidth, height: boardAreaHeight } = useElementSize();
+  const boardAreaRef = useRef<HTMLDivElement | null>(null);
+  const [boardAreaSize, setBoardAreaSize] = useState({ width: 0, height: 0 });
   const [hasBoardControlsRail, setHasBoardControlsRail] = useState(false);
+
+  useEffect(() => {
+    const el = boardAreaRef.current;
+    if (!el) return;
+    if (typeof ResizeObserver === "undefined") return;
+
+    let rafId = 0;
+
+    const measure = (width: number, height: number) => {
+      const w = Math.floor(width);
+      const h = Math.floor(height);
+      setBoardAreaSize((current) => (current.width === w && current.height === h ? current : { width: w, height: h }));
+    };
+
+    const rect = el.getBoundingClientRect();
+    measure(rect.width, rect.height);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => measure(width, height));
+    });
+
+    observer.observe(el);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, []);
 
   const store = useContext(TreeStateContext)!;
 
@@ -409,9 +442,9 @@ function Board({
   const showDesktopSideControls = !hideFooterControls && layout.chessBoard.layoutType !== "mobile";
 
   const boardSquareSize = useMemo(() => {
-    const size = Math.floor(Math.min(boardAreaWidth, boardAreaHeight));
+    const size = Math.floor(Math.min(boardAreaSize.width, boardAreaSize.height));
     return Number.isFinite(size) && size > 0 ? size : null;
-  }, [boardAreaHeight, boardAreaWidth]);
+  }, [boardAreaSize.height, boardAreaSize.width]);
 
   const setBoardFen = useCallback(
     (fen: string) => {

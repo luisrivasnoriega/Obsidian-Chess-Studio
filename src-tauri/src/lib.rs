@@ -66,6 +66,7 @@ use crate::db::{
     create_event_game,
     get_db_source, set_db_source,
     merge_profile_event_from_db_player,
+    download_game_database,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
 use crate::fs::{set_file_as_executable, DownloadProgress};
@@ -79,6 +80,7 @@ use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
 use crate::puzzle::{
     check_puzzle_db_columns, get_puzzle, get_puzzle_db_info, get_puzzle_opening_tags,
     get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file, validate_puzzle_database,
+    download_puzzle_database,
 };
 use crate::puzzle_variants::generate_puzzle_variants_from_tree;
 use crate::variants_builder::build_variants_tree;
@@ -196,6 +198,7 @@ pub async fn run() {
             precache_openings,
             import_online_tournament,
             download_position_cache,
+            download_game_database,
             set_db_source,
             get_db_source,
             merge_profile_event_from_db_player,
@@ -207,6 +210,7 @@ pub async fn run() {
             get_puzzle_themes,
             get_puzzle_opening_tags,
             validate_puzzle_database,
+            download_puzzle_database,
             check_package_manager_available,
             install_package,
             check_package_installed,

@@ -277,6 +277,49 @@
     "processingPlayerData": "Procesando datos del jugador",
     "searchPlaceholder": "Buscar bases de datos...",
     "noDatabasesFound": "No se encontraron bases de datos",
+    "download": {
+      "inProgressTitle": "Descargando",
+      "inProgressMessage": "Descargando {{name}}...",
+      "progressMessage": "Descargando {{name}} ({{progress}}%)...",
+      "progressUnknown": "Descargando {{name}}...",
+      "completedTitle": "Descarga completada",
+      "completedMessage": "{{name}} esta listo.",
+      "failedTitle": "Fallo la descarga"
+    },
+    "import": {
+      "button": "Importar partidas",
+      "title": "Importar partidas",
+      "profileLabel": "Perfil destino",
+      "profilePlaceholder": "Selecciona un perfil...",
+      "noProfiles": "No se encontraron perfiles",
+      "pgnLabel": "Archivos PGN",
+      "pgnDescription": "Selecciona uno o mas archivos PGN para importar.",
+      "selectedFilesLabel": "Archivos seleccionados",
+      "eventSectionLabel": "Evento",
+      "eventModeExisting": "Usar existente",
+      "eventModeNew": "Crear nuevo",
+      "eventSelectLabel": "Seleccionar evento",
+      "eventSelectPlaceholder": "Selecciona un evento...",
+      "eventSelectDisabledNoProfile": "Selecciona un perfil primero",
+      "eventNameLabel": "Nombre del evento",
+      "eventTypeLabel": "Tipo de evento",
+      "eventType": {
+        "otb_tournament": "Torneo OTB",
+        "online_tournament": "Torneo online",
+        "league": "Liga"
+      },
+      "importButton": "Importar",
+      "importingStep": "Importando {{current}} / {{total}}...",
+      "successMessage": "Se importaron {{count, number}} partidas.",
+      "failedTitle": "Fallo al importar",
+      "validation": {
+        "profileRequired": "El perfil destino es obligatorio.",
+        "pgnRequired": "Debes seleccionar al menos un archivo PGN.",
+        "eventRequired": "Debes seleccionar un evento.",
+        "eventNameRequired": "El nombre del evento es obligatorio.",
+        "profileDbMissing": "No se pudo resolver la ruta de la base de datos del perfil."
+      }
+    },
     "player1": "Jugador 1",
     "player2": "Jugador 2",
     "on": "Activado",
@@ -1958,6 +2001,11 @@
     "missingPosition": "Falta la posición",
     "variantPositionsCacheUnavailable": "Caché de posiciones de variantes no disponible: {{message}}",
     "unknownError": "Error desconocido",
+    "runtimeErrorTitle": "Algo salió mal",
+    "runtimeErrorDescription": "Ocurrió un error inesperado. Por favor copia los detalles de abajo y repórtalos.",
+    "errorDetails": "Detalles del error",
+    "copyErrorDetails": "Copiar detalles del error",
+    "copied": "Copiado",
     "puzzleDepthTooDeep": "La profundidad no puede exceder la profundidad de puzzles disponible (max {{max}})",
     "puzzleVariantsNeedSystemMove": "Solo puedes generar variantes de puzzles después de crear la primera variante (se requiere una jugada previa del sistema)."
   },
@@ -2093,7 +2141,16 @@
   },
   "puzzles": {
     "depthHelper": "Selecciona cuantas jugadas incluir (max {{max}})",
-    "depthLabel": "Profundidad"
+    "depthLabel": "Profundidad",
+    "download": {
+      "inProgressTitle": "Descargando",
+      "inProgressMessage": "Descargando {{name}}...",
+      "progressMessage": "Descargando {{name}} ({{progress}}%)...",
+      "progressUnknown": "Descargando {{name}}...",
+      "completedTitle": "Descarga completada",
+      "completedMessage": "{{name}} esta listo.",
+      "failedTitle": "Fallo la descarga"
+    }
   },
   "profiles": {
     "title": "Perfiles",

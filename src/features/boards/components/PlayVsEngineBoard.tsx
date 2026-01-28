@@ -1,4 +1,4 @@
-import { Box, Button, Divider, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
+import { Box, Button, Divider, Group, Paper, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconArrowLeft,
@@ -30,6 +30,8 @@ import BoardGame, { useClockTimer } from "./BoardGame";
 import { GameTimeProvider, useGameTime } from "./GameTimeContext";
 import { useEngineMoves } from "./hooks/useEngineMoves";
 import ResponsiveBoard from "./ResponsiveBoard";
+
+const setupLayout = createFullLayout();
 
 function getMainlineLastNode(root: TreeNode): TreeNode {
   let node = root;
@@ -428,13 +430,11 @@ function PlayVsEngineBoardContent() {
   ]);
 
   if (gameState === "settingUp") {
-    const fullLayout = createFullLayout();
     return (
       <Box style={{ width: "100%", height: "100%", minHeight: 0, minWidth: 0, position: "relative" }}>
         <Mosaic<"left" | "topRight" | "bottomRight">
-          renderTile={(id) => fullLayout[id]}
-          value={DEFAULT_MOSAIC_LAYOUT}
-          onChange={() => {}}
+          renderTile={(id) => setupLayout[id]}
+          initialValue={DEFAULT_MOSAIC_LAYOUT}
         />
         <BoardGame />
       </Box>
@@ -501,9 +501,9 @@ function PlayVsEngineBoardContent() {
               </>
             )}
 
-            <ScrollArea style={{ flex: 1 }} type="auto">
+            <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <GameInfo headers={headers} />
-            </ScrollArea>
+            </Box>
           </Stack>
         </Paper>
 
@@ -620,7 +620,7 @@ function PlayVsEngineBoardContent() {
               {t("common.pgn")}
             </Text>
 
-            <ScrollArea style={{ flex: 1 }} type="auto">
+            <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <Box
                 component="pre"
                 style={{
@@ -634,7 +634,7 @@ function PlayVsEngineBoardContent() {
               >
                 {pgn}
               </Box>
-            </ScrollArea>
+            </Box>
           </Stack>
         </Paper>
       </Box>

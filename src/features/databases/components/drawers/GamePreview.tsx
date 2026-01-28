@@ -1,7 +1,6 @@
 import { Box, Group, Stack } from "@mantine/core";
-import { useElementSize } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
-import { useContext } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { Chessground } from "@/components/Chessground";
 import GameNotation from "@/components/GameNotation";
@@ -47,8 +46,40 @@ function GamePreview({
   hideControls?: boolean;
   showOpening?: boolean;
 }) {
-  const { ref: boardRef, height } = useElementSize();
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const [boardHeight, setBoardHeight] = useState(0);
   const { layout } = useResponsiveLayout();
+
+  useEffect(() => {
+    const el = boardRef.current;
+    if (!el) return;
+    if (typeof ResizeObserver === "undefined") return;
+
+    let rafId = 0;
+
+    const measure = (height: number) => {
+      const h = Math.floor(height);
+      setBoardHeight((current) => (current === h ? current : h));
+    };
+
+    const rect = el.getBoundingClientRect();
+    measure(rect.height);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { height } = entry.contentRect;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => measure(height));
+    });
+
+    observer.observe(el);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, []);
 
   // Calculate board dimensions based on layout flags
   const boardStyle = {
@@ -69,7 +100,7 @@ function GamePreview({
             <MoveControls readOnly />
           </Stack>
           {!hideControls && (
-            <Stack style={{ height }} gap="xs" flex={1}>
+            <Stack style={{ height: boardHeight > 0 ? boardHeight : undefined }} gap="xs" flex={1}>
               <GameNotation />
             </Stack>
           )}

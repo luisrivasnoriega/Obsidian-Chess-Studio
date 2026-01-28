@@ -1,5 +1,5 @@
 import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
-import { IconChess, IconUpload } from "@tabler/icons-react";
+import { IconChess } from "@tabler/icons-react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue } from "jotai";
@@ -12,7 +12,6 @@ import { welcomeCardImageAtom } from "@/state/atoms";
 interface WelcomeCardProps {
   isFirstOpen: boolean;
   onPlayChess: () => void;
-  onImportGame: () => void;
   playerFirstName?: string;
   playerGender?: "male" | "female";
   fideInfo?: {
@@ -27,14 +26,7 @@ interface WelcomeCardProps {
   };
 }
 
-export function WelcomeCard({
-  isFirstOpen,
-  onPlayChess,
-  onImportGame,
-  playerFirstName,
-  playerGender,
-  fideInfo,
-}: WelcomeCardProps) {
+export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerGender, fideInfo }: WelcomeCardProps) {
   const { t } = useTranslation();
   const currentThemeId = useAtomValue(currentThemeIdAtom);
   const { layout } = useResponsiveLayout();
@@ -294,19 +286,8 @@ export function WelcomeCard({
 
             {/* Action buttons */}
             <Group gap="xs" mt="xs" wrap={isCompact ? "wrap" : "nowrap"}>
-              {!isCompact && (
-                <Button radius="md" onClick={onPlayChess} leftSection={<IconChess size={18} />} fullWidth={isCompact}>
-                  {t("features.dashboard.cards.playChess.button")}
-                </Button>
-              )}
-              <Button
-                variant="light"
-                radius="md"
-                onClick={onImportGame}
-                leftSection={<IconUpload size={18} />}
-                fullWidth={isCompact}
-              >
-                {t("features.tabs.importGame.button")}
+              <Button radius="md" onClick={onPlayChess} leftSection={<IconChess size={18} />} fullWidth={isCompact}>
+                {t("features.dashboard.cards.playChess.button")}
               </Button>
             </Group>
           </Stack>

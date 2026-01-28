@@ -186,9 +186,16 @@ export async function query_players(db: string, query: PlayerQuery): Promise<Que
 export async function getDatabases(): Promise<DatabaseInfo[]> {
   const files = await readDir("db", { baseDir: BaseDirectory.AppData });
   const dbs = files.filter((file) => file.name?.endsWith(".db3"));
-  return (await Promise.allSettled(dbs.map((db) => getDatabase(db.name))))
+  const list = (await Promise.allSettled(dbs.map((db) => getDatabase(db.name))))
     .filter((r) => r.status === "fulfilled")
     .map((r) => (r as PromiseFulfilledResult<DatabaseInfo>).value);
+
+  // If the backend detects a corrupted database and deletes it, avoid showing a broken entry.
+  return list.filter((db) => {
+    if (db.type !== "error") return true;
+    const msg = (db.error ?? "").toLowerCase();
+    return !msg.includes("corrupted database detected and removed");
+  });
 }
 
 export async function importOnlineTournament(input: {

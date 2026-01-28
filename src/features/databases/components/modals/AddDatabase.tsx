@@ -7,6 +7,7 @@ import {
   Loader,
   Modal,
   Paper,
+  Progress,
   ScrollArea,
   Stack,
   Tabs,
@@ -17,6 +18,7 @@ import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -56,6 +58,7 @@ interface DatabaseCardProps {
   database: SuccessDatabaseInfo;
   databaseId: number;
   initInstalled: boolean;
+  closeModal: () => void;
 }
 
 interface PuzzleDbCardProps {
@@ -128,7 +131,7 @@ function AddDatabase({
   setOpened,
   setLoading,
   setDatabases,
-  puzzleDbs,
+  puzzleDbs: _puzzleDbs,
   setPuzzleDbs,
   redirectTo,
 }: AddDatabaseProps) {
@@ -270,6 +273,7 @@ function AddDatabase({
                       database={db}
                       databaseId={i}
                       setDatabases={setDatabases}
+                      closeModal={() => setOpened(false)}
                       initInstalled={
                         // Position Cache is stored in AppData root, NOT in db folder
                         // So it should be checked separately, not via installedDatabaseTitles
@@ -314,7 +318,7 @@ function AddDatabase({
   );
 }
 
-function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: DatabaseCardProps) {
+function DatabaseCard({ setDatabases, database, databaseId, initInstalled, closeModal }: DatabaseCardProps) {
   const { t } = useTranslation();
   const [inProgress, setInProgress] = useState<boolean>(false);
   const [isInstalled, setIsInstalled] = useState(initInstalled);
@@ -324,37 +328,99 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
     setIsInstalled(initInstalled);
   }, [initInstalled]);
 
+  const startDownloadToast = useCallback(
+    (downloadId: string, title: string) => {
+      const notificationId = `db-download-${downloadId}`;
+      const baseTitle = t("databases.download.inProgressTitle");
+
+      notifications.show({
+        id: notificationId,
+        title: baseTitle,
+        message: (
+          <Stack gap={6}>
+            <Text size="sm">{t("databases.download.inProgressMessage", { name: title })}</Text>
+            <Progress value={0} animated striped />
+          </Stack>
+        ),
+        loading: true,
+        autoClose: false,
+        withCloseButton: false,
+      });
+
+      let unlistenFn: (() => void) | null = null;
+      const unlistenPromise = events.downloadProgress.listen((e) => {
+        if (e.payload.id !== downloadId) return;
+
+        const rawProgress = e.payload.progress;
+        const progressValue = rawProgress >= 0 ? Math.max(0, Math.min(100, rawProgress)) : 0;
+        const finished = e.payload.finished;
+
+        notifications.update({
+          id: notificationId,
+          title: finished ? t("databases.download.completedTitle") : baseTitle,
+          message: (
+            <Stack gap={6}>
+              <Text size="sm">
+                {finished
+                  ? t("databases.download.completedMessage", { name: title })
+                  : rawProgress >= 0
+                    ? t("databases.download.progressMessage", { name: title, progress: Math.round(progressValue) })
+                    : t("databases.download.progressUnknown", { name: title })}
+              </Text>
+              <Progress value={progressValue} animated striped />
+            </Stack>
+          ),
+          loading: !finished,
+          autoClose: finished ? 4000 : false,
+          withCloseButton: finished,
+          color: finished ? "green" : undefined,
+        });
+
+        if (finished) {
+          unlistenFn?.();
+        }
+      });
+
+      unlistenPromise.then((f) => {
+        unlistenFn = f;
+      });
+
+      return { notificationId, unlistenPromise };
+    },
+    [t],
+  );
+
   const downloadDatabase = useCallback(
     async (id: number, url: string, name: string) => {
+      const downloadId = name === "Position Cache" ? "db_position_cache" : `db_${id}`;
+      const { notificationId } = startDownloadToast(downloadId, name);
+
       try {
+        // Immediately close the modal after starting the download request.
+        closeModal();
         setInProgress(true);
-        // Special handling for Position Cache - it goes to AppData, not db folder
-        if (name === "Position Cache") {
-          const result = await commands.downloadPositionCache();
-          if (result.status === "error") {
-            throw new Error(result.error);
-          }
-        } else {
-          const path = await resolve(await appDataDir(), "db", `${name}.db3`);
-          await commands.downloadFile(`db_${id}`, url, path, null, null, null);
-          await setDbSource(path, "local");
-        }
+
+        // Backend handles AppData path + DB source metadata. Progress comes from download-progress events.
+        await invoke("download_game_database", { databaseId: id, url, title: name });
+
         setDatabases();
-        // Update installed state for Position Cache
-        if (name === "Position Cache") {
-          setIsInstalled(true);
-        }
+        setIsInstalled(true);
       } catch (error) {
-        notifications.show({
-          title: t("common.error"),
-          message: error instanceof Error ? error.message : t("errors.unknownError"),
+        const message = error instanceof Error ? error.message : String(error);
+        notifications.update({
+          id: notificationId,
+          title: t("databases.download.failedTitle"),
+          message,
           color: "red",
+          loading: false,
+          autoClose: 10000,
+          withCloseButton: true,
         });
       } finally {
         setInProgress(false);
       }
     },
-    [setDatabases, t],
+    [closeModal, setDatabases, startDownloadToast, t],
   );
 
   const handleDownload = useCallback(() => {

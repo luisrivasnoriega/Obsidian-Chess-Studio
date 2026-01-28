@@ -84,6 +84,8 @@ i18n.use(initReactI18next).init({
   fallbackNS: "translation",
   debug: IS_DEV,
   load: "currentOnly",
+  // React already escapes output. Keep interpolation values as-is to avoid HTML entities like &#39;.
+  interpolation: { escapeValue: false },
 });
 
 i18n.services.formatter?.add("bytes", createBytesFormatter(i18n));

@@ -8,6 +8,7 @@ import {
   Loader,
   Modal,
   Paper,
+  Progress,
   ScrollArea,
   Stack,
   Tabs,
@@ -15,8 +16,10 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
+import { notifications } from "@mantine/notifications";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { type Dispatch, type SetStateAction, useState } from "react";
@@ -112,6 +115,7 @@ export function AddPuzzle({
                   databaseId={i}
                   key={`puzzle-db-${db.title}-${i}`}
                   setPuzzleDbs={setPuzzleDbs}
+                  closeModal={() => setOpened(false)}
                   initInstalled={puzzleDbs.some((e) => e.title === `${db.title}.db3`)}
                 />
               ))}
@@ -186,20 +190,112 @@ function PuzzleDbCard({
   puzzleDb,
   databaseId,
   initInstalled,
+  closeModal,
 }: {
   setPuzzleDbs: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
   puzzleDb: PuzzleDatabaseInfo & { downloadLink: string };
   databaseId: number;
   initInstalled: boolean;
+  closeModal: () => void;
 }) {
   const { t } = useTranslation();
   const [inProgress, setInProgress] = useState<boolean>(false);
 
-  async function downloadDatabase(id: number, url: string, name: string) {
-    setInProgress(true);
-    const path = await resolve(await appDataDir(), "puzzles", `${name}.db3`);
-    await commands.downloadFile(`puzzle_db_${id}`, url, path, null, null, null);
-    setPuzzleDbs(await getPuzzleDatabases());
+  function startDownloadToast(downloadId: string, title: string) {
+    const notificationId = `puzzle-download-${downloadId}`;
+    const baseTitle = t("puzzles.download.inProgressTitle");
+
+    notifications.show({
+      id: notificationId,
+      title: baseTitle,
+      message: (
+        <Stack gap={6}>
+          <Text size="sm">{t("puzzles.download.inProgressMessage", { name: title })}</Text>
+          <Progress value={0} animated striped />
+        </Stack>
+      ),
+      loading: true,
+      autoClose: false,
+      withCloseButton: false,
+    });
+
+    let unlistenFn: (() => void) | null = null;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      unlistenFn?.();
+    };
+
+    const unlistenPromise = events.downloadProgress.listen((e) => {
+      if (e.payload.id !== downloadId) return;
+
+      const rawProgress = e.payload.progress;
+      const progressValue = rawProgress >= 0 ? Math.max(0, Math.min(100, rawProgress)) : 0;
+      const finished = e.payload.finished;
+
+      notifications.update({
+        id: notificationId,
+        title: finished ? t("puzzles.download.completedTitle") : baseTitle,
+        message: (
+          <Stack gap={6}>
+            <Text size="sm">
+              {finished
+                ? t("puzzles.download.completedMessage", { name: title })
+                : rawProgress >= 0
+                  ? t("puzzles.download.progressMessage", { name: title, progress: Math.round(progressValue) })
+                  : t("puzzles.download.progressUnknown", { name: title })}
+            </Text>
+            <Progress value={progressValue} animated striped />
+          </Stack>
+        ),
+        loading: !finished,
+        autoClose: finished ? 4000 : false,
+        withCloseButton: finished,
+        color: finished ? "green" : undefined,
+      });
+
+      if (finished) {
+        stop();
+      }
+    });
+
+    unlistenPromise.then((f) => {
+      unlistenFn = f;
+    });
+
+    return { notificationId, stop };
+  }
+
+  async function downloadDatabase(id: number, url: string, name: string, description: string) {
+    const downloadId = `puzzle_db_${id}`;
+    const { notificationId, stop } = startDownloadToast(downloadId, name);
+
+    try {
+      closeModal();
+      setInProgress(true);
+      await invoke("download_puzzle_database", {
+        databaseId: id,
+        url,
+        title: name,
+        description: description || null,
+      });
+      setPuzzleDbs(await getPuzzleDatabases());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      notifications.update({
+        id: notificationId,
+        title: t("puzzles.download.failedTitle"),
+        message,
+        color: "red",
+        loading: false,
+        autoClose: 10000,
+        withCloseButton: true,
+      });
+    } finally {
+      stop();
+      setInProgress(false);
+    }
   }
 
   return (
@@ -241,7 +337,9 @@ function PuzzleDbCard({
               inProgress: t("common.downloading"),
               finalizing: t("common.extracting"),
             }}
-            onClick={() => downloadDatabase(databaseId, puzzleDb.downloadLink || "", puzzleDb.title)}
+            onClick={() =>
+              downloadDatabase(databaseId, puzzleDb.downloadLink || "", puzzleDb.title, puzzleDb.description)
+            }
             inProgress={inProgress}
             setInProgress={setInProgress}
           />

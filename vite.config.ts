@@ -9,6 +9,7 @@ const isDebug = !!process.env.TAURI_ENV_DEBUG;
 const _isProdBuild = !isDebug;
 
 const devHost = process.env.TAURI_DEV_HOST;
+const disableHmrOverlay = true;
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -25,13 +26,16 @@ export default defineConfig({
     // when Vite would otherwise bind to IPv6 localhost only.
     host: devHost ? "0.0.0.0" : "127.0.0.1",
     // Keep HMR on localhost so it works with `adb reverse tcp:1421 tcp:1421`.
+    // Disable the Vite HMR error overlay so React error boundaries can render
+    // a copyable component stack (critical for debugging crash loops in Tauri).
     hmr: devHost
       ? {
           protocol: "ws",
           host: "127.0.0.1",
           port: 1421,
+          overlay: !disableHmrOverlay,
         }
-      : undefined,
+      : { overlay: !disableHmrOverlay },
     watch: {
       ignored: ["**/src-tauri/**"],
     },

@@ -271,11 +271,54 @@
     "loadError": "Error loading database",
     "reason": "Reason",
     "checkFileError": "Check if the file exists and you have permission to read it",
+    "download": {
+      "inProgressTitle": "Downloading",
+      "inProgressMessage": "Downloading {{name}}...",
+      "progressMessage": "Downloading {{name}} ({{progress}}%)...",
+      "progressUnknown": "Downloading {{name}}...",
+      "completedTitle": "Download completed",
+      "completedMessage": "{{name}} is ready.",
+      "failedTitle": "Download failed"
+    },
     "noTournamentSelected": "No tournament selected",
     "noPlayerSelected": "No player selected",
     "processingPlayerData": "Processing Player Data",
     "searchPlaceholder": "Search databases...",
     "noDatabasesFound": "No databases found",
+    "import": {
+      "button": "Import games",
+      "title": "Import games",
+      "profileLabel": "Destination profile",
+      "profilePlaceholder": "Select a profile...",
+      "noProfiles": "No profiles found",
+      "pgnLabel": "PGN files",
+      "pgnDescription": "Select one or more PGN files to import.",
+      "selectedFilesLabel": "Selected files",
+      "eventSectionLabel": "Event",
+      "eventModeExisting": "Use existing",
+      "eventModeNew": "Create new",
+      "eventSelectLabel": "Select event",
+      "eventSelectPlaceholder": "Select an event...",
+      "eventSelectDisabledNoProfile": "Select a profile first",
+      "eventNameLabel": "Event name",
+      "eventTypeLabel": "Event type",
+      "eventType": {
+        "otb_tournament": "OTB tournament",
+        "online_tournament": "Online tournament",
+        "league": "League"
+      },
+      "importButton": "Import",
+      "importingStep": "Importing {{current}} / {{total}}...",
+      "successMessage": "Imported {{count, number}} games.",
+      "failedTitle": "Import failed",
+      "validation": {
+        "profileRequired": "Destination profile is required.",
+        "pgnRequired": "At least one PGN file is required.",
+        "eventRequired": "An event is required.",
+        "eventNameRequired": "Event name is required.",
+        "profileDbMissing": "Could not resolve the profile database path."
+      }
+    },
     "player1": "Player 1",
     "player2": "Player 2",
     "on": "On",
@@ -2022,6 +2065,11 @@
     "missingPosition": "Missing position",
     "variantPositionsCacheUnavailable": "Variant positions cache unavailable: {{message}}",
     "unknownError": "Unknown error",
+    "runtimeErrorTitle": "Something went wrong",
+    "runtimeErrorDescription": "An unexpected error occurred. Please copy the details below and report them.",
+    "errorDetails": "Error details",
+    "copyErrorDetails": "Copy error details",
+    "copied": "Copied",
     "puzzleDepthTooDeep": "Depth cannot exceed the available puzzle depth (max {{max}})",
     "puzzleVariantsNeedSystemMove": "You can generate puzzle variants only after the first variation is created (a prior system move is required)."
   },
@@ -2157,7 +2205,16 @@
   },
   "puzzles": {
     "depthLabel": "Depth",
-    "depthHelper": "Select how many moves to include (max {{max}})"
+    "depthHelper": "Select how many moves to include (max {{max}})",
+    "download": {
+      "inProgressTitle": "Downloading",
+      "inProgressMessage": "Downloading {{name}}...",
+      "progressMessage": "Downloading {{name}} ({{progress}}%)...",
+      "progressUnknown": "Downloading {{name}}...",
+      "completedTitle": "Download completed",
+      "completedMessage": "{{name}} is ready.",
+      "failedTitle": "Download failed"
+    }
   },
   "maya": {
     "nav": {

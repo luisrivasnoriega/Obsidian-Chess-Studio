@@ -1,5 +1,5 @@
 import { Box } from "@mantine/core";
-import { useElementSize, useHotkeys } from "@mantine/hooks";
+import { useHotkeys } from "@mantine/hooks";
 import { type Move, type NormalMove, parseSquare, parseUci } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import equal from "fast-deep-equal";
@@ -201,8 +201,42 @@ function PuzzleBoard({
     }
   }
 
-  const { ref: parentRef, width: parentWidth, height: parentHeight } = useElementSize();
-  const maxBoardSize = Math.min(parentWidth || Infinity, parentHeight || Infinity);
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const [parentSize, setParentSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    if (typeof ResizeObserver === "undefined") return;
+
+    let rafId = 0;
+
+    const measure = (width: number, height: number) => {
+      const w = Math.floor(width);
+      const h = Math.floor(height);
+      setParentSize((current) => (current.width === w && current.height === h ? current : { width: w, height: h }));
+    };
+
+    const rect = el.getBoundingClientRect();
+    measure(rect.width, rect.height);
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => measure(width, height));
+    });
+
+    observer.observe(el);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
+  }, []);
+
+  const maxBoardSize = Math.min(parentSize.width || Infinity, parentSize.height || Infinity);
 
   return (
     <Box w="100%" h="100%" ref={parentRef} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>

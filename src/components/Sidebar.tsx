@@ -1,19 +1,16 @@
 import { AppShellSection, Group, Stack, Tooltip } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import type { IconProps } from "@tabler/icons-react";
 import {
   IconCalendarEvent,
   IconChartLine,
   IconCpu,
   IconDatabase,
-  IconFiles,
   IconGitBranch,
   IconKeyboard,
   IconLayoutDashboard,
   IconPlayerPlay,
   IconPuzzle,
   IconSettings,
-  IconUpload,
   IconUserCircle,
 } from "@tabler/icons-react";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
@@ -123,7 +120,6 @@ const primaryLinks = [
 const secondaryLinksData = [
   { icon: IconDatabase, label: "databases", url: "/databases" },
   { icon: IconCpu, label: "engines", url: "/engines" },
-  { icon: IconFiles, label: "files", url: "/files" },
   { icon: IconGitBranch, label: "variants", url: "/variants" },
 ];
 
@@ -156,7 +152,7 @@ export function SideBar() {
     if (existing) {
       setActiveTab(existing.value);
       try {
-        navigate({ to: route as any });
+        navigate({ to: route as never });
       } catch (error) {
         console.error("Navigation error in openRouteTab:", error);
       }
@@ -172,7 +168,7 @@ export function SideBar() {
       // Use requestAnimationFrame to ensure router is ready
       requestAnimationFrame(() => {
         try {
-          navigate({ to: route as any });
+          navigate({ to: route as never });
         } catch (error) {
           console.error("Navigation error in openRouteTab (after createTab):", error);
         }
@@ -408,23 +404,6 @@ export function SideBar() {
     );
   }
 
-  // Acción terciaria: Import
-  const tertiaryActionLink = (
-    <MayaActionLink
-      key="import"
-      icon={IconUpload}
-      label={t("maya.nav.importGame")}
-      onClick={() => {
-        try {
-          navigate({ to: "/analysis" });
-        } catch (error) {
-          console.error("Navigation error in import link:", error);
-        }
-        modals.openContextModal({ modal: "importModal", innerProps: {} });
-      }}
-    />
-  );
-
   // Para compatibilidad con código existente (footer/mobile)
   // Desktop layout
   return (
@@ -438,8 +417,6 @@ export function SideBar() {
         {secondaryNavLinks}
         {/* Sección terciaria: Tournaments */}
         {tertiaryNavLinks}
-        {/* Acción terciaria: Import */}
-        {tertiaryActionLink}
 
         {/* Sección final: Keyboard Shortcuts y Settings */}
         <Stack justify="flex-end" gap={0} mt="auto" visibleFrom="sm">

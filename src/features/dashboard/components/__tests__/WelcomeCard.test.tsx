@@ -9,7 +9,7 @@ beforeAll(() => {
       observe() {}
       unobserve() {}
       disconnect() {}
-    } as any;
+    } as unknown as typeof ResizeObserver;
   }
 });
 
@@ -42,38 +42,22 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 describe("WelcomeCard", () => {
   const mockOnPlayChess = vi.fn();
-  const mockOnImportGame = vi.fn();
 
   test("renders without crashing", () => {
-    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} />);
     expect(document.body).toBeTruthy();
   });
 
   test("calls onPlayChess when play button is clicked", async () => {
     const user = userEvent.setup();
-    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} />);
     const playButton = screen.getByRole("button", { name: /play/i });
     await user.click(playButton);
     expect(mockOnPlayChess).toHaveBeenCalled();
   });
 
-  test("calls onImportGame when import button is clicked", async () => {
-    const user = userEvent.setup();
-    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} onImportGame={mockOnImportGame} />);
-    const importButton = screen.getByRole("button", { name: /import/i });
-    await user.click(importButton);
-    expect(mockOnImportGame).toHaveBeenCalled();
-  });
-
   test("displays player first name when provided", () => {
-    render(
-      <WelcomeCard
-        isFirstOpen={false}
-        onPlayChess={mockOnPlayChess}
-        onImportGame={mockOnImportGame}
-        playerFirstName="John"
-      />,
-    );
+    render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} playerFirstName="John" />);
     expect(screen.getByText(/john/i)).toBeInTheDocument();
   });
 
@@ -82,7 +66,6 @@ describe("WelcomeCard", () => {
       <WelcomeCard
         isFirstOpen={false}
         onPlayChess={mockOnPlayChess}
-        onImportGame={mockOnImportGame}
         fideInfo={{ title: "GM", standardRating: 2500 }}
       />,
     );

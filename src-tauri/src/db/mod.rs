@@ -219,23 +219,44 @@ fn get_db_or_create(
     options: ConnectionOptions,
 ) -> Result<diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>>
 {
-    let pool = match state.connection_pool.get(db_path) {
-        Some(pool) => pool.clone(),
-        None => {
-            let pool = Pool::builder()
-                .max_size(32) // OPTIMIZED: Increased from 16 to 32 for better concurrency
-                .min_idle(Some(4)) // OPTIMIZED: Keep minimum connections ready
-                .connection_timeout(Duration::from_secs(30))
-                .connection_customizer(Box::new(options))
-                .build(ConnectionManager::<SqliteConnection>::new(db_path))?;
-            state
-                .connection_pool
-                .insert(db_path.to_string(), pool.clone());
-            pool
-        }
-    };
+    fn is_malformed_sqlite_message(msg: &str) -> bool {
+        let m = msg.to_lowercase();
+        m.contains("database disk image is malformed") || m.contains("file is not a database")
+    }
 
-    Ok(pool.get()?)
+    if let Some(pool) = state.connection_pool.get(db_path) {
+        match pool.clone().get() {
+            Ok(conn) => return Ok(conn),
+            Err(e) => {
+                // If the pool can no longer create connections (corrupted DB, interrupted download, etc),
+                // drop it so future calls fail fast without repeatedly retrying for a long time.
+                let _ = state.connection_pool.remove(db_path);
+                let msg = e.to_string();
+                if is_malformed_sqlite_message(&msg) {
+                    let _ = std::fs::remove_file(db_path);
+                    let _ = std::fs::remove_file(format!("{db_path}.partial"));
+                    return Err(Error::PackageManager(
+                        "Corrupted database detected and removed".to_string(),
+                    ));
+                }
+                return Err(e.into());
+            }
+        }
+    }
+
+    // Build the pool, but only cache it after we successfully acquire a connection.
+    // This prevents "poisoning" the cache with a pool that can't create connections
+    // (e.g. partially downloaded / corrupted SQLite files).
+    let pool = Pool::builder()
+        .max_size(32) // OPTIMIZED: Increased from 16 to 32 for better concurrency
+        .min_idle(Some(4)) // OPTIMIZED: Keep minimum connections ready
+        .connection_timeout(Duration::from_secs(30))
+        .connection_customizer(Box::new(options))
+        .build(ConnectionManager::<SqliteConnection>::new(db_path))?;
+
+    let conn = pool.get()?;
+    state.connection_pool.insert(db_path.to_string(), pool);
+    Ok(conn)
 }
 
 pub fn insert_to_db_with_event_override(
@@ -640,44 +661,86 @@ pub async fn get_db_info(
 
     let path = app.path().resolve(db_path, BaseDirectory::AppData)?;
 
-    let db = &mut get_db_or_create(&state, path.to_str().unwrap(), ConnectionOptions::default())?;
+    fn is_malformed_sqlite_message(msg: &str) -> bool {
+        let m = msg.to_lowercase();
+        m.contains("database disk image is malformed") || m.contains("file is not a database")
+    }
 
-    let player_count = players::table.count().get_result::<i64>(db)? as i32;
-    let game_count = games::table.count().get_result::<i64>(db)? as i32;
-    let event_count = events::table.count().get_result::<i64>(db)? as i32;
+    fn cleanup_malformed_db(state: &tauri::State<'_, AppState>, path: &PathBuf) {
+        let path_str = path.to_string_lossy().into_owned();
+        let _ = state.connection_pool.remove(&path_str);
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}.partial", path.display()));
+    }
 
-    let title = match info::table
-        .filter(info::name.eq("Title"))
-        .first(db)
-        .map(|title_info: Info| title_info.value)
-    {
-        Ok(Some(title)) => title,
-        _ => "Untitled".to_string(),
+    // Avoid using the connection pool for lightweight metadata reads.
+    // If a DB file is corrupted (e.g. interrupted download), r2d2 may retry and block for a long time.
+    // Establishing directly fails fast and keeps the UI responsive.
+    let mut db = match SqliteConnection::establish(path.to_str().unwrap()) {
+        Ok(db) => db,
+        Err(e) => {
+            let msg = e.to_string();
+            if is_malformed_sqlite_message(&msg) {
+                cleanup_malformed_db(&state, &path);
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            return Err(e.into());
+        }
     };
 
-    let description = match info::table
-        .filter(info::name.eq("Description"))
-        .first(db)
-        .map(|description_info: Info| description_info.value)
-    {
-        Ok(Some(description)) => description,
-        _ => "".to_string(),
-    };
+    let res: Result<DatabaseInfo> = (|| {
+        let player_count = players::table.count().get_result::<i64>(&mut db)? as i32;
+        let game_count = games::table.count().get_result::<i64>(&mut db)? as i32;
+        let event_count = events::table.count().get_result::<i64>(&mut db)? as i32;
 
-    let storage_size = path.metadata()?.len() as i64;
-    let filename = path.file_name().expect("get filename").to_string_lossy();
+        let title = match info::table
+            .filter(info::name.eq("Title"))
+            .first(&mut db)
+            .map(|title_info: Info| title_info.value)
+        {
+            Ok(Some(title)) => title,
+            _ => "Untitled".to_string(),
+        };
 
-    let is_indexed = check_index_exists(db)?;
-    Ok(DatabaseInfo {
-        title,
-        description,
-        player_count,
-        game_count,
-        event_count,
-        storage_size,
-        filename: filename.to_string(),
-        indexed: is_indexed,
-    })
+        let description = match info::table
+            .filter(info::name.eq("Description"))
+            .first(&mut db)
+            .map(|description_info: Info| description_info.value)
+        {
+            Ok(Some(description)) => description,
+            _ => "".to_string(),
+        };
+
+        let storage_size = path.metadata()?.len() as i64;
+        let filename = path.file_name().expect("get filename").to_string_lossy();
+
+        let is_indexed = check_index_exists(&mut db)?;
+        Ok(DatabaseInfo {
+            title,
+            description,
+            player_count,
+            game_count,
+            event_count,
+            storage_size,
+            filename: filename.to_string(),
+            indexed: is_indexed,
+        })
+    })();
+
+    match res {
+        Ok(info) => Ok(info),
+        Err(e) => {
+            if is_malformed_sqlite_message(&e.to_string()) {
+                cleanup_malformed_db(&state, &path);
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
@@ -3012,6 +3075,97 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
     Ok(())
 }
 
+fn sanitize_db_filename(name: &str) -> String {
+    // Keep it simple and predictable across platforms.
+    // Windows forbids: < > : " / \ | ? * and control chars. We also guard against path separators.
+    let trimmed = name.trim();
+    let mut out = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            || ch.is_control();
+        if is_invalid {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+
+    let out = out.trim().trim_matches('.').to_string();
+    if out.is_empty() {
+        "database".to_string()
+    } else {
+        out
+    }
+}
+
+/// Download a default game database into AppData/db and set its Source metadata.
+///
+/// This moves the path/source handling to the backend. Download progress is emitted via `download-progress`.
+#[tauri::command]
+#[specta::specta]
+pub async fn download_game_database(
+    database_id: i32,
+    url: String,
+    title: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    use crate::fs::download_file;
+    use tauri::path::BaseDirectory;
+
+    let title_trim = title.trim().to_string();
+    if title_trim.is_empty() {
+        return Err(Error::InvalidInput("Database title cannot be empty".to_string()));
+    }
+
+    // Keep the legacy special-case behavior for Position Cache.
+    if title_trim == "Position Cache" {
+        return download_position_cache(app).await;
+    }
+
+    let file_name = sanitize_db_filename(&title_trim);
+    let db_path = app
+        .path()
+        .resolve(format!("db/{file_name}.db3"), BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve DB path: {e}")))?;
+
+    // Download into a temporary file first. This prevents leaving a corrupted SQLite DB behind
+    // if the download is interrupted.
+    let tmp_path = app
+        .path()
+        .resolve(format!("db/{file_name}.db3.partial"), BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve temp DB path: {e}")))?;
+
+    // Use the same ID format as the existing UI expects.
+    let download_res = download_file(
+        format!("db_{database_id}"),
+        url,
+        tmp_path.clone(),
+        app.clone(),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    if let Err(e) = download_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    // Replace existing DB atomically (best-effort on Windows).
+    if db_path.exists() {
+        let _ = std::fs::remove_file(&db_path);
+    }
+    std::fs::rename(&tmp_path, &db_path)?;
+
+    // Mark DB source so the frontend can display/filter it.
+    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+    upsert_info_value(db, "Source", "local")?;
+
+    Ok(())
+}
+
 // ============================================================================
 // Player Statistics Commands
 // ============================================================================
@@ -3499,25 +3653,97 @@ pub async fn import_online_tournament(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_db_source(file: PathBuf, source: String, state: tauri::State<'_, AppState>) -> Result<()> {
+pub async fn set_db_source(file: PathBuf, source: String, _state: tauri::State<'_, AppState>) -> Result<()> {
     let Some(source_norm) = normalize_db_source(&source) else {
         return Err(Error::PackageManager("Invalid database source".to_string()));
     };
 
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-    upsert_info_value(db, "Source", source_norm)?;
-    Ok(())
+    fn is_malformed_sqlite_message(msg: &str) -> bool {
+        let m = msg.to_lowercase();
+        m.contains("database disk image is malformed") || m.contains("file is not a database")
+    }
+
+    // Fail fast for corrupted DB files and avoid caching a broken pool.
+    let mut db = match SqliteConnection::establish(file.to_str().unwrap()) {
+        Ok(db) => db,
+        Err(e) => {
+            let msg = e.to_string();
+            if is_malformed_sqlite_message(&msg) {
+                let _ = std::fs::remove_file(&file);
+                let _ = std::fs::remove_file(format!("{}.partial", file.display()));
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            return Err(e.into());
+        }
+    };
+
+    let res: Result<()> = (|| {
+        upsert_info_value(&mut db, "Source", source_norm)?;
+        Ok(())
+    })();
+
+    match res {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if is_malformed_sqlite_message(&e.to_string()) {
+                let _ = std::fs::remove_file(&file);
+                let _ = std::fs::remove_file(format!("{}.partial", file.display()));
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_db_source(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<Option<String>> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+pub async fn get_db_source(file: PathBuf, _state: tauri::State<'_, AppState>) -> Result<Option<String>> {
+    fn is_malformed_sqlite_message(msg: &str) -> bool {
+        let m = msg.to_lowercase();
+        m.contains("database disk image is malformed") || m.contains("file is not a database")
+    }
 
-    let res: std::result::Result<Info, _> = info::table.filter(info::name.eq("Source")).first(db);
+    // Fail fast for corrupted DB files and avoid blocking the UI.
+    let mut db = match SqliteConnection::establish(file.to_str().unwrap()) {
+        Ok(db) => db,
+        Err(e) => {
+            let msg = e.to_string();
+            if is_malformed_sqlite_message(&msg) {
+                let _ = std::fs::remove_file(&file);
+                let _ = std::fs::remove_file(format!("{}.partial", file.display()));
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            return Err(e.into());
+        }
+    };
+
+    let res: Result<Option<String>> = (|| {
+        let res: std::result::Result<Info, _> =
+            info::table.filter(info::name.eq("Source")).first(&mut db);
+        match res {
+            Ok(info_row) => Ok(info_row.value),
+            Err(_) => Ok(None),
+        }
+    })();
+
     match res {
-        Ok(info_row) => Ok(info_row.value),
-        Err(_) => Ok(None),
+        Ok(v) => Ok(v),
+        Err(e) => {
+            if is_malformed_sqlite_message(&e.to_string()) {
+                let _ = std::fs::remove_file(&file);
+                let _ = std::fs::remove_file(format!("{}.partial", file.display()));
+                return Err(Error::PackageManager(
+                    "Corrupted database detected and removed".to_string(),
+                ));
+            }
+            Err(e)
+        }
     }
 }
 

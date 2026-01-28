@@ -532,6 +532,19 @@ async downloadPositionCache() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Download a default game database into AppData/db and set its Source metadata.
+ * 
+ * This moves the path/source handling to the backend. Download progress is emitted via `download-progress`.
+ */
+async downloadGameDatabase(databaseId: number, url: string, title: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_game_database", { databaseId, url, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setDbSource(file: string, source: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_db_source", { file, source }) };
@@ -698,6 +711,21 @@ async getPuzzleOpeningTags(file: string) : Promise<Result<OpeningTagOption[], st
 async validatePuzzleDatabase(file: string) : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("validate_puzzle_database", { file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download a puzzle database (or CSV source) into AppData/puzzles.
+ * 
+ * - Emits download progress via `download-progress`.
+ * - For CSV/CSV.ZST sources, runs import (emits `import_puzzle_progress`) and deletes the temp file.
+ * - For DB sources, validates the downloaded file and removes it if invalid.
+ */
+async downloadPuzzleDatabase(databaseId: number, url: string, title: string, description: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_puzzle_database", { databaseId, url, title, description }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

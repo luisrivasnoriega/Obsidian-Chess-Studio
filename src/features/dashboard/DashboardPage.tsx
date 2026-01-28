@@ -1,7 +1,6 @@
 import type { MantineColor } from "@mantine/core";
 import { Box, Button, Grid, Group, Select, Stack, Text } from "@mantine/core";
 import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { IconBolt, IconChess, IconClock, IconStopwatch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -11,7 +10,7 @@ import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Event } from "@/bindings";
+import type { Event, GameQuery } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
@@ -642,7 +641,7 @@ export default function DashboardPage() {
           tournament_id: eventFilterId ?? null,
           time_control_category: timeControlCategory ?? null,
           ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
-        } as any);
+        } as unknown as GameQuery);
 
         const analyzedGames = await getAllAnalyzedGames(activeProfileId);
         const games = (queryResult.data ?? [])
@@ -725,7 +724,7 @@ export default function DashboardPage() {
           tournament_id: eventFilterId ?? null,
           time_control_category: timeControlCategory ?? null,
           ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
-        } as any);
+        } as unknown as GameQuery);
 
         const analyzedGames = await getAllAnalyzedGames(activeProfileId);
         const games = (queryResult.data ?? [])
@@ -982,13 +981,6 @@ export default function DashboardPage() {
         <WelcomeCard
           isFirstOpen={isFirstOpen}
           onPlayChess={PLAY_CHESS.onClick}
-          onImportGame={() => {
-            navigate({ to: "/analysis" });
-            modals.openContextModal({
-              modal: "importModal",
-              innerProps: {},
-            });
-          }}
           playerFirstName={displayName || fidePlayer?.firstName || undefined}
           playerGender={fidePlayer?.gender}
           fideInfo={fideInfo}

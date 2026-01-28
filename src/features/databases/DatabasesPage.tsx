@@ -29,6 +29,7 @@ import {
   IconPuzzle,
   IconRefresh,
   IconStar,
+  IconUpload,
   IconWorld,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
@@ -52,6 +53,7 @@ import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 import AddDatabase from "./components/modals/AddDatabase";
 import AddOnlineTournament from "./components/modals/AddOnlineTournament";
+import ImportGamesModal from "./components/modals/ImportGamesModal";
 import { PlayerSearchInput } from "./components/PlayerSearchInput";
 
 type Progress = {
@@ -116,6 +118,7 @@ export default function DatabasesPage() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [open, setOpen] = useState(false);
   const [openOnlineTournament, setOpenOnlineTournament] = useState(false);
+  const [openImportGames, setOpenImportGames] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortState>({ field: "name", direction: "asc" });
@@ -276,6 +279,14 @@ export default function DatabasesPage() {
             >
               {t("features.databases.onlineTournament.addButton")}
             </Button>
+            <Button
+              onClick={() => setOpenImportGames(true)}
+              size="xs"
+              variant="light"
+              leftSection={<IconUpload size="1rem" />}
+            >
+              {t("databases.import.button")}
+            </Button>
           </Group>
         }
         filters={
@@ -358,6 +369,8 @@ export default function DatabasesPage() {
         onImported={mutate}
         setLoading={setConvertLoading}
       />
+
+      <ImportGamesModal opened={openImportGames} onClose={() => setOpenImportGames(false)} />
     </>
   );
 }

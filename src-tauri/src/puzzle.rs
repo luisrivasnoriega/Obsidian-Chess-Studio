@@ -1572,6 +1572,130 @@ pub async fn validate_puzzle_database(file: PathBuf) -> Result<bool, Error> {
     Ok(true)
 }
 
+fn sanitize_puzzle_filename(name: &str) -> String {
+    // Keep it simple and predictable across platforms.
+    // Windows forbids: < > : " / \ | ? * and control chars. We also guard against path separators.
+    let trimmed = name.trim();
+    let mut out = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control();
+        if is_invalid {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+
+    let out = out.trim().trim_matches('.').to_string();
+    if out.is_empty() {
+        "puzzles".to_string()
+    } else {
+        out
+    }
+}
+
+/// Download a puzzle database (or CSV source) into AppData/puzzles.
+///
+/// - Emits download progress via `download-progress`.
+/// - For CSV/CSV.ZST sources, runs import (emits `import_puzzle_progress`) and deletes the temp file.
+/// - For DB sources, validates the downloaded file and removes it if invalid.
+#[tauri::command]
+#[specta::specta]
+pub async fn download_puzzle_database(
+    database_id: i32,
+    url: String,
+    title: String,
+    description: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), Error> {
+    use crate::fs::download_file;
+    use tauri::path::BaseDirectory;
+
+    let title_trim = title.trim().to_string();
+    if title_trim.is_empty() {
+        return Err(Error::InvalidInput("Puzzle database title cannot be empty".to_string()));
+    }
+
+    let file_name = sanitize_puzzle_filename(&title_trim);
+
+    let is_csv = url.ends_with(".csv") || url.ends_with(".csv.zst");
+    if is_csv {
+        // Download to temp file first, then import to a DB.
+        let tmp_ext = if url.ends_with(".csv.zst") { "csv.zst" } else { "csv" };
+        let tmp_path = app
+            .path()
+            .resolve(format!("puzzles/{file_name}.download.{tmp_ext}"), BaseDirectory::AppData)
+            .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle temp path: {e}")))?;
+
+        let db_path = app
+            .path()
+            .resolve(format!("puzzles/{file_name}.db3"), BaseDirectory::AppData)
+            .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle DB path: {e}")))?;
+
+        let download_id = format!("puzzle_db_{database_id}");
+        let download_res = download_file(
+            download_id,
+            url,
+            tmp_path.clone(),
+            app.clone(),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        if let Err(e) = download_res {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+
+        let import_res = import_puzzle_file(tmp_path.clone(), db_path, title_trim, description, app.clone()).await;
+        let _ = std::fs::remove_file(&tmp_path);
+        return import_res;
+    }
+
+    // DB download: download into a partial file first, then rename.
+    let db_path = app
+        .path()
+        .resolve(format!("puzzles/{file_name}.db3"), BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle DB path: {e}")))?;
+
+    let tmp_path = app
+        .path()
+        .resolve(format!("puzzles/{file_name}.db3.partial"), BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle temp DB path: {e}")))?;
+
+    let download_id = format!("puzzle_db_{database_id}");
+    let download_res = download_file(
+        download_id,
+        url,
+        tmp_path.clone(),
+        app.clone(),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    if let Err(e) = download_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    if db_path.exists() {
+        let _ = std::fs::remove_file(&db_path);
+    }
+    std::fs::rename(&tmp_path, &db_path)?;
+
+    // Validate and remove if invalid.
+    if let Err(e) = validate_sqlite_database(&db_path) {
+        let _ = std::fs::remove_file(&db_path);
+        return Err(e);
+    }
+
+    Ok(())
+}
+
 fn strip_move_number_prefix(token: &str) -> &str {
     // Examples we want to handle:
     // - "1." / "1..." (sometimes separated tokens)
