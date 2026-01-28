@@ -406,7 +406,7 @@ export default function DashboardPage() {
     const run = async () => {
       try {
         const res = (await invoke<{
-          rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }>;
+          rows?: Array<{ kind: string; gameKey: string; analysisGameId: string }>;
         }>("dashboard_get_games_history_rows", {
           req: {
             profileId: activeProfileId,
@@ -426,7 +426,7 @@ export default function DashboardPage() {
 
         const next = new Map<string, string>();
         for (const r of res.rows ?? []) {
-          next.set(`${r.kind}:${r.gameKey}`, r.analysisGameId);
+          next.set(`${String(r.kind).toLowerCase()}:${r.gameKey}`, r.analysisGameId);
         }
         if (!cancelled) profileDbIdByExternalKeyRef.current = next;
       } catch {
@@ -1178,7 +1178,7 @@ export default function DashboardPage() {
                       const resolvedDbGameId =
                         meta?.profileDbGameId ??
                         (resolvedProfileId
-                          ? profileDbIdByExternalKeyRef.current.get(`Chesscom:${game.url}`)
+                          ? profileDbIdByExternalKeyRef.current.get(`chesscom:${game.url}`)
                           : undefined);
                       if (resolvedProfileId) {
                         sessionStorage.setItem(`${tabId}_profileId`, resolvedProfileId);
@@ -1189,13 +1189,13 @@ export default function DashboardPage() {
                         // Fallback (no race): resolve internal Games.ID on demand.
                         invoke<string | null>("dashboard_resolve_profile_db_game_id", {
                           profileId: resolvedProfileId,
-                          kind: "Chesscom",
+                          kind: "chesscom",
                           gameKey: game.url,
                         })
                           .then((id) => {
                             const v = (id ?? "").trim();
                             if (!v) return;
-                            profileDbIdByExternalKeyRef.current.set(`Chesscom:${game.url}`, v);
+                            profileDbIdByExternalKeyRef.current.set(`chesscom:${game.url}`, v);
                             sessionStorage.setItem(`${tabId}_profileDbGameId`, v);
                           })
                           .catch(() => {
@@ -1240,7 +1240,7 @@ export default function DashboardPage() {
                       const resolvedProfileId = meta?.profileId ?? activeProfileId ?? null;
                       const resolvedDbGameId =
                         meta?.profileDbGameId ??
-                        (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`Lichess:${game.id}`) : undefined);
+                        (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`lichess:${game.id}`) : undefined);
                       if (resolvedProfileId) {
                         sessionStorage.setItem(`${tabId}_profileId`, resolvedProfileId);
                       }
@@ -1250,13 +1250,13 @@ export default function DashboardPage() {
                         // Fallback (no race): resolve internal Games.ID on demand.
                         invoke<string | null>("dashboard_resolve_profile_db_game_id", {
                           profileId: resolvedProfileId,
-                          kind: "Lichess",
+                          kind: "lichess",
                           gameKey: game.id,
                         })
                           .then((id) => {
                             const v = (id ?? "").trim();
                             if (!v) return;
-                            profileDbIdByExternalKeyRef.current.set(`Lichess:${game.id}`, v);
+                            profileDbIdByExternalKeyRef.current.set(`lichess:${game.id}`, v);
                             sessionStorage.setItem(`${tabId}_profileDbGameId`, v);
                           })
                           .catch(() => {

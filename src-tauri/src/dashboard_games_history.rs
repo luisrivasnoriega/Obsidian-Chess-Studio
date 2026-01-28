@@ -19,6 +19,7 @@ pub enum GamesHistoryKind {
     Local,
     Chesscom,
     Lichess,
+    Chessbase,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -287,7 +288,7 @@ fn time_control_category(site: GamesHistoryKind, time_control: &str) -> Option<S
                 return Some("correspondence".to_string());
             }
         }
-        GamesHistoryKind::Local => {}
+        GamesHistoryKind::Local | GamesHistoryKind::Chessbase => {}
     }
 
     // Parse "initial+increment" or seconds.
@@ -376,6 +377,41 @@ fn normalize_https_url(raw: &str) -> Option<String> {
         return Some(format!("https://{}", s));
     }
     None
+}
+
+fn build_minimal_pgn_from_db_game(
+    white: &str,
+    black: &str,
+    event: &str,
+    site: &str,
+    date: Option<&str>,
+    time: Option<&str>,
+    result: &str,
+    moves: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("[Event \"{}\"]\n", event));
+    out.push_str(&format!("[Site \"{}\"]\n", site));
+    out.push_str(&format!("[Date \"{}\"]\n", date.unwrap_or("????.??.??")));
+    if let Some(t) = time {
+        if !t.trim().is_empty() {
+            out.push_str(&format!("[UTCTime \"{}\"]\n", t.trim()));
+        }
+    }
+    out.push_str(&format!("[White \"{}\"]\n", white));
+    out.push_str(&format!("[Black \"{}\"]\n", black));
+    out.push_str(&format!("[Result \"{}\"]\n", result));
+    out.push('\n');
+    out.push_str(moves.trim());
+    if !out.ends_with(' ') && !out.ends_with('\n') {
+        out.push(' ');
+    } else if out.ends_with('\n') {
+        // ok
+    }
+    if !out.ends_with(result) {
+        out.push_str(result);
+    }
+    out
 }
 
 fn load_profile_player_id(conn: &Connection) -> Option<i32> {
@@ -503,6 +539,10 @@ pub async fn dashboard_get_games_history_rows(
                 kind = Some(GamesHistoryKind::Chesscom);
                 external_key = url.clone();
                 external_url = Some(url);
+            } else if site_lower.contains("chessbase.com") {
+                kind = Some(GamesHistoryKind::Chessbase);
+                external_key = g.id.to_string();
+                external_url = None;
             }
         }
 
@@ -526,6 +566,10 @@ pub async fn dashboard_get_games_history_rows(
                     external_key = format!("https://www.chess.com/game/live/{}", g.id);
                     external_url = Some(external_key.clone());
                 }
+            } else if site_lower.contains("chessbase.com") {
+                kind = Some(GamesHistoryKind::Chessbase);
+                external_key = g.id.to_string();
+                external_url = None;
             }
         }
 
@@ -557,7 +601,8 @@ pub async fn dashboard_get_games_history_rows(
             is_user_white || (!is_user_black)
         };
         let user_color = if user_is_white { "white" } else { "black" };
-        let opponent = if user_is_white { black_name } else { white_name };
+        let opponent = if user_is_white { black_name.clone() } else { white_name.clone() };
+        let is_chessbase = matches!(kind, GamesHistoryKind::Chessbase);
 
         let result_str = g.result.to_string();
         let outcome = outcome_from_result(user_color, &result_str);
@@ -579,7 +624,22 @@ pub async fn dashboard_get_games_history_rows(
             opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
             color: user_color.to_string(),
             outcome,
-            pgn: if g.moves.trim().is_empty() { None } else { Some(g.moves) },
+            pgn: if g.moves.trim().is_empty() {
+                None
+            } else if is_chessbase {
+                Some(build_minimal_pgn_from_db_game(
+                    &white_name,
+                    &black_name,
+                    &g.event,
+                    &g.site,
+                    g.date.as_deref(),
+                    g.time.as_deref(),
+                    &result_str,
+                    &g.moves,
+                ))
+            } else {
+                Some(g.moves)
+            },
             accuracy: None,
             acpl: None,
             estimated_elo: None,
@@ -848,7 +908,7 @@ pub async fn dashboard_get_analyze_all_counts(
                 analysis_game_id: g.id.to_string(),
                 game_key: external_key,
                 external_url,
-                opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
+            opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
                 color: user_color.to_string(),
                 outcome,
                 pgn: None,
@@ -1009,6 +1069,10 @@ pub fn dashboard_resolve_profile_db_game_id(
             format!("%{}%", key_lower),
             format!("%{}%", key_lower),
         ),
+        GamesHistoryKind::Chessbase => {
+            // ChessBase imports use the internal Games.ID as game_key.
+            return Ok(Some(game_key));
+        }
         GamesHistoryKind::Local => {
             // Not a profile DB game.
             return Ok(None);

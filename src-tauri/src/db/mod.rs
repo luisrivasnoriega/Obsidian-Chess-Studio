@@ -1816,6 +1816,121 @@ pub async fn add_event_games_from_pgn(
     Ok(inserted_total)
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn add_profile_games_from_pgn(
+    profile_id: String,
+    source_player_name: String,
+    pgn: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<i32> {
+    let trimmed = pgn.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidInput("PGN cannot be empty".to_string()));
+    }
+
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
+
+    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
+
+    let mut importer = Importer::new(None);
+    let mut inserted_total: i32 = 0;
+    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+    db.transaction::<_, Error, _>(|db| {
+        for game in BufferedReader::new_cursor(trimmed.as_bytes())
+            .into_iter(&mut importer)
+            .flatten()
+            .flatten()
+        {
+            if let Some(w) = game.white_name.as_ref() {
+                if !w.trim().is_empty() {
+                    *name_counts.entry(w.trim().to_string()).or_insert(0) += 1;
+                }
+            }
+            if let Some(b) = game.black_name.as_ref() {
+                if !b.trim().is_empty() {
+                    *name_counts.entry(b.trim().to_string()).or_insert(0) += 1;
+                }
+            }
+
+            let inserted = insert_to_db_with_event_override(db, &game, 0)?;
+            if inserted {
+                inserted_total += 1;
+            }
+        }
+        Ok(())
+    })?;
+
+    // Pick the profile "main player" so dashboards can reliably compute opponents.
+    // Prefer a name that matches the requested player; otherwise, use the most frequent name in the import.
+    fn normalize_name(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut prev_space = true;
+        for ch in s.chars() {
+            let c = ch.to_ascii_lowercase();
+            if c.is_ascii_alphanumeric() {
+                out.push(c);
+                prev_space = false;
+            } else if c.is_whitespace() || c == '-' || c == '_' || c == ',' || c == '.' {
+                if !prev_space {
+                    out.push(' ');
+                    prev_space = true;
+                }
+            }
+        }
+        out.trim().to_string()
+    }
+
+    let preferred_norm = normalize_name(&source_player_name);
+    let mut best_name: Option<(String, u32, u8)> = None;
+
+    for (name, count) in &name_counts {
+        let n = normalize_name(name);
+        if n.is_empty() {
+            continue;
+        }
+        let score = if !preferred_norm.is_empty() && n == preferred_norm {
+            3u8
+        } else if !preferred_norm.is_empty() && (n.contains(&preferred_norm) || preferred_norm.contains(&n)) {
+            2u8
+        } else {
+            1u8
+        };
+        let candidate = (name.clone(), *count, score);
+        best_name = match best_name {
+            None => Some(candidate),
+            Some(prev) => {
+                if candidate.2 > prev.2 || (candidate.2 == prev.2 && candidate.1 > prev.1) {
+                    Some(candidate)
+                } else {
+                    Some(prev)
+                }
+            }
+        };
+    }
+
+    let main_player_name = best_name
+        .map(|v| v.0)
+        .or_else(|| {
+            let s = source_player_name.trim();
+            if s.is_empty() { None } else { Some(s.to_string()) }
+        });
+
+    if let Some(main_player_name) = main_player_name {
+        let pid = create_player(db, &main_player_name)?.id;
+        upsert_info_value(db, "ProfilePlayerId", &pid.to_string())?;
+        upsert_info_value(db, "ProfilePlayerName", &main_player_name)?;
+    }
+
+    Ok(inserted_total)
+}
+
 #[derive(Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateEventGamePayload {

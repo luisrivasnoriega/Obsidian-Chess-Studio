@@ -8,6 +8,7 @@ import {
   Loader,
   Modal,
   Paper,
+  Progress,
   ScrollArea,
   Stack,
   Tabs,
@@ -16,9 +17,9 @@ import {
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { IconAlertCircle, IconDatabase, IconTrophy, IconX } from "@tabler/icons-react";
-import { appDataDir, join, resolve } from "@tauri-apps/api/path";
-import { exists, readDir, remove, rename } from "@tauri-apps/plugin-fs";
-import { arch } from "@tauri-apps/plugin-os";
+import { invoke } from "@tauri-apps/api/core";
+import { join } from "@tauri-apps/api/path";
+import { exists } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -82,6 +83,7 @@ function AddEngine({ opened, setOpened }: { opened: boolean; setOpened: (opened:
                   // @ts-expect-error
                   engine={engine}
                   engineId={i}
+                  closeModal={() => setOpened(false)}
                   key={engine.name}
                 />
               ))}
@@ -171,7 +173,15 @@ function CloudCard({ engine }: { engine: RemoteEngine }) {
   );
 }
 
-function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: number }) {
+function EngineCard({
+  engine,
+  engineId,
+  closeModal,
+}: {
+  engine: LocalEngine;
+  engineId: number;
+  closeModal: () => void;
+}) {
   const { t } = useTranslation();
 
   const [inProgress, setInProgress] = useState<boolean>(false);
@@ -180,67 +190,74 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
   const isInstalled = engines.some((e) => e.name === engine.name);
   const { os } = usePlatform();
 
-  const resolveAndroidEnginePath = useCallback(
-    async (engineDir: string): Promise<string> => {
-      const cpuArch = await arch();
-      if (cpuArch !== "aarch64") {
-        throw new Error(t("features.engines.add.androidUnsupportedArch", { arch: cpuArch }));
-      }
+  const startDownloadToast = useCallback(
+    (downloadId: string, title: string) => {
+      const notificationId = `engine-download-${downloadId}`;
+      const baseTitle = t("features.engines.download.inProgressTitle");
 
-      const normalizePathForPrefixCheck = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/g, "");
-      const isPathInside = (parent: string, child: string) => {
-        const parentNorm = normalizePathForPrefixCheck(parent);
-        const childNorm = normalizePathForPrefixCheck(child);
-        return childNorm === parentNorm || childNorm.startsWith(`${parentNorm}/`);
+      notifications.show({
+        id: notificationId,
+        title: baseTitle,
+        message: (
+          <Stack gap={6}>
+            <Text size="sm">{t("features.engines.download.inProgressMessage", { name: title })}</Text>
+            <Progress value={0} animated striped />
+          </Stack>
+        ),
+        loading: true,
+        autoClose: false,
+        withCloseButton: false,
+      });
+
+      let unlistenFn: (() => void) | null = null;
+      let stopped = false;
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        unlistenFn?.();
       };
 
-      const removeForce = async (p: string) => {
-        if (!(await exists(p))) return;
-        await remove(p, { recursive: true });
-      };
+      const unlistenPromise = events.downloadProgress.listen((e) => {
+        if (e.payload.id !== downloadId) return;
 
-      async function findCandidate(dir: string): Promise<string | null> {
-        const entries = await readDir(dir);
-        for (const entry of entries) {
-          if (entry.isFile) {
-            const name = entry.name ?? "";
-            if (name === "stockfish") return await join(dir, name);
-            if (name.startsWith("stockfish-android-")) return await join(dir, name);
-          }
+        const rawProgress = e.payload.progress;
+        const progressValue = rawProgress >= 0 ? Math.max(0, Math.min(100, rawProgress)) : 0;
+        const finished = e.payload.finished;
+
+        notifications.update({
+          id: notificationId,
+          title: finished ? t("features.engines.download.completedTitle") : baseTitle,
+          message: (
+            <Stack gap={6}>
+              <Text size="sm">
+                {finished
+                  ? t("features.engines.download.completedMessage", { name: title })
+                  : rawProgress >= 0
+                    ? t("features.engines.download.progressMessage", {
+                        name: title,
+                        progress: Math.round(progressValue),
+                      })
+                    : t("features.engines.download.progressUnknown", { name: title })}
+              </Text>
+              <Progress value={progressValue} animated striped />
+            </Stack>
+          ),
+          loading: !finished,
+          autoClose: finished ? 4000 : false,
+          withCloseButton: finished,
+          color: finished ? "green" : undefined,
+        });
+
+        if (finished) {
+          stop();
         }
-        for (const entry of entries) {
-          if (!entry.isDirectory) continue;
-          const child = await join(dir, entry.name ?? "");
-          const found = await findCandidate(child);
-          if (found) return found;
-        }
-        return null;
-      }
+      });
 
-      const extracted = await findCandidate(engineDir);
-      if (!extracted) {
-        throw new Error(t("features.engines.add.androidBinaryNotFound"));
-      }
+      unlistenPromise.then((f) => {
+        unlistenFn = f;
+      });
 
-      const finalPath = await join(engineDir, "stockfish");
-      if (extracted !== finalPath) {
-        if (await exists(finalPath)) {
-          if (isPathInside(finalPath, extracted)) {
-            const tempPath = await join(engineDir, "stockfish.tmp");
-            await removeForce(tempPath);
-            await rename(extracted, tempPath);
-            await removeForce(finalPath);
-            await rename(tempPath, finalPath);
-          } else {
-            await removeForce(finalPath);
-            await rename(extracted, finalPath);
-          }
-        } else {
-          await rename(extracted, finalPath);
-        }
-      }
-
-      return finalPath;
+      return { notificationId, stop };
     },
     [t],
   );
@@ -279,36 +296,42 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
             unwrap(await commands.setFileAsExecutable(enginePath));
           }
         } else if (engine.installMethod === "download") {
-          let engineBaseDir = await appDataDir();
-          if (isAndroid) {
-            const normalized = engineBaseDir.replace(/\\/g, "/").replace(/\/+$/g, "");
-            if (!normalized.endsWith("/files")) {
-              engineBaseDir = await join(engineBaseDir, "files");
-            }
-          }
           const url = engine.downloadLink;
           if (!url) throw new Error("Download link not found");
 
-          let path = await resolve(engineBaseDir, "engines", `${url.slice(url.lastIndexOf("/") + 1)}`);
-          if (url.endsWith(".zip") || url.endsWith(".tar") || url.endsWith(".tar.gz")) {
-            path = await resolve(engineBaseDir, "engines");
+          const downloadId = `engine_${id}`;
+          const title = `${engine.name} ${engine.version}`.trim();
+          const { notificationId, stop } = startDownloadToast(downloadId, title);
+          closeModal();
+          try {
+            enginePath = await invoke<string>("download_engine", {
+              engineId: id,
+              url,
+              engineRelPath: engine.path,
+            });
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            notifications.update({
+              id: notificationId,
+              title: t("features.engines.download.failedTitle"),
+              message,
+              color: "red",
+              loading: false,
+              autoClose: 10000,
+              withCloseButton: true,
+            });
+
+            const err = new Error(message);
+            (err as unknown as { ocsToastHandled?: boolean }).ocsToastHandled = true;
+            throw err;
+          } finally {
+            stop();
           }
-          unwrap(await commands.downloadFile(`engine_${id}`, url, path, null, null, null));
-          let engineBaseDirPath = engineBaseDir;
-          if (engineBaseDirPath.endsWith("/") || engineBaseDirPath.endsWith("\\")) {
-            engineBaseDirPath = engineBaseDirPath.slice(0, -1);
-          }
-          const enginesDir = await join(engineBaseDirPath, "engines");
-          if (isAndroid) {
-            enginePath = await resolveAndroidEnginePath(enginesDir);
-          } else {
-            enginePath = await join(engineBaseDirPath, "engines", ...engine.path.split("/"));
-          }
+
           const meta = unwrap(await commands.getFileMetadata(enginePath));
           if (meta.is_dir) {
             throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
           }
-          unwrap(await commands.setFileAsExecutable(enginePath));
         } else if (engine.installMethod === "brew") {
           const brewPackage = engine.brewPackage;
           if (!brewPackage) throw new Error("Brew package name not found");
@@ -394,6 +417,14 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
           },
         ]);
       } catch (error) {
+        const handled =
+          error != null &&
+          typeof error === "object" &&
+          "ocsToastHandled" in (error as Record<string, unknown>) &&
+          (error as Record<string, unknown>).ocsToastHandled === true;
+        if (handled) {
+          return;
+        }
         notifications.show({
           title: t("common.error"),
           message: error instanceof Error ? error.message : String(error),
@@ -404,7 +435,7 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
         setInProgress(false);
       }
     },
-    [engine, setEngines, t, os, resolveAndroidEnginePath],
+    [engine, setEngines, t, os, closeModal, startDownloadToast],
   );
 
   const getInstallText = () => {

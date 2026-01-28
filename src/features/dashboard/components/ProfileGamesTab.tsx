@@ -48,7 +48,7 @@ type OnlineGameStats = {
   estimatedElo?: number;
 };
 
-type GamesHistoryKind = "Local" | "Chesscom" | "Lichess";
+type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase";
 
 type GamesHistoryRow = {
   kind: GamesHistoryKind;
@@ -392,13 +392,13 @@ export function ProfileGamesTab({
     const inferredWhite = row.color === "white" ? profileDisplayName : row.opponent;
     const inferredBlack = row.color === "white" ? row.opponent : profileDisplayName;
 
-    if (row.kind === "Local") {
+    if (row.kind === "local") {
       const g = localGames.find((x) => x.id === row.gameKey);
       if (g) onAnalyzeLocalGame(g);
       return;
     }
 
-    if (row.kind === "Chesscom") {
+    if (row.kind === "chesscom") {
       const existing = chessComGames.find((x) => x.url === row.gameKey);
       if (existing?.pgn) {
         if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
@@ -434,6 +434,42 @@ export function ProfileGamesTab({
 
       if (profileId) onAnalyzeChessComGame(stub, { profileId, profileDbGameId: row.analysisGameId });
       else onAnalyzeChessComGame(stub);
+      return;
+    }
+
+    if (row.kind === "chessbase") {
+      const fetched = pgn?.trim() ? pgn : "";
+      if (!fetched) return;
+
+      const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
+      const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
+      const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+      const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+      const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
+      const winner = _winnerFromResult(_getResultFromPgn(fetched));
+      const fen = _getTagFromPgn(fetched, "FEN") ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+      const stub: DashboardLichessGame = {
+        id: `chessbase:${row.analysisGameId}`,
+        players: {
+          white: { user: { name: stripAccountKey(white) } },
+          black: { user: { name: stripAccountKey(black) } },
+        },
+        speed: row.timeControlCategory
+          ? getTimeControlLabel(t, row.timeControlCategory)
+          : t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+        timeControl,
+        createdAt: row.timestampMs,
+        winner,
+        status: "finished",
+        pgn: fetched,
+        lastFen: fen,
+        eventId: row.eventId ?? 0,
+        eventName: row.eventName ?? null,
+      };
+
+      if (profileId) onAnalyzeLichessGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+      else onAnalyzeLichessGame(stub);
       return;
     }
 
@@ -709,7 +745,7 @@ export function ProfileGamesTab({
                       : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
 
                 const favoriteSource =
-                  row.kind === "Local" ? "local" : row.kind === "Chesscom" ? "chesscom" : "lichess";
+                  row.kind === "local" ? "local" : row.kind === "chesscom" ? "chesscom" : "lichess";
                 const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
 
                 return (
@@ -717,9 +753,23 @@ export function ProfileGamesTab({
                     <Table.Td>
                       <Badge
                         variant="light"
-                        color={row.kind === "Lichess" ? "red" : row.kind === "Chesscom" ? "green" : "gray"}
+                        color={
+                          row.kind === "lichess"
+                            ? "red"
+                            : row.kind === "chesscom"
+                              ? "green"
+                              : row.kind === "chessbase"
+                                ? "blue"
+                                : "gray"
+                        }
                       >
-                        {row.kind === "Local" ? "Local" : row.kind === "Chesscom" ? "Chess.com" : "Lichess"}
+                        {row.kind === "local"
+                          ? "Local"
+                          : row.kind === "chesscom"
+                            ? "Chess.com"
+                            : row.kind === "chessbase"
+                              ? "ChessBase"
+                              : "Lichess"}
                       </Badge>
                     </Table.Td>
                     <Table.Td style={{ width: 180 }}>
@@ -780,17 +830,17 @@ export function ProfileGamesTab({
                       <ActionIcon
                         variant="subtle"
                         onClick={async () => {
-                          if (row.kind === "Local" && onToggleFavoriteLocal)
+                          if (row.kind === "local" && onToggleFavoriteLocal)
                             return await onToggleFavoriteLocal(row.gameKey);
-                          if (row.kind === "Chesscom" && onToggleFavoriteChessCom)
+                          if (row.kind === "chesscom" && onToggleFavoriteChessCom)
                             return await onToggleFavoriteChessCom(row.gameKey);
-                          if (row.kind === "Lichess" && onToggleFavoriteLichess)
+                          if (row.kind === "lichess" && onToggleFavoriteLichess)
                             return await onToggleFavoriteLichess(row.gameKey);
                         }}
                         disabled={
-                          (row.kind === "Local" && !onToggleFavoriteLocal) ||
-                          (row.kind === "Chesscom" && !onToggleFavoriteChessCom) ||
-                          (row.kind === "Lichess" && !onToggleFavoriteLichess)
+                          (row.kind === "local" && !onToggleFavoriteLocal) ||
+                          (row.kind === "chesscom" && !onToggleFavoriteChessCom) ||
+                          (row.kind === "lichess" && !onToggleFavoriteLichess)
                         }
                       >
                         {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
@@ -798,7 +848,7 @@ export function ProfileGamesTab({
                     </Table.Td>
                     <Table.Td style={{ textAlign: "left" }}>
                       <Group gap="xs" wrap="nowrap" justify="flex-start">
-                        {row.kind === "Local" && onDeleteLocalGame && (
+                        {row.kind === "local" && onDeleteLocalGame && (
                           <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
                             <IconTrash size={16} />
                           </ActionIcon>
@@ -828,7 +878,7 @@ export function ProfileGamesTab({
                             {t("features.dashboard.analyze") || "Analyze"}
                           </Button>
                         )}
-                        {row.kind !== "Local" && (
+                        {row.kind !== "local" && (
                           <Tooltip label={t("features.dashboard.openGame", "Open game")}>
                             <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
                               <IconExternalLink size={16} />

@@ -12,6 +12,7 @@ import {
   IconPuzzle,
   IconSettings,
   IconUserCircle,
+  IconWorld,
 } from "@tabler/icons-react";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
@@ -109,21 +110,22 @@ function MayaActionLink({
   );
 }
 
-// Sección principal (uso diario)
+// Primary section (daily use)
 const primaryLinks = [
   { icon: IconLayoutDashboard, label: "dashboard", url: "/" },
   { icon: IconUserCircle, label: "profiles", url: "/profiles" },
   { icon: IconCalendarEvent, label: "events", url: "/events" },
 ];
 
-// Sección secundaria (uso regular)
+// Secondary section (regular use)
 const secondaryLinksData = [
   { icon: IconDatabase, label: "databases", url: "/databases" },
   { icon: IconCpu, label: "engines", url: "/engines" },
   { icon: IconGitBranch, label: "variants", url: "/variants" },
+  { icon: IconWorld, label: "chessbase", url: "/chessbase" },
 ];
 
-// Sección terciaria (configuración/avanzado)
+// Tertiary section (advanced)
 const tertiaryLinksData = [{ icon: LichessSideIcon, label: "tournaments", url: "/tournaments" }];
 
 const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: string }> = [
@@ -136,7 +138,7 @@ const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: strin
   { icon: LichessSideIcon, labelKey: "features.sidebar.tournaments", url: "/tournaments" },
 ];
 
-// Mantener linksdata para compatibilidad
+// Keep linksdata for compatibility
 export const linksdata = [...primaryLinks, ...secondaryLinksData, ...tertiaryLinksData];
 
 export function SideBar() {
@@ -213,7 +215,7 @@ export function SideBar() {
     }
   };
 
-  // Sección principal: Dashboard y Profiles
+  // Primary section: Dashboard and Profiles
   const primaryNavLinks = primaryLinks.map((link) => {
     if (link.url === "/profiles") {
       return (
@@ -302,7 +304,7 @@ export function SideBar() {
     />,
   ];
 
-  // Sección secundaria: Databases, Engines, Files
+  // Secondary section: Databases, Engines, Variants, ChessBase
   const secondaryNavLinks = secondaryLinksData.map((link) => (
     <NavbarLink
       {...link}
@@ -312,7 +314,7 @@ export function SideBar() {
     />
   ));
 
-  // Sección terciaria: Tournaments
+  // Tertiary section: Tournaments
   const tertiaryNavLinks = tertiaryLinksData.map((link) => (
     <NavbarLink
       {...link}

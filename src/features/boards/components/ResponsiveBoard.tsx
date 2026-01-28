@@ -138,9 +138,7 @@ function ResponsiveBoard({
   // Loading state
   if (isInitializing) {
     return (
-      <Box
-        style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}
-      >
+      <Box style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
         <ResponsiveLoadingWrapper isLoading={true}>
           <ResponsiveSkeleton type="board" />
         </ResponsiveLoadingWrapper>
@@ -151,9 +149,7 @@ function ResponsiveBoard({
   // Error state
   if (initializationError) {
     return (
-      <Box
-        style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}
-      >
+      <Box style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
         <Stack align="center" gap="md">
           <div>{t("errors.failedToInitializeChessBoard")}</div>
           <button type="button" onClick={handleRetry}>
@@ -167,9 +163,7 @@ function ResponsiveBoard({
   // Use mobile layout patterns when layout type is mobile
   if (boardDimensions.isMobileLayout) {
     return (
-      <Box
-        style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}
-      >
+      <Box style={{ width: "100%", minWidth: 0, overflowX: "hidden", display: "flex", flexDirection: "column" }}>
         <ResponsiveLoadingWrapper isLoading={false}>
           <MobileBoardLayout
             dirty={dirty}

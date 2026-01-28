@@ -148,6 +148,143 @@ pub async fn download_file(
     Ok(())
 }
 
+fn sanitize_engine_filename(name: &str) -> String {
+    // Keep it simple and predictable across platforms.
+    // Windows forbids: < > : " / \ | ? * and control chars. We also guard against path separators.
+    let trimmed = name.trim();
+    let mut out = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            || ch.is_control();
+        if is_invalid {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+
+    let out = out.trim().trim_matches('.').to_string();
+    if out.is_empty() {
+        "engine".to_string()
+    } else {
+        out
+    }
+}
+
+/// Download and install an engine into AppData/engines.
+///
+/// - Emits progress via `download-progress` under id `engine_{engine_id}`.
+/// - For archives (.zip/.tar/.tar.gz), extracts into the engines dir.
+/// - For direct binaries, downloads to a `.partial` file and renames on success.
+/// - Returns the absolute path to the installed engine binary.
+#[tauri::command]
+#[specta::specta]
+pub async fn download_engine(
+    engine_id: i32,
+    url: String,
+    engine_rel_path: String,
+    app: tauri::AppHandle,
+) -> Result<String, Error> {
+    use tauri::path::BaseDirectory;
+
+    let engines_dir = app
+        .path()
+        .resolve("engines", BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve engines dir: {e}")))?;
+
+    // Ensure directory exists.
+    if let Some(parent) = engines_dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::create_dir_all(&engines_dir)?;
+
+    let download_id = format!("engine_{}", engine_id);
+
+    if is_archive_url(&url) {
+        // Extract into engines_dir.
+        download_file(
+            download_id,
+            url,
+            engines_dir.clone(),
+            app.clone(),
+            None,
+            None,
+            None,
+        )
+        .await?;
+    } else {
+        // Download file into engines_dir/<filename>.partial then rename.
+        let file_name = url
+            .split('/')
+            .last()
+            .map(sanitize_engine_filename)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "engine.bin".to_string());
+
+        let final_path = engines_dir.join(&file_name);
+        let tmp_path = engines_dir.join(format!("{file_name}.partial"));
+
+        // Best-effort cleanup from previous interrupted attempts.
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let download_res = download_file(
+            download_id,
+            url,
+            tmp_path.clone(),
+            app.clone(),
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        if let Err(e) = download_res {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+
+        if final_path.exists() {
+            let _ = std::fs::remove_file(&final_path);
+        }
+        std::fs::rename(&tmp_path, &final_path)?;
+    }
+
+    // Resolve engine path from engines_dir + engine_rel_path (which uses "/" separators).
+    let mut engine_path = engines_dir.clone();
+    let rel = engine_rel_path.trim().trim_matches('/');
+    if !rel.is_empty() {
+        for part in rel.split('/') {
+            if part.is_empty() {
+                continue;
+            }
+            engine_path = engine_path.join(part);
+        }
+    } else {
+        return Err(Error::InvalidInput(
+            "engine_rel_path cannot be empty".to_string(),
+        ));
+    }
+
+    if !engine_path.exists() {
+        return Err(Error::PackageManager(format!(
+            "Engine binary not found after download: {}",
+            engine_path.display()
+        )));
+    }
+
+    if engine_path.is_dir() {
+        return Err(Error::PackageManager(format!(
+            "Engine path points to a directory: {}",
+            engine_path.display()
+        )));
+    }
+
+    // Set executable on Unix (no-op on Windows).
+    set_file_as_executable(engine_path.to_string_lossy().to_string()).await?;
+
+    Ok(engine_path.to_string_lossy().to_string())
+}
+
 async fn download_to_file(
     res: reqwest::Response,
     content_length: Option<u64>,

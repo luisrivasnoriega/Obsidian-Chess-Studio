@@ -11,6 +11,8 @@ mod db;
 mod error;
 mod fide;
 mod fs;
+mod chessbase;
+mod chessbase_service;
 mod lexer;
 mod oauth;
 mod online;
@@ -63,13 +65,14 @@ use crate::db::{
     upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
     get_account_import_stats, sync_account_games_to_profile_db,
     upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
+    add_profile_games_from_pgn,
     create_event_game,
     get_db_source, set_db_source,
     merge_profile_event_from_db_player,
     download_game_database,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
-use crate::fs::{set_file_as_executable, DownloadProgress};
+use crate::fs::{download_engine, set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
 use crate::online::{create_lichess_tournament, get_chesscom_account, get_lichess_account};
@@ -86,6 +89,14 @@ use crate::puzzle_variants::generate_puzzle_variants_from_tree;
 use crate::variants_builder::build_variants_tree;
 use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
+use crate::chessbase::{
+    chessbase_clear_credentials, chessbase_download_games_quick_search, chessbase_get_credentials,
+    chessbase_login_background, chessbase_quick_search_count, chessbase_set_credentials,
+};
+use crate::chessbase_service::{
+    chessbase_clear_prepared_download, chessbase_get_prepared_download, chessbase_import_prepared_download,
+    chessbase_prepare_download,
+};
 use crate::{
     db::{
         delete_duplicated_games, edit_db_info, get_db_info, get_game, get_games, get_players,
@@ -97,7 +108,7 @@ use crate::{
         search_opening_name,
     },
 };
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 pub type GameData = (
     i32,
@@ -129,6 +140,8 @@ pub struct AppState {
     fide_players: RwLock<Vec<FidePlayer>>,
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
     auth: AuthState,
+    chessbase_ws: Mutex<chessbase::ChessbaseWsState>,
+    chessbase_cache: Mutex<Option<chessbase_service::ChessbaseCachedDownload>>,
 }
 
 // ============================================================================
@@ -189,6 +202,7 @@ pub async fn run() {
             write_game,
             download_fide_db,
             download_file,
+            download_engine,
             get_tournaments,
             get_db_info,
             get_games,
@@ -234,6 +248,16 @@ pub async fn run() {
             dashboard_resolve_profile_db_game_id,
             planner_build_variant_book,
             planner_build_variant_pgn,
+            chessbase_get_credentials,
+            chessbase_set_credentials,
+            chessbase_clear_credentials,
+            chessbase_login_background,
+            chessbase_download_games_quick_search,
+            chessbase_quick_search_count,
+            chessbase_get_prepared_download,
+            chessbase_clear_prepared_download,
+            chessbase_prepare_download,
+            chessbase_import_prepared_download,
             open_external_link,
             compute_pawn_structures,
             calculate_player_game_stats,
@@ -259,6 +283,7 @@ pub async fn run() {
             list_managed_events,
             delete_managed_event,
             add_event_games_from_pgn,
+            add_profile_games_from_pgn,
             create_event_game,
         ))
         .events(tauri_specta::collect_events!(

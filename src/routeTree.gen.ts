@@ -17,6 +17,7 @@ import { Route as PlayRouteImport } from './routes/play'
 import { Route as FilesRouteImport } from './routes/files'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as EnginesRouteImport } from './routes/engines'
+import { Route as ChessbaseRouteImport } from './routes/chessbase'
 import { Route as AnalysisRouteImport } from './routes/analysis'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
@@ -66,6 +67,11 @@ const EnginesRoute = EnginesRouteImport.update({
   path: '/engines',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChessbaseRoute = ChessbaseRouteImport.update({
+  id: '/chessbase',
+  path: '/chessbase',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AnalysisRoute = AnalysisRouteImport.update({
   id: '/analysis',
   path: '/analysis',
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteRouteWithChildren
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
+  '/chessbase': typeof ChessbaseRoute
   '/engines': typeof EnginesRoute
   '/events': typeof EventsRoute
   '/files': typeof FilesRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
+  '/chessbase': typeof ChessbaseRoute
   '/engines': typeof EnginesRoute
   '/events': typeof EventsRoute
   '/files': typeof FilesRoute
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteRouteWithChildren
   '/accounts': typeof AccountsRoute
   '/analysis': typeof AnalysisRoute
+  '/chessbase': typeof ChessbaseRoute
   '/engines': typeof EnginesRoute
   '/events': typeof EventsRoute
   '/files': typeof FilesRoute
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/accounts'
     | '/analysis'
+    | '/chessbase'
     | '/engines'
     | '/events'
     | '/files'
@@ -186,6 +196,7 @@ export interface FileRouteTypes {
     | '/'
     | '/accounts'
     | '/analysis'
+    | '/chessbase'
     | '/engines'
     | '/events'
     | '/files'
@@ -204,6 +215,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/accounts'
     | '/analysis'
+    | '/chessbase'
     | '/engines'
     | '/events'
     | '/files'
@@ -223,6 +235,7 @@ export interface RootRouteChildren {
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   AccountsRoute: typeof AccountsRoute
   AnalysisRoute: typeof AnalysisRoute
+  ChessbaseRoute: typeof ChessbaseRoute
   EnginesRoute: typeof EnginesRoute
   EventsRoute: typeof EventsRoute
   FilesRoute: typeof FilesRoute
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       path: '/engines'
       fullPath: '/engines'
       preLoaderRoute: typeof EnginesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chessbase': {
+      id: '/chessbase'
+      path: '/chessbase'
+      fullPath: '/chessbase'
+      preLoaderRoute: typeof ChessbaseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/analysis': {
@@ -371,6 +391,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   AccountsRoute: AccountsRoute,
   AnalysisRoute: AnalysisRoute,
+  ChessbaseRoute: ChessbaseRoute,
   EnginesRoute: EnginesRoute,
   EventsRoute: EventsRoute,
   FilesRoute: FilesRoute,

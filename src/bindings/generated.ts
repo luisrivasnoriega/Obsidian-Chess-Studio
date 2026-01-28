@@ -446,6 +446,22 @@ async downloadFile(id: string, url: string, path: string, token: string | null, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Download and install an engine into AppData/engines.
+ * 
+ * - Emits progress via `download-progress` under id `engine_{engine_id}`.
+ * - For archives (.zip/.tar/.tar.gz), extracts into the engines dir.
+ * - For direct binaries, downloads to a `.partial` file and renames on success.
+ * - Returns the absolute path to the installed engine binary.
+ */
+async downloadEngine(engineId: number, url: string, engineRelPath: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_engine", { engineId, url, engineRelPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTournaments(file: string, query: TournamentQuery) : Promise<Result<QueryResponse<Event[]>, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_tournaments", { file, query }) };
@@ -915,6 +931,86 @@ async plannerBuildVariantPgn(req: PlannerBuildPgnRequest) : Promise<Result<Plann
     else return { status: "error", error: e  as any };
 }
 },
+async chessbaseGetCredentials() : Promise<Result<ChessbaseCredentialsSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_get_credentials") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseSetCredentials(username: string, password: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_set_credentials", { username, password }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseClearCredentials() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_clear_credentials") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseLoginBackground() : Promise<Result<ChessbaseSessionStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_login_background") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseDownloadGamesQuickSearch(query: string, maxGames: number) : Promise<Result<ChessbaseDownloadResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_download_games_quick_search", { query, maxGames }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseQuickSearchCount(query: string) : Promise<Result<ChessbaseQuickSearchCount, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_quick_search_count", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseGetPreparedDownload() : Promise<Result<ChessbasePreparedDownload | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_get_prepared_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseClearPreparedDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_clear_prepared_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbasePrepareDownload(query: string, maxGames: number) : Promise<Result<ChessbasePreparedDownload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_prepare_download", { query, maxGames }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseImportPreparedDownload(profileId: string) : Promise<Result<ChessbaseImportPreparedResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_import_prepared_download", { profileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async openExternalLink(url: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_external_link", { url }) };
@@ -1105,6 +1201,14 @@ async addEventGamesFromPgn(file: string, eventId: number, pgn: string) : Promise
     else return { status: "error", error: e  as any };
 }
 },
+async addProfileGamesFromPgn(profileId: string, sourcePlayerName: string, pgn: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("add_profile_games_from_pgn", { profileId, sourcePlayerName, pgn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async createEventGame(file: string, eventId: number, payload: CreateEventGamePayload) : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("create_event_game", { file, eventId, payload }) };
@@ -1167,6 +1271,12 @@ export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; ki
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
 export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
+export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
+export type ChessbaseDownloadResult = { pgn: string; games: number }
+export type ChessbaseImportPreparedResult = { downloadedGames: number; importedGames: number }
+export type ChessbasePreparedDownload = { query: string; maxGames: number; downloadedGames: number }
+export type ChessbaseQuickSearchCount = { returned: number; total: number }
+export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
@@ -1217,7 +1327,7 @@ time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
-export type GamesHistoryKind = "local" | "chesscom" | "lichess"
+export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
 export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
 export type GamesHistoryRow = { kind: GamesHistoryKind; 

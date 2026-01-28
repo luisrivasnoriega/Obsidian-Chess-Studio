@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getPGNFromReportView } from "@/utils/chess";
 import { createTreeStore } from "@/state/store/tree";
+import { getPGNFromReportView } from "@/utils/chess";
 
 describe("tree store applyLinesAtPath", () => {
   it("applies all lines in a single update without moving the current position", () => {
@@ -37,4 +37,3 @@ describe("tree store applyLinesAtPath", () => {
     expect(pgn).toContain("(3. c3");
   });
 });
-

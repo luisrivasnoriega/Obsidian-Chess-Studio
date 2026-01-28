@@ -284,14 +284,14 @@ function ReportPanel() {
                   preferredGameId =
                     (await invoke<string | null>("dashboard_resolve_profile_db_game_id", {
                       profileId: preferredProfileId,
-                      kind: "Chesscom",
+                      kind: "chesscom",
                       gameKey: chessComGameUrl,
                     })) ?? null;
                 } else if (lichessGameId) {
                   preferredGameId =
                     (await invoke<string | null>("dashboard_resolve_profile_db_game_id", {
                       profileId: preferredProfileId,
-                      kind: "Lichess",
+                      kind: "lichess",
                       gameKey: lichessGameId,
                     })) ?? null;
                 }
