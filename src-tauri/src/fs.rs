@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 use log::{info, warn};
 use reqwest::{Client, Url};
@@ -187,6 +189,10 @@ pub async fn download_engine(
 ) -> Result<String, Error> {
     use tauri::path::BaseDirectory;
 
+    // Keep a copy for post-install tasks; `url` is moved into the download call below.
+    let url_for_post_install = url.clone();
+    let engine_rel_path_for_post_install = engine_rel_path.clone();
+
     let engines_dir = app
         .path()
         .resolve("engines", BaseDirectory::AppData)
@@ -201,17 +207,22 @@ pub async fn download_engine(
     let download_id = format!("engine_{}", engine_id);
 
     if is_archive_url(&url) {
-        // Extract into engines_dir.
-        download_file(
-            download_id,
-            url,
-            engines_dir.clone(),
-            app.clone(),
-            None,
-            None,
-            None,
-        )
-        .await?;
+        // Most engine archives include a root folder, and `engine_rel_path` points inside it.
+        // Lc0's Windows archives currently extract files directly at the archive root (lc0.exe + DLLs),
+        // so we extract them into a dedicated `engines/lc0/` folder to keep the engines dir tidy.
+        let extract_dir = if looks_like_lc0(&engine_rel_path, &url) {
+            let lc0_dir = engines_dir.join("lc0");
+            std::fs::create_dir_all(&lc0_dir)?;
+            #[cfg(target_os = "windows")]
+            {
+                let _ = migrate_lc0_root_files_to_subdir(&engines_dir, &lc0_dir);
+            }
+            lc0_dir
+        } else {
+            engines_dir.clone()
+        };
+
+        download_file(download_id, url, extract_dir, app.clone(), None, None, None).await?;
     } else {
         // Download file into engines_dir/<filename>.partial then rename.
         let file_name = url
@@ -282,7 +293,199 @@ pub async fn download_engine(
     // Set executable on Unix (no-op on Windows).
     set_file_as_executable(engine_path.to_string_lossy().to_string()).await?;
 
+    // After Lc0 is installed on Windows, automatically download recommended networks.
+    // This runs in the background and does not block returning the engine path.
+    maybe_spawn_lc0_network_downloads(app.clone(), &url_for_post_install, &engine_rel_path_for_post_install);
+
     Ok(engine_path.to_string_lossy().to_string())
+}
+
+fn maybe_spawn_lc0_network_downloads(app: tauri::AppHandle, url: &str, engine_rel_path: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        if !looks_like_lc0(engine_rel_path, url) {
+            return;
+        }
+
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = download_lc0_networks(app).await {
+                warn!("Failed to download Lc0 networks: {}", e);
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, url, engine_rel_path);
+    }
+}
+
+fn looks_like_lc0(engine_rel_path: &str, url: &str) -> bool {
+    let rel = engine_rel_path.to_ascii_lowercase();
+    let u = url.to_ascii_lowercase();
+
+    // Typical desktop installs: .../lc0.exe (from zip) and URLs containing lc0-v...
+    rel.ends_with("lc0.exe") || rel.contains("/lc0") || u.contains("/lc0-") || u.contains("leelachesszero")
+}
+
+#[cfg(target_os = "windows")]
+fn migrate_lc0_root_files_to_subdir(engines_dir: &Path, lc0_dir: &Path) -> Result<(), Error> {
+    // Best-effort cleanup for older installs where Lc0 extracted into the engines root.
+    // Only move files that are strongly associated with Lc0 bundles.
+    let entries = std::fs::read_dir(engines_dir)?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(name_os) = path.file_name() else { continue };
+        let name = name_os.to_string_lossy();
+        let name_lc = name.to_ascii_lowercase();
+
+        if name_lc == "engines.json" {
+            continue;
+        }
+
+        let is_lc0_related =
+            name_lc == "lc0.exe"
+                || name_lc == "lc0-training-client.exe"
+                || name_lc == "copying"
+                || name_lc == "readme.txt"
+                || name_lc == "cuda.txt"
+                || name_lc.ends_with(".pb.gz")
+                || name_lc.starts_with("cublas")
+                || name_lc.starts_with("cudart")
+                || name_lc.starts_with("cudnn")
+                || name_lc.starts_with("onnxruntime")
+                || name_lc.starts_with("mimalloc-");
+
+        if !is_lc0_related {
+            continue;
+        }
+
+        let dest = lc0_dir.join(name_os);
+        if dest.exists() {
+            continue;
+        }
+
+        let _ = std::fs::rename(&path, &dest);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+async fn download_lc0_networks(app: tauri::AppHandle) -> Result<(), Error> {
+    use tauri::path::BaseDirectory;
+
+    let networks_dir = app
+        .path()
+        .resolve("engines/lc0/networks", BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve Lc0 networks dir: {e}")))?;
+
+    std::fs::create_dir_all(&networks_dir)?;
+
+    let gpu_large = has_large_gpu_vram().unwrap_or(false);
+
+    // Download order: one "big" net (if applicable) then Maia nets.
+    let mut urls: Vec<&str> = Vec::new();
+    if gpu_large {
+        urls.push("https://storage.lczero.org/files/networks-contrib/BT4-1024x15x32h-swa-6147500-policytune-332.pb.gz");
+    }
+
+    urls.extend([
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1100.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1200.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1300.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1400.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1500.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1600.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1700.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1800.pb.gz",
+        "https://github.com/CSSLab/maia-chess/releases/download/v1.0/maia-1900.pb.gz",
+        "https://github.com/CallOn84/LeelaNets/raw/refs/heads/main/Nets/Maia%202200/maia-2200.pb.gz",
+    ]);
+
+    for url in urls {
+        let file_name = url.split('/').last().unwrap_or("network.pb.gz");
+        let dest = networks_dir.join(file_name);
+
+        if dest.exists() {
+            continue;
+        }
+
+        let id = format!("lc0_network_{}", file_name.replace(' ', "_"));
+
+        // Best-effort: if one network fails, continue with the rest.
+        if let Err(e) = download_file(id, url.to_string(), dest, app.clone(), None, None, None).await {
+            warn!("Lc0 network download failed ({url}): {e}");
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn has_large_gpu_vram() -> Option<bool> {
+    // "Large" == at least 4GB of dedicated VRAM, per request.
+    let threshold: u64 = 4 * 1024 * 1024 * 1024;
+    let max = get_max_adapter_ram_bytes()?;
+    Some(max >= threshold)
+}
+
+#[cfg(target_os = "windows")]
+fn get_max_adapter_ram_bytes() -> Option<u64> {
+    // Prefer CIM via PowerShell. `AdapterRAM` is in bytes.
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty AdapterRAM",
+        ])
+        .output()
+        .ok()?;
+
+    let mut max: u64 = 0;
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if let Ok(v) = line.trim().parse::<u64>() {
+                max = max.max(v);
+            }
+        }
+        if max > 0 {
+            return Some(max);
+        }
+    }
+
+    // Fallback: `wmic` is deprecated but still present on many systems.
+    let output = Command::new("wmic")
+        .args(["path", "win32_VideoController", "get", "AdapterRAM"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.eq_ignore_ascii_case("AdapterRAM") {
+            continue;
+        }
+        if let Ok(v) = t.parse::<u64>() {
+            max = max.max(v);
+        }
+    }
+
+    if max > 0 { Some(max) } else { None }
 }
 
 async fn download_to_file(

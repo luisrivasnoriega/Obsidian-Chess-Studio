@@ -13,6 +13,14 @@ async getSystemLocale() : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getPreferredLc0EngineName() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_preferred_lc0_engine_name") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async screenCapture() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("screen_capture") };

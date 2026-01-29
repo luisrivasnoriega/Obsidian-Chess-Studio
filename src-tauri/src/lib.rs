@@ -26,6 +26,7 @@ mod puzzle_variants;
 mod variants_builder;
 mod variant_positions;
 
+use std::process::Command;
 use std::sync::Arc;
 
 use chess::{BestMovesPayload, EngineProcess, ReportProgress};
@@ -153,7 +154,8 @@ pub struct AppState {
 pub async fn run() {
     let specta_builder = tauri_specta::Builder::new()
         .commands(tauri_specta::collect_commands!(
-            get_system_locale,
+        get_system_locale,
+        get_preferred_lc0_engine_name,
             app::platform::screen_capture,
             find_fide_player,
             fetch_fide_profile_html,
@@ -352,6 +354,155 @@ fn is_bmi2_compatible() -> bool {
 #[specta::specta]
 fn memory_size() -> u64 {
     sysinfo::System::new_all().total_memory() / (1024 * 1024)
+}
+
+fn get_gpu_names() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to query GPU names: {}", e))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let names: Vec<String> = stdout
+                .lines()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty())
+                .filter(|line| {
+                    let lower = line.to_lowercase();
+                    !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
+                })
+                .map(|line| line.to_string())
+                .collect();
+
+            if !names.is_empty() {
+                return Ok(names);
+            }
+        }
+
+        let output = Command::new("wmic")
+            .args(["path", "win32_VideoController", "get", "name"])
+            .output()
+            .map_err(|e| format!("Failed to query GPU names via wmic: {}", e))?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let names: Vec<String> = stdout
+                .lines()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty() && !line.eq_ignore_ascii_case("name"))
+                .filter(|line| {
+                    let lower = line.to_lowercase();
+                    !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
+                })
+                .map(|line| line.to_string())
+                .collect();
+
+            return Ok(names);
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Failed to query GPU names: {}", stderr.trim()))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_lc0_engine_name() -> Result<Option<String>, String> {
+    const LC0_CUDA12: &str = "Leela Chess Zero (CUDA 12)";
+    const LC0_CUDNN: &str = "Leela Chess Zero (CUDNN)";
+    const LC0_ONNX_DML: &str = "Leela Chess Zero (ONNX-DML)";
+    const LC0_DNNL: &str = "Leela Chess Zero (DNNL)";
+
+    #[cfg(target_os = "windows")]
+    {
+        let gpu_names = get_gpu_names().unwrap_or_default();
+        if gpu_names.is_empty() {
+            return Ok(Some(LC0_DNNL.to_string()));
+        }
+
+        let mut has_gtx_legacy = false;
+        for raw_name in gpu_names {
+            let name = raw_name.to_uppercase();
+
+            if name.contains("RTX") {
+                if let Some(series) = parse_gpu_series(&name, "RTX") {
+                    if series >= 2000 {
+                        return Ok(Some(LC0_CUDA12.to_string()));
+                    }
+                } else if contains_any(&name, &["RTX 20", "RTX 30", "RTX 40"]) {
+                    return Ok(Some(LC0_CUDA12.to_string()));
+                }
+            }
+
+            if name.contains("GTX") {
+                if let Some(series) = parse_gpu_series(&name, "GTX") {
+                    if (600..=1699).contains(&series) {
+                        has_gtx_legacy = true;
+                    }
+                } else {
+                    has_gtx_legacy = true;
+                }
+            }
+        }
+
+        if has_gtx_legacy {
+            return Ok(Some(LC0_CUDNN.to_string()));
+        }
+
+        return Ok(Some(LC0_ONNX_DML.to_string()));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Some(LC0_DNNL.to_string()))
+    }
+}
+
+fn parse_gpu_series(name: &str, token: &str) -> Option<u32> {
+    let name_upper = name.to_uppercase();
+    let token_upper = token.to_uppercase();
+    let start = name_upper.find(&token_upper)?;
+    let mut chars = name_upper[start + token_upper.len()..].chars().peekable();
+
+    while let Some(c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else {
+            break;
+        }
+    }
+
+    let mut digits = String::new();
+    while let Some(c) = chars.peek() {
+        if c.is_ascii_digit() && digits.len() < 4 {
+            digits.push(*c);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+
+    if digits.len() >= 3 {
+        digits.parse::<u32>().ok()
+    } else {
+        None
+    }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 #[tauri::command]

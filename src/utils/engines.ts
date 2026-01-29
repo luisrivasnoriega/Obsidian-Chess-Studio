@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Platform } from "@tauri-apps/plugin-os";
+import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import { type BestMoves, commands, type EngineOptions, type GoMode } from "@/bindings";
@@ -324,16 +325,122 @@ const ENGINES = [
   // Leela Chess Zero (Lc0)
   // ---------------------------
   {
-    name: "Leela Chess Zero",
-    version: "0.30.0",
+    name: "Leela Chess Zero (Auto)",
+    version: "0.32.1",
     os: "windows",
     bmi2: true,
     image: "https://lczero.org/images/logo.svg",
     installMethod: "download" as const,
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/lc0-v0.30.0-windows-gpu-nvidia-cuda.zip",
-    path: "lc0-v0.30.0-windows-gpu-nvidia-cuda/lc0.exe",
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    path: "lc0/lc0.exe",
     elo: 3440,
-    downloadSize: 251872888,
+  },
+  {
+    name: "Leela Chess Zero (Auto)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: false,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (CUDA 12)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: true,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-gpu-nvidia-cuda12.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (CUDA 12)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: false,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-gpu-nvidia-cuda12.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (CUDNN)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: true,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-gpu-nvidia-cudnn.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (CUDNN)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: false,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-gpu-nvidia-cudnn.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (ONNX-DML)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: true,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (ONNX-DML)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: false,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (DNNL)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: true,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
+  },
+  {
+    name: "Leela Chess Zero (DNNL)",
+    version: "0.32.1",
+    os: "windows",
+    bmi2: false,
+    image: "https://lczero.org/images/logo.svg",
+    installMethod: "download" as const,
+    downloadLink:
+      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
+    path: "lc0/lc0.exe",
+    elo: 3440,
   },
   {
     name: "Leela Chess Zero",
@@ -623,7 +730,27 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
         }),
       );
 
-      return supportedEngines.filter((engine): engine is NonNullable<typeof engine> => engine !== null);
+      const filtered = supportedEngines.filter((engine): engine is NonNullable<typeof engine> => engine !== null);
+
+      // Keep the engine list in TS, but delegate hardware detection to the backend.
+      // For Lc0 on Windows we only show "Auto" + the recommended variant for this GPU.
+      let preferredLc0Name: string | null = null;
+      try {
+        preferredLc0Name = await invoke<string | null>("get_preferred_lc0_engine_name");
+      } catch {
+        preferredLc0Name = null;
+      }
+
+      const lc0AutoName = "Leela Chess Zero (Auto)";
+      const lc0VariantPrefix = "Leela Chess Zero (";
+      const lc0FallbackName = normalizedOs === "windows" ? "Leela Chess Zero (ONNX-DML)" : "Leela Chess Zero (DNNL)";
+      return filtered.filter((e) => {
+        if (!e.name.startsWith(lc0VariantPrefix)) return true;
+        // Hide the "Auto" entry; only show the recommended build for the detected hardware.
+        if (e.name === lc0AutoName) return false;
+        const targetName = preferredLc0Name ?? lc0FallbackName;
+        return e.name === targetName;
+      });
     },
     enabled: opened && !!os,
     staleTime: Infinity,
