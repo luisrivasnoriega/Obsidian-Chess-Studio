@@ -292,6 +292,8 @@
       "profileLabel": "Perfil destino",
       "profilePlaceholder": "Selecciona un perfil...",
       "noProfiles": "No se encontraron perfiles",
+      "sourcePlayerNameLabel": "Nombre del jugador activo",
+      "sourcePlayerNameDescription": "Asocia partidas a este perfil; el rival es el otro lado.",
       "pgnLabel": "Archivos PGN",
       "pgnDescription": "Selecciona uno o mas archivos PGN para importar.",
       "selectedFilesLabel": "Archivos seleccionados",
@@ -317,6 +319,7 @@
         "pgnRequired": "Debes seleccionar al menos un archivo PGN.",
         "eventRequired": "Debes seleccionar un evento.",
         "eventNameRequired": "El nombre del evento es obligatorio.",
+        "sourcePlayerRequired": "El nombre del jugador activo es obligatorio.",
         "profileDbMissing": "No se pudo resolver la ruta de la base de datos del perfil."
       }
     },

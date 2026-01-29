@@ -291,6 +291,8 @@
       "profileLabel": "Destination profile",
       "profilePlaceholder": "Select a profile...",
       "noProfiles": "No profiles found",
+      "sourcePlayerNameLabel": "Active player name",
+      "sourcePlayerNameDescription": "Matches games against this profile; opponents are the other side.",
       "pgnLabel": "PGN files",
       "pgnDescription": "Select one or more PGN files to import.",
       "selectedFilesLabel": "Selected files",
@@ -316,6 +318,7 @@
         "pgnRequired": "At least one PGN file is required.",
         "eventRequired": "An event is required.",
         "eventNameRequired": "Event name is required.",
+        "sourcePlayerRequired": "Active player name is required.",
         "profileDbMissing": "Could not resolve the profile database path."
       }
     },

@@ -13,7 +13,7 @@ import { useTranslation } from "react-i18next";
 import type { Event, GameQuery, GamesHistoryRow } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
-import { getAccountKey } from "@/utils/accountKeys";
+import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { query_games, query_players } from "@/utils/db";
@@ -796,9 +796,9 @@ export default function DashboardPage() {
                 eventFilterId,
                 selectedOpponentId,
                 timeControlCategory,
-                  target: type,
-                },
-              })) ?? null;
+                target: type,
+              },
+            })) ?? null;
           if (res) {
             setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
             setUnanalyzedGameCount(res.unanalyzed);
@@ -1407,24 +1407,25 @@ export default function DashboardPage() {
             let chessbaseRows: GamesHistoryRow[] = [];
             if (activeProfileId && (analyzeAllGameType === "chessbase" || analyzeAllGameType === "all")) {
               try {
-                const res =
-                  (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
-                    req: {
-                      profileId: activeProfileId,
-                      profileUsernames,
-                      gameHistoryLimit,
-                      page: 1,
-                      pageSize: gameHistoryLimit,
-                      eventFilterId,
-                      selectedOpponentId,
-                      opponentContains: null,
-                      timeControlCategory,
-                      resultFilter: null,
-                      sortBy: "date",
-                      sortDirection: "desc",
-                    },
-                  })) ?? { rows: [] };
-                chessbaseRows = (res.rows ?? []).filter((r) => String(r.kind).toLowerCase() === "chessbase" && hasEnoughMovesPgn(r.pgn));
+                const res = (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
+                  req: {
+                    profileId: activeProfileId,
+                    profileUsernames,
+                    gameHistoryLimit,
+                    page: 1,
+                    pageSize: gameHistoryLimit,
+                    eventFilterId,
+                    selectedOpponentId,
+                    opponentContains: null,
+                    timeControlCategory,
+                    resultFilter: null,
+                    sortBy: "date",
+                    sortDirection: "desc",
+                  },
+                })) ?? { rows: [] };
+                chessbaseRows = (res.rows ?? []).filter(
+                  (r) => String(r.kind).toLowerCase() === "chessbase" && hasEnoughMovesPgn(r.pgn),
+                );
               } catch {
                 chessbaseRows = [];
               }
@@ -1490,7 +1491,7 @@ export default function DashboardPage() {
                       ? getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g }))
                       : analyzeAllGameType === "chessbase"
                         ? getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g }))
-                      : [];
+                        : [];
 
             // Filter to only unanalyzed games if requested
             const gamesToAnalyze =
@@ -1847,7 +1848,9 @@ export default function DashboardPage() {
                     });
                   } else if (gameType === "chessbase") {
                     const row = game as GamesHistoryRow;
-                    const gameIdToSave = activeProfileId ? String(row.analysisGameId) : `chessbase:${row.analysisGameId}`;
+                    const gameIdToSave = activeProfileId
+                      ? String(row.analysisGameId)
+                      : `chessbase:${row.analysisGameId}`;
                     await saveAnalyzedGame(gameIdToSave, analyzedPgn, activeProfileId ?? null);
 
                     const normalize = (s: string) => stripAccountKey((s ?? "").trim()).toLowerCase();
@@ -1855,7 +1858,8 @@ export default function DashboardPage() {
                     const whiteName = normalize(gameHeaders.white);
                     const blackName = normalize(gameHeaders.black);
                     const isUserWhite =
-                      usernamesLower.includes(whiteName) || (!usernamesLower.includes(blackName) && usernamesLower.length > 0);
+                      usernamesLower.includes(whiteName) ||
+                      (!usernamesLower.includes(blackName) && usernamesLower.length > 0);
                     const userColor = isUserWhite ? "white" : "black";
 
                     const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;

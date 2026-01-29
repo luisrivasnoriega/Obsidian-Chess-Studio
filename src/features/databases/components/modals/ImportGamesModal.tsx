@@ -44,6 +44,7 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
   const [newEventType, setNewEventType] = useState<ManagedEventType>("otb_tournament");
   const [useEvent, setUseEvent] = useState(false);
   const [createdEventId, setCreatedEventId] = useState<number | null>(null);
+  const [sourcePlayerName, setSourcePlayerName] = useState("");
 
   const [isImporting, setIsImporting] = useState(false);
   const [importStep, setImportStep] = useState<{ index: number; total: number } | null>(null);
@@ -67,6 +68,12 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
     // Default destination profile to the currently active one (if any).
     setSelectedProfileId((prev) => prev ?? activeProfileId ?? null);
   }, [opened, activeProfileId]);
+
+  useEffect(() => {
+    if (!opened) return;
+    if (!selectedProfile) return;
+    setSourcePlayerName((prev) => prev.trim() || profileLabel(selectedProfile));
+  }, [opened, selectedProfile]);
 
   const { data: profileDbPath } = useQuery<string | null>({
     queryKey: ["profileDbPath", selectedProfileId],
@@ -123,6 +130,7 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
     setNewEventType("otb_tournament");
     setUseEvent(false);
     setCreatedEventId(null);
+    setSourcePlayerName("");
     setIsImporting(false);
     setImportStep(null);
   }, []);
@@ -166,12 +174,23 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
     if (!selectedProfileId) return t("databases.import.validation.profileRequired");
     if (pgnFiles.length === 0) return t("databases.import.validation.pgnRequired");
     if (!profileDbPath) return t("databases.import.validation.profileDbMissing");
+    if (!useEvent && sourcePlayerName.trim().length === 0) return t("databases.import.validation.sourcePlayerRequired");
     if (!useEvent) return null;
     if (eventMode === "existing" && !existingEventId) return t("databases.import.validation.eventRequired");
     if (eventMode === "new" && newEventName.trim().length === 0)
       return t("databases.import.validation.eventNameRequired");
     return null;
-  }, [selectedProfileId, pgnFiles.length, profileDbPath, useEvent, eventMode, existingEventId, newEventName, t]);
+  }, [
+    selectedProfileId,
+    pgnFiles.length,
+    profileDbPath,
+    useEvent,
+    sourcePlayerName,
+    eventMode,
+    existingEventId,
+    newEventName,
+    t,
+  ]);
 
   useEffect(() => {
     if (!opened) return;
@@ -217,12 +236,15 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
       }
 
       let totalImported = 0;
+      const sourcePlayerNameTrimmed = sourcePlayerName.trim();
       for (let i = 0; i < pgnFiles.length; i += 1) {
         setImportStep({ index: i + 1, total: pgnFiles.length });
         const pgn = await readTextFile(pgnFiles[i]);
 
         if (!useEvent) {
-          unwrap(await commands.convertPgn(pgnFiles[i], profileDbPath, null, "", null));
+          totalImported += unwrap(
+            await commands.addProfileGamesFromPgn(selectedProfileId!, sourcePlayerNameTrimmed, pgn),
+          );
           continue;
         }
 
@@ -277,6 +299,8 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
     t,
     onClose,
     resetState,
+    selectedProfileId,
+    sourcePlayerName.trim,
   ]);
 
   const fileButtonText =
@@ -300,6 +324,17 @@ export default function ImportGamesModal({ opened, onClose }: { opened: boolean;
           disabled={isImporting || profileOptions.length === 0}
           withAsterisk
         />
+
+        {!useEvent && (
+          <TextInput
+            label={t("databases.import.sourcePlayerNameLabel")}
+            description={t("databases.import.sourcePlayerNameDescription")}
+            value={sourcePlayerName}
+            onChange={(e) => setSourcePlayerName(e.currentTarget.value)}
+            disabled={isImporting}
+            withAsterisk
+          />
+        )}
 
         <FileInput
           label={t("databases.import.pgnLabel")}
