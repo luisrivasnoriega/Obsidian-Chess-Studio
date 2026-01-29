@@ -83,6 +83,7 @@ pub enum AnalyzeAllTarget {
     Local,
     Chesscom,
     Lichess,
+    Chessbase,
     All,
 }
 
@@ -427,6 +428,67 @@ fn load_profile_player_id(conn: &Connection) -> Option<i32> {
     value.and_then(|v| v.trim().parse::<i32>().ok()).filter(|v| *v > 0)
 }
 
+fn infer_profile_player_id(conn: &Connection) -> Option<i32> {
+    // Infer the "main" player from the imported games when a profile DB is missing
+    // ProfilePlayerId (older DBs or created without a known player). We pick the
+    // player that appears the most across WhiteId/BlackId.
+    conn.query_row(
+        r#"
+        SELECT player_id
+        FROM (
+            SELECT WhiteId AS player_id, COUNT(*) AS c FROM Games GROUP BY WhiteId
+            UNION ALL
+            SELECT BlackId AS player_id, COUNT(*) AS c FROM Games GROUP BY BlackId
+        )
+        GROUP BY player_id
+        ORDER BY SUM(c) DESC
+        LIMIT 1
+        "#,
+        [],
+        |row| row.get::<_, i32>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .filter(|v| *v > 0)
+}
+
+fn ensure_profile_player_id(conn: &Connection) -> Option<i32> {
+    if let Some(pid) = load_profile_player_id(conn) {
+        return Some(pid);
+    }
+
+    let pid = infer_profile_player_id(conn)?;
+
+    // Best-effort persistence so future calls don't need to infer again.
+    let _ = conn.execute(
+        "INSERT INTO Info (Name, Value) VALUES ('ProfilePlayerId', ?) ON CONFLICT(Name) DO UPDATE SET Value=excluded.Value",
+        [pid.to_string()],
+    );
+
+    let name: Option<String> = conn
+        .query_row(
+            "SELECT Name FROM Players WHERE Id = ? LIMIT 1",
+            [pid],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+
+    if let Some(name) = name {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            let _ = conn.execute(
+                "INSERT INTO Info (Name, Value) VALUES ('ProfilePlayerName', ?) ON CONFLICT(Name) DO UPDATE SET Value=excluded.Value",
+                [name],
+            );
+        }
+    }
+
+    Some(pid)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn dashboard_get_games_history_rows(
@@ -452,7 +514,7 @@ pub async fn dashboard_get_games_history_rows(
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let profile_player_id: Option<i32> = (|| {
         let conn = Connection::open(&db_path).ok()?;
-        load_profile_player_id(&conn)
+        ensure_profile_player_id(&conn)
     })();
 
     let mut q = GameQueryJs::default();
@@ -571,6 +633,16 @@ pub async fn dashboard_get_games_history_rows(
                 external_key = g.id.to_string();
                 external_url = None;
             }
+        }
+
+        // If we still couldn't identify a specific online platform, treat this as a
+        // profile-local (imported) game. These come from arbitrary `Sites.Name` values
+        // like "Mexico City", "Chihuahua City", etc., and should still show up in the
+        // profile dashboard.
+        if kind.is_none() {
+            kind = Some(GamesHistoryKind::Chessbase);
+            external_key = g.id.to_string();
+            external_url = None;
         }
 
         let Some(kind) = kind else {
@@ -814,7 +886,7 @@ pub async fn dashboard_get_analyze_all_counts(
     // 2) Load online games if needed (single query; later split by platform).
     let include_online = matches!(
         req.target,
-        AnalyzeAllTarget::Chesscom | AnalyzeAllTarget::Lichess | AnalyzeAllTarget::All
+        AnalyzeAllTarget::Chesscom | AnalyzeAllTarget::Lichess | AnalyzeAllTarget::Chessbase | AnalyzeAllTarget::All
     );
     if include_online {
         let db_path = parse_profile_db_path(&app, &profile_id)?;
@@ -944,6 +1016,7 @@ pub async fn dashboard_get_analyze_all_counts(
         AnalyzeAllTarget::Local => matches!(r.kind, GamesHistoryKind::Local),
         AnalyzeAllTarget::Chesscom => matches!(r.kind, GamesHistoryKind::Chesscom),
         AnalyzeAllTarget::Lichess => matches!(r.kind, GamesHistoryKind::Lichess),
+        AnalyzeAllTarget::Chessbase => matches!(r.kind, GamesHistoryKind::Chessbase),
     });
 
     let total = rows.len() as i32;
@@ -987,7 +1060,7 @@ pub async fn dashboard_search_profile_opponents(
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let profile_player_id: Option<i32> = (|| {
         let conn = Connection::open(&db_path).ok()?;
-        load_profile_player_id(&conn)
+        ensure_profile_player_id(&conn)
     })();
 
     let pq = PlayerQuery {

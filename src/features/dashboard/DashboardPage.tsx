@@ -10,7 +10,7 @@ import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Event, GameQuery } from "@/bindings";
+import type { Event, GameQuery, GamesHistoryRow } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
@@ -218,10 +218,12 @@ export default function DashboardPage() {
 
   const [activeGamesTab, setActiveGamesTab] = useState<string | null>("games");
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
-  const [analyzeAllGameType, setAnalyzeAllGameType] = useState<"local" | "chesscom" | "lichess" | "all" | null>(null);
+  const [analyzeAllGameType, setAnalyzeAllGameType] = useState<
+    "local" | "chesscom" | "lichess" | "chessbase" | "all" | null
+  >(null);
   const [unanalyzedGameCount, setUnanalyzedGameCount] = useState<number | null>(null);
   const [analyzeAllCounts, setAnalyzeAllCounts] = useState<{
-    type: "local" | "chesscom" | "lichess" | "all";
+    type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
     total: number;
     unanalyzed: number;
   } | null>(null);
@@ -776,7 +778,7 @@ export default function DashboardPage() {
   }, []);
 
   const handleAnalyzeAll = useCallback(
-    async (type: "local" | "chesscom" | "lichess" | "all") => {
+    async (type: "local" | "chesscom" | "lichess" | "chessbase" | "all") => {
       setAnalyzeAllGameType(type);
       setUnanalyzedGameCount(null);
       setAnalyzeAllCounts(null);
@@ -794,9 +796,9 @@ export default function DashboardPage() {
                 eventFilterId,
                 selectedOpponentId,
                 timeControlCategory,
-                target: type,
-              },
-            })) ?? null;
+                  target: type,
+                },
+              })) ?? null;
           if (res) {
             setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
             setUnanalyzedGameCount(res.unanalyzed);
@@ -1386,7 +1388,49 @@ export default function DashboardPage() {
             // Get all analyzed games for this profile to filter out already analyzed ones if needed
             const analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
 
-            const getFilteredGames = (type: "local" | "chesscom" | "lichess") => {
+            const hasEnoughMovesPgn = (pgn?: string | null) => {
+              if (!pgn) return false;
+              try {
+                const movesSection = pgn.split(/\n\n/)[1] || pgn;
+                const cleanMoves = movesSection
+                  .replace(/\[[^\]]*\]/g, "")
+                  .replace(/\{[^}]*\}/g, "")
+                  .replace(/\([^)]*\)/g, "");
+                const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+                const matches = cleanMoves.match(movePattern) || [];
+                return matches.length >= 5;
+              } catch {
+                return false;
+              }
+            };
+
+            let chessbaseRows: GamesHistoryRow[] = [];
+            if (activeProfileId && (analyzeAllGameType === "chessbase" || analyzeAllGameType === "all")) {
+              try {
+                const res =
+                  (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
+                    req: {
+                      profileId: activeProfileId,
+                      profileUsernames,
+                      gameHistoryLimit,
+                      page: 1,
+                      pageSize: gameHistoryLimit,
+                      eventFilterId,
+                      selectedOpponentId,
+                      opponentContains: null,
+                      timeControlCategory,
+                      resultFilter: null,
+                      sortBy: "date",
+                      sortDirection: "desc",
+                    },
+                  })) ?? { rows: [] };
+                chessbaseRows = (res.rows ?? []).filter((r) => String(r.kind).toLowerCase() === "chessbase" && hasEnoughMovesPgn(r.pgn));
+              } catch {
+                chessbaseRows = [];
+              }
+            }
+
+            const getFilteredGames = (type: "local" | "chesscom" | "lichess" | "chessbase") => {
               if (type === "local") {
                 return recentGames.filter((g) => {
                   if (!g.moves || g.moves.length === 0) return false;
@@ -1408,7 +1452,7 @@ export default function DashboardPage() {
                     return false;
                   }
                 });
-              } else {
+              } else if (type === "lichess") {
                 // lichess
                 return lichessGames.filter((g) => {
                   if (!g.pgn) return false;
@@ -1425,6 +1469,8 @@ export default function DashboardPage() {
                     return false;
                   }
                 });
+              } else {
+                return chessbaseRows;
               }
             };
 
@@ -1434,6 +1480,7 @@ export default function DashboardPage() {
                     ...getFilteredGames("local").map((g) => ({ type: "local" as const, game: g })),
                     ...getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g })),
                     ...getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g })),
+                    ...getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g })),
                   ]
                 : analyzeAllGameType === "local"
                   ? getFilteredGames("local").map((g) => ({ type: "local" as const, game: g }))
@@ -1441,6 +1488,8 @@ export default function DashboardPage() {
                     ? getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g }))
                     : analyzeAllGameType === "lichess"
                       ? getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g }))
+                      : analyzeAllGameType === "chessbase"
+                        ? getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g }))
                       : [];
 
             // Filter to only unanalyzed games if requested
@@ -1459,6 +1508,11 @@ export default function DashboardPage() {
                       const internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`);
                       const existsInDb = internalId ? !!analyzedGames[internalId] : false;
                       if (existsInDb) return false; // Already analyzed
+                      return true;
+                    } else if (item.type === "chessbase") {
+                      const row = item.game as GamesHistoryRow;
+                      const existsInDb = !!analyzedGames[String(row.analysisGameId)];
+                      if (existsInDb) return false;
                       return true;
                     } else {
                       // lichess
@@ -1560,6 +1614,27 @@ export default function DashboardPage() {
                   moves = getMainLine(tree.root, is960);
                   initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
                   gameHeaders = createChessComGameHeaders(chessComGame);
+                } else if (gameType === "chessbase") {
+                  const row = game as GamesHistoryRow;
+                  const pgn = row.pgn?.trim() ?? "";
+                  if (!pgn) {
+                    activeAnalysisIds.delete(analysisId);
+                    return;
+                  }
+                  tree = await parsePGN(pgn);
+                  const is960 = tree.headers?.variant === "Chess960";
+                  moves = getMainLine(tree.root, is960);
+                  initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                  gameHeaders = {
+                    id: 0,
+                    event: tree.headers?.event || "ChessBase",
+                    site: "ChessBase",
+                    date: tree.headers?.date || "",
+                    white: tree.headers?.white || "White",
+                    black: tree.headers?.black || "Black",
+                    result: (tree.headers?.result || "*") as any,
+                    fen: initialFen,
+                  } as ReturnType<typeof createLocalGameHeaders>;
                 } else {
                   // Lichess games
                   const lichessGame = game as (typeof lichessGames)[0];
@@ -1770,6 +1845,29 @@ export default function DashboardPage() {
                       }
                       return updated;
                     });
+                  } else if (gameType === "chessbase") {
+                    const row = game as GamesHistoryRow;
+                    const gameIdToSave = activeProfileId ? String(row.analysisGameId) : `chessbase:${row.analysisGameId}`;
+                    await saveAnalyzedGame(gameIdToSave, analyzedPgn, activeProfileId ?? null);
+
+                    const normalize = (s: string) => stripAccountKey((s ?? "").trim()).toLowerCase();
+                    const usernamesLower = profileUsernames.map(normalize);
+                    const whiteName = normalize(gameHeaders.white);
+                    const blackName = normalize(gameHeaders.black);
+                    const isUserWhite =
+                      usernamesLower.includes(whiteName) || (!usernamesLower.includes(blackName) && usernamesLower.length > 0);
+                    const userColor = isUserWhite ? "white" : "black";
+
+                    const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
+                    const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
+                    if (accuracy > 0 || acpl > 0) {
+                      const stats: GameStats = {
+                        accuracy,
+                        acpl,
+                        estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
+                      };
+                      await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
+                    }
                   } else {
                     // lichess
                     const lichessGame = game as (typeof lichessGames)[0];

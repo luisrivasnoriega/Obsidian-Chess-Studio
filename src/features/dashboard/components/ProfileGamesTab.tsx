@@ -214,7 +214,7 @@ export function ProfileGamesTab({
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
-  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "all") => void;
+  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "chessbase" | "all") => void;
   favoriteGames?: FavoriteGame[];
   eventFilterId: number | null;
   onEventFilterChange: (eventId: number | null) => void;
@@ -349,14 +349,16 @@ export function ProfileGamesTab({
   const totalPages = Math.ceil(totalCount / itemsPerPage);
   const now = useMemo(() => Date.now(), []);
   const analyzeAllOptions = useMemo(() => {
-    const totalCount = localGames.length + chessComGames.length + lichessGames.length;
+    const chessbaseCount = Math.max(0, totalCount - (localGames.length + chessComGames.length + lichessGames.length));
+    const total = localGames.length + chessComGames.length + lichessGames.length + chessbaseCount;
     return [
-      { type: "all" as const, label: "All", count: totalCount },
+      { type: "all" as const, label: "All", count: total },
       { type: "local" as const, label: "Local", count: localGames.length },
       { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
       { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
+      { type: "chessbase" as const, label: t("chessbase.title"), count: chessbaseCount },
     ];
-  }, [localGames.length, chessComGames.length, lichessGames.length]);
+  }, [localGames.length, chessComGames.length, lichessGames.length, t, totalCount]);
 
   const handleOpenGame = async (url: string | null) => {
     if (!url) return;

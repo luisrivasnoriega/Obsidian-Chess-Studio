@@ -1257,7 +1257,7 @@ export type AccountSyncState = { account_key: string; platform: string; cursor_u
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
 export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[]; target: AnalyzeAllTarget }
 export type AnalyzeAllCountsResponse = { total: number; analyzed: number; unanalyzed: number }
-export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "all"
+export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "chessbase" | "all"
 export type AnalyzedGameEntry = { profile_id: string; game_id: string; analyzed_pgn: string }
 /**
  * Best-move line from engine output, including PV, score, and stats.

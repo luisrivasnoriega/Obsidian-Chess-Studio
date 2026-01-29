@@ -481,6 +481,7 @@ pub(crate) fn convert_pgn_impl<'a>(
     let start = Instant::now();
 
     let mut importer = Importer::new(timestamp.map(|t| t as i64));
+    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
     // OPTIMIZED: Use bulk insert context for maximum performance
     // This applies aggressive pragmas, drops indexes, uses BEGIN IMMEDIATE,
@@ -501,6 +502,23 @@ pub(crate) fn convert_pgn_impl<'a>(
             .flatten()
             .flatten()
         {
+            if let Some(w) = game
+                .white_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                *name_counts.entry(w.to_string()).or_insert(0) += 1;
+            }
+            if let Some(b) = game
+                .black_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                *name_counts.entry(b.to_string()).or_insert(0) += 1;
+            }
+
             batch.push(game);
 
             if batch.len() >= BATCH_SIZE {
@@ -564,6 +582,111 @@ pub(crate) fn convert_pgn_impl<'a>(
             .execute(db)?;
     }
 
+    // If we're writing into a profile database, persist the "main" player so dashboards can
+    // correctly infer opponents and colors. Keep any existing profile player if already set.
+    let is_profile_db = db_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.starts_with("profile_") && s.ends_with(".db3"))
+        .unwrap_or(false);
+
+    if is_profile_db {
+        let existing_profile_player_id: Option<String> = info::table
+            .filter(info::name.eq("ProfilePlayerId"))
+            .select(info::value)
+            .first::<Option<String>>(db)
+            .optional()?
+            .flatten();
+
+        if existing_profile_player_id.is_none() {
+            // Prefer picking the profile's active player based on profile metadata (ProfilePlayerName/Title).
+            // Fall back to the most frequent name in the imported PGNs.
+            fn normalize_name(s: &str) -> String {
+                let mut out = String::with_capacity(s.len());
+                let mut prev_space = true;
+                for ch in s.chars() {
+                    let c = ch.to_ascii_lowercase();
+                    if c.is_ascii_alphanumeric() {
+                        out.push(c);
+                        prev_space = false;
+                    } else if c.is_whitespace() || c == '-' || c == '_' || c == ',' || c == '.' {
+                        if !prev_space {
+                            out.push(' ');
+                            prev_space = true;
+                        }
+                    }
+                }
+                out.trim().to_string()
+            }
+
+            let profile_player_name: Option<String> = info::table
+                .filter(info::name.eq("ProfilePlayerName"))
+                .select(info::value)
+                .first::<Option<String>>(db)
+                .optional()?
+                .flatten()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let title_name: Option<String> = info::table
+                .filter(info::name.eq("Title"))
+                .select(info::value)
+                .first::<Option<String>>(db)
+                .optional()?
+                .flatten()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            let preferred_raw = profile_player_name.or(title_name).unwrap_or_default();
+            let preferred_norm = normalize_name(&preferred_raw);
+
+            let mut best_name: Option<(String, u32, u8)> = None;
+            for (name, count) in &name_counts {
+                let n = normalize_name(name);
+                if n.is_empty() {
+                    continue;
+                }
+                let score = if !preferred_norm.is_empty() && n == preferred_norm {
+                    3u8
+                } else if !preferred_norm.is_empty()
+                    && (n.contains(&preferred_norm) || preferred_norm.contains(&n))
+                {
+                    2u8
+                } else {
+                    1u8
+                };
+
+                let candidate = (name.trim().to_string(), *count, score);
+                best_name = match best_name {
+                    None => Some(candidate),
+                    Some(prev) => {
+                        if candidate.2 > prev.2 || (candidate.2 == prev.2 && candidate.1 > prev.1) {
+                            Some(candidate)
+                        } else {
+                            Some(prev)
+                        }
+                    }
+                };
+            }
+
+            let main_player_name = best_name
+                .map(|v| v.0)
+                .or_else(|| {
+                    name_counts
+                        .into_iter()
+                        .max_by_key(|(_, c)| *c)
+                        .map(|(n, _)| n.trim().to_string())
+                })
+                .filter(|s| !s.is_empty());
+
+            if let Some(main_player_name) = main_player_name {
+                let pid = create_player(db, &main_player_name)?.id;
+                upsert_info_value(db, "ProfilePlayerId", &pid.to_string())?;
+                upsert_info_value(db, "ProfilePlayerName", &main_player_name)?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -619,6 +742,20 @@ pub async fn init_profile_db(
         }
         core::init_db(db, &title, &description)?;
         let _ = db.batch_execute(INDEXES_SQL);
+    }
+
+    // Store the profile's active player name (used for opponent detection after imports).
+    // Do not override if already present (profiles should be stable).
+    if !title.trim().is_empty() {
+        let existing: Option<String> = info::table
+            .filter(info::name.eq("ProfilePlayerName"))
+            .select(info::value)
+            .first::<Option<String>>(db)
+            .optional()?
+            .flatten();
+        if existing.is_none() {
+            upsert_info_value(db, "ProfilePlayerName", title.trim())?;
+        }
     }
 
     Ok(())
@@ -1838,37 +1975,7 @@ pub async fn add_profile_games_from_pgn(
     let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
     ensure_db_initialized(db)?;
 
-    let mut importer = Importer::new(None);
-    let mut inserted_total: i32 = 0;
-    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-
-    db.transaction::<_, Error, _>(|db| {
-        for game in BufferedReader::new_cursor(trimmed.as_bytes())
-            .into_iter(&mut importer)
-            .flatten()
-            .flatten()
-        {
-            if let Some(w) = game.white_name.as_ref() {
-                if !w.trim().is_empty() {
-                    *name_counts.entry(w.trim().to_string()).or_insert(0) += 1;
-                }
-            }
-            if let Some(b) = game.black_name.as_ref() {
-                if !b.trim().is_empty() {
-                    *name_counts.entry(b.trim().to_string()).or_insert(0) += 1;
-                }
-            }
-
-            let inserted = insert_to_db_with_event_override(db, &game, 0)?;
-            if inserted {
-                inserted_total += 1;
-            }
-        }
-        Ok(())
-    })?;
-
-    // Pick the profile "main player" so dashboards can reliably compute opponents.
-    // Prefer a name that matches the requested player; otherwise, use the most frequent name in the import.
+    // Normalize a player name so we can match variants like "Last, First" vs "Last First".
     fn normalize_name(s: &str) -> String {
         let mut out = String::with_capacity(s.len());
         let mut prev_space = true;
@@ -1887,23 +1994,57 @@ pub async fn add_profile_games_from_pgn(
         out.trim().to_string()
     }
 
-    let preferred_norm = normalize_name(&source_player_name);
-    let mut best_name: Option<(String, u32, u8)> = None;
+    let mut importer = Importer::new(None);
+    let mut inserted_total: i32 = 0;
+    let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut normalized_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
-    for (name, count) in &name_counts {
-        let n = normalize_name(name);
-        if n.is_empty() {
-            continue;
+    db.transaction::<_, Error, _>(|db| {
+        for game in BufferedReader::new_cursor(trimmed.as_bytes())
+            .into_iter(&mut importer)
+            .flatten()
+            .flatten()
+        {
+            if let Some(w) = game.white_name.as_ref() {
+                if !w.trim().is_empty() {
+                    *name_counts.entry(w.trim().to_string()).or_insert(0) += 1;
+                    let nw = normalize_name(w);
+                    if !nw.is_empty() {
+                        *normalized_counts.entry(nw).or_insert(0) += 1;
+                    }
+                }
+            }
+            if let Some(b) = game.black_name.as_ref() {
+                if !b.trim().is_empty() {
+                    *name_counts.entry(b.trim().to_string()).or_insert(0) += 1;
+                    let nb = normalize_name(b);
+                    if !nb.is_empty() {
+                        *normalized_counts.entry(nb).or_insert(0) += 1;
+                    }
+                }
+            }
+
+            let inserted = insert_to_db_with_event_override(db, &game, 0)?;
+            if inserted {
+                inserted_total += 1;
+            }
         }
-        let score = if !preferred_norm.is_empty() && n == preferred_norm {
+        Ok(())
+    })?;
+
+    // Pick the profile "main player" so dashboards can reliably compute opponents.
+    let preferred_norm = normalize_name(&source_player_name);
+    let mut best_norm: Option<(String, u32, u8)> = None;
+    for (norm, count) in &normalized_counts {
+        let score = if !preferred_norm.is_empty() && norm == &preferred_norm {
             3u8
-        } else if !preferred_norm.is_empty() && (n.contains(&preferred_norm) || preferred_norm.contains(&n)) {
+        } else if !preferred_norm.is_empty() && (norm.contains(&preferred_norm) || preferred_norm.contains(norm)) {
             2u8
         } else {
             1u8
         };
-        let candidate = (name.clone(), *count, score);
-        best_name = match best_name {
+        let candidate = (norm.clone(), *count, score);
+        best_norm = match best_norm {
             None => Some(candidate),
             Some(prev) => {
                 if candidate.2 > prev.2 || (candidate.2 == prev.2 && candidate.1 > prev.1) {
@@ -1915,17 +2056,42 @@ pub async fn add_profile_games_from_pgn(
         };
     }
 
-    let main_player_name = best_name
-        .map(|v| v.0)
+    let main_player_name = best_norm
+        .as_ref()
+        .and_then(|(norm, _count, _score)| {
+            name_counts
+                .iter()
+                .filter(|(name, _)| normalize_name(name) == *norm)
+                .max_by_key(|(_, c)| *c)
+                .map(|(name, _)| name.clone())
+        })
         .or_else(|| {
+            // Fallback: most frequent raw name observed in the PGN.
+            name_counts
+                .iter()
+                .max_by_key(|(_, c)| *c)
+                .map(|(name, _)| name.clone())
+        })
+        .or_else(|| {
+            // Last resort: use the provided source name (may not match a real player row).
             let s = source_player_name.trim();
             if s.is_empty() { None } else { Some(s.to_string()) }
         });
 
-    if let Some(main_player_name) = main_player_name {
-        let pid = create_player(db, &main_player_name)?.id;
-        upsert_info_value(db, "ProfilePlayerId", &pid.to_string())?;
-        upsert_info_value(db, "ProfilePlayerName", &main_player_name)?;
+    let existing_profile_player_id: Option<String> = info::table
+        .filter(info::name.eq("ProfilePlayerId"))
+        .select(info::value)
+        .first::<Option<String>>(db)
+        .optional()?
+        .flatten();
+
+    let should_override_profile_player = existing_profile_player_id.is_none() || !source_player_name.trim().is_empty();
+    if should_override_profile_player {
+        if let Some(main_player_name) = main_player_name {
+            let pid = create_player(db, &main_player_name)?.id;
+            upsert_info_value(db, "ProfilePlayerId", &pid.to_string())?;
+            upsert_info_value(db, "ProfilePlayerName", &main_player_name)?;
+        }
     }
 
     Ok(inserted_total)
@@ -3999,9 +4165,20 @@ pub async fn merge_profile_event_from_db_player(
     )
     .bind::<diesel::sql_types::Text, _>(source_player_name.clone())
     .load(profile_db)?;
-    if let Some(pid) = rows.first().map(|r| r.id) {
-        upsert_info_value(profile_db, "ProfilePlayerId", &pid.to_string())?;
-        upsert_info_value(profile_db, "ProfilePlayerName", &source_player_name)?;
+
+    // Keep the profile's active player stable once set.
+    let existing_profile_player_id: Option<String> = info::table
+        .filter(info::name.eq("ProfilePlayerId"))
+        .select(info::value)
+        .first::<Option<String>>(profile_db)
+        .optional()?
+        .flatten();
+
+    if existing_profile_player_id.is_none() {
+        if let Some(pid) = rows.first().map(|r| r.id) {
+            upsert_info_value(profile_db, "ProfilePlayerId", &pid.to_string())?;
+            upsert_info_value(profile_db, "ProfilePlayerName", &source_player_name)?;
+        }
     }
 
     Ok(inserted_total)
