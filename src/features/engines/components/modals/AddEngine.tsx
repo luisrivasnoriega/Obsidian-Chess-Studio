@@ -42,7 +42,7 @@ async function resolveAutoLc0Engine(engine: LocalEngine, availableEngines: Local
   }
 
   return preferredName != null
-    ? availableEngines.find((candidate) => candidate.name === preferredName) ?? engine
+    ? (availableEngines.find((candidate) => candidate.name === preferredName) ?? engine)
     : engine;
 }
 function AddEngine({ opened, setOpened }: { opened: boolean; setOpened: (opened: boolean) => void }) {
@@ -54,6 +54,7 @@ function AddEngine({ opened, setOpened }: { opened: boolean; setOpened: (opened:
   const { os } = usePlatform();
 
   const { defaultEngines, error, isLoading } = useDefaultEngines(os, opened);
+  const localDefaultEngines: LocalEngine[] = (defaultEngines ?? []).map((e) => ({ ...e, type: "local" }));
 
   const form = useForm<LocalEngine>({
     initialValues: {
@@ -92,16 +93,15 @@ function AddEngine({ opened, setOpened }: { opened: boolean; setOpened: (opened:
           )}
           <ScrollArea.Autosize mah={500} offsetScrollbars>
             <Stack>
-                        {defaultEngines?.map((engine, i) => (
-                          <EngineCard
-                            // @ts-expect-error
-                            engine={engine}
-                            engineId={i}
-                            availableEngines={defaultEngines ?? []}
-                            closeModal={() => setOpened(false)}
-                            key={engine.name}
-                          />
-                        ))}
+              {localDefaultEngines.map((engine, i) => (
+                <EngineCard
+                  engine={engine}
+                  engineId={i}
+                  availableEngines={localDefaultEngines}
+                  closeModal={() => setOpened(false)}
+                  key={engine.name}
+                />
+              ))}
               {error && (
                 <Alert icon={<IconAlertCircle size="1rem" />} title={t("common.error")} color="red">
                   {t("features.engines.add.errorFetch")}
@@ -282,33 +282,32 @@ function EngineCard({
     [t],
   );
 
-    const installEngine = useCallback(
-      async (id: number) => {
-        setInProgress(true);
+  const installEngine = useCallback(
+    async (id: number) => {
+      setInProgress(true);
 
-        try {
-          const resolvedEngine =
-            engine.name === LC0_AUTO_NAME && engine.installMethod === "download"
-              ? await resolveAutoLc0Engine(engine, availableEngines)
-              : engine;
-          let enginePath: string;
-          const isAndroid =
-            os === "android" || (resolvedEngine as unknown as { os?: string }).os === "android";
+      try {
+        const resolvedEngine =
+          engine.name === LC0_AUTO_NAME && engine.installMethod === "download"
+            ? await resolveAutoLc0Engine(engine, availableEngines)
+            : engine;
+        let enginePath: string;
+        const isAndroid = os === "android" || (resolvedEngine as unknown as { os?: string }).os === "android";
 
-          if (resolvedEngine.installMethod === "bundled") {
-            // On Android, bundled engines are resolved by the backend (prefer nativeLibraryDir `lib*.so`).
-            // Treat the engine path as a logical identifier instead of a filesystem path.
-            if (isAndroid) {
-              enginePath = resolvedEngine.path;
-            } else {
-              // Use bundled engine from app resources (resource_dir) on desktop targets.
-              const { resourceDir } = await import("@tauri-apps/api/path");
-              const resourceDirPath = await resourceDir();
-              enginePath = await join(resourceDirPath, resolvedEngine.path);
+        if (resolvedEngine.installMethod === "bundled") {
+          // On Android, bundled engines are resolved by the backend (prefer nativeLibraryDir `lib*.so`).
+          // Treat the engine path as a logical identifier instead of a filesystem path.
+          if (isAndroid) {
+            enginePath = resolvedEngine.path;
+          } else {
+            // Use bundled engine from app resources (resource_dir) on desktop targets.
+            const { resourceDir } = await import("@tauri-apps/api/path");
+            const resourceDirPath = await resourceDir();
+            enginePath = await join(resourceDirPath, resolvedEngine.path);
 
-              // Verify it exists
-              if (!(await exists(enginePath))) {
-                throw new Error(t("features.engines.add.bundledEngineNotFound"));
+            // Verify it exists
+            if (!(await exists(enginePath))) {
+              throw new Error(t("features.engines.add.bundledEngineNotFound"));
             }
 
             // Verify it's a file, not a directory
@@ -320,21 +319,21 @@ function EngineCard({
             // Set executable (though it should already be from resources, this ensures it)
             unwrap(await commands.setFileAsExecutable(enginePath));
           }
-          } else if (resolvedEngine.installMethod === "download") {
-            const url = resolvedEngine.downloadLink;
-            if (!url) throw new Error("Download link not found");
+        } else if (resolvedEngine.installMethod === "download") {
+          const url = resolvedEngine.downloadLink;
+          if (!url) throw new Error("Download link not found");
 
-            const downloadId = `engine_${id}`;
-            const title = `${resolvedEngine.name} ${resolvedEngine.version}`.trim();
-            const { notificationId, stop } = startDownloadToast(downloadId, title);
-            closeModal();
-            try {
-              enginePath = await invoke<string>("download_engine", {
-                engineId: id,
-                url,
-                engineRelPath: resolvedEngine.path,
-              });
-            } catch (e) {
+          const downloadId = `engine_${id}`;
+          const title = `${resolvedEngine.name} ${resolvedEngine.version}`.trim();
+          const { notificationId, stop } = startDownloadToast(downloadId, title);
+          closeModal();
+          try {
+            enginePath = await invoke<string>("download_engine", {
+              engineId: id,
+              url,
+              engineRelPath: resolvedEngine.path,
+            });
+          } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
             notifications.update({
               id: notificationId,
@@ -357,18 +356,18 @@ function EngineCard({
           if (meta.is_dir) {
             throw new Error(t("features.engines.add.enginePathIsDirectory", { path: enginePath }));
           }
-          } else if (resolvedEngine.installMethod === "brew") {
-            const brewPackage = resolvedEngine.brewPackage;
-            if (!brewPackage) throw new Error("Brew package name not found");
+        } else if (resolvedEngine.installMethod === "brew") {
+          const brewPackage = resolvedEngine.brewPackage;
+          if (!brewPackage) throw new Error("Brew package name not found");
 
-            const result = unwrap(await commands.installPackage("brew", brewPackage));
-            if (!result.success) {
-              throw new Error(`Brew installation failed: ${result.stderr}`);
-            }
-            enginePath = resolvedEngine.path;
-          } else if (resolvedEngine.installMethod === "package") {
-            const packageCommand = resolvedEngine.packageCommand;
-            if (!packageCommand) throw new Error("Package command not found");
+          const result = unwrap(await commands.installPackage("brew", brewPackage));
+          if (!result.success) {
+            throw new Error(`Brew installation failed: ${result.stderr}`);
+          }
+          enginePath = resolvedEngine.path;
+        } else if (resolvedEngine.installMethod === "package") {
+          const packageCommand = resolvedEngine.packageCommand;
+          if (!packageCommand) throw new Error("Package command not found");
 
           const [manager, ...args] = packageCommand.split(" ");
           const packageName = args[args.length - 1];
@@ -377,39 +376,39 @@ function EngineCard({
           if (!result.success) {
             throw new Error(`Package installation failed: ${result.stderr}`);
           }
-            enginePath = resolvedEngine.path;
-          } else {
-            throw new Error(`Unsupported installation method: ${resolvedEngine.installMethod}`);
-          }
+          enginePath = resolvedEngine.path;
+        } else {
+          throw new Error(`Unsupported installation method: ${resolvedEngine.installMethod}`);
+        }
 
         let config: {
           name: string;
           options: { type: string; value: { name: string; default?: string | number | boolean | null } }[];
         } | null = null;
         try {
-            config = unwrap(await commands.getEngineConfig(enginePath)) as unknown as typeof config;
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (msg.includes("Engine timeout")) {
-              notifications.show({
-                title: t("common.warning"),
-                message: t("features.engines.add.engineConfigTimeoutInstalled"),
-                color: "yellow",
-              });
-              config = { name: resolvedEngine.name, options: [] };
-            } else {
-              throw e;
-            }
+          config = unwrap(await commands.getEngineConfig(enginePath)) as unknown as typeof config;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("Engine timeout")) {
+            notifications.show({
+              title: t("common.warning"),
+              message: t("features.engines.add.engineConfigTimeoutInstalled"),
+              color: "yellow",
+            });
+            config = { name: resolvedEngine.name, options: [] };
+          } else {
+            throw e;
           }
+        }
 
-          setEngines(async (prev) => [
-            ...(await prev),
-            {
-              ...resolvedEngine,
-              type: "local" as const,
-              path: enginePath,
-              loaded: true,
-              settings:
+        setEngines(async (prev) => [
+          ...(await prev),
+          {
+            ...resolvedEngine,
+            type: "local" as const,
+            path: enginePath,
+            loaded: true,
+            settings:
               config && config.options.length > 0
                 ? config.options
                     .filter((o) => requiredEngineSettings.includes(o.value.name))
@@ -460,7 +459,7 @@ function EngineCard({
         setInProgress(false);
       }
     },
-    [engine, availableEngines, setEngines, t, closeModal, startDownloadToast],
+    [engine, availableEngines, setEngines, t, closeModal, startDownloadToast, os],
   );
 
   const getInstallText = () => {

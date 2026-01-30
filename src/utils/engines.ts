@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Platform } from "@tauri-apps/plugin-os";
 import { invoke } from "@tauri-apps/api/core";
+import type { Platform } from "@tauri-apps/plugin-os";
 import { z } from "zod";
 
 import { type BestMoves, commands, type EngineOptions, type GoMode } from "@/bindings";
@@ -401,8 +401,7 @@ const ENGINES = [
     bmi2: true,
     image: "https://lczero.org/images/logo.svg",
     installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
     path: "lc0/lc0.exe",
     elo: 3440,
   },
@@ -413,8 +412,7 @@ const ENGINES = [
     bmi2: false,
     image: "https://lczero.org/images/logo.svg",
     installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-onnx-dml.zip",
     path: "lc0/lc0.exe",
     elo: 3440,
   },
@@ -425,8 +423,7 @@ const ENGINES = [
     bmi2: true,
     image: "https://lczero.org/images/logo.svg",
     installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
     path: "lc0/lc0.exe",
     elo: 3440,
   },
@@ -437,8 +434,7 @@ const ENGINES = [
     bmi2: false,
     image: "https://lczero.org/images/logo.svg",
     installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
+    downloadLink: "https://github.com/LeelaChessZero/lc0/releases/download/v0.32.1/lc0-v0.32.1-windows-cpu-dnnl.zip",
     path: "lc0/lc0.exe",
     elo: 3440,
   },
