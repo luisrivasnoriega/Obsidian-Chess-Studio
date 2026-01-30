@@ -328,6 +328,78 @@ fn looks_like_lc0(engine_rel_path: &str, url: &str) -> bool {
     rel.ends_with("lc0.exe") || rel.contains("/lc0") || u.contains("/lc0-") || u.contains("leelachesszero")
 }
 
+/// Entry for one Lc0 neural network file (e.g. maia-1100.pb.gz).
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct Lc0NetworkEntry {
+    /// Absolute path to the .pb.gz file for UCI WeightsFile.
+    pub path: String,
+    /// Display label, e.g. "Maia 1100" or "BT4 1024x15x32h".
+    pub display_name: String,
+    /// ELO if parsed from filename (e.g. maia-1100 -> 1100).
+    pub elo: Option<u16>,
+}
+
+/// List Lc0 network files in AppData/engines/lc0/networks.
+/// Returns entries sorted by ELO (Maia nets first, ascending) then by display_name.
+#[tauri::command]
+#[specta::specta]
+pub fn list_lc0_networks(app: tauri::AppHandle) -> Result<Vec<Lc0NetworkEntry>, Error> {
+    use tauri::path::BaseDirectory;
+
+    let networks_dir = app
+        .path()
+        .resolve("engines/lc0/networks", BaseDirectory::AppData)
+        .map_err(|e| Error::PackageManager(format!("Failed to resolve Lc0 networks dir: {e}")))?;
+
+    if !networks_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries: Vec<Lc0NetworkEntry> = std::fs::read_dir(&networks_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = path.file_name()?.to_string_lossy();
+            if !name.to_lowercase().ends_with(".pb.gz") {
+                return None;
+            }
+            let path_str = path.to_string_lossy().to_string();
+            // Parse maia-<elo>.pb.gz -> display "Maia <elo>", elo = Some(elo)
+            let name_lc = name.to_lowercase();
+            let (display_name, elo) = if name_lc.starts_with("maia-") {
+                let rest = name_lc.trim_start_matches("maia-").trim_end_matches(".pb.gz");
+                if let Ok(elo) = rest.parse::<u16>() {
+                    (format!("Maia {}", elo), Some(elo))
+                } else {
+                    (name.to_string(), None)
+                }
+            } else {
+                // e.g. BT4-1024x15x32h-swa-...
+                let base = name.trim_end_matches(".pb.gz").trim_end_matches(".PB.GZ");
+                (base.replace('-', " "), None)
+            };
+            Some(Lc0NetworkEntry {
+                path: path_str,
+                display_name,
+                elo,
+            })
+        })
+        .collect();
+
+    // Sort: Maia by ELO ascending, then others by display_name
+    entries.sort_by(|a, b| {
+        match (a.elo, b.elo) {
+            (Some(ea), Some(eb)) => ea.cmp(&eb),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.display_name.cmp(&b.display_name),
+        }
+    });
+
+    Ok(entries)
+}
+
 #[cfg(target_os = "windows")]
 fn migrate_lc0_root_files_to_subdir(engines_dir: &Path, lc0_dir: &Path) -> Result<(), Error> {
     // Best-effort cleanup for older installs where Lc0 extracted into the engines root.

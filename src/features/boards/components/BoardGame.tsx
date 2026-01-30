@@ -47,6 +47,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
@@ -161,7 +162,76 @@ export type OpponentSettings =
       timeControl?: TimeControlField;
       engine: LocalEngine | null;
       go: GoMode;
+      /** When engine is Lc0, path to selected neural network (.pb.gz) for UCI WeightsFile. */
+      lc0NetworkPath?: string;
     };
+
+function isLc0Engine(engine: LocalEngine): boolean {
+  return engine.name.startsWith("Leela Chess Zero");
+}
+
+interface Lc0NetworkSelectProps {
+  opponent: Extract<OpponentSettings, { type: "engine" }>;
+  setOpponent: Dispatch<SetStateAction<OpponentSettings>>;
+}
+
+function Lc0NetworkSelect({ opponent, setOpponent }: Lc0NetworkSelectProps) {
+  const { t } = useTranslation();
+  const { data: lc0Networks = [], isLoading } = useQuery({
+    queryKey: ["lc0-networks"],
+    queryFn: async () => {
+      const r = await commands.listLc0Networks();
+      if (r.status === "error") throw new Error(r.error);
+      return r.data;
+    },
+  });
+
+  useEffect(() => {
+    if (
+      opponent.type === "engine" &&
+      lc0Networks.length > 0 &&
+      !opponent.lc0NetworkPath
+    ) {
+      setOpponent((prev) =>
+        prev.type === "engine"
+          ? { ...prev, lc0NetworkPath: lc0Networks[0].path }
+          : prev,
+      );
+    }
+  }, [opponent.type, opponent.lc0NetworkPath, lc0Networks, setOpponent]);
+
+  const networkOptions = useMemo(() => {
+    if (lc0Networks.length === 0) return [];
+    const defaultLabel = t("game.lc0NetworkDefault");
+    const first = lc0Networks[0];
+    return [
+      { value: first.path, label: `${defaultLabel} (${first.display_name})` },
+      ...lc0Networks.slice(1).map((n) => ({ value: n.path, label: n.display_name })),
+    ];
+  }, [lc0Networks, t]);
+
+  const value =
+    opponent.type === "engine"
+      ? opponent.lc0NetworkPath ?? lc0Networks[0]?.path ?? ""
+      : "";
+
+  if (isLoading || lc0Networks.length === 0) return null;
+
+  return (
+    <Select
+      label={t("game.lc0Network")}
+      allowDeselect={false}
+      data={networkOptions}
+      value={value}
+      onChange={(path) =>
+        setOpponent((prev) =>
+          prev.type === "engine" ? { ...prev, lc0NetworkPath: path ?? undefined } : prev,
+        )
+      }
+      placeholder={t("game.lc0Network")}
+    />
+  );
+}
 
 interface OpponentFormProps {
   sameTimeControl: boolean;
@@ -306,18 +376,31 @@ function OpponentForm({
       )}
 
       {opponent.type === "engine" && (
-        <EnginesSelect
-          engine={opponent.engine}
-          setEngine={(engine) =>
-            setOpponent((prev) => ({
-              ...prev,
-              ...(engine?.go ? { go: engine.go } : {}),
-              engine,
-            }))
-          }
-          engines={engines}
-          enginesState={enginesState}
-        />
+        <>
+          <EnginesSelect
+            engine={opponent.engine}
+            setEngine={(engine) =>
+              setOpponent((prev) => {
+                if (prev.type !== "engine") return prev;
+                return {
+                  ...prev,
+                  ...(engine?.go ? { go: engine.go } : {}),
+                  engine,
+                  lc0NetworkPath:
+                    engine && isLc0Engine(engine) ? prev.lc0NetworkPath : undefined,
+                };
+              })
+            }
+            engines={engines}
+            enginesState={enginesState}
+          />
+          {opponent.engine && isLc0Engine(opponent.engine) && (
+            <Lc0NetworkSelect
+              opponent={opponent}
+              setOpponent={setOpponent}
+            />
+          )}
+        </>
       )}
 
       <Divider variant="dashed" label={t("game.timeSettings")} />
@@ -430,14 +513,16 @@ export function useClockTimer(
   useEffect(() => {
     if (gameState === "playing") {
       if (whiteTime !== null && whiteTime <= 0) {
+        setWhiteTime(0);
         setGameState("gameOver");
         setResult("0-1");
       } else if (blackTime !== null && blackTime <= 0) {
+        setBlackTime(0);
         setGameState("gameOver");
         setResult("1-0");
       }
     }
-  }, [gameState, whiteTime, blackTime, setGameState, setResult]);
+  }, [gameState, whiteTime, blackTime, setGameState, setResult, setWhiteTime, setBlackTime]);
 
   useEffect(() => {
     if (gameState !== "playing" && intervalId) {
@@ -459,26 +544,26 @@ export function useClockTimer(
     gameStateRef.current = gameState;
   }, [gameState]);
 
-  // Keep intervalId in a ref to access it inside the callback
+  // Keep interval in a ref so we can clear it when pos changes without waiting for state.
+  // This fixes the clock stopping after a move: we no longer depend on intervalId being null.
   const intervalIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    intervalIdRef.current = intervalId;
-  }, [intervalId]);
 
   useEffect(() => {
-    if (gameState === "playing" && pos && !intervalId) {
+    if (gameState === "playing" && pos) {
+      if (intervalIdRef.current) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
+      }
+
       const decrementTime = () => {
-        // Stop immediately if game is no longer playing
         if (gameStateRef.current !== "playing") {
-          const currentIntervalId = intervalIdRef.current;
-          if (currentIntervalId) {
-            clearInterval(currentIntervalId);
-            setIntervalId(null);
+          if (intervalIdRef.current) {
+            clearInterval(intervalIdRef.current);
+            intervalIdRef.current = null;
           }
           return;
         }
 
-        // Use ref to avoid dependency on pos.turn in closure
         const currentTurn = posTurnRef.current;
         if (currentTurn === "white" && whiteTimeRef.current !== null) {
           setWhiteTime((prev) => {
@@ -494,15 +579,15 @@ export function useClockTimer(
       };
 
       const id = setInterval(decrementTime, CLOCK_UPDATE_INTERVAL);
-      setIntervalId(id);
       intervalIdRef.current = id;
+      setIntervalId(id);
       return () => {
         clearInterval(id);
         intervalIdRef.current = null;
         setIntervalId((current) => (current === id ? null : current));
       };
     }
-  }, [gameState, intervalId, pos, setWhiteTime, setBlackTime]);
+  }, [gameState, pos, setWhiteTime, setBlackTime]);
 }
 
 /**

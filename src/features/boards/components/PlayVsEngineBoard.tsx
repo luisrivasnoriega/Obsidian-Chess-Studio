@@ -62,9 +62,15 @@ function PlayVsEngineBoardContent() {
 
   const { whiteTime, blackTime, setWhiteTime, setBlackTime } = useGameTime();
 
-  // Initialize times from players when game starts playing
+  // Initialize times from players only at the very start of a game (no moves yet).
+  // Never overwrite clock state mid-game, so the clock cannot "reset" while playing.
   useEffect(() => {
-    if (gameState === "playing" && whiteTime === null && blackTime === null) {
+    if (
+      gameState === "playing" &&
+      whiteTime === null &&
+      blackTime === null &&
+      root.children.length === 0
+    ) {
       if (players.white.timeControl) {
         setWhiteTime(players.white.timeControl.seconds);
       }
@@ -78,6 +84,7 @@ function PlayVsEngineBoardContent() {
     players.black.timeControl,
     whiteTime,
     blackTime,
+    root.children.length,
     setWhiteTime,
     setBlackTime,
   ]);

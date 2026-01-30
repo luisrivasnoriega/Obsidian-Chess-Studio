@@ -147,34 +147,43 @@ impl<'a> EngineManager<'a> {
                                         let depth_ok = cur_depth >= proc.last_depth;
                                         let rate_limit_ok = lim.check().is_ok();
                                         if all_same_depth && depth_ok && rate_limit_ok {
-                                            let progress = match proc.go_mode {
-                                                GoMode::Depth(depth) => {
-                                                    (cur_depth as f64 / depth as f64) * 100.0
-                                                }
-                                                GoMode::Time(time) => {
+                                            let (progress, should_emit) = match proc.go_mode {
+                                                GoMode::Depth(depth) => (
+                                                    (cur_depth as f64 / depth as f64) * 100.0,
+                                                    true,
+                                                ),
+                                                GoMode::Time(time) => (
                                                     (proc.start.elapsed().as_millis() as f64
                                                         / time as f64)
-                                                        * 100.0
-                                                }
-                                                GoMode::Nodes(nodes) => {
-                                                    (cur_nodes as f64 / nodes as f64) * 100.0
-                                                }
-                                                GoMode::PlayersTime(_) => 99.99,
-                                                GoMode::Infinite => 99.99,
+                                                        * 100.0,
+                                                    true,
+                                                ),
+                                                GoMode::Nodes(nodes) => (
+                                                    (cur_nodes as f64 / nodes as f64) * 100.0,
+                                                    true,
+                                                ),
+                                                // PlayersTime/Infinite: emit 99.99 only when depth increases or first time (avoid flood)
+                                                GoMode::PlayersTime(_) | GoMode::Infinite => (
+                                                    99.99,
+                                                    cur_depth > proc.last_depth
+                                                        || proc.last_progress < 99.0,
+                                                ),
                                             };
-                                            super::types::BestMovesPayload {
-                                                best_lines: proc.best_moves.clone(),
-                                                engine: id_cloned.clone(),
-                                                tab: tab_cloned.clone(),
-                                                fen: proc.options.fen.clone(),
-                                                moves: proc.options.moves.clone(),
-                                                progress,
+                                            if should_emit {
+                                                super::types::BestMovesPayload {
+                                                    best_lines: proc.best_moves.clone(),
+                                                    engine: id_cloned.clone(),
+                                                    tab: tab_cloned.clone(),
+                                                    fen: proc.options.fen.clone(),
+                                                    moves: proc.options.moves.clone(),
+                                                    progress,
+                                                }
+                                                .emit(&app_cloned)
+                                                .ok();
+                                                proc.last_depth = cur_depth;
+                                                proc.last_best_moves = proc.best_moves.clone();
+                                                proc.last_progress = progress as f32;
                                             }
-                                            .emit(&app_cloned)
-                                            .ok();
-                                            proc.last_depth = cur_depth;
-                                            proc.last_best_moves = proc.best_moves.clone();
-                                            proc.last_progress = progress as f32;
                                         }
                                         proc.best_moves.clear();
                                     }

@@ -258,6 +258,8 @@
     "noEnginesAvailableDesc": "Actualmente no hay motores de ajedrez instalados o detectados en tu sistema. Para jugar contra un motor, necesitarás instalar uno primero.",
     "installEngine": "Instalar motor",
     "selectEngine": "Seleccionar motor",
+    "lc0Network": "Red Lc0",
+    "lc0NetworkDefault": "Por defecto",
     "openingFor": "apertura para",
     "startingPosition": "Posición inicial",
     "fen": "Posición FEN",

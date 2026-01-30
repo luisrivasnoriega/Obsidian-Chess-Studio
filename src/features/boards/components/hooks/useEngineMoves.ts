@@ -33,6 +33,8 @@ export function useEngineMoves(
     moves: string[];
   } | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Skip duplicate payloads: once we've applied a move for (tab, fen, moves.length), ignore further events for same key
+  const lastAppliedPayloadKeyRef = useRef<string | null>(null);
   // Force re-request after error by incrementing this counter
   const [_retryCounter, setRetryCounter] = useState(0);
 
@@ -110,6 +112,7 @@ export function useEngineMoves(
           fen: root.fen,
           moves: moves,
         };
+        lastAppliedPayloadKeyRef.current = null;
 
         // Calculate time for engine - use actual remaining time or fallback to timeControl seconds
         // Use refs to get current time values without triggering effect on time updates
@@ -137,25 +140,44 @@ export function useEngineMoves(
               }
             : player.go;
 
-        const requestPromise = commands.getBestMoves(currentTurn, engine.path, tabKey, goMode, {
-          fen: root.fen,
-          moves: moves,
-          extraOptions: (engine.settings || [])
-            .filter((s) => s.name !== "MultiPV")
-            .map((s) => ({ ...s, value: s.value?.toString() ?? "" })),
-        });
+        const baseOptions = (engine.settings || [])
+          .filter((s) => s.name !== "MultiPV" && s.name !== "WeightsFile")
+          .map((s) => ({ ...s, value: s.value?.toString() ?? "" }));
 
-        // Set a timeout (1 second) to detect if engine is stuck
-        // If no response after 1s, clear the request and force a retry
+        const runRequest = async () => {
+          let extraOptions = [...baseOptions];
+          if (engine.name.startsWith("Leela Chess Zero")) {
+            let weightsPath =
+              player.type === "engine" && "lc0NetworkPath" in player
+                ? player.lc0NetworkPath
+                : undefined;
+            if (!weightsPath) {
+              const r = await commands.listLc0Networks();
+              if (r.status === "ok" && r.data?.length) weightsPath = r.data[0].path;
+            }
+            if (weightsPath) {
+              extraOptions = [...extraOptions, { name: "WeightsFile", value: weightsPath }];
+            }
+          }
+          return commands.getBestMoves(currentTurn, engine.path, tabKey, goMode, {
+            fen: root.fen,
+            moves: moves,
+            extraOptions,
+          });
+        };
+
+        const requestPromise = runRequest();
+
+        const isLc0 = engine.name.startsWith("Leela Chess Zero");
+        const timeoutMs = isLc0 ? 5_000 : 60_000;
         timeoutRef.current = setTimeout(() => {
           if (engineRequestRef.current === requestKey) {
             engineRequestRef.current = null;
             engineRequestDetailsRef.current = null;
-            // Force re-request by incrementing retry counter
             setRetryCounter((prev) => prev + 1);
           }
           timeoutRef.current = null;
-        }, 1000); // 1 second timeout
+        }, timeoutMs);
 
         requestPromise
           .then((res: any) => {
@@ -247,8 +269,8 @@ export function useEngineMoves(
         timeoutRef.current = null;
       }
     };
-    // Depend on position/turn changes and key identifiers, but not time updates
-    // Time updates should not trigger new engine requests - we use refs for times
+    // Depend on position/turn changes and key identifiers, but not time updates.
+    // _retryCounter: when timeout fires we increment it so this effect re-runs and sends a new request.
   }, [
     gameState,
     pos,
@@ -263,6 +285,7 @@ export function useEngineMoves(
     players.black,
     players.white?.timeControl?.seconds,
     players.white,
+    _retryCounter,
   ]);
 
   // Listen for engine move responses
@@ -287,6 +310,12 @@ export function useEngineMoves(
       const payload = pending;
       pending = null;
 
+      // Skip duplicate payloads: backend can emit 99.99/100 many times; process each (tab,fen,moves) once
+      const payloadKey = `${payload.tab}|${payload.fen}|${payload.moves.length}`;
+      if (lastAppliedPayloadKeyRef.current === payloadKey) {
+        return;
+      }
+
       // Only process moves when game is actively playing
       if (gameState !== "playing" || headers.result !== "*" || !activeTab || !pos) {
         return;
@@ -302,59 +331,51 @@ export function useEngineMoves(
       const tabMatchesExactly = payload.tab === expectedTab;
       const tabMatches = tabMatchesExactly || tabEndsWithTurn;
 
+      // Backend emits 99.99 for PlayersTime/Infinite from Info; only 100 when engine sends "bestmove".
+      // Lc0 sometimes never sends "bestmove" in some positions, so treat 99.99 with best lines as final.
+      const progressFinal = payload.progress >= 99.99;
       const shouldApplyMove =
-        payload.progress === 100 &&
+        progressFinal &&
         tabMatches &&
         payload.engine === pos.turn &&
         isEngineTurn &&
         !pos.isEnd() &&
-        headers.result === "*";
+        headers.result === "*" &&
+        (payload.bestLines?.length ?? 0) > 0;
 
       if (shouldApplyMove) {
-        // Double-check that we still have an active request to prevent duplicate moves
-        if (!engineRequestRef.current) {
-          // Request was already cleared, ignore this response
+        // Only apply when payload is for the current position (same main-line length).
+        // Prevents applying twice when we get repeated 100/99.99 events.
+        const currentMoves = getMainLine(root, headers.variant === "Chess960");
+        if (payload.moves.length !== currentMoves.length) {
           return;
         }
 
-        // Verify the request matches the current position
+        const hasActiveRequest = !!engineRequestRef.current;
+        const payloadMatchesFen = payload.fen === root.fen;
+        if (!hasActiveRequest && !payloadMatchesFen) {
+          return;
+        }
         if (engineRequestDetailsRef.current) {
           const requestDetails = engineRequestDetailsRef.current;
-          // Check if the request is for a different position (stale response)
           if (requestDetails.fen !== root.fen || requestDetails.tab !== payload.tab) {
-            // This is a stale response, ignore it
             return;
           }
         }
 
         const bestUci = payload.bestLines?.[0]?.uciMoves?.[0];
         if (!bestUci) {
-          // Clear refs on error to allow retry
-          engineRequestRef.current = null;
-          engineRequestDetailsRef.current = null;
-          // Force re-request by incrementing retry counter
-          setRetryCounter((prev) => prev + 1);
           return;
         }
         const parsed = parseUci(bestUci);
         if (!parsed) {
-          // Clear refs on error to allow retry
-          engineRequestRef.current = null;
-          engineRequestDetailsRef.current = null;
-          // Force re-request by incrementing retry counter
-          setRetryCounter((prev) => prev + 1);
           return;
         }
 
-        // Verify move is legal in current position (safety check)
-        const dests = pos.allDests();
-        const legalDestinations = "from" in parsed ? dests.get(parsed.from) : null;
-        const isLegal = "from" in parsed && legalDestinations?.has(parsed.to);
-        if (!isLegal) {
-          // Clear refs on error to allow retry
+        // Verify move is legal (handles normal moves, castling, en passant, drops)
+        if (!pos.isLegal(parsed)) {
           engineRequestRef.current = null;
           engineRequestDetailsRef.current = null;
-          // Force re-request by incrementing retry counter
           setRetryCounter((prev) => prev + 1);
           return;
         }
@@ -369,14 +390,15 @@ export function useEngineMoves(
             payload: parsed,
             clock: (pos.turn === "white" ? whiteTimeRef.current : blackTimeRef.current) ?? undefined,
           });
+          // Only mark as applied after success so duplicate events are skipped; if appendMove throws we can retry
+          lastAppliedPayloadKeyRef.current = payloadKey;
         } catch (_error) {
-          // Clear refs on error to allow retry
+          // Clear refs on error to allow retry; do NOT set lastAppliedPayloadKeyRef so we can process this payload again
           engineRequestRef.current = null;
           engineRequestDetailsRef.current = null;
-          // Force re-request by incrementing retry counter
           setRetryCounter((prev) => prev + 1);
         }
-      } else if (payload.progress === 100 && tabEndsWithTurn) {
+      } else if (payload.progress >= 99.99 && tabEndsWithTurn) {
         // Only clear the engine request ref if it matches this payload
         // This prevents clearing requests for different positions/turns
         if (
@@ -395,8 +417,16 @@ export function useEngineMoves(
     events.bestMovesPayload
       .listen(({ payload }) => {
         if (!isMounted) return;
-        // Always throttle to avoid stutter - even progress 100 events can arrive in bursts
-        // We only need the latest payload, so accumulate and flush at ~10fps
+        // Progress 100 or 99.99 (PlayersTime) = final: flush immediately so we never overwrite it
+        if (payload.progress >= 99.99) {
+          if (timer != null) {
+            window.clearTimeout(timer);
+            timer = null;
+          }
+          pending = payload;
+          flush();
+          return;
+        }
         pending = payload;
         if (timer == null) {
           timer = window.setTimeout(() => {

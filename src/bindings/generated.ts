@@ -470,6 +470,18 @@ async downloadEngine(engineId: number, url: string, engineRelPath: string) : Pro
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * List Lc0 network files in AppData/engines/lc0/networks.
+ * Returns entries sorted by ELO (Maia nets first, ascending) then by display_name.
+ */
+async listLc0Networks() : Promise<Result<Lc0NetworkEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_lc0_networks") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTournaments(file: string, query: TournamentQuery) : Promise<Result<QueryResponse<Event[]>, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_tournaments", { file, query }) };
@@ -1370,6 +1382,22 @@ export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
  * Engine search mode (depth, time, nodes, etc).
  */
 export type GoMode = { t: "PlayersTime"; c: PlayersTime } | { t: "Depth"; c: number } | { t: "Time"; c: number } | { t: "Nodes"; c: number } | { t: "Infinite" }
+/**
+ * Entry for one Lc0 neural network file (e.g. maia-1100.pb.gz).
+ */
+export type Lc0NetworkEntry = { 
+/**
+ * Absolute path to the .pb.gz file for UCI WeightsFile.
+ */
+path: string; 
+/**
+ * Display label, e.g. "Maia 1100" or "BT4 1024x15x32h".
+ */
+display_name: string; 
+/**
+ * ELO if parsed from filename (e.g. maia-1100 -> 1100).
+ */
+elo: number | null }
 export type LichessGamesOptionsDto = { variant?: string | null; speeds?: string[] | null; ratings?: number[] | null; 
 /**
  * Serialized from JS Date as ISO string (or omitted).

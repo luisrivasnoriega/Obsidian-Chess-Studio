@@ -73,7 +73,7 @@ use crate::db::{
     download_game_database,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
-use crate::fs::{download_engine, set_file_as_executable, DownloadProgress};
+use crate::fs::{download_engine, list_lc0_networks, set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
 use crate::online::{create_lichess_tournament, get_chesscom_account, get_lichess_account};
@@ -205,6 +205,7 @@ pub async fn run() {
             download_fide_db,
             download_file,
             download_engine,
+            list_lc0_networks,
             get_tournaments,
             get_db_info,
             get_games,

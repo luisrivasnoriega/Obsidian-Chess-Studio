@@ -257,6 +257,8 @@
     "noEnginesAvailableDesc": "No chess engines are currently installed or detected on your system. To play against an engine, you\u0027ll need to install one first.",
     "installEngine": "Install Engine",
     "selectEngine": "Select engine",
+    "lc0Network": "Lc0 network",
+    "lc0NetworkDefault": "Default",
     "openingFor": "opening for",
     "startingPosition": "Starting Position",
     "fen": "FEN Position",
