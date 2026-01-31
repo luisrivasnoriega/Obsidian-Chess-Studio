@@ -30,6 +30,7 @@ import {
   IconUser,
   IconZoomCheck,
 } from "@tabler/icons-react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { save } from "@tauri-apps/plugin-dialog";
 import { INITIAL_FEN } from "chessops/fen";
@@ -47,7 +48,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
@@ -59,11 +59,13 @@ import TimeInput from "@/components/TimeInput";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
+  activeProfileIdAtom,
   activeTabAtom,
   currentGameStateAtom,
   currentPlayersAtom,
   type GameState,
   loadableEnginesAtom,
+  profilesAtom,
   tabsAtom,
 } from "@/state/atoms";
 import { getMainLine, getMoveText, getPGN } from "@/utils/chess";
@@ -155,7 +157,8 @@ export type OpponentSettings =
   | {
       type: "human";
       timeControl?: TimeControlField;
-      name?: string;
+      /** Profile id for the human player (Play vs PC saves games to this profile's DB). */
+      profileId?: string | null;
     }
   | {
       type: "engine";
@@ -164,6 +167,8 @@ export type OpponentSettings =
       go: GoMode;
       /** When engine is Lc0, path to selected neural network (.pb.gz) for UCI WeightsFile. */
       lc0NetworkPath?: string;
+      /** When engine is Lc0, search limit in nodes (default 1). */
+      lc0Nodes?: number;
     };
 
 function isLc0Engine(engine: LocalEngine): boolean {
@@ -187,14 +192,16 @@ function Lc0NetworkSelect({ opponent, setOpponent }: Lc0NetworkSelectProps) {
   });
 
   useEffect(() => {
-    if (
-      opponent.type === "engine" &&
-      lc0Networks.length > 0 &&
-      !opponent.lc0NetworkPath
-    ) {
+    if (opponent.type === "engine" && lc0Networks.length > 0 && !opponent.lc0NetworkPath) {
       setOpponent((prev) =>
         prev.type === "engine"
-          ? { ...prev, lc0NetworkPath: lc0Networks[0].path }
+          ? {
+              ...prev,
+              lc0NetworkPath: lc0Networks[0].path,
+              timeControl: undefined,
+              go: { t: "Nodes" as const, c: 1 },
+              lc0Nodes: 1,
+            }
           : prev,
       );
     }
@@ -210,10 +217,7 @@ function Lc0NetworkSelect({ opponent, setOpponent }: Lc0NetworkSelectProps) {
     ];
   }, [lc0Networks, t]);
 
-  const value =
-    opponent.type === "engine"
-      ? opponent.lc0NetworkPath ?? lc0Networks[0]?.path ?? ""
-      : "";
+  const value = opponent.type === "engine" ? (opponent.lc0NetworkPath ?? lc0Networks[0]?.path ?? "") : "";
 
   if (isLoading || lc0Networks.length === 0) return null;
 
@@ -224,9 +228,7 @@ function Lc0NetworkSelect({ opponent, setOpponent }: Lc0NetworkSelectProps) {
       data={networkOptions}
       value={value}
       onChange={(path) =>
-        setOpponent((prev) =>
-          prev.type === "engine" ? { ...prev, lc0NetworkPath: path ?? undefined } : prev,
-        )
+        setOpponent((prev) => (prev.type === "engine" ? { ...prev, lc0NetworkPath: path ?? undefined } : prev))
       }
       placeholder={t("game.lc0Network")}
     />
@@ -240,6 +242,8 @@ interface OpponentFormProps {
   setOtherOpponent: Dispatch<SetStateAction<OpponentSettings>>;
   engines: LocalEngine[];
   enginesState: string;
+  profiles: { id: string; name: string }[];
+  activeProfileId: string | null;
 }
 
 function OpponentForm({
@@ -249,6 +253,8 @@ function OpponentForm({
   setOtherOpponent,
   engines = [],
   enginesState,
+  profiles,
+  activeProfileId,
 }: OpponentFormProps) {
   const { t } = useTranslation();
 
@@ -258,7 +264,7 @@ function OpponentForm({
         setOpponent((prev) => ({
           ...prev,
           type: "human",
-          name: "Player",
+          profileId: activeProfileId ?? undefined,
         }));
       } else {
         setOpponent((prev) => ({
@@ -269,8 +275,17 @@ function OpponentForm({
         }));
       }
     },
-    [setOpponent],
+    [activeProfileId, setOpponent],
   );
+
+  const opponentProfileId = opponent.type === "human" ? opponent.profileId : undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: use opponentProfileId (not opponent.profileId) for type safety; profileId only exists when type is "human"
+  useEffect(() => {
+    if (opponent.type !== "human") return;
+    if (opponent.profileId != null) return;
+    if (profiles.length === 0 || !activeProfileId) return;
+    setOpponent((prev) => (prev.type === "human" ? { ...prev, profileId: activeProfileId } : prev));
+  }, [opponent.type, activeProfileId, profiles.length, setOpponent, opponentProfileId]);
 
   const updateTimeControl = useCallback(
     (timeControl: TimeControlField | undefined) => {
@@ -284,7 +299,7 @@ function OpponentForm({
 
   const handleTimeControlToggle = useCallback(
     (v: string) => {
-      updateTimeControl(v === "Time" ? DEFAULT_TIME_CONTROL : undefined);
+      updateTimeControl(v === "time" ? DEFAULT_TIME_CONTROL : undefined);
     },
     [updateTimeControl],
   );
@@ -368,10 +383,15 @@ function OpponentForm({
       />
 
       {opponent.type === "human" && (
-        <TextInput
-          placeholder={t("common.namePlaceholder")}
-          value={opponent.name ?? ""}
-          onChange={(e) => setOpponent((prev) => ({ ...prev, name: e.target.value }))}
+        <Select
+          label={t("game.selectProfile")}
+          placeholder={t("game.selectProfilePlaceholder")}
+          data={profiles.map((p) => ({ value: p.id, label: p.name }))}
+          value={opponent.profileId ?? null}
+          onChange={(v) =>
+            setOpponent((prev) => (prev.type === "human" ? { ...prev, profileId: v ?? undefined } : prev))
+          }
+          allowDeselect={false}
         />
       )}
 
@@ -386,8 +406,8 @@ function OpponentForm({
                   ...prev,
                   ...(engine?.go ? { go: engine.go } : {}),
                   engine,
-                  lc0NetworkPath:
-                    engine && isLc0Engine(engine) ? prev.lc0NetworkPath : undefined,
+                  lc0NetworkPath: engine && isLc0Engine(engine) ? prev.lc0NetworkPath : undefined,
+                  lc0Nodes: engine && isLc0Engine(engine) ? (prev.lc0Nodes ?? 1) : undefined,
                 };
               })
             }
@@ -395,19 +415,19 @@ function OpponentForm({
             enginesState={enginesState}
           />
           {opponent.engine && isLc0Engine(opponent.engine) && (
-            <Lc0NetworkSelect
-              opponent={opponent}
-              setOpponent={setOpponent}
-            />
+            <Lc0NetworkSelect opponent={opponent} setOpponent={setOpponent} />
           )}
         </>
       )}
 
       <Divider variant="dashed" label={t("game.timeSettings")} />
       <SegmentedControl
-        data={[t("game.timeControl"), t("game.unlimited")]}
-        value={opponent.timeControl ? t("game.timeControl") : t("game.unlimited")}
-        onChange={handleTimeControlToggle}
+        data={[
+          { value: "time", label: t("game.timeControl") },
+          { value: "advanced", label: t("game.advanced") },
+        ]}
+        value={opponent.timeControl ? "time" : "advanced"}
+        onChange={(v) => handleTimeControlToggle(v === "time" ? "time" : "advanced")}
       />
       <Group grow wrap="nowrap">
         {opponent.timeControl && (
@@ -428,8 +448,12 @@ function OpponentForm({
             engine={opponent.engine}
             remote={false}
             gameMode
+            hideCores={isLc0Engine(opponent.engine)}
             settings={{
-              go: opponent.go,
+              go:
+                opponent.engine != null && isLc0Engine(opponent.engine)
+                  ? { t: "Nodes", c: opponent.lc0Nodes ?? 1 }
+                  : opponent.go,
               settings: opponent.engine.settings || [],
               enabled: true,
               synced: false,
@@ -438,12 +462,17 @@ function OpponentForm({
               setOpponent((prev) => {
                 if (prev.type === "human") return prev;
                 const newSettings = fn({
-                  go: prev.go,
+                  go:
+                    prev.engine && isLc0Engine(prev.engine) ? { t: "Nodes" as const, c: prev.lc0Nodes ?? 1 } : prev.go,
                   settings: prev.engine?.settings || [],
                   enabled: true,
                   synced: false,
                 });
-                return { ...prev, ...newSettings };
+                const updated = { ...prev, ...newSettings };
+                if (prev.engine && isLc0Engine(prev.engine) && newSettings.go?.t === "Nodes") {
+                  updated.lc0Nodes = newSettings.go.c;
+                }
+                return updated;
               })
             }
             minimal={true}
@@ -608,6 +637,8 @@ export function useClockTimer(
  */
 function BoardGame() {
   const activeTab = useAtomValue(activeTabAtom);
+  const profiles = useAtomValue(profilesAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
   const { t } = useTranslation();
 
   // Load saved game settings from localStorage
@@ -616,18 +647,35 @@ function BoardGame() {
       const saved = localStorage.getItem("boardGameSettings");
       if (saved) {
         const settings = JSON.parse(saved);
+        const norm = (p: unknown): OpponentSettings => {
+          if (!p || typeof p !== "object")
+            return { type: "human", profileId: undefined, timeControl: DEFAULT_TIME_CONTROL };
+          const o = p as Record<string, unknown>;
+          if (o.type === "human") {
+            const tc: TimeControlField =
+              o.timeControl && typeof o.timeControl === "object" && "seconds" in o.timeControl
+                ? (o.timeControl as TimeControlField)
+                : DEFAULT_TIME_CONTROL;
+            return {
+              type: "human",
+              profileId: typeof o.profileId === "string" ? o.profileId : undefined,
+              timeControl: tc,
+            };
+          }
+          return o as OpponentSettings;
+        };
         return {
           inputColor: settings.inputColor || "white",
           sameTimeControl: settings.sameTimeControl ?? true,
           customFen: settings.customFen || "",
-          player1Settings: settings.player1Settings || {
-            type: "human",
-            name: "Player",
+          player1Settings: norm(settings.player1Settings) || {
+            type: "human" as const,
+            profileId: undefined,
             timeControl: DEFAULT_TIME_CONTROL,
           },
-          player2Settings: settings.player2Settings || {
-            type: "human",
-            name: "Player",
+          player2Settings: norm(settings.player2Settings) || {
+            type: "human" as const,
+            profileId: undefined,
             timeControl: DEFAULT_TIME_CONTROL,
           },
         };
@@ -641,12 +689,12 @@ function BoardGame() {
       customFen: "",
       player1Settings: {
         type: "human" as const,
-        name: "Player",
+        profileId: undefined,
         timeControl: DEFAULT_TIME_CONTROL,
       },
       player2Settings: {
         type: "human" as const,
-        name: "Player",
+        profileId: undefined,
         timeControl: DEFAULT_TIME_CONTROL,
       },
     };
@@ -840,8 +888,16 @@ function BoardGame() {
   useEffect(() => {
     if (pos?.isEnd()) {
       setGameState("gameOver");
+      // Ensure result is set so Play vs PC saves with correct outcome (safety if makeMove didn't set it)
+      if (!headers.result || headers.result === "*") {
+        if (pos.isCheckmate()) {
+          setResult(pos.turn === "white" ? "0-1" : "1-0");
+        } else if (pos.isStalemate() || pos.isInsufficientMaterial()) {
+          setResult("1/2-1/2");
+        }
+      }
     }
-  }, [pos, setGameState]);
+  }, [pos, setGameState, setResult, headers.result]);
 
   // Engine moves logic is handled by PlayVsEngineBoard component, not here
   // This keeps BoardGame clean for other use cases (analysis, variants, puzzles)
@@ -930,6 +986,24 @@ function BoardGame() {
   }, [applyFenString, customFen]);
 
   const startGame = useCallback(() => {
+    const newPlayers = getPlayers();
+    if (newPlayers.white.type === "human" && !newPlayers.white.profileId) {
+      notifications.show({
+        title: t("common.error"),
+        message: t("game.selectProfileRequired"),
+        color: "red",
+      });
+      return;
+    }
+    if (newPlayers.black.type === "human" && !newPlayers.black.profileId) {
+      notifications.show({
+        title: t("common.error"),
+        message: t("game.selectProfileRequired"),
+        color: "red",
+      });
+      return;
+    }
+
     // Kill any existing engines to start fresh (but don't wait)
     // Note: When used via PlayVsEngineBoard, engine logic is handled by that component
     if (activeTab) {
@@ -944,8 +1018,6 @@ function BoardGame() {
     // Set game state to playing immediately
     setGameState("playing");
 
-    const newPlayers = getPlayers();
-
     if (newPlayers.white.timeControl) {
       setWhiteTime(newPlayers.white.timeControl.seconds);
     }
@@ -956,9 +1028,19 @@ function BoardGame() {
 
     setPlayers(newPlayers);
 
+    const humanWhiteName =
+      newPlayers.white.type === "human"
+        ? (profiles.find((p) => p.id === (newPlayers.white as Extract<OpponentSettings, { type: "human" }>).profileId)
+            ?.name ?? "?")
+        : null;
+    const humanBlackName =
+      newPlayers.black.type === "human"
+        ? (profiles.find((p) => p.id === (newPlayers.black as Extract<OpponentSettings, { type: "human" }>).profileId)
+            ?.name ?? "?")
+        : null;
     const newHeaders: Partial<GameHeaders> = {
-      white: (newPlayers.white.type === "human" ? newPlayers.white.name : newPlayers.white.engine?.name) ?? "?",
-      black: (newPlayers.black.type === "human" ? newPlayers.black.name : newPlayers.black.engine?.name) ?? "?",
+      white: (newPlayers.white.type === "human" ? humanWhiteName : newPlayers.white.engine?.name) ?? "?",
+      black: (newPlayers.black.type === "human" ? humanBlackName : newPlayers.black.engine?.name) ?? "?",
       time_control: undefined,
       orientation:
         newPlayers.white.type === "human" && newPlayers.black.type === "engine"
@@ -1005,9 +1087,9 @@ function BoardGame() {
     setTabs((prev) =>
       prev.map((tab) => {
         const whiteName =
-          newPlayers.white.type === "human" ? newPlayers.white.name : (newPlayers.white.engine?.name ?? "?");
+          newPlayers.white.type === "human" ? (humanWhiteName ?? "?") : (newPlayers.white.engine?.name ?? "?");
         const blackName =
-          newPlayers.black.type === "human" ? newPlayers.black.name : (newPlayers.black.engine?.name ?? "?");
+          newPlayers.black.type === "human" ? (humanBlackName ?? "?") : (newPlayers.black.engine?.name ?? "?");
         return tab.value === activeTab ? { ...tab, name: `${whiteName} vs. ${blackName}` } : tab;
       }),
     );
@@ -1024,6 +1106,8 @@ function BoardGame() {
     setTabs,
     setBlackTime,
     setWhiteTime,
+    profiles,
+    t,
   ]);
 
   const handleNewGame = useCallback(() => {
@@ -1309,12 +1393,22 @@ function BoardGame() {
               id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               white: {
                 type: players.white.type,
-                name: players.white.type === "human" ? players.white.name : players.white.engine?.name,
+                name:
+                  players.white.type === "human"
+                    ? (profiles.find(
+                        (p) => p.id === (players.white as Extract<OpponentSettings, { type: "human" }>).profileId,
+                      )?.name ?? "?")
+                    : players.white.engine?.name,
                 engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
               },
               black: {
                 type: players.black.type,
-                name: players.black.type === "human" ? players.black.name : players.black.engine?.name,
+                name:
+                  players.black.type === "human"
+                    ? (profiles.find(
+                        (p) => p.id === (players.black as Extract<OpponentSettings, { type: "human" }>).profileId,
+                      )?.name ?? "?")
+                    : players.black.engine?.name,
                 engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
               },
               result: gameResult,
@@ -1340,7 +1434,19 @@ function BoardGame() {
 
     // Reset to new game
     handleNewGame();
-  }, [activeTab, root, headers, players, setTabs, setActiveTab, setGameState, handleNewGame, engines, getPlayers]);
+  }, [
+    activeTab,
+    root,
+    headers,
+    players,
+    setTabs,
+    setActiveTab,
+    setGameState,
+    handleNewGame,
+    engines,
+    getPlayers,
+    profiles.find,
+  ]);
 
   const handleSameTimeControlChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -1623,6 +1729,8 @@ function BoardGame() {
                       setOtherOpponent={setPlayer2Settings}
                       engines={engines}
                       enginesState={enginesState}
+                      profiles={profiles}
+                      activeProfileId={activeProfileId}
                     />
                     <Divider orientation="vertical" />
                     <OpponentForm
@@ -1632,6 +1740,8 @@ function BoardGame() {
                       setOtherOpponent={setPlayer1Settings}
                       engines={engines}
                       enginesState={enginesState}
+                      profiles={profiles}
+                      activeProfileId={activeProfileId}
                     />
                   </Group>
                 </Box>

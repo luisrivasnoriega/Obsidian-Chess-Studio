@@ -126,7 +126,7 @@ export function useEngineMoves(
             : (whiteTimeRef.current ?? players.white?.timeControl?.seconds ?? 0);
 
         // Only use PlayersTime if we have valid time values and timeControl is set
-        // Otherwise use the engine's default go mode
+        // Otherwise use Lc0 nodes limit (default 1) when engine is Lc0, else engine's go mode
         const goMode =
           player.timeControl && engineTime > 0 && opponentTime >= 0
             ? {
@@ -138,7 +138,9 @@ export function useEngineMoves(
                   binc: player.timeControl.increment ?? 0,
                 },
               }
-            : player.go;
+            : engine.name.startsWith("Leela Chess Zero") && player.type === "engine" && "lc0Nodes" in player
+              ? { t: "Nodes" as const, c: Math.max(1, Math.floor(player.lc0Nodes ?? 1)) }
+              : player.go;
 
         const baseOptions = (engine.settings || [])
           .filter((s) => s.name !== "MultiPV" && s.name !== "WeightsFile")
@@ -148,9 +150,7 @@ export function useEngineMoves(
           let extraOptions = [...baseOptions];
           if (engine.name.startsWith("Leela Chess Zero")) {
             let weightsPath =
-              player.type === "engine" && "lc0NetworkPath" in player
-                ? player.lc0NetworkPath
-                : undefined;
+              player.type === "engine" && "lc0NetworkPath" in player ? player.lc0NetworkPath : undefined;
             if (!weightsPath) {
               const r = await commands.listLc0Networks();
               if (r.status === "ok" && r.data?.length) weightsPath = r.data[0].path;
@@ -285,7 +285,6 @@ export function useEngineMoves(
     players.black,
     players.white?.timeControl?.seconds,
     players.white,
-    _retryCounter,
   ]);
 
   // Listen for engine move responses
@@ -474,5 +473,5 @@ export function useEngineMoves(
         unlistenFn = null;
       }
     };
-  }, [gameState, headers.result, activeTab, appendMove, pos, players, root.fen, t]);
+  }, [gameState, headers.result, activeTab, appendMove, pos, players, root.fen, t, headers.variant, root]);
 }

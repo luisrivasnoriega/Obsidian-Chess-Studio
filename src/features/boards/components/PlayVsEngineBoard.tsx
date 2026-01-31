@@ -24,6 +24,7 @@ import { activeTabAtom, currentGameStateAtom, currentPlayersAtom, tabsAtom } fro
 import { getMainLine, getOpening, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
+import { createTab } from "@/utils/tabs";
 import type { TreeNode } from "@/utils/treeReducer";
 import { createFullLayout, DEFAULT_MOSAIC_LAYOUT } from "../constants";
 import BoardGame, { useClockTimer } from "./BoardGame";
@@ -51,6 +52,25 @@ function PlayVsEngineBoardContent() {
   const [tabs, setTabs] = useAtom(tabsAtom);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
+  // Ensure a play tab exists when mounting, using the same createTab flow as the Sidebar
+  // (Sidebar uses openTabAndNavigate({ tab: { name, type: "play" }, route: "/play" }))
+  useEffect(() => {
+    const hasPlayTab = tabs.some((tab) => tab.type === "play");
+    if (hasPlayTab) return;
+    void createTab({
+      tab: { name: t("features.tabs.playBoard.title"), type: "play" },
+      setTabs,
+      setActiveTab,
+    });
+    requestAnimationFrame(() => {
+      try {
+        navigate({ to: "/play" });
+      } catch {
+        // ignore
+      }
+    });
+  }, [tabs, setTabs, setActiveTab, navigate, t]);
+
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
@@ -65,12 +85,7 @@ function PlayVsEngineBoardContent() {
   // Initialize times from players only at the very start of a game (no moves yet).
   // Never overwrite clock state mid-game, so the clock cannot "reset" while playing.
   useEffect(() => {
-    if (
-      gameState === "playing" &&
-      whiteTime === null &&
-      blackTime === null &&
-      root.children.length === 0
-    ) {
+    if (gameState === "playing" && whiteTime === null && blackTime === null && root.children.length === 0) {
       if (players.white.timeControl) {
         setWhiteTime(players.white.timeControl.seconds);
       }
@@ -151,7 +166,7 @@ function PlayVsEngineBoardContent() {
   // Track if game has been saved to avoid duplicate saves
   const gameSavedRef = useRef<string | null>(null);
 
-  // Function to save the current game to local games
+  // Function to save the current game to local games or profile DB (Play Vs PC)
   const saveGame = useCallback(
     async (result: string) => {
       // Only save if there are moves in the game
@@ -159,12 +174,13 @@ function PlayVsEngineBoardContent() {
         return;
       }
 
-      // Create a unique key for this game to avoid duplicate saves
-      const gameKey = `${root.fen}-${result}-${root.children.length}`;
+      // Unique key per game (position + move count). Do not include result so we only save once
+      // regardless of who calls saveGame; prevents duplicate entries and wrong-result saves.
+      const gameKey = `${root.fen}-${root.children.length}`;
       if (gameSavedRef.current === gameKey) {
-        // Already saved this game
         return;
       }
+      gameSavedRef.current = gameKey;
 
       try {
         // Get the initial FEN from headers (set when game started)
@@ -193,17 +209,25 @@ function PlayVsEngineBoardContent() {
           timeControlStr = `${headers.white_time_control || ""},${headers.black_time_control || ""}`;
         }
 
-        // Create game record
+        const humanProfileId =
+          players.white.type === "human"
+            ? players.white.profileId
+            : players.black.type === "human"
+              ? players.black.profileId
+              : undefined;
+
+        // Create game record (use headers for names; they were set at game start from profile/engine)
         const record: GameRecord = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          profileId: humanProfileId ?? undefined,
           white: {
             type: players.white.type,
-            name: players.white.type === "human" ? players.white.name : players.white.engine?.name,
+            name: headers.white ?? (players.white.type === "engine" ? players.white.engine?.name : "?"),
             engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
           },
           black: {
             type: players.black.type,
-            name: players.black.type === "human" ? players.black.name : players.black.engine?.name,
+            name: headers.black ?? (players.black.type === "engine" ? players.black.engine?.name : "?"),
             engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
           },
           result: result,
@@ -216,8 +240,10 @@ function PlayVsEngineBoardContent() {
           pgn: gamePgn, // Full PGN
         };
 
-        await saveGameRecord(record);
-        gameSavedRef.current = gameKey;
+        // Play vs PC: save only to played_games.json (LOCAL). Pass dedupe key so duplicate
+        // saves (same game) replace the previous entry instead of adding another.
+        const dedupeKey = `${lastNode.fen}-${uciMoves.length}-${result}`;
+        await saveGameRecord(record, dedupeKey);
       } catch {
         notifications.show({
           title: t("common.error"),
@@ -237,43 +263,29 @@ function PlayVsEngineBoardContent() {
   }, [gameState, root.children.length]);
 
   // Save game when it ends (by time, checkmate, stalemate, etc.)
+  // Claim synchronously in the effect so multiple effect runs don't trigger multiple saves (singleton).
   useEffect(() => {
-    // Only save if game is over and has a result (not "*")
-    if (gameState === "gameOver" && headers.result && headers.result !== "*" && root.children.length > 0) {
-      // Save the game with the current result
-      saveGame(headers.result).catch(() => {
-        notifications.show({
-          title: t("common.error"),
-          message: t("errors.failedToSaveGame"),
-          color: "red",
-        });
+    const hasResult = headers.result && headers.result !== "*";
+    const shouldSave = hasResult && root.children.length > 0 && (gameState === "gameOver" || pos?.isEnd() === true);
+    if (!shouldSave) return;
+
+    const gameKey = `${root.fen}-${root.children.length}`;
+    if (gameSavedRef.current === gameKey) return;
+    gameSavedRef.current = gameKey;
+
+    saveGame(headers.result!).catch(() => {
+      gameSavedRef.current = null;
+      notifications.show({
+        title: t("common.error"),
+        message: t("errors.failedToSaveGame"),
+        color: "red",
       });
-    }
-  }, [gameState, headers.result, root.children.length, saveGame, t]);
+    });
+  }, [gameState, headers.result, root.fen, root.children.length, saveGame, t, pos?.isEnd]);
 
   const handleNewGame = async () => {
-    // Save the current game before going to setup (if there are moves and game is playing)
-    if (root.children.length > 0 && (gameState === "playing" || gameState === "gameOver")) {
-      // Determine result: loss for the player whose turn it is (or was playing)
-      const currentTurn = pos?.turn ?? "white";
-      const result = currentTurn === "white" ? "0-1" : "1-0";
-
-      // Set result temporarily for saving
-      const _previousResult = headers.result;
-      setHeaders({
-        ...headers,
-        result,
-      });
-
-      // Save the game
-      await saveGame(result);
-
-      // Restore previous result (or "*") for cleanup
-      setHeaders({
-        ...headers,
-        result: "*",
-      });
-    }
+    // Do not save when abandoning via "New game" — that would create a duplicate with wrong result.
+    // The game is only saved once when it actually ends (checkmate, stalemate, time) in the effect above.
 
     // Clear times
     setWhiteTime(null);
@@ -288,28 +300,8 @@ function PlayVsEngineBoardContent() {
   };
 
   const handleAgain = async () => {
-    // Save the current game before restarting (if there are moves)
-    if (root.children.length > 0 && gameState === "playing") {
-      // Determine result: loss for the player whose turn it is
-      const currentTurn = pos?.turn ?? "white";
-      const result = currentTurn === "white" ? "0-1" : "1-0";
-
-      // Set result temporarily for saving
-      const _previousResult = headers.result;
-      setHeaders({
-        ...headers,
-        result,
-      });
-
-      // Save the game
-      await saveGame(result);
-
-      // Restore previous result (or "*") for the new game
-      setHeaders({
-        ...headers,
-        result: "*",
-      });
-    }
+    // Do not save when restarting via "Again" — that would create a duplicate with wrong result.
+    // The game is only saved once when it actually ends (checkmate, stalemate, time).
 
     // Get the initial FEN from headers.fen (this should be the starting position)
     // If headers.fen is not set or is the same as current position, use INITIAL_FEN

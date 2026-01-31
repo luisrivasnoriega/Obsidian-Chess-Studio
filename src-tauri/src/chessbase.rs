@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use shakmaty::fen::Fen;
 use shakmaty::san::San;
-use shakmaty::uci::Uci;
+use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position as _};
 use tauri::State;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
@@ -127,6 +127,7 @@ enum SockMsgId {
 #[repr(i32)]
 enum LoginMode {
     Normal = 1,
+    #[allow(dead_code)]
     Guest = 2,
 }
 
@@ -537,7 +538,7 @@ struct ParsedGameHeader {
     white: String,
     black: String,
     event: String,
-    site: String,
+    _site: String,
     date: (u16, u8, u8),
     result: u8,
 }
@@ -695,7 +696,7 @@ fn parse_game_header(buf: &mut DataBuffer) -> Result<ParsedGameHeader, String> {
         white,
         black,
         event,
-        site,
+        _site: site,
         date,
         result,
     })
@@ -813,7 +814,7 @@ fn game_to_pgn_text(game: &ParsedGame) -> Result<String, String> {
         if let Some(p) = prom {
             uci.push(*p);
         }
-        let uci: Uci = uci.parse().map_err(|e| format!("Invalid UCI: {e}"))?;
+        let uci: UciMove = uci.parse().map_err(|e| format!("Invalid UCI: {e}"))?;
         let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
         let san = San::from_move(&pos, &mv);
         pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
@@ -949,7 +950,7 @@ async fn run_ws_session(
     let mut active_download: Option<ActiveDownload> = None;
     let mut active_count: Option<ActiveCount> = None;
     let mut login_phase: &'static str = "connecting";
-    let mut login_timeout = tokio::time::sleep(std::time::Duration::from_secs(20));
+    let login_timeout = tokio::time::sleep(std::time::Duration::from_secs(20));
     tokio::pin!(login_timeout);
 
     let logon = build_logon_message(&username, &password, LoginMode::Normal, true);

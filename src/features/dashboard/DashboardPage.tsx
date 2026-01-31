@@ -1423,8 +1423,12 @@ export default function DashboardPage() {
                     sortDirection: "desc",
                   },
                 })) ?? { rows: [] };
+                const PLAY_VS_PC_EVENT_LOWER = "play vs pc";
                 chessbaseRows = (res.rows ?? []).filter(
-                  (r) => String(r.kind).toLowerCase() === "chessbase" && hasEnoughMovesPgn(r.pgn),
+                  (r) =>
+                    String(r.kind).toLowerCase() === "chessbase" &&
+                    hasEnoughMovesPgn(r.pgn) &&
+                    (r.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER,
                 );
               } catch {
                 chessbaseRows = [];

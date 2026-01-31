@@ -30,7 +30,14 @@ export interface GameRecord {
 const FILENAME = "played_games.json";
 const ACTIVE_PROFILE_STORAGE_KEY = "activeProfileId";
 
-export async function saveGameRecord(record: GameRecord) {
+/** Stable key for dedupe: same game = same fen + move count + result. */
+export function getGameRecordDedupeKey(r: GameRecord): string {
+  return `${r.fen ?? ""}-${r.moves?.length ?? 0}-${r.result ?? ""}`;
+}
+
+const DEDUPE_LOOKBACK = 50;
+
+export async function saveGameRecord(record: GameRecord, dedupeKey?: string) {
   try {
     if (!record.profileId && typeof window !== "undefined") {
       const activeProfileId = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
@@ -61,6 +68,14 @@ export async function saveGameRecord(record: GameRecord) {
     } catch (err) {
       error(`[gameRecords] Failed to read existing game records: ${err}`);
       // Continue with empty array
+    }
+
+    const key = dedupeKey ?? getGameRecordDedupeKey(record);
+    const recent = records.slice(0, DEDUPE_LOOKBACK);
+    const duplicateIndex = recent.findIndex((r) => getGameRecordDedupeKey(r) === key);
+    if (duplicateIndex >= 0) {
+      records.splice(duplicateIndex, 1);
+      info(`[gameRecords] Dedupe: removed existing record at index ${duplicateIndex} (same game)`);
     }
 
     records.unshift(record);

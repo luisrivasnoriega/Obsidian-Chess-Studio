@@ -27,9 +27,20 @@ interface EngineSettingsProps {
   minimal?: boolean;
   remote: boolean;
   gameMode?: boolean;
+  /** When true, hide Threads (numOfCores) option (e.g. for Lc0 in Play vs Engine). */
+  hideCores?: boolean;
 }
 
-function EngineSettingsForm({ engine, settings, setSettings, color, minimal, remote, gameMode }: EngineSettingsProps) {
+function EngineSettingsForm({
+  engine,
+  settings,
+  setSettings,
+  color,
+  minimal,
+  remote,
+  gameMode,
+  hideCores = false,
+}: EngineSettingsProps) {
   const { t } = useTranslation();
 
   const multipv = settings.settings.find((o) => o.name === "MultiPV");
@@ -71,7 +82,7 @@ function EngineSettingsForm({ engine, settings, setSettings, color, minimal, rem
         </Group>
       )}
 
-      {!remote && threads && (
+      {!remote && threads && !hideCores && (
         <>
           <Group grow>
             <Text size="sm" fw="bold">

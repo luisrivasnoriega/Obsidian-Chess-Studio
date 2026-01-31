@@ -32,7 +32,7 @@ type MenuGroup = {
 export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   const navigate = useNavigate();
   const { layout } = useResponsiveLayout();
-  const gameState = useAtomValue(currentGameStateAtom);
+  const _gameState = useAtomValue(currentGameStateAtom);
   const isCompactHeader = layout.chessBoard.layoutType === "mobile";
   const hasCoarsePointer = useMediaQuery("(pointer: coarse)");
   const safeTop = "max(env(safe-area-inset-top, 0px), 24px)";
@@ -43,7 +43,8 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
   });
 
   const activeTabData = useMemo(() => tabs.find((tab) => tab.value === activeTab) ?? null, [activeTab, tabs]);
-  const shouldHideTabs = activeTabData?.type === "play" && (gameState === "playing" || gameState === "gameOver");
+  // Always show the full tab bar so every tab (including play) is visible and can be closed
+  const _shouldHideTabs = false;
 
   // Track tabs that should flash when opened or created
   const previousActiveTab = useRef<string | null>(activeTab);
@@ -274,50 +275,48 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
             </Menu.Dropdown>
           </Menu>
 
-          {!shouldHideTabs && (
-            <ScrollArea
-              scrollbarSize={SCROLL_AREA_CONFIG.SCROLLBAR_SIZE}
-              scrollbars="x"
-              style={{ flex: 1, minWidth: 0 }}
-              data-tauri-drag-region
-            >
-              <Droppable droppableId={DROPPABLE_IDS.TABS} direction="horizontal">
-                {(provided) => (
-                  <div
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                    style={{ display: "flex", minHeight: "100%" }}
-                    data-tauri-drag-region
-                  >
-                    {tabs.map((tab, i) => (
-                      <Draggable key={tab.value} draggableId={tab.value} index={i}>
-                        {(provided) => (
-                          <div
-                            ref={provided.innerRef}
-                            {...provided.draggableProps}
-                            {...provided.dragHandleProps}
-                            data-tauri-drag-region={false}
-                          >
-                            <BoardTab
-                              tab={tab}
-                              setActiveTab={handleTabSelect}
-                              closeTab={closeTab}
-                              renameTab={renameTab}
-                              duplicateTab={duplicateTab}
-                              openInNewWindow={openTabInNewWindow}
-                              selected={activeTab === tab.value}
-                              shouldFlash={flashingTab === tab.value}
-                            />
-                          </div>
-                        )}
-                      </Draggable>
-                    ))}
-                    {provided.placeholder}
-                  </div>
-                )}
-              </Droppable>
-            </ScrollArea>
-          )}
+          <ScrollArea
+            scrollbarSize={SCROLL_AREA_CONFIG.SCROLLBAR_SIZE}
+            scrollbars="x"
+            style={{ flex: 1, minWidth: 0 }}
+            data-tauri-drag-region
+          >
+            <Droppable droppableId={DROPPABLE_IDS.TABS} direction="horizontal">
+              {(provided) => (
+                <div
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  style={{ display: "flex", minHeight: "100%" }}
+                  data-tauri-drag-region
+                >
+                  {tabs.map((tab, i) => (
+                    <Draggable key={tab.value} draggableId={tab.value} index={i}>
+                      {(provided) => (
+                        <div
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                          data-tauri-drag-region={false}
+                        >
+                          <BoardTab
+                            tab={tab}
+                            setActiveTab={handleTabSelect}
+                            closeTab={closeTab}
+                            renameTab={renameTab}
+                            duplicateTab={duplicateTab}
+                            openInNewWindow={openTabInNewWindow}
+                            selected={activeTab === tab.value}
+                            shouldFlash={flashingTab === tab.value}
+                          />
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </ScrollArea>
 
           <Box w={trailingSpacerWidth} h="100%" data-tauri-drag-region />
 
