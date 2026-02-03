@@ -16,16 +16,23 @@ import { useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, 
 import { useTranslation } from "react-i18next";
 import { Mosaic } from "react-mosaic-component";
 import { useStore } from "zustand";
-import { commands } from "@/bindings";
+import { commands, type Outcome } from "@/bindings";
 import Clock from "@/components/Clock";
 import GameInfo from "@/components/GameInfo";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { activeTabAtom, currentGameStateAtom, currentPlayersAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  currentGameStateAtom,
+  currentPlayersAtom,
+  profilesAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { getMainLine, getOpening, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
 import { createTab } from "@/utils/tabs";
-import type { TreeNode } from "@/utils/treeReducer";
+import type { GameHeaders, TreeNode } from "@/utils/treeReducer";
 import { createFullLayout, DEFAULT_MOSAIC_LAYOUT } from "../constants";
 import BoardGame, { useClockTimer } from "./BoardGame";
 import { GameTimeProvider, useGameTime } from "./GameTimeContext";
@@ -33,6 +40,20 @@ import { useEngineMoves } from "./hooks/useEngineMoves";
 import ResponsiveBoard from "./ResponsiveBoard";
 
 const setupLayout = createFullLayout();
+
+function formatPgnDateUtc(d: Date): string {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yyyy}.${mm}.${dd}`;
+}
+
+function formatPgnTimeUtc(d: Date): string {
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
 
 function getMainlineLastNode(root: TreeNode): TreeNode {
   let node = root;
@@ -45,6 +66,8 @@ function getMainlineLastNode(root: TreeNode): TreeNode {
 function PlayVsEngineBoardContent() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
+  const profiles = useAtomValue(profilesAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const [gameState, setGameState] = useAtom(currentGameStateAtom);
@@ -163,129 +186,228 @@ function PlayVsEngineBoardContent() {
     return "turn";
   }, [players]);
 
-  // Track if game has been saved to avoid duplicate saves
-  const gameSavedRef = useRef<string | null>(null);
+  // Centralized, idempotent game finalization. Multiple end paths (time, resign, back, etc.)
+  // must persist the game exactly once under the active profile at the moment of ending.
+  const gameInstanceIdRef = useRef<string>(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const finalizedInstanceIdRef = useRef<string | null>(null);
+  const isFinalizingRef = useRef(false);
+  const profileIdAtGameStartRef = useRef<string | null>(activeProfileId ?? null);
+  const profileIdAtGameEndRef = useRef<string | null>(null);
+  const startTimestampRef = useRef<number>(Date.now());
+  const startDateRef = useRef<string>(formatPgnDateUtc(new Date()));
+  const startTimeRef = useRef<string>(formatPgnTimeUtc(new Date()));
+  const prevMoveCountRef = useRef<number>(root.children.length);
 
-  // Function to save the current game to local games or profile DB (Play Vs PC)
-  const saveGame = useCallback(
-    async (result: string) => {
-      // Only save if there are moves in the game
-      if (root.children.length === 0) {
-        return;
+  useEffect(() => {
+    const moveCount = root.children.length;
+    const prev = prevMoveCountRef.current;
+
+    // Reset idempotency guards only when a *new* game is actually created (tree cleared).
+    // Some end paths (e.g. New game) flip gameState before the tree is cleared; if we reset
+    // too early, multiple end handlers can save the same finished game.
+    const didClearTree = moveCount === 0 && prev > 0;
+    const initialMountEmpty = prev === 0 && moveCount === 0 && finalizedInstanceIdRef.current === null;
+
+    if (didClearTree || initialMountEmpty) {
+      gameInstanceIdRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      finalizedInstanceIdRef.current = null;
+      isFinalizingRef.current = false;
+      profileIdAtGameStartRef.current = activeProfileId ?? null;
+      profileIdAtGameEndRef.current = null;
+
+      const ts = Date.now();
+      startTimestampRef.current = ts;
+      const d = new Date(ts);
+      startDateRef.current = headers.date?.trim() || formatPgnDateUtc(d);
+      startTimeRef.current = headers.time?.trim() || formatPgnTimeUtc(d);
+    }
+
+    prevMoveCountRef.current = moveCount;
+  }, [activeProfileId, headers.date, headers.time, root.children.length]);
+
+  const inferAbortResult = useCallback((): Outcome => {
+    const humanColor =
+      players.white.type === "human" ? "white" : players.black.type === "human" ? "black" : (pos?.turn ?? "white");
+    return humanColor === "white" ? "0-1" : "1-0";
+  }, [players, pos?.turn]);
+
+  const persistGameOnce = useCallback(
+    async (result: Outcome) => {
+      if (root.children.length === 0) return;
+
+      const profileIdSnapshot =
+        profileIdAtGameEndRef.current ?? activeProfileId ?? profileIdAtGameStartRef.current ?? null;
+      if (!profileIdSnapshot) return;
+
+      const initialFen = headers.fen || INITIAL_FEN;
+      const lastNode = getMainlineLastNode(root);
+      const uciMoves = getMainLine(root, headers.variant === "Chess960");
+
+      const resolveProfileName = (profileId?: string | null): string | null => {
+        const pid = (profileId ?? "").trim();
+        if (!pid) return null;
+        const p = profiles.find((x) => x.id === pid);
+        const name = (p?.displayName ?? p?.name ?? "").trim();
+        return name || null;
+      };
+
+      const profileName = resolveProfileName(profileIdSnapshot) ?? "";
+      const profileNameLower = profileName.trim().toLowerCase();
+      const headerWhiteLower = (headers.white ?? "").trim().toLowerCase();
+      const headerBlackLower = (headers.black ?? "").trim().toLowerCase();
+
+      // Determine which side is the human player. This must reflect the real colors played,
+      // not board orientation (users can flip the board mid-game).
+      let humanSide: "white" | "black" | null = null;
+      if (players.white.type === "human" && players.black.type !== "human") humanSide = "white";
+      else if (players.black.type === "human" && players.white.type !== "human") humanSide = "black";
+      else if (profileNameLower && headerWhiteLower === profileNameLower) humanSide = "white";
+      else if (profileNameLower && headerBlackLower === profileNameLower) humanSide = "black";
+      else if (headers.orientation === "white" || headers.orientation === "black") humanSide = headers.orientation;
+      else humanSide = "white";
+
+      const engineNameFallback = (s?: string | null) => (s ?? "").trim() || "?";
+      const engineWhiteName = engineNameFallback(
+        players.white.type === "engine" ? players.white.engine?.name : headers.white,
+      );
+      const engineBlackName = engineNameFallback(
+        players.black.type === "engine" ? players.black.engine?.name : headers.black,
+      );
+
+      const whiteNameFromSettings =
+        humanSide === "white" ? profileName || headers.white?.trim() || "?" : engineWhiteName;
+      const blackNameFromSettings =
+        humanSide === "black" ? profileName || headers.black?.trim() || "?" : engineBlackName;
+
+      // Build time control string for both stored record and PGN headers.
+      let timeControlStr: string | null = null;
+      if (headers.time_control) {
+        timeControlStr = headers.time_control;
+      } else if (headers.white_time_control || headers.black_time_control) {
+        timeControlStr = `${headers.white_time_control || ""},${headers.black_time_control || ""}`;
       }
 
-      // Unique key per game (position + move count). Do not include result so we only save once
-      // regardless of who calls saveGame; prevents duplicate entries and wrong-result saves.
-      const gameKey = `${root.fen}-${root.children.length}`;
-      if (gameSavedRef.current === gameKey) {
-        return;
+      // Tag saved games as "local" so the dashboard can filter/group them consistently.
+      const headersForSave: GameHeaders = {
+        ...headers,
+        site: "local",
+        result,
+        date: (headers.date ?? startDateRef.current) || startDateRef.current,
+        time: (headers.time ?? startTimeRef.current) || startTimeRef.current,
+        time_control: headers.time_control ?? timeControlStr,
+        white: whiteNameFromSettings,
+        black: blackNameFromSettings,
+      };
+
+      const gamePgn = getPGN(root, {
+        headers: headersForSave,
+        comments: true,
+        extraMarkups: true,
+        glyphs: true,
+        variations: true,
+      });
+
+      const record: GameRecord = {
+        id: gameInstanceIdRef.current,
+        profileId: profileIdSnapshot,
+        white: {
+          type: humanSide === "white" ? "human" : "engine",
+          name: whiteNameFromSettings,
+          engine:
+            humanSide === "white"
+              ? undefined
+              : players.white.type === "engine"
+                ? players.white.engine?.path
+                : players.black.type === "engine"
+                  ? players.black.engine?.path
+                  : undefined,
+        },
+        black: {
+          type: humanSide === "black" ? "human" : "engine",
+          name: blackNameFromSettings,
+          engine:
+            humanSide === "black"
+              ? undefined
+              : players.black.type === "engine"
+                ? players.black.engine?.path
+                : players.white.type === "engine"
+                  ? players.white.engine?.path
+                  : undefined,
+        },
+        result,
+        timeControl: timeControlStr ?? undefined,
+        timestamp: startTimestampRef.current,
+        moves: uciMoves,
+        variant: headers.variant ?? undefined,
+        fen: lastNode.fen,
+        initialFen: initialFen !== INITIAL_FEN ? initialFen : undefined,
+        pgn: gamePgn,
+      };
+
+      const dedupeKey = `${lastNode.fen}-${uciMoves.length}-${result}-${headersForSave.date ?? ""}-${headersForSave.time ?? ""}`;
+      await saveGameRecord(record, dedupeKey);
+    },
+    [activeProfileId, headers, players, profiles, root],
+  );
+
+  const finalizeGame = useCallback(
+    async (opts: {
+      reason: "board" | "time" | "resign" | "abandon" | "newGame" | "again" | "back";
+      forcedResult?: Outcome;
+    }) => {
+      if (root.children.length === 0) return;
+
+      const instanceId = gameInstanceIdRef.current;
+      if (finalizedInstanceIdRef.current === instanceId || isFinalizingRef.current) return;
+
+      // Claim synchronously to prevent races across effects + button handlers.
+      finalizedInstanceIdRef.current = instanceId;
+      isFinalizingRef.current = true;
+      if (!profileIdAtGameEndRef.current) {
+        profileIdAtGameEndRef.current = activeProfileId ?? profileIdAtGameStartRef.current ?? null;
       }
-      gameSavedRef.current = gameKey;
+
+      const result =
+        opts.forcedResult ?? (headers.result && headers.result !== "*" ? headers.result : inferAbortResult());
 
       try {
-        // Get the initial FEN from headers (set when game started)
-        const initialFen = headers.fen || INITIAL_FEN;
-
-        // Get the last node for final FEN
-        const lastNode = getMainlineLastNode(root);
-
-        // Get UCI moves for the moves array
-        const uciMoves = getMainLine(root, headers.variant === "Chess960");
-
-        // Get PGN
-        const gamePgn = getPGN(root, {
-          headers,
-          comments: true,
-          extraMarkups: true,
-          glyphs: true,
-          variations: true,
-        });
-
-        // Build time control string
-        let timeControlStr: string | undefined;
-        if (headers.time_control) {
-          timeControlStr = headers.time_control;
-        } else if (headers.white_time_control || headers.black_time_control) {
-          timeControlStr = `${headers.white_time_control || ""},${headers.black_time_control || ""}`;
-        }
-
-        const humanProfileId =
-          players.white.type === "human"
-            ? players.white.profileId
-            : players.black.type === "human"
-              ? players.black.profileId
-              : undefined;
-
-        // Create game record (use headers for names; they were set at game start from profile/engine)
-        const record: GameRecord = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          profileId: humanProfileId ?? undefined,
-          white: {
-            type: players.white.type,
-            name: headers.white ?? (players.white.type === "engine" ? players.white.engine?.name : "?"),
-            engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
-          },
-          black: {
-            type: players.black.type,
-            name: headers.black ?? (players.black.type === "engine" ? players.black.engine?.name : "?"),
-            engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
-          },
-          result: result,
-          timeControl: timeControlStr,
-          timestamp: Date.now(),
-          moves: uciMoves,
-          variant: headers.variant ?? undefined,
-          fen: lastNode.fen, // Final FEN position
-          initialFen: initialFen !== INITIAL_FEN ? initialFen : undefined, // Initial FEN if different from standard
-          pgn: gamePgn, // Full PGN
-        };
-
-        // Play vs PC: save only to played_games.json (LOCAL). Pass dedupe key so duplicate
-        // saves (same game) replace the previous entry instead of adding another.
-        const dedupeKey = `${lastNode.fen}-${uciMoves.length}-${result}`;
-        await saveGameRecord(record, dedupeKey);
+        await persistGameOnce(result);
       } catch {
+        // If persistence fails, allow a later end path to retry.
+        finalizedInstanceIdRef.current = null;
         notifications.show({
           title: t("common.error"),
           message: t("errors.failedToSaveGame"),
           color: "red",
         });
+      } finally {
+        isFinalizingRef.current = false;
       }
     },
-    [root, headers, players, t],
+    [activeProfileId, headers.result, inferAbortResult, persistGameOnce, root.children.length, t],
   );
 
-  // Reset saved game ref when a new game starts
+  // Save exactly once when the game result is first produced. This must not re-fire
+  // just because the user leaves and re-enters the board view with the same finished game.
+  const prevResultRef = useRef<Outcome>(headers.result ?? "*");
   useEffect(() => {
-    if (gameState === "settingUp" || (gameState === "playing" && root.children.length === 0)) {
-      gameSavedRef.current = null;
-    }
-  }, [gameState, root.children.length]);
+    const prev = prevResultRef.current ?? "*";
+    const next = headers.result ?? "*";
+    prevResultRef.current = next;
 
-  // Save game when it ends (by time, checkmate, stalemate, etc.)
-  // Claim synchronously in the effect so multiple effect runs don't trigger multiple saves (singleton).
-  useEffect(() => {
-    const hasResult = headers.result && headers.result !== "*";
-    const shouldSave = hasResult && root.children.length > 0 && (gameState === "gameOver" || pos?.isEnd() === true);
-    if (!shouldSave) return;
+    if (root.children.length === 0) return;
+    if (prev !== "*" || next === "*") return;
 
-    const gameKey = `${root.fen}-${root.children.length}`;
-    if (gameSavedRef.current === gameKey) return;
-    gameSavedRef.current = gameKey;
-
-    saveGame(headers.result!).catch(() => {
-      gameSavedRef.current = null;
-      notifications.show({
-        title: t("common.error"),
-        message: t("errors.failedToSaveGame"),
-        color: "red",
-      });
-    });
-  }, [gameState, headers.result, root.fen, root.children.length, saveGame, t, pos?.isEnd]);
+    void finalizeGame({ reason: "board", forcedResult: next });
+  }, [finalizeGame, headers.result, root.children.length]);
 
   const handleNewGame = async () => {
-    // Do not save when abandoning via "New game" — that would create a duplicate with wrong result.
-    // The game is only saved once when it actually ends (checkmate, stalemate, time) in the effect above.
+    if (root.children.length > 0) {
+      await finalizeGame({
+        reason: "newGame",
+        forcedResult: headers.result && headers.result !== "*" ? headers.result : inferAbortResult(),
+      });
+    }
 
     // Clear times
     setWhiteTime(null);
@@ -300,8 +422,12 @@ function PlayVsEngineBoardContent() {
   };
 
   const handleAgain = async () => {
-    // Do not save when restarting via "Again" — that would create a duplicate with wrong result.
-    // The game is only saved once when it actually ends (checkmate, stalemate, time).
+    if (root.children.length > 0) {
+      await finalizeGame({
+        reason: "again",
+        forcedResult: headers.result && headers.result !== "*" ? headers.result : inferAbortResult(),
+      });
+    }
 
     // Get the initial FEN from headers.fen (this should be the starting position)
     // If headers.fen is not set or is the same as current position, use INITIAL_FEN
@@ -354,7 +480,7 @@ function PlayVsEngineBoardContent() {
     const humanColor =
       players.white.type === "human" ? "white" : players.black.type === "human" ? "black" : (pos?.turn ?? "white");
 
-    const result = humanColor === "white" ? "0-1" : "1-0";
+    const result: Outcome = humanColor === "white" ? "0-1" : "1-0";
 
     // Set result in headers so useEngineMoves stops requesting moves
     setHeaders({
@@ -366,21 +492,16 @@ function PlayVsEngineBoardContent() {
     setGameState("gameOver");
 
     // Save the game with resignation result
-    await saveGame(result);
+    await finalizeGame({ reason: "resign", forcedResult: result });
   };
 
   const handleBack = useCallback(async () => {
-    // 1. Resign if game is playing
-    if (gameState === "playing" && root.children.length > 0) {
-      await resign();
-    } else if (gameState === "gameOver" && root.children.length > 0 && headers.result && headers.result !== "*") {
-      // If game is already over but not saved, save it
-      await saveGame(headers.result);
-    } else if (root.children.length > 0 && (gameState === "playing" || gameState === "gameOver")) {
-      // Fallback: save with loss for current player
-      const currentTurn = pos?.turn ?? "white";
-      const result = currentTurn === "white" ? "0-1" : "1-0";
-      await saveGame(result);
+    // 1. Finalize the game exactly once before leaving the board.
+    if (root.children.length > 0) {
+      await finalizeGame({
+        reason: "back",
+        forcedResult: headers.result && headers.result !== "*" ? headers.result : inferAbortResult(),
+      });
     }
 
     // 2. Close the tab
@@ -415,17 +536,15 @@ function PlayVsEngineBoardContent() {
     // 3. Navigate to dashboard
     navigate({ to: "/" });
   }, [
-    gameState,
     root.children.length,
     headers.result,
-    pos?.turn,
     activeTab,
     tabs,
     setTabs,
     setActiveTab,
     navigate,
-    resign,
-    saveGame,
+    finalizeGame,
+    inferAbortResult,
   ]);
 
   if (gameState === "settingUp") {

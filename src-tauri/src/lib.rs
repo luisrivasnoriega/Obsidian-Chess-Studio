@@ -156,6 +156,7 @@ pub async fn run() {
         .commands(tauri_specta::collect_commands!(
         get_system_locale,
         get_preferred_lc0_engine_name,
+        get_preferred_stockfish_build_key,
             app::platform::screen_capture,
             find_fide_player,
             fetch_fide_profile_html,
@@ -348,6 +349,206 @@ fn is_bmi2_compatible() -> bool {
     if is_x86_feature_detected!("bmi2") {
         return true;
     }
+    false
+}
+
+// Prefer the fastest Stockfish build available for this device.
+//
+// We keep the build matrix and URLs in the frontend, but hardware detection is
+// done here (like Lc0) to avoid fragile/incorrect JS-side CPU probing.
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    // Keys must match the mapping in `src/utils/engines.ts`.
+    //
+    // NOTE: Stockfish naming uses `ubuntu` in filenames for Linux builds.
+
+    #[cfg(target_os = "android")]
+    {
+        // On Android we ship a bundled Stockfish and the backend resolves it to native libs.
+        return "android-bundled".to_string();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if has_avx512_icl_like() {
+                return "windows-x86-64-avx512icl".to_string();
+            }
+            if is_x86_feature_detected!("avx512f") {
+                // Prefer VNNI-512 if available, otherwise fall back to plain AVX-512.
+                if is_x86_feature_detected!("avx512vnni") {
+                    return "windows-x86-64-vnni512".to_string();
+                }
+                return "windows-x86-64-avx512".to_string();
+            }
+            if has_avx_vnni() && is_x86_feature_detected!("avx2") {
+                return "windows-x86-64-avxvnni".to_string();
+            }
+            if is_x86_feature_detected!("bmi2") {
+                return "windows-x86-64-bmi2".to_string();
+            }
+            if is_x86_feature_detected!("avx2") {
+                return "windows-x86-64-avx2".to_string();
+            }
+            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+                return "windows-x86-64-sse41-popcnt".to_string();
+            }
+            return "windows-x86-64".to_string();
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            if has_aarch64_dotprod() {
+                return "windows-armv8-dotprod".to_string();
+            }
+            return "windows-armv8".to_string();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if has_avx512_icl_like() {
+                return "linux-x86-64-avx512icl".to_string();
+            }
+            if is_x86_feature_detected!("avx512f") {
+                if is_x86_feature_detected!("avx512vnni") {
+                    return "linux-x86-64-vnni512".to_string();
+                }
+                return "linux-x86-64-avx512".to_string();
+            }
+            if has_avx_vnni() && is_x86_feature_detected!("avx2") {
+                return "linux-x86-64-avxvnni".to_string();
+            }
+            if is_x86_feature_detected!("bmi2") {
+                return "linux-x86-64-bmi2".to_string();
+            }
+            if is_x86_feature_detected!("avx2") {
+                return "linux-x86-64-avx2".to_string();
+            }
+            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+                return "linux-x86-64-sse41-popcnt".to_string();
+            }
+            return "linux-x86-64".to_string();
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            if has_aarch64_dotprod() {
+                return "linux-armv8-dotprod".to_string();
+            }
+            return "linux-armv8".to_string();
+        }
+
+        #[cfg(target_arch = "arm")]
+        {
+            if has_arm_neon() {
+                return "linux-armv7-neon".to_string();
+            }
+            return "linux-armv7".to_string();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        #[cfg(target_arch = "aarch64")]
+        {
+            return "macos-m1-apple-silicon".to_string();
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("bmi2") {
+                return "macos-x86-64-bmi2".to_string();
+            }
+            if is_x86_feature_detected!("avx2") {
+                return "macos-x86-64-avx2".to_string();
+            }
+            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+                return "macos-x86-64-sse41-popcnt".to_string();
+            }
+            return "macos-x86-64".to_string();
+        }
+    }
+
+    // Unknown platform/arch: return empty string so the frontend can fall back.
+    String::new()
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn has_avx_vnni() -> bool {
+    // AVX VNNI (aka AVX2+VNNI) is reported by CPUID.(EAX=7, ECX=1):EAX[4].
+    //
+    // We intentionally only use this for build selection; actual AVX usage is
+    // validated via `is_x86_feature_detected!` elsewhere (e.g. AVX2).
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::__cpuid_count;
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::__cpuid_count;
+
+    unsafe {
+        // First check max supported subleaf for leaf 7.
+        let leaf7_0 = __cpuid_count(0x7, 0x0);
+        let max_subleaf = leaf7_0.eax;
+        if max_subleaf < 1 {
+            return false;
+        }
+
+        let leaf7_1 = __cpuid_count(0x7, 0x1);
+        (leaf7_1.eax & (1 << 4)) != 0
+    }
+}
+
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn has_avx_vnni() -> bool {
+    false
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+fn has_avx512_icl_like() -> bool {
+    // "AVX-512ICL" binaries typically assume the "full" AVX-512 feature set found on
+    // Ice Lake-family CPUs (and later), including VNNI. We approximate this by
+    // requiring the key AVX-512 subsets that Stockfish uses in that build.
+    is_x86_feature_detected!("avx512f")
+        && is_x86_feature_detected!("avx512bw")
+        && is_x86_feature_detected!("avx512dq")
+        && is_x86_feature_detected!("avx512vl")
+        && is_x86_feature_detected!("avx512vnni")
+}
+
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+fn has_avx512_icl_like() -> bool {
+    false
+}
+
+#[cfg(target_arch = "aarch64")]
+fn has_aarch64_dotprod() -> bool {
+    #[cfg(any(target_os = "android", target_os = "linux", target_os = "windows", target_os = "macos"))]
+    {
+        // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
+        std::arch::is_aarch64_feature_detected!("dotprod")
+    }
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn has_aarch64_dotprod() -> bool {
+    false
+}
+
+#[cfg(target_arch = "arm")]
+fn has_arm_neon() -> bool {
+    std::arch::is_arm_feature_detected!("neon")
+}
+
+#[cfg(not(target_arch = "arm"))]
+fn has_arm_neon() -> bool {
     false
 }
 

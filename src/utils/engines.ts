@@ -9,6 +9,157 @@ import { unwrap } from "./unwrap";
 
 export const requiredEngineSettings = ["MultiPV", "Threads", "Hash"];
 
+const STOCKFISH_18_RELEASE_TAG = "sf_18";
+const stockfish18Url = (fileName: string) =>
+  `https://github.com/official-stockfish/Stockfish/releases/download/${STOCKFISH_18_RELEASE_TAG}/${fileName}`;
+
+// Stockfish 18 official build matrix (used for download/install).
+// Keys must match the backend command `get_preferred_stockfish_build_key`.
+const STOCKFISH_18_BUILDS: Record<
+  string,
+  {
+    fileName: string;
+    // Path inside the extracted archive passed to `download_engine`.
+    engineRelPath: string;
+  }
+> = {
+  // Windows x86_64
+  "windows-x86-64-avx512icl": {
+    fileName: "stockfish-windows-x86-64-avx512icl.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-avx512icl.exe",
+  },
+  "windows-x86-64-vnni512": {
+    fileName: "stockfish-windows-x86-64-vnni512.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-vnni512.exe",
+  },
+  "windows-x86-64-avx512": {
+    fileName: "stockfish-windows-x86-64-avx512.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-avx512.exe",
+  },
+  "windows-x86-64-avxvnni": {
+    fileName: "stockfish-windows-x86-64-avxvnni.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-avxvnni.exe",
+  },
+  "windows-x86-64-bmi2": {
+    fileName: "stockfish-windows-x86-64-bmi2.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-bmi2.exe",
+  },
+  "windows-x86-64-avx2": {
+    fileName: "stockfish-windows-x86-64-avx2.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-avx2.exe",
+  },
+  "windows-x86-64-sse41-popcnt": {
+    fileName: "stockfish-windows-x86-64-sse41-popcnt.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64-sse41-popcnt.exe",
+  },
+  "windows-x86-64": {
+    fileName: "stockfish-windows-x86-64.zip",
+    engineRelPath: "stockfish/stockfish-windows-x86-64.exe",
+  },
+
+  // Windows ARM64
+  "windows-armv8": {
+    fileName: "stockfish-windows-armv8.zip",
+    engineRelPath: "stockfish/stockfish-windows-armv8.exe",
+  },
+  "windows-armv8-dotprod": {
+    fileName: "stockfish-windows-armv8-dotprod.zip",
+    engineRelPath: "stockfish/stockfish-windows-armv8-dotprod.exe",
+  },
+
+  // Linux x86_64 (Ubuntu builds)
+  "linux-x86-64-avx512icl": {
+    fileName: "stockfish-ubuntu-x86-64-avx512icl.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-avx512icl",
+  },
+  "linux-x86-64-vnni512": {
+    fileName: "stockfish-ubuntu-x86-64-vnni512.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-vnni512",
+  },
+  "linux-x86-64-avx512": {
+    fileName: "stockfish-ubuntu-x86-64-avx512.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-avx512",
+  },
+  "linux-x86-64-avxvnni": {
+    fileName: "stockfish-ubuntu-x86-64-avxvnni.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-avxvnni",
+  },
+  "linux-x86-64-bmi2": {
+    fileName: "stockfish-ubuntu-x86-64-bmi2.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-bmi2",
+  },
+  "linux-x86-64-avx2": {
+    fileName: "stockfish-ubuntu-x86-64-avx2.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-avx2",
+  },
+  "linux-x86-64-sse41-popcnt": {
+    fileName: "stockfish-ubuntu-x86-64-sse41-popcnt.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64-sse41-popcnt",
+  },
+  "linux-x86-64": {
+    fileName: "stockfish-ubuntu-x86-64.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-x86-64",
+  },
+
+  // Linux ARM
+  "linux-armv7": {
+    fileName: "stockfish-ubuntu-armv7.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-armv7",
+  },
+  "linux-armv7-neon": {
+    fileName: "stockfish-ubuntu-armv7-neon.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-armv7-neon",
+  },
+  "linux-armv8": {
+    fileName: "stockfish-ubuntu-armv8.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-armv8",
+  },
+  "linux-armv8-dotprod": {
+    fileName: "stockfish-ubuntu-armv8-dotprod.tar",
+    engineRelPath: "stockfish/stockfish-ubuntu-armv8-dotprod",
+  },
+
+  // macOS
+  "macos-m1-apple-silicon": {
+    fileName: "stockfish-macos-m1-apple-silicon.tar",
+    engineRelPath: "stockfish/stockfish-macos-m1-apple-silicon",
+  },
+  "macos-x86-64-bmi2": {
+    fileName: "stockfish-macos-x86-64-bmi2.tar",
+    engineRelPath: "stockfish/stockfish-macos-x86-64-bmi2",
+  },
+  "macos-x86-64-avx2": {
+    fileName: "stockfish-macos-x86-64-avx2.tar",
+    engineRelPath: "stockfish/stockfish-macos-x86-64-avx2",
+  },
+  "macos-x86-64-sse41-popcnt": {
+    fileName: "stockfish-macos-x86-64-sse41-popcnt.tar",
+    engineRelPath: "stockfish/stockfish-macos-x86-64-sse41-popcnt",
+  },
+  "macos-x86-64": {
+    fileName: "stockfish-macos-x86-64.tar",
+    engineRelPath: "stockfish/stockfish-macos-x86-64",
+  },
+
+  // Android builds (OCS prefers bundled install on Android, but we keep the routes here for completeness)
+  "android-armv8": {
+    fileName: "stockfish-android-armv8.tar",
+    engineRelPath: "stockfish/stockfish-android-armv8",
+  },
+  "android-armv8-dotprod": {
+    fileName: "stockfish-android-armv8-dotprod.tar",
+    engineRelPath: "stockfish/stockfish-android-armv8-dotprod",
+  },
+  "android-armv7": {
+    fileName: "stockfish-android-armv7.tar",
+    engineRelPath: "stockfish/stockfish-android-armv7",
+  },
+  "android-armv7-neon": {
+    fileName: "stockfish-android-armv7-neon.tar",
+    engineRelPath: "stockfish/stockfish-android-armv7-neon",
+  },
+};
+
 /**
  * IMPORTANT:
  * - `bmi2` is used as a 2-way CPU switch in Obsidian Chess Studio (OCS) (bmi2 compatible vs not).
@@ -18,105 +169,6 @@ export const requiredEngineSettings = ["MultiPV", "Threads", "Hash"];
  * - For engines that don't have CPU variants, duplicate entries (bmi2 true/false) with same build.
  */
 const ENGINES = [
-  // ---------------------------
-  // Stockfish
-  // ---------------------------
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "android",
-    // Safer default for broad device compatibility (dotprod is not universally available).
-    bmi2: false,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "bundled" as const,
-    path: "engines/stockfish",
-    elo: 3635,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "android",
-    bmi2: true,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "bundled" as const,
-    path: "engines/stockfish",
-    elo: 3635,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "windows",
-    bmi2: true,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-windows-x86-64-avx2.zip",
-    path: "stockfish/stockfish-windows-x86-64-avx2.exe",
-    elo: 3635,
-    downloadSize: 65412642,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "windows",
-    bmi2: false,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-windows-x86-64-sse41-popcnt.zip",
-    path: "stockfish/stockfish-windows-x86-64-sse41-popcnt.exe",
-    elo: 3635,
-    downloadSize: 65413257,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "macos",
-    bmi2: true,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "brew" as const,
-    brewPackage: "stockfish",
-    path: "/opt/homebrew/bin/stockfish",
-    elo: 3635,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "macos",
-    bmi2: false,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "brew" as const,
-    brewPackage: "stockfish",
-    path: "/opt/homebrew/bin/stockfish",
-    elo: 3635,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "linux",
-    bmi2: true,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64-avx2.tar",
-    path: "stockfish/stockfish-ubuntu-x86-64-avx2",
-    elo: 3635,
-    downloadSize: 79953920,
-  },
-  {
-    name: "Stockfish",
-    version: "17.1",
-    os: "linux",
-    bmi2: false,
-    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
-    installMethod: "download" as const,
-    downloadLink:
-      "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-ubuntu-x86-64-sse41-popcnt.tar",
-    path: "stockfish/stockfish-ubuntu-x86-64-sse41-popcnt",
-    elo: 3635,
-    downloadSize: 79953920,
-  },
-
   // ---------------------------
   // RubiChess
   // ---------------------------
@@ -700,6 +752,71 @@ export function getBestMoves(
   return commands.getBestMoves(engine.name, engine.path, tab, goMode, options).then((r) => unwrap(r));
 }
 
+async function createDefaultStockfishEngine(
+  normalizedOs: "windows" | "macos" | "linux" | "android" | "ios" | null,
+  bmi2: boolean,
+) {
+  if (!normalizedOs) return null;
+
+  // iOS: no official Stockfish binary route in our installer.
+  if (normalizedOs === "ios") return null;
+
+  const base = {
+    name: "Stockfish",
+    version: "18",
+    image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
+    elo: 3635,
+  };
+
+  if (normalizedOs === "android") {
+    // Safer default for broad device compatibility (dotprod is not universally available).
+    return {
+      ...base,
+      os: "android",
+      bmi2: false,
+      installMethod: "bundled" as const,
+      path: "engines/stockfish",
+    };
+  }
+
+  let key: string | null = null;
+  try {
+    key = await invoke<string>("get_preferred_stockfish_build_key");
+  } catch {
+    key = null;
+  }
+
+  const fallbackKey =
+    normalizedOs === "windows"
+      ? bmi2
+        ? "windows-x86-64-avx2"
+        : "windows-x86-64-sse41-popcnt"
+      : normalizedOs === "linux"
+        ? bmi2
+          ? "linux-x86-64-avx2"
+          : "linux-x86-64-sse41-popcnt"
+        : normalizedOs === "macos"
+          ? bmi2
+            ? "macos-x86-64-avx2"
+            : "macos-x86-64-sse41-popcnt"
+          : null;
+
+  const selectedKey = (key && STOCKFISH_18_BUILDS[key] ? key : fallbackKey) ?? null;
+  if (!selectedKey) return null;
+
+  const build = STOCKFISH_18_BUILDS[selectedKey];
+  if (!build) return null;
+
+  return {
+    ...base,
+    os: normalizedOs,
+    bmi2,
+    installMethod: "download" as const,
+    downloadLink: stockfish18Url(build.fileName),
+    path: build.engineRelPath,
+  };
+}
+
 export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
   const { data, error, isLoading } = useQuery({
     queryKey: ["default-engines", os],
@@ -719,8 +836,14 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
             : osMatches
           : ENGINES.filter((e) => e.installMethod === "download" && e.bmi2 === bmi2);
 
+      // Stockfish 18: keep the full route matrix in TS, but let the backend pick the right build.
+      const stockfish = await createDefaultStockfishEngine(normalizedOs, bmi2);
+      const enginesWithStockfish = stockfish
+        ? [stockfish, ...availableEngines.filter((e) => e.name !== "Stockfish")]
+        : availableEngines;
+
       const supportedEngines = await Promise.all(
-        availableEngines.map(async (engine) => {
+        enginesWithStockfish.map(async (engine) => {
           const isSupported = await isInstallMethodSupported(engine.installMethod || "download");
           return isSupported ? engine : null;
         }),

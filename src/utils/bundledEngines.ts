@@ -41,7 +41,7 @@ export async function autoRegisterBundledEngines(): Promise<void> {
       if (bundledStockfishPath) {
         // Check if Stockfish is already registered
         const stockfishIndex = currentEngines.findIndex(
-          (e) => e.type === "local" && e.name === "Stockfish" && (e as LocalEngine).version === "17.1",
+          (e) => e.type === "local" && e.name === "Stockfish" && (e as LocalEngine).installMethod === "bundled",
         );
         const stockfishExists = stockfishIndex !== -1;
 
@@ -73,7 +73,7 @@ export async function autoRegisterBundledEngines(): Promise<void> {
           const bundledEngine: LocalEngine = {
             type: "local",
             name: "Stockfish",
-            version: "17.1",
+            version: "18",
             path: bundledStockfishPath,
             image: "https://upload.wikimedia.org/wikipedia/commons/3/3a/NewLogoSF.png",
             elo: 3635,
@@ -117,11 +117,13 @@ export async function autoRegisterBundledEngines(): Promise<void> {
         } else {
           // Migrate old absolute path (e.g. /data/user/0/.../files/engines/stockfish) to logical path.
           const existing = currentEngines[stockfishIndex] as LocalEngine;
-          if (existing.installMethod === "bundled" && existing.path !== bundledStockfishPath) {
+          const needsPathMigration = existing.installMethod === "bundled" && existing.path !== bundledStockfishPath;
+          const needsVersionMigration = existing.version !== "18";
+          if (needsPathMigration || needsVersionMigration) {
             const updated = [...currentEngines];
-            updated[stockfishIndex] = { ...existing, path: bundledStockfishPath };
+            updated[stockfishIndex] = { ...existing, path: bundledStockfishPath, version: "18" };
             await store.set(enginesAtom, updated);
-            info(`Updated bundled Stockfish path to: ${bundledStockfishPath}`);
+            info(`Updated bundled Stockfish to version 18 at: ${bundledStockfishPath}`);
           } else {
             info("Stockfish already registered, skipping auto-registration");
           }

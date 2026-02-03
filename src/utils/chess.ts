@@ -373,6 +373,9 @@ function headersToPGN(game: GameHeaders): string {
 [Black "${game.black || "?"}"]
 [Result "${game.result}"]
 `;
+  if (game.time) {
+    headers += `[UTCTime "${game.time}"]\n`;
+  }
   if (game.white_elo) {
     headers += `[WhiteElo "${game.white_elo}"]\n`;
   }

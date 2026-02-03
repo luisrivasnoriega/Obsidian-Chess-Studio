@@ -342,27 +342,11 @@ fn outcome_from_result(user_color: &str, result: &str) -> String {
     "unknown".to_string()
 }
 
-fn load_local_games(app: &AppHandle, profile_id: &str, limit: usize) -> Result<Vec<LocalGameRecord>> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| Error::PackageManager(format!("Failed to resolve AppData dir: {}", e)))?;
-    let path = app_data.join("played_games.json");
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let text = std::fs::read_to_string(path).map_err(Error::Io)?;
-    let mut records: Vec<LocalGameRecord> = serde_json::from_str(&text).unwrap_or_default();
-    // Filter valid and profile match, keep newest first.
-    records.retain(|r| {
-        !r.id.trim().is_empty()
-            && r.timestamp > 0
-            && r.moves.len() >= 5
-            && (r.profile_id.as_deref().unwrap_or("") == profile_id || r.profile_id.is_none())
-    });
-    records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    records.truncate(limit);
-    Ok(records)
+/// Local games were previously stored in played_games.json; that file is deprecated.
+/// Games are now stored in the profile DB. This returns an empty list so callers
+/// only see profile DB and online games.
+fn load_local_games(_app: &AppHandle, _profile_id: &str, _limit: usize) -> Result<Vec<LocalGameRecord>> {
+    Ok(vec![])
 }
 
 fn normalize_https_url(raw: &str) -> Option<String> {
@@ -387,6 +371,8 @@ fn build_minimal_pgn_from_db_game(
     site: &str,
     date: Option<&str>,
     time: Option<&str>,
+    time_control: Option<&str>,
+    fen: Option<&str>,
     result: &str,
     moves: &str,
 ) -> String {
@@ -397,6 +383,19 @@ fn build_minimal_pgn_from_db_game(
     if let Some(t) = time {
         if !t.trim().is_empty() {
             out.push_str(&format!("[UTCTime \"{}\"]\n", t.trim()));
+        }
+    }
+    if let Some(tc) = time_control {
+        let tc = tc.trim();
+        if !tc.is_empty() {
+            out.push_str(&format!("[TimeControl \"{}\"]\n", tc));
+        }
+    }
+    if let Some(fen) = fen {
+        let fen = fen.trim();
+        if !fen.is_empty() {
+            out.push_str("[SetUp \"1\"]\n");
+            out.push_str(&format!("[FEN \"{}\"]\n", fen));
         }
     }
     out.push_str(&format!("[White \"{}\"]\n", white));
@@ -579,42 +578,50 @@ pub async fn dashboard_get_games_history_rows(
         });
     }
 
-    for g in online {
-        // Identify platform and extract external key.
-        let site_tag = parse_site_tag(&g.moves);
-        let mut kind: Option<GamesHistoryKind> = None;
-        let mut external_key = g.id.to_string();
-        let mut external_url: Option<String> = None;
+        for g in online {
+            // Identify platform and extract external key.
+            let site_tag = parse_site_tag(&g.moves);
+            let mut kind: Option<GamesHistoryKind> = None;
+            let mut external_key = g.id.to_string();
+            let mut external_url: Option<String> = None;
 
-        if let Some(site) = site_tag.as_deref() {
-            let site_lower = site.to_lowercase();
-            if site_lower.contains("lichess.org/broadcast/") {
-                kind = Some(GamesHistoryKind::Lichess);
-                // Not a Lichess *game* URL; keep internal key and use the broadcast URL for "open".
-                external_key = g.id.to_string();
-                external_url = normalize_https_url(site);
-            } else if let Some(id) = extract_lichess_id_from_site(site) {
-                kind = Some(GamesHistoryKind::Lichess);
-                external_key = id.clone();
-                external_url = Some(format!("https://lichess.org/{}", id));
-            } else if let Some(url) = extract_chesscom_url(site) {
-                kind = Some(GamesHistoryKind::Chesscom);
-                external_key = url.clone();
-                external_url = Some(url);
-            } else if site_lower.contains("chessbase.com") {
-                kind = Some(GamesHistoryKind::Chessbase);
-                external_key = g.id.to_string();
-                external_url = None;
-            }
-        }
-
-        if kind.is_none() {
-            let site_lower = g.site.to_lowercase();
-            if site_lower.contains("lichess.org") {
-                kind = Some(GamesHistoryKind::Lichess);
-                // If `Sites.Name` stores a URL, try to extract id; else keep numeric.
-                if let Some(id) = extract_lichess_id_from_site(&g.site) {
+            if let Some(site) = site_tag.as_deref() {
+                let site_lower = site.to_lowercase();
+                if site_lower.trim() == "local" {
+                    kind = Some(GamesHistoryKind::Local);
+                    external_key = g.id.to_string();
+                    external_url = None;
+                } else if site_lower.contains("lichess.org/broadcast/") {
+                    kind = Some(GamesHistoryKind::Lichess);
+                    // Not a Lichess *game* URL; keep internal key and use the broadcast URL for "open".
+                    external_key = g.id.to_string();
+                    external_url = normalize_https_url(site);
+                } else if let Some(id) = extract_lichess_id_from_site(site) {
+                    kind = Some(GamesHistoryKind::Lichess);
                     external_key = id.clone();
+                    external_url = Some(format!("https://lichess.org/{}", id));
+                } else if let Some(url) = extract_chesscom_url(site) {
+                    kind = Some(GamesHistoryKind::Chesscom);
+                    external_key = url.clone();
+                    external_url = Some(url);
+                } else if site_lower.contains("chessbase.com") {
+                    kind = Some(GamesHistoryKind::Chessbase);
+                    external_key = g.id.to_string();
+                    external_url = None;
+                }
+            }
+
+            if kind.is_none() {
+                let site_lower = g.site.to_lowercase();
+                if site_lower.trim() == "local" {
+                    kind = Some(GamesHistoryKind::Local);
+                    external_key = g.id.to_string();
+                    external_url = None;
+                } else if site_lower.contains("lichess.org") {
+                    kind = Some(GamesHistoryKind::Lichess);
+                    // If `Sites.Name` stores a URL, try to extract id; else keep numeric.
+                    if let Some(id) = extract_lichess_id_from_site(&g.site) {
+                        external_key = id.clone();
                     external_url = Some(format!("https://lichess.org/{}", id));
                 } else {
                     external_url = normalize_https_url(&g.site);
@@ -674,7 +681,7 @@ pub async fn dashboard_get_games_history_rows(
         };
         let user_color = if user_is_white { "white" } else { "black" };
         let opponent = if user_is_white { black_name.clone() } else { white_name.clone() };
-        let is_chessbase = matches!(kind, GamesHistoryKind::Chessbase);
+        let needs_minimal_pgn = matches!(kind, GamesHistoryKind::Chessbase | GamesHistoryKind::Local);
 
         let result_str = g.result.to_string();
         let outcome = outcome_from_result(user_color, &result_str);
@@ -698,7 +705,7 @@ pub async fn dashboard_get_games_history_rows(
             outcome,
             pgn: if g.moves.trim().is_empty() {
                 None
-            } else if is_chessbase {
+            } else if needs_minimal_pgn {
                 Some(build_minimal_pgn_from_db_game(
                     &white_name,
                     &black_name,
@@ -706,6 +713,8 @@ pub async fn dashboard_get_games_history_rows(
                     &g.site,
                     g.date.as_deref(),
                     g.time.as_deref(),
+                    g.time_control.as_deref(),
+                    Some(g.fen.as_str()),
                     &result_str,
                     &g.moves,
                 ))

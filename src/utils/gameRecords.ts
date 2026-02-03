@@ -1,7 +1,6 @@
-import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { error, info } from "@tauri-apps/plugin-log";
+import { commands } from "@/bindings";
 import { getGameStats, parsePGN } from "@/utils/chess";
+import { getProfileDbPath } from "@/utils/profileDb";
 
 export interface GameRecord {
   id: string;
@@ -27,210 +26,164 @@ export interface GameRecord {
   stats?: GameStats; // Calculated stats including estimatedElo (saved once during analysis)
 }
 
-const FILENAME = "played_games.json";
 const ACTIVE_PROFILE_STORAGE_KEY = "activeProfileId";
+
+// In-session idempotency guard. We can still get multiple "game end" triggers from
+// different UI paths; this prevents duplicate imports even if the caller misbehaves.
+const inFlightSaves = new Map<string, Promise<void>>();
+const completedSaveKeys = new Set<string>();
 
 /** Stable key for dedupe: same game = same fen + move count + result. */
 export function getGameRecordDedupeKey(r: GameRecord): string {
   return `${r.fen ?? ""}-${r.moves?.length ?? 0}-${r.result ?? ""}`;
 }
 
-const DEDUPE_LOOKBACK = 50;
-
-export async function saveGameRecord(record: GameRecord, dedupeKey?: string) {
-  try {
-    if (!record.profileId && typeof window !== "undefined") {
-      const activeProfileId = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
-      if (activeProfileId) record.profileId = activeProfileId;
-    }
-
-    const dir = await appDataDir();
-    info(`[gameRecords] Saving game record to directory: ${dir}`);
-
-    // Ensure directory exists
-    if (!(await exists(dir))) {
-      await mkdir(dir, { recursive: true });
-      info(`[gameRecords] Created directory: ${dir}`);
-    }
-
-    const file = await resolve(dir, FILENAME);
-    info(`[gameRecords] Game records file path: ${file}`);
-
-    let records: GameRecord[] = [];
-    try {
-      if (await exists(file)) {
-        const text = await readTextFile(file);
-        records = JSON.parse(text);
-        info(`[gameRecords] Loaded ${records.length} existing game records`);
-      } else {
-        info(`[gameRecords] Game records file does not exist, creating new one`);
-      }
-    } catch (err) {
-      error(`[gameRecords] Failed to read existing game records: ${err}`);
-      // Continue with empty array
-    }
-
-    const key = dedupeKey ?? getGameRecordDedupeKey(record);
-    const recent = records.slice(0, DEDUPE_LOOKBACK);
-    const duplicateIndex = recent.findIndex((r) => getGameRecordDedupeKey(r) === key);
-    if (duplicateIndex >= 0) {
-      records.splice(duplicateIndex, 1);
-      info(`[gameRecords] Dedupe: removed existing record at index ${duplicateIndex} (same game)`);
-    }
-
-    records.unshift(record);
-    info(`[gameRecords] Saving ${records.length} game records (added new record with id: ${record.id})`);
-
-    await writeTextFile(file, JSON.stringify(records));
-    info(`[gameRecords] Successfully saved game records to ${file}`);
-
-    if (typeof window !== "undefined") {
-      try {
-        window.dispatchEvent(new Event("games:updated"));
-        info(`[gameRecords] Dispatched games:updated event`);
-      } catch (err) {
-        error(`[gameRecords] Failed to dispatch games:updated event: ${err}`);
-      }
-    }
-  } catch (err) {
-    error(`[gameRecords] Failed to save game record: ${err}`);
-    throw err;
+/**
+ * Saves a game to the profile DB (played_games.json is deprecated).
+ * Requires an active profile and a PGN string. Dispatches "games:updated" on success.
+ */
+export async function saveGameRecord(record: GameRecord, dedupeKey?: string): Promise<void> {
+  let profileId = record.profileId;
+  if (!profileId && typeof window !== "undefined") {
+    profileId = localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) ?? undefined;
   }
+  if (!profileId || !record.pgn?.trim()) {
+    return;
+  }
+
+  const key = `${profileId}:${dedupeKey ?? getGameRecordDedupeKey(record)}`;
+  if (completedSaveKeys.has(key)) return;
+  const existing = inFlightSaves.get(key);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const humanName =
+    record.white.type === "human"
+      ? (record.white.name ?? "Human")
+      : record.black.type === "human"
+        ? (record.black.name ?? "Human")
+        : "Human";
+
+  const p = (async () => {
+    const res = await commands.addProfileGamesFromPgn(profileId, humanName, record.pgn!);
+    if (res.status === "ok") {
+      completedSaveKeys.add(key);
+      if (typeof window !== "undefined") {
+        try {
+          window.dispatchEvent(new Event("games:updated"));
+        } catch {
+          // ignore
+        }
+      }
+    }
+  })().finally(() => {
+    inFlightSaves.delete(key);
+  });
+
+  inFlightSaves.set(key, p);
+  await p;
 }
 
-export async function getRecentGames(limit = 20): Promise<GameRecord[]> {
+/**
+ * Returns recent games from the profile DB (played_games.json is deprecated).
+ * When profileId is null, returns an empty array.
+ */
+export async function getRecentGames(profileId: string | null, limit = 20): Promise<GameRecord[]> {
+  if (!profileId) return [];
+
   try {
-    const dir = await appDataDir();
-    info(`[gameRecords] Loading games from directory: ${dir}`);
-
-    const file = await resolve(dir, FILENAME);
-    info(`[gameRecords] Game records file path: ${file}`);
-
-    // Check if file exists
-    if (!(await exists(file))) {
-      info(`[gameRecords] Game records file does not exist at ${file}`);
-      return [];
-    }
-
-    try {
-      const text = await readTextFile(file);
-      info(`[gameRecords] Read ${text.length} characters from game records file`);
-
-      const records: GameRecord[] = JSON.parse(text);
-      info(`[gameRecords] Parsed ${records.length} game records from file`);
-
-      // Filter out invalid/corrupted games
-      const validRecords = records.filter((record) => {
-        // Must have an id
-        if (!record.id) return false;
-
-        // Must have valid player information
-        if (!record.white || !record.black) return false;
-        if (!record.white.type || !record.black.type) return false;
-
-        // Must have moves array (can be empty but must exist)
-        if (!Array.isArray(record.moves)) return false;
-
-        // Must have a valid timestamp
-        if (!record.timestamp || typeof record.timestamp !== "number") return false;
-
-        // Must have a result (can be "*" for unfinished games)
-        if (!record.result || typeof record.result !== "string") return false;
-
-        // Must have a FEN
-        if (!record.fen || typeof record.fen !== "string") return false;
-
-        return true;
-      });
-
-      info(`[gameRecords] Found ${validRecords.length} valid game records (filtered from ${records.length} total)`);
-      const limited = validRecords.slice(0, limit);
-      info(`[gameRecords] Returning ${limited.length} game records (limited to ${limit})`);
-
-      return limited;
-    } catch (err) {
-      error(`[gameRecords] Failed to read or parse game records from ${file}: ${err}`);
-      return [];
-    }
-  } catch (err) {
-    error(`[gameRecords] Failed to get recent games: ${err}`);
+    const res = await commands.dashboardGetGamesHistoryRows({
+      profileId,
+      gameHistoryLimit: limit,
+      page: 1,
+      pageSize: limit,
+      eventFilterId: null,
+      selectedOpponentId: null,
+      opponentContains: null,
+      timeControlCategory: null,
+      resultFilter: null,
+      sortBy: null,
+      sortDirection: null,
+      profileUsernames: [],
+    });
+    if (res.status !== "ok") return [];
+    return res.data.rows.map((row) => gamesHistoryRowToGameRecord(row, profileId));
+  } catch {
     return [];
   }
 }
 
-export async function migrateLegacyGameRecordsProfileId(profileId: string): Promise<void> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  if (!(await exists(file))) return;
-
-  try {
-    const text = await readTextFile(file);
-    const records: GameRecord[] = JSON.parse(text);
-    let changed = false;
-    const migrated = records.map((r) => {
-      if (r && !r.profileId) {
-        changed = true;
-        return { ...r, profileId };
-      }
-      return r;
-    });
-    if (changed) {
-      await writeTextFile(file, JSON.stringify(migrated));
-    }
-  } catch {
-    // best-effort
-  }
+function outcomeToResult(outcome: string, userColor: string): string {
+  if (outcome === "draw") return "1/2-1/2";
+  if (outcome === "unknown") return "*";
+  if (outcome === "win") return userColor === "white" ? "1-0" : "0-1";
+  if (outcome === "loss") return userColor === "white" ? "0-1" : "1-0";
+  return "*";
 }
 
-export async function getAllGames(): Promise<GameRecord[]> {
-  try {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    if (!(await exists(file))) {
-      return [];
-    }
-    const text = await readTextFile(file);
-    const records: GameRecord[] = JSON.parse(text);
-    const validRecords = records.filter((record) => {
-      if (!record.id) return false;
-      if (!record.white || !record.black) return false;
-      if (!record.white.type || !record.black.type) return false;
-      if (!Array.isArray(record.moves)) return false;
-      if (!record.timestamp || typeof record.timestamp !== "number") return false;
-      if (!record.result || typeof record.result !== "string") return false;
-      if (!record.fen || typeof record.fen !== "string") return false;
-      return true;
-    });
-    return validRecords;
-  } catch (err) {
-    error(`[gameRecords] Failed to get all games: ${err}`);
-    return [];
-  }
+function gamesHistoryRowToGameRecord(
+  row: {
+    analysisGameId: string;
+    gameKey: string;
+    opponent: string;
+    color: string;
+    outcome: string;
+    pgn: string | null;
+    timeControl: string | null;
+    timestampMs: bigint;
+    moves: number;
+  },
+  profileId: string,
+): GameRecord {
+  const result = outcomeToResult(row.outcome, row.color);
+  const isUserWhite = row.color === "white";
+  // moves: row.moves is full-move count; use length so filters like moves.length >= 5 work
+  const halfMoves = Math.max(0, (row.moves ?? 0) * 2);
+  return {
+    id: row.analysisGameId,
+    profileId,
+    white: isUserWhite ? { type: "human", name: "You" } : { type: "engine", name: row.opponent },
+    black: isUserWhite ? { type: "engine", name: row.opponent } : { type: "human", name: "You" },
+    result,
+    timeControl: row.timeControl ?? undefined,
+    timestamp: Number(row.timestampMs),
+    moves: Array.from({ length: halfMoves }, () => ""),
+    fen: "",
+    pgn: row.pgn ?? undefined,
+  };
 }
 
-export async function countGamesOnDate(date: Date = new Date()): Promise<number> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  try {
-    const text = await readTextFile(file);
-    const records: GameRecord[] = JSON.parse(text);
-    const y = date.getFullYear();
-    const m = date.getMonth();
-    const d = date.getDate();
-    return records.filter((r) => {
-      const dt = new Date(r.timestamp);
-      return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d;
-    }).length;
-  } catch {
-    return 0;
-  }
+/** played_games.json is deprecated; no migration needed. */
+export async function migrateLegacyGameRecordsProfileId(_profileId: string): Promise<void> {
+  // No-op: local games are now in profile DB
+}
+
+/**
+ * Returns all games from the profile DB (played_games.json is deprecated).
+ * When profileId is null, returns an empty array.
+ */
+export async function getAllGames(profileId: string | null): Promise<GameRecord[]> {
+  return getRecentGames(profileId, 5000);
+}
+
+/** played_games.json is deprecated; count is from profile DB. When profileId not passed, uses activeProfileId from localStorage. */
+export async function countGamesOnDate(date: Date = new Date(), profileId?: string | null): Promise<number> {
+  const pid = profileId ?? (typeof window !== "undefined" ? localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) : null);
+  if (!pid) return 0;
+  const games = await getRecentGames(pid, 5000);
+  const y = date.getFullYear();
+  const m = date.getMonth();
+  const day = date.getDate();
+  return games.filter((r) => {
+    const t = new Date(r.timestamp);
+    return t.getFullYear() === y && t.getMonth() === m && t.getDate() === day;
+  }).length;
 }
 
 export async function clearAllGames(): Promise<void> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  // Write an empty array to clear all games
-  await writeTextFile(file, JSON.stringify([]));
+  // played_games.json is deprecated; clearing is not supported (profile DB is source of truth)
   if (typeof window !== "undefined") {
     try {
       window.dispatchEvent(new Event("games:updated"));
@@ -240,22 +193,35 @@ export async function clearAllGames(): Promise<void> {
   }
 }
 
-export async function updateGameRecord(gameId: string, updates: Partial<GameRecord>): Promise<void> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  let records: GameRecord[] = [];
-  try {
-    const text = await readTextFile(file);
-    records = JSON.parse(text);
-  } catch {
-    // file may not exist yet
-    return;
-  }
+/** played_games.json is deprecated; updates are not supported for profile DB games. */
+export async function updateGameRecord(_gameId: string, _updates: Partial<GameRecord>): Promise<void> {
+  // No-op: stats are stored in analysis DB; profile DB games are immutable
+}
 
-  const index = records.findIndex((r) => r.id === gameId);
-  if (index !== -1) {
-    records[index] = { ...records[index], ...updates };
-    await writeTextFile(file, JSON.stringify(records));
+/**
+ * Loads a single game by id from profile DB (played_games.json is deprecated).
+ * When called with one argument, uses activeProfileId from localStorage.
+ * Returns null if not found or when profileId is null.
+ */
+export async function getGameRecordById(profileIdOrGameId: string | null, gameId?: string): Promise<GameRecord | null> {
+  const profileId = gameId !== undefined ? profileIdOrGameId : localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY);
+  const id = gameId !== undefined ? gameId : profileIdOrGameId;
+  if (!profileId || !id) return null;
+  const games = await getRecentGames(profileId, 1000);
+  return games.find((r) => r.id === id) ?? null;
+}
+
+/**
+ * Deletes a game from the profile DB (played_games.json is deprecated).
+ * When profileId is null, no-op.
+ */
+export async function deleteGameRecord(profileId: string | null, gameId: string): Promise<void> {
+  if (!profileId) return;
+  try {
+    const dbPath = await getProfileDbPath(profileId);
+    const id = Number.parseInt(gameId, 10);
+    if (Number.isNaN(id)) return;
+    await commands.deleteDbGame(dbPath, id);
     if (typeof window !== "undefined") {
       try {
         window.dispatchEvent(new Event("games:updated"));
@@ -263,46 +229,8 @@ export async function updateGameRecord(gameId: string, updates: Partial<GameReco
         // ignore
       }
     }
-  }
-}
-
-/**
- * Loads a single game record by id without slicing/validating the full list.
- * Returns null if the file doesn't exist, is corrupted, or the record is not found.
- */
-export async function getGameRecordById(gameId: string): Promise<GameRecord | null> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  try {
-    const text = await readTextFile(file);
-    const records: GameRecord[] = JSON.parse(text);
-    const found = records.find((r) => r?.id === gameId);
-    return found ?? null;
   } catch {
-    return null;
-  }
-}
-
-export async function deleteGameRecord(gameId: string): Promise<void> {
-  const dir = await appDataDir();
-  const file = await resolve(dir, FILENAME);
-  let records: GameRecord[] = [];
-  try {
-    const text = await readTextFile(file);
-    records = JSON.parse(text);
-  } catch {
-    // file may not exist yet
-    return;
-  }
-
-  const filteredRecords = records.filter((r) => r.id !== gameId);
-  await writeTextFile(file, JSON.stringify(filteredRecords));
-  if (typeof window !== "undefined") {
-    try {
-      window.dispatchEvent(new Event("games:updated"));
-    } catch {
-      // ignore
-    }
+    // ignore
   }
 }
 
@@ -341,13 +269,9 @@ export async function calculateGameStats(game: GameRecord): Promise<GameStats | 
       return null;
     }
 
-    // Don't calculate estimatedElo here - it should only be calculated and saved when generating a report
-    // This function is used for backwards compatibility and should not calculate estimatedElo
-
     return {
       accuracy,
       acpl,
-      // estimatedElo is not calculated here - only when saving from a report
     };
   } catch {
     // If parsing fails, return null

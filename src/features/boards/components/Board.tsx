@@ -7,6 +7,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { makeSquare, type NormalMove, parseSquare, parseUci, type SquareName } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
+import { INITIAL_FEN } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import domtoimage from "dom-to-image";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -188,7 +189,7 @@ function Board({
   const setShapes = useStore(store, (s) => s.setShapes);
   const setFen = useStore(store, (s) => s.setFen);
 
-  const [pos, error] = useMemo(() => positionFromFen(currentNode.fen), [currentNode.fen]);
+  const [pos, error] = useMemo(() => positionFromFen(currentNode?.fen ?? INITIAL_FEN), [currentNode?.fen]);
 
   const moveInput = useAtomValue(moveInputAtom);
   const showDests = useAtomValue(showDestsAtom);
@@ -516,10 +517,10 @@ function Board({
   const square = match(currentNode)
     .with({ san: "O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "g1" : "g8"))
     .with({ san: "O-O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "c1" : "c8"))
-    .otherwise((node) => node.move?.to);
+    .otherwise((node) => node?.move?.to);
 
   const lastMove =
-    currentNode.move && square !== undefined ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!] : undefined;
+    currentNode?.move && square !== undefined ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!] : undefined;
 
   // ---------------------------------------------------------------------------
   // Performance: keep Chessground config object references stable across frequent
@@ -670,7 +671,7 @@ function Board({
           }}
           gap="md"
         >
-          {currentNode.annotations.length > 0 && currentNode.move && square !== undefined && (
+          {currentNode?.annotations?.length > 0 && currentNode?.move && square !== undefined && (
             <Box pl="2.5rem" w="100%" h="100%" pos="absolute">
               <Box pos="relative" w="100%" h="100%">
                 <AnnotationHint orientation={orientation} square={square} annotation={currentNode.annotations[0]} />

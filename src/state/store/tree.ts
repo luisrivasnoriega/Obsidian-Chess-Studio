@@ -96,14 +96,25 @@ export interface TreeStoreState extends TreeState {
 export type TreeStore = ReturnType<typeof createTreeStore>;
 
 export const createTreeStore = (id?: string, initialTree?: TreeState) => {
+  const base = initialTree ?? defaultTree();
   const stateCreator: StateCreator<TreeStoreState> = (set, get) => ({
-    ...(initialTree ?? defaultTree()),
+    ...base,
+    root: base.root ?? defaultTree().root,
     saveVersion: 0,
 
-    currentNode: () => getNodeAtPath(get().root, get().position),
+    currentNode: () => {
+      const s = get();
+      const node = getNodeAtPath(s.root, s.position);
+      return node ?? s.root;
+    },
 
     setState: (state) => {
-      set(() => ({ ...state, saveVersion: 0 }));
+      set((prev) => ({
+        ...prev,
+        ...state,
+        saveVersion: 0,
+        root: state.root ?? prev.root,
+      }));
     },
 
     reset: () => set(() => ({ ...defaultTree(), saveVersion: 0 })),
@@ -550,6 +561,17 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
       persist(stateCreator, {
         name: id,
         storage: createJSONStorage(() => tabStateStorage),
+        merge: (persistedState, currentState) => {
+          const persisted =
+            persistedState && typeof persistedState === "object"
+              ? (persistedState as Partial<TreeStoreState>)
+              : ({} as Partial<TreeStoreState>);
+          return {
+            ...currentState,
+            ...persisted,
+            root: persisted.root ?? currentState.root,
+          };
+        },
       }),
     );
   }

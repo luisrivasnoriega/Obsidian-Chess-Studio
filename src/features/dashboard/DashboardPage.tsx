@@ -571,18 +571,18 @@ export default function DashboardPage() {
 
   const loadGames = useCallback(async () => {
     try {
-      const games = await getRecentGames(gameHistoryLimit);
-      // Filter out games with less than 5 moves
+      const games = await getRecentGames(activeProfileId, gameHistoryLimit);
+      // Filter out games with less than 5 moves (moves may be empty when loaded from profile DB; use pgn)
       const filteredGames = games.filter((g) => {
-        // Filter out games with no moves or less than 5 moves
-        if (!g.moves || g.moves.length === 0) return false;
-        return g.moves.length >= 5;
+        if (g.moves?.length >= 5) return true;
+        if (g.pgn) {
+          const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+          const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
+          return moveCount >= 5;
+        }
+        return false;
       });
-      const profileFiltered =
-        activeProfileId == null
-          ? filteredGames
-          : filteredGames.filter((g) => !g.profileId || g.profileId === activeProfileId);
-      setRecentGames(profileFiltered);
+      setRecentGames(filteredGames);
     } catch {}
   }, [activeProfileId, gameHistoryLimit]);
 
@@ -1094,14 +1094,18 @@ export default function DashboardPage() {
               onGameHistoryLimitChange={setGameHistoryLimit}
               onAnalyzeAll={handleAnalyzeAll}
               onDeleteLocalGame={async (gameId: string) => {
-                await deleteGameRecord(gameId);
-                const updatedGames = await getRecentGames(gameHistoryLimit);
-                const filteredGames = updatedGames.filter((g) => g.moves.length >= 5);
-                const profileFiltered =
-                  activeProfileId == null
-                    ? filteredGames
-                    : filteredGames.filter((g) => !g.profileId || g.profileId === activeProfileId);
-                setRecentGames(profileFiltered);
+                await deleteGameRecord(activeProfileId, gameId);
+                const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
+                const filteredGames = updatedGames.filter((g) => {
+                  if (g.moves?.length >= 5) return true;
+                  if (g.pgn) {
+                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                    const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
+                    return moveCount >= 5;
+                  }
+                  return false;
+                });
+                setRecentGames(filteredGames);
               }}
               chessComGames={chessComGames}
               lichessGames={lichessGames}
@@ -2011,13 +2015,17 @@ export default function DashboardPage() {
 
               // Refresh games to update stats
               if (analyzeAllGameType === "local" || analyzeAllGameType === "all") {
-                const updatedGames = await getRecentGames(gameHistoryLimit);
-                const filteredGames = updatedGames.filter((g) => g.moves.length >= 5);
-                const profileFiltered =
-                  activeProfileId == null
-                    ? filteredGames
-                    : filteredGames.filter((g) => !g.profileId || g.profileId === activeProfileId);
-                setRecentGames(profileFiltered);
+                const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
+                const filteredGames = updatedGames.filter((g) => {
+                  if (g.moves?.length >= 5) return true;
+                  if (g.pgn) {
+                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                    const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
+                    return moveCount >= 5;
+                  }
+                  return false;
+                });
+                setRecentGames(filteredGames);
               }
               if (analyzeAllGameType === "chesscom" || analyzeAllGameType === "all") {
                 // Trigger refresh for Chess.com games
