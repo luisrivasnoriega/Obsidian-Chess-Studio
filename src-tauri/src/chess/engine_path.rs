@@ -12,19 +12,6 @@ use tauri::Manager;
 /// Uses multiple detection methods with fallbacks.
 #[cfg(target_os = "android")]
 fn find_bundled_stockfish() -> Option<PathBuf> {
-    fn preferred_lib_names() -> Vec<&'static str> {
-        // Prefer the dotprod build on devices that support it, but always fall back.
-        #[cfg(target_arch = "aarch64")]
-        {
-            if std::arch::is_aarch64_feature_detected!("dotprod") {
-                return vec!["libstockfish_dotprod.so", "libstockfish.so"];
-            }
-        }
-        vec!["libstockfish.so", "libstockfish_dotprod.so"]
-    }
-
-    let lib_names = preferred_lib_names();
-
     // Method 1: Parse /proc/self/maps to find where libocs_lib.so is loaded.
     // If native libraries are extracted, Stockfish should be in the same directory.
     // Note: Some builds map libs directly from inside the APK (e.g. `base.apk!/lib/...`),
@@ -47,13 +34,19 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
 
                     let p = PathBuf::from(lib_path);
                     if let Some(parent) = p.parent() {
-                        for lib in &lib_names {
-                            let candidate = parent.join(lib);
-                            info!("Checking for {} via /proc/self/maps: {}", lib, candidate.display());
-                            if candidate.is_file() {
-                                info!("Found {} via /proc/self/maps: {}", lib, candidate.display());
-                                return Some(candidate);
-                            }
+                        let candidate = parent.join("libstockfish.so");
+                        info!(
+                            "Checking for libstockfish.so via /proc/self/maps: {}",
+                            candidate.display()
+                        );
+                        if candidate.is_file() {
+                            info!("Found libstockfish.so via /proc/self/maps: {}", candidate.display());
+                            return Some(candidate);
+                        } else {
+                            warn!(
+                                "libstockfish.so NOT found at {} (derived from libocs_lib.so)",
+                                candidate.display()
+                            );
                         }
                     }
 
@@ -66,17 +59,20 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                             .filter(|s| !s.is_empty())
                         {
                             if let Some(apk_parent) = std::path::Path::new(apk_path).parent() {
-                                for lib in &lib_names {
-                                    let candidate = apk_parent.join("lib").join(abi).join(lib);
+                                let candidate = apk_parent
+                                    .join("lib")
+                                    .join(abi)
+                                    .join("libstockfish.so");
+                                info!(
+                                    "Checking for extracted libstockfish.so derived from APK path: {}",
+                                    candidate.display()
+                                );
+                                if candidate.is_file() {
                                     info!(
-                                        "Checking for extracted {} derived from APK path: {}",
-                                        lib,
+                                        "Found libstockfish.so via APK-derived lib dir: {}",
                                         candidate.display()
                                     );
-                                    if candidate.is_file() {
-                                        info!("Found {} via APK-derived lib dir: {}", lib, candidate.display());
-                                        return Some(candidate);
-                                    }
+                                    return Some(candidate);
                                 }
                             }
                         }
@@ -92,12 +88,10 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
     if let Ok(ld_library_path) = std::env::var("LD_LIBRARY_PATH") {
         info!("LD_LIBRARY_PATH = {}", ld_library_path);
         for dir in ld_library_path.split(':').filter(|s| !s.is_empty()) {
-            for lib in &lib_names {
-                let candidate = PathBuf::from(dir).join(lib);
-                if candidate.is_file() {
-                    info!("Found {} via LD_LIBRARY_PATH: {}", lib, candidate.display());
-                    return Some(candidate);
-                }
+            let candidate = PathBuf::from(dir).join("libstockfish.so");
+            if candidate.is_file() {
+                info!("Found libstockfish.so via LD_LIBRARY_PATH: {}", candidate.display());
+                return Some(candidate);
             }
         }
     } else {
@@ -118,17 +112,17 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                     let sub_path = sub_entry.path();
                     if let Some(name) = sub_path.file_name().and_then(|n| n.to_str()) {
                         if name.starts_with("com.ocs") {
-                            for lib in &lib_names {
-                                let candidate = sub_path.join("lib/arm64").join(lib);
-                                if candidate.is_file() {
-                                    info!("Found {} via /data/app scan: {}", lib, candidate.display());
-                                    return Some(candidate);
-                                }
-                                let candidate2 = sub_path.join("lib/arm64-v8a").join(lib);
-                                if candidate2.is_file() {
-                                    info!("Found {} via /data/app scan: {}", lib, candidate2.display());
-                                    return Some(candidate2);
-                                }
+                            // Try arm64-v8a path
+                            let candidate = sub_path.join("lib/arm64/libstockfish.so");
+                            if candidate.is_file() {
+                                info!("Found libstockfish.so via /data/app scan: {}", candidate.display());
+                                return Some(candidate);
+                            }
+                            // Also try arm64-v8a naming
+                            let candidate2 = sub_path.join("lib/arm64-v8a/libstockfish.so");
+                            if candidate2.is_file() {
+                                info!("Found libstockfish.so via /data/app scan: {}", candidate2.display());
+                                return Some(candidate2);
                             }
                         }
                     }
@@ -137,7 +131,7 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
         }
     }
 
-    warn!("Could not find bundled Stockfish in any native library directory");
+    warn!("Could not find libstockfish.so in any native library directory");
     None
 }
 
@@ -146,7 +140,7 @@ pub fn resolve_engine_path(engine: &str, app: &AppHandle) -> PathBuf {
     let _ = app;
     let path = PathBuf::from(engine);
 
-    // On Android, ALWAYS prefer bundled Stockfish from native libs
+    // On Android, ALWAYS prefer the bundled libstockfish.so from native libs
     // This is the only reliable way to execute on devices with noexec app data
     #[cfg(target_os = "android")]
     {
@@ -163,14 +157,14 @@ pub fn resolve_engine_path(engine: &str, app: &AppHandle) -> PathBuf {
             info!("Resolving Stockfish engine path for: {}", engine);
             if let Some(bundled) = find_bundled_stockfish() {
                 info!(
-                    "Using bundled Stockfish from native libs: {} (instead of {})",
+                    "Using bundled libstockfish.so: {} (instead of {})",
                     bundled.display(),
                     engine
                 );
                 return bundled;
             } else {
                 warn!(
-                    "Bundled Stockfish not found in native libs, falling back to original path: {}",
+                    "Bundled libstockfish.so not found, falling back to original path: {}",
                     engine
                 );
             }
