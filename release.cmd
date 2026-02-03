@@ -56,17 +56,42 @@ if "%MAJOR%"=="" (
   exit /b 1
 )
 
-set /a PATCH=%PATCH%+1
-set "NEW_VERSION=%MAJOR%.%MINOR%.%PATCH%"
+REM ----------------------------
+REM Determine next version
+REM - Default is a MINOR bump (e.g. 2.0.27 -> 2.1.0)
+REM - Override with:
+REM   - RELEASE_VERSION=2.1.0 (exact)
+REM   - RELEASE_BUMP=patch|minor|major
+REM ----------------------------
+if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=minor"
+
+if not "%RELEASE_VERSION%"=="" (
+  set "NEW_VERSION=%RELEASE_VERSION%"
+) else (
+  if /I "%RELEASE_BUMP%"=="patch" (
+    set /a PATCH=%PATCH%+1
+  ) else if /I "%RELEASE_BUMP%"=="minor" (
+    set /a MINOR=%MINOR%+1
+    set "PATCH=0"
+  ) else if /I "%RELEASE_BUMP%"=="major" (
+    set /a MAJOR=%MAJOR%+1
+    set "MINOR=0"
+    set "PATCH=0"
+  ) else (
+    echo ERROR: Invalid RELEASE_BUMP="%RELEASE_BUMP%". Use patch^|minor^|major, or set RELEASE_VERSION.
+    exit /b 1
+  )
+
+  set "NEW_VERSION=%MAJOR%.%MINOR%.%PATCH%"
+)
 
 echo New version will be: %NEW_VERSION%
 echo.
 
-REM Check if tag already exists
+REM Check if tag already exists (we will force-move it later if needed)
 git rev-parse --verify "v%NEW_VERSION%" >nul 2>&1
 if not errorlevel 1 (
-  echo ERROR: Tag v%NEW_VERSION% already exists!
-  exit /b 1
+  echo WARNING: Tag v%NEW_VERSION% already exists locally and will be updated.
 )
 
 REM ----------------------------
@@ -201,7 +226,7 @@ if errorlevel 1 (
 )
 echo [OK] Commit created: "Release %NEW_VERSION%"
 
-git tag v%NEW_VERSION%
+git tag -f v%NEW_VERSION%
 if errorlevel 1 (
   echo ERROR: Failed to create tag!
   exit /b %errorlevel%
@@ -212,13 +237,14 @@ echo.
 echo ========================================
 echo Step 9: Pushing to remote...
 echo ========================================
-git push
+echo NOTE: This script force-pushes rewritten history. Make sure you have coordinated with any collaborators.
+git push --force-with-lease
 if errorlevel 1 (
   echo ERROR: Failed to push commits!
   exit /b %errorlevel%
 )
 
-git push origin v%NEW_VERSION%
+git push --force origin v%NEW_VERSION%
 if errorlevel 1 (
   echo ERROR: Failed to push tag!
   exit /b %errorlevel%
