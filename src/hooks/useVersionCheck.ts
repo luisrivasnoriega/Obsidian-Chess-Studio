@@ -1,9 +1,11 @@
 import { info, error as logError } from "@tauri-apps/plugin-log";
+import { platform } from "@tauri-apps/plugin-os";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersionCheckConfig, VERSION_CHECK_SETTINGS } from "@/config";
+import { downloadApkToTemp, openApkInstaller } from "@/services/apk-updater";
 import {
   checkForUpdates,
   isVersionCheckEnabled,
@@ -13,6 +15,8 @@ import {
 } from "@/services/version-checker";
 import {
   hideUpdateProgressNotification,
+  showApkReadyToInstallNotification,
+  showApkUpdateProgressNotification,
   showUpdateErrorNotification,
   showUpdateProgressNotification,
   showUpdateSuccessNotification,
@@ -102,6 +106,30 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
     setIsUpdating(true);
 
     try {
+      const os = await platform();
+
+      if (os === "android") {
+        const apkUrl = lastResult.versionInfo?.apkDownloadUrl;
+        const version = lastResult.versionInfo?.version;
+
+        if (!apkUrl || !version) {
+          throw new Error(t("notifications.apkNotAvailable"));
+        }
+
+        info("Starting update installation via direct APK (Android)");
+
+        showApkUpdateProgressNotification(t);
+
+        const downloaded = await downloadApkToTemp({ url: apkUrl, version });
+        info(`APK downloaded to: ${downloaded.path} (${downloaded.bytes} bytes)`);
+
+        hideUpdateProgressNotification();
+
+        await openApkInstaller(downloaded.path);
+        showApkReadyToInstallNotification(t);
+        return;
+      }
+
       info("Starting update installation via Tauri updater");
 
       showUpdateProgressNotification(t);

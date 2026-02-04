@@ -1,4 +1,5 @@
 @echo off
+if /I "%DEBUG_RELEASE%"=="1" echo on
 setlocal enabledelayedexpansion
 
 echo ========================================
@@ -65,6 +66,20 @@ REM   - RELEASE_BUMP=patch|minor|major
 REM ----------------------------
 if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=minor"
 
+REM Normalize RELEASE_VERSION (allow "v2.1.0") and guard against stale overrides
+if defined RELEASE_VERSION (
+  if "!RELEASE_VERSION:~0,1!"=="v" set "RELEASE_VERSION=!RELEASE_VERSION:~1!"
+
+  if "%RELEASE_VERSION%"=="%VERSION%" (
+    echo WARNING: RELEASE_VERSION matches current version %VERSION%. Ignoring RELEASE_VERSION and using RELEASE_BUMP=%RELEASE_BUMP%.
+    set "RELEASE_VERSION="
+  ) else (
+    echo Using RELEASE_VERSION=%RELEASE_VERSION%
+  )
+) else (
+  echo Using RELEASE_BUMP=%RELEASE_BUMP%
+)
+
 if not "%RELEASE_VERSION%"=="" (
   set "NEW_VERSION=%RELEASE_VERSION%"
 ) else (
@@ -82,7 +97,7 @@ if not "%RELEASE_VERSION%"=="" (
     exit /b 1
   )
 
-  set "NEW_VERSION=%MAJOR%.%MINOR%.%PATCH%"
+  set "NEW_VERSION=!MAJOR!.!MINOR!.!PATCH!"
 )
 
 echo New version will be: %NEW_VERSION%

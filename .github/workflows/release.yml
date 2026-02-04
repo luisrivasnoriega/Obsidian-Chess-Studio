@@ -178,8 +178,8 @@ jobs:
             ${{ env.ANDROID_SDK_ROOT }}/platform-tools
             ${{ env.ANDROID_SDK_ROOT }}/platforms/android-36
             ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
-            ${{ env.ANDROID_SDK_ROOT }}/ndk/26.3.11579264
-          key: android-sdk-${{ runner.os }}-api36-bt36-ndk26.3.11579264
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
+          key: android-sdk-${{ runner.os }}-api36-bt36-ndk29.0.14206865
 
       - name: Install Android SDK packages (only if missing)
         shell: bash
@@ -190,20 +190,20 @@ jobs:
           [ -d "$ANDROID_SDK_ROOT/platform-tools" ] || need_install=1
           [ -d "$ANDROID_SDK_ROOT/platforms/android-36" ] || need_install=1
           [ -d "$ANDROID_SDK_ROOT/build-tools/36.0.0" ] || need_install=1
-          [ -d "$ANDROID_SDK_ROOT/ndk/26.3.11579264" ] || need_install=1
+          [ -d "$ANDROID_SDK_ROOT/ndk/29.0.14206865" ] || need_install=1
 
           if [ "$need_install" -eq 1 ]; then
             sdkmanager --install \
               "platform-tools" \
               "platforms;android-36" \
               "build-tools;36.0.0" \
-              "ndk;26.3.11579264"
+              "ndk;29.0.14206865"
           else
             echo "Android SDK/NDK already present (cache hit)."
           fi
 
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
-          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
       - name: Setup Rust toolchain (Android)
         uses: dtolnay/rust-toolchain@stable
@@ -250,9 +250,39 @@ jobs:
           ls -la "$RUNNER_TEMP/ocs-release.jks"
 
       - name: Build the app (Android)
+        id: android_build
+        continue-on-error: true
         env:
-          CI: false
+          CI: true
         run: pnpm android:build
+
+      - name: Gradle verbose logs (only if build failed)
+        if: steps.android_build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "=== Android/Java/Gradle diagnostics ==="
+          java -version || true
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "NDK_HOME=$NDK_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+
+          echo "=== List gen/android ==="
+          ls -la src-tauri/gen/android || true
+
+          echo "=== Gradle version ==="
+          cd src-tauri/gen/android
+          ./gradlew --version || true
+
+          echo "=== Assemble with stacktrace/info ==="
+          ./gradlew assembleRelease --stacktrace --info --no-daemon || true
+          echo "=== If release task name differs, list tasks ==="
+          ./gradlew tasks --all --stacktrace --info --no-daemon || true
+
+      - name: Fail if Android build failed
+        if: steps.android_build.outcome == 'failure'
+        shell: bash
+        run: exit 1
 
       - name: Sign Release APK (zipalign + apksigner)
         shell: bash

@@ -48,6 +48,10 @@
     {
       "identifier": "http:default",
       "allow": [
+        "https://api.github.com/**",
+        "https://github.com/**",
+        "https://objects.githubusercontent.com/**",
+        "https://release-assets.githubusercontent.com/**",
         "https://api.chess.com/**",
         "https://www.chess.com/**",
         "https://lichess.org/**",

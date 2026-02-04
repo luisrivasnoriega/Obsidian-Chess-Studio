@@ -321,17 +321,22 @@ The application provides deep game analysis with multi-engine support, automatic
 
 ### Download
 
-Prebuilt binaries are available for Windows, macOS, and Linux:
+Prebuilt binaries are available for Windows, macOS, and Linux: 
+ 
+**[Download the latest release](https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest)** 
+ 
+| Platform | Download | 
+|----------|----------| 
+| **Windows** | `.exe` | 
+| **macOS** | `.dmg` (Apple Silicon and Intel) | 
+| **Linux** | `.AppImage`, `.deb`, or `.rpm` | 
+| **Android (Direct APK)** | `.apk` (if available) |
 
-**[Download the latest release](https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/releases/latest)**
+#### Android (Direct APK) Updates
 
-| Platform | Download |
-|----------|----------|
-| **Windows** | `.exe` |
-| **macOS** | `.dmg` (Apple Silicon and Intel) |
-| **Linux** | `.AppImage`, `.deb`, or `.rpm` |
-
-### Quick Start
+If you install the app via a direct `.apk` (not via an app store), the Android build can update by downloading the latest `.apk` attached to the GitHub Release (an asset ending in `.apk`) and then opening the system installer. Android may require enabling "Install unknown apps" for Obsidian Chess Studio.
+ 
+### Quick Start 
 
 1. Download and install Obsidian Chess Studio for your platform
 2. Launch the application

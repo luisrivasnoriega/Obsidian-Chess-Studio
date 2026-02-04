@@ -9,6 +9,7 @@ import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { platform } from "@tauri-apps/plugin-os";
 import { exit, relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { useAtom } from "jotai";
@@ -18,10 +19,19 @@ import AboutModal from "@/components/About";
 import { MayaHeader } from "@/components/MayaHeader";
 import { SideBar } from "@/components/Sidebar";
 import { getSpotlightActions } from "@/components/spotlightActions";
+import {
+  hideUpdateProgressNotification,
+  showApkReadyToInstallNotification,
+  showApkUpdateProgressNotification,
+  showUpdateErrorNotification,
+} from "@/components/UpdateNotification";
+import { getVersionCheckConfig } from "@/config";
 import { getRouteForTab } from "@/features/boards/BoardsRouteEntry";
 import ImportModal from "@/features/boards/components/ImportModal";
 import { useTabManagement } from "@/features/boards/hooks/useTabManagement";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import { downloadApkToTemp, openApkInstaller } from "@/services/apk-updater";
+import { checkForUpdates as checkForUpdatesService } from "@/services/version-checker";
 import { keyMapAtom } from "@/state/keybindings";
 import type { Dirs } from "@/types/dirs";
 import { debugNavLog, debugNavLogPaths } from "@/utils/debugNav";
@@ -196,6 +206,41 @@ function RootLayout() {
 
   const checkForUpdates = useCallback(async () => {
     try {
+      const os = await platform();
+
+      if (os === "android") {
+        const config = getVersionCheckConfig();
+        const result = await checkForUpdatesService(config);
+
+        if (result.hasUpdate && result.versionInfo) {
+          const apkUrl = result.versionInfo.apkDownloadUrl;
+          if (!apkUrl) {
+            await message(t("notifications.apkNotAvailable"));
+            return;
+          }
+
+          const shouldInstall = await ask(
+            t("notifications.updateAvailablePrompt", { version: result.versionInfo.version }),
+            {
+              title: t("notifications.newVersionAvailable"),
+            },
+          );
+
+          if (!shouldInstall) return;
+
+          showApkUpdateProgressNotification(t);
+          const downloaded = await downloadApkToTemp({ url: apkUrl, version: result.versionInfo.version });
+          hideUpdateProgressNotification();
+
+          await openApkInstaller(downloaded.path);
+          showApkReadyToInstallNotification(t);
+          return;
+        }
+
+        await message(t("notifications.latestVersion"));
+        return;
+      }
+
       const update = await check();
       if (update) {
         const shouldInstall = await ask(t("notifications.updateAvailablePrompt", { version: update.version }), {
@@ -215,8 +260,9 @@ function RootLayout() {
       } else {
         await message(t("notifications.latestVersion"));
       }
-    } catch {
-      await message(t("notifications.updateCheckFailed"));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : t("notifications.updateCheckFailed");
+      showUpdateErrorNotification(errorMessage, t);
     }
   }, [t]);
 

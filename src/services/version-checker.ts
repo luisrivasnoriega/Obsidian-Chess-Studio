@@ -3,6 +3,9 @@ import { info, error as logError } from "@tauri-apps/plugin-log";
 export interface VersionInfo {
   version: string;
   downloadUrl?: string;
+  apkDownloadUrl?: string;
+  apkAssetName?: string;
+  apkSizeBytes?: number;
   releaseNotes?: string;
   isPrerelease?: boolean;
   publishedAt?: string;
@@ -67,9 +70,50 @@ async function fetchVersionInfo(url: string, timeout = 10000): Promise<VersionIn
     let versionInfo: VersionInfo;
 
     if (data.tag_name && data.name) {
+      const apkAsset =
+        Array.isArray(data.assets) &&
+        data.assets.find(
+          (asset: unknown) =>
+            typeof asset === "object" &&
+            asset !== null &&
+            "name" in asset &&
+            typeof (asset as { name?: unknown }).name === "string" &&
+            (asset as { name: string }).name.toLowerCase().endsWith(".apk"),
+        );
+
+      const apkDownloadUrl =
+        apkAsset &&
+        typeof apkAsset === "object" &&
+        apkAsset !== null &&
+        "browser_download_url" in apkAsset &&
+        typeof (apkAsset as { browser_download_url?: unknown }).browser_download_url === "string"
+          ? (apkAsset as { browser_download_url: string }).browser_download_url
+          : undefined;
+
+      const apkAssetName =
+        apkAsset &&
+        typeof apkAsset === "object" &&
+        apkAsset !== null &&
+        "name" in apkAsset &&
+        typeof (apkAsset as { name?: unknown }).name === "string"
+          ? (apkAsset as { name: string }).name
+          : undefined;
+
+      const apkSizeBytes =
+        apkAsset &&
+        typeof apkAsset === "object" &&
+        apkAsset !== null &&
+        "size" in apkAsset &&
+        typeof (apkAsset as { size?: unknown }).size === "number"
+          ? (apkAsset as { size: number }).size
+          : undefined;
+
       versionInfo = {
         version: data.tag_name,
         downloadUrl: data.html_url,
+        apkDownloadUrl,
+        apkAssetName,
+        apkSizeBytes,
         releaseNotes: data.body,
         isPrerelease: data.prerelease,
         publishedAt: data.published_at,
@@ -78,6 +122,9 @@ async function fetchVersionInfo(url: string, timeout = 10000): Promise<VersionIn
       versionInfo = {
         version: data.version,
         downloadUrl: data.downloadUrl,
+        apkDownloadUrl: data.apkDownloadUrl,
+        apkAssetName: data.apkAssetName,
+        apkSizeBytes: data.apkSizeBytes,
         releaseNotes: data.releaseNotes,
         isPrerelease: data.isPrerelease,
         publishedAt: data.publishedAt,

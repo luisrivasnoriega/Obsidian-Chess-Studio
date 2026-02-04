@@ -219,6 +219,27 @@ export function showUpdateProgressNotification(t: (key: string) => string) {
   });
 }
 
+export function showApkUpdateProgressNotification(t: (key: string) => string) {
+  return notifications.show({
+    id: "update-progress",
+    title: t("notifications.updatingApplication"),
+    message: t("notifications.downloadingApkUpdate"),
+    loading: true,
+    autoClose: false,
+    withCloseButton: false,
+  });
+}
+
+export function showApkReadyToInstallNotification(t: (key: string) => string) {
+  notifications.show({
+    title: t("notifications.updateCompleted"),
+    message: t("notifications.apkReadyToInstall"),
+    color: "green",
+    autoClose: 8000,
+    withCloseButton: true,
+  });
+}
+
 export function showUpdateSuccessNotification(t: (key: string) => string) {
   notifications.show({
     title: t("notifications.updateCompleted"),
