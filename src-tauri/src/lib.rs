@@ -26,6 +26,7 @@ mod puzzle_variants;
 mod variants_builder;
 mod variant_positions;
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 use std::sync::Arc;
 
@@ -356,125 +357,170 @@ fn is_bmi2_compatible() -> bool {
 //
 // We keep the build matrix and URLs in the frontend, but hardware detection is
 // done here (like Lc0) to avoid fragile/incorrect JS-side CPU probing.
+#[cfg(target_os = "android")]
 #[tauri::command]
 #[specta::specta]
 fn get_preferred_stockfish_build_key() -> String {
     // Keys must match the mapping in `src/utils/engines.ts`.
     //
     // NOTE: Stockfish naming uses `ubuntu` in filenames for Linux builds.
+    //
+    // On Android we ship a bundled Stockfish and the backend resolves it to native libs.
+    "android-bundled".to_string()
+}
 
-    #[cfg(target_os = "android")]
-    {
-        // On Android we ship a bundled Stockfish and the backend resolves it to native libs.
-        return "android-bundled".to_string();
+// --- Windows ---
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if has_avx512_icl_like() {
+        return "windows-x86-64-avx512icl".to_string();
     }
-
-    #[cfg(target_os = "windows")]
-    {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if has_avx512_icl_like() {
-                return "windows-x86-64-avx512icl".to_string();
-            }
-            if is_x86_feature_detected!("avx512f") {
-                // Prefer VNNI-512 if available, otherwise fall back to plain AVX-512.
-                if is_x86_feature_detected!("avx512vnni") {
-                    return "windows-x86-64-vnni512".to_string();
-                }
-                return "windows-x86-64-avx512".to_string();
-            }
-            if has_avx_vnni() && is_x86_feature_detected!("avx2") {
-                return "windows-x86-64-avxvnni".to_string();
-            }
-            if is_x86_feature_detected!("bmi2") {
-                return "windows-x86-64-bmi2".to_string();
-            }
-            if is_x86_feature_detected!("avx2") {
-                return "windows-x86-64-avx2".to_string();
-            }
-            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
-                return "windows-x86-64-sse41-popcnt".to_string();
-            }
-            return "windows-x86-64".to_string();
+    if is_x86_feature_detected!("avx512f") {
+        // Prefer VNNI-512 if available, otherwise fall back to plain AVX-512.
+        if is_x86_feature_detected!("avx512vnni") {
+            return "windows-x86-64-vnni512".to_string();
         }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            if has_aarch64_dotprod() {
-                return "windows-armv8-dotprod".to_string();
-            }
-            return "windows-armv8".to_string();
-        }
+        return "windows-x86-64-avx512".to_string();
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if has_avx512_icl_like() {
-                return "linux-x86-64-avx512icl".to_string();
-            }
-            if is_x86_feature_detected!("avx512f") {
-                if is_x86_feature_detected!("avx512vnni") {
-                    return "linux-x86-64-vnni512".to_string();
-                }
-                return "linux-x86-64-avx512".to_string();
-            }
-            if has_avx_vnni() && is_x86_feature_detected!("avx2") {
-                return "linux-x86-64-avxvnni".to_string();
-            }
-            if is_x86_feature_detected!("bmi2") {
-                return "linux-x86-64-bmi2".to_string();
-            }
-            if is_x86_feature_detected!("avx2") {
-                return "linux-x86-64-avx2".to_string();
-            }
-            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
-                return "linux-x86-64-sse41-popcnt".to_string();
-            }
-            return "linux-x86-64".to_string();
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            if has_aarch64_dotprod() {
-                return "linux-armv8-dotprod".to_string();
-            }
-            return "linux-armv8".to_string();
-        }
-
-        #[cfg(target_arch = "arm")]
-        {
-            if has_arm_neon() {
-                return "linux-armv7-neon".to_string();
-            }
-            return "linux-armv7".to_string();
-        }
+    if has_avx_vnni() && is_x86_feature_detected!("avx2") {
+        return "windows-x86-64-avxvnni".to_string();
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        #[cfg(target_arch = "aarch64")]
-        {
-            return "macos-m1-apple-silicon".to_string();
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("bmi2") {
-                return "macos-x86-64-bmi2".to_string();
-            }
-            if is_x86_feature_detected!("avx2") {
-                return "macos-x86-64-avx2".to_string();
-            }
-            if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
-                return "macos-x86-64-sse41-popcnt".to_string();
-            }
-            return "macos-x86-64".to_string();
-        }
+    if is_x86_feature_detected!("bmi2") {
+        return "windows-x86-64-bmi2".to_string();
     }
+    if is_x86_feature_detected!("avx2") {
+        return "windows-x86-64-avx2".to_string();
+    }
+    if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+        return "windows-x86-64-sse41-popcnt".to_string();
+    }
+    "windows-x86-64".to_string()
+}
 
-    // Unknown platform/arch: return empty string so the frontend can fall back.
+#[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if has_aarch64_dotprod() {
+        return "windows-armv8-dotprod".to_string();
+    }
+    "windows-armv8".to_string()
+}
+
+#[cfg(all(
+    target_os = "windows",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    String::new()
+}
+
+// --- Linux ---
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if has_avx512_icl_like() {
+        return "linux-x86-64-avx512icl".to_string();
+    }
+    if is_x86_feature_detected!("avx512f") {
+        if is_x86_feature_detected!("avx512vnni") {
+            return "linux-x86-64-vnni512".to_string();
+        }
+        return "linux-x86-64-avx512".to_string();
+    }
+    if has_avx_vnni() && is_x86_feature_detected!("avx2") {
+        return "linux-x86-64-avxvnni".to_string();
+    }
+    if is_x86_feature_detected!("bmi2") {
+        return "linux-x86-64-bmi2".to_string();
+    }
+    if is_x86_feature_detected!("avx2") {
+        return "linux-x86-64-avx2".to_string();
+    }
+    if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+        return "linux-x86-64-sse41-popcnt".to_string();
+    }
+    "linux-x86-64".to_string()
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if has_aarch64_dotprod() {
+        return "linux-armv8-dotprod".to_string();
+    }
+    "linux-armv8".to_string()
+}
+
+#[cfg(all(target_os = "linux", target_arch = "arm"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if has_arm_neon() {
+        return "linux-armv7-neon".to_string();
+    }
+    "linux-armv7".to_string()
+}
+
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "arm"))
+))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    String::new()
+}
+
+// --- macOS ---
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    "macos-m1-apple-silicon".to_string()
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    if is_x86_feature_detected!("bmi2") {
+        return "macos-x86-64-bmi2".to_string();
+    }
+    if is_x86_feature_detected!("avx2") {
+        return "macos-x86-64-avx2".to_string();
+    }
+    if is_x86_feature_detected!("sse4.1") && is_x86_feature_detected!("popcnt") {
+        return "macos-x86-64-sse41-popcnt".to_string();
+    }
+    "macos-x86-64".to_string()
+}
+
+#[cfg(all(
+    target_os = "macos",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
+    String::new()
+}
+
+// --- Fallback ---
+
+#[cfg(not(any(target_os = "android", target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_stockfish_build_key() -> String {
     String::new()
 }
 
@@ -526,15 +572,12 @@ fn has_avx512_icl_like() -> bool {
 
 #[cfg(target_arch = "aarch64")]
 fn has_aarch64_dotprod() -> bool {
-    #[cfg(any(target_os = "android", target_os = "linux", target_os = "windows", target_os = "macos"))]
-    {
-        // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
-        std::arch::is_aarch64_feature_detected!("dotprod")
-    }
-    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
-        false
-    }
+    // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
+    //
+    // `std::arch::is_*_feature_detected!` for ARM is currently unstable on stable Rust.
+    // For our purposes (selecting a bundled engine build), compile-time detection is
+    // sufficient and avoids relying on unstable std APIs.
+    cfg!(target_feature = "dotprod")
 }
 
 #[cfg(not(target_arch = "aarch64"))]
@@ -544,7 +587,9 @@ fn has_aarch64_dotprod() -> bool {
 
 #[cfg(target_arch = "arm")]
 fn has_arm_neon() -> bool {
-    std::arch::is_arm_feature_detected!("neon")
+    // `std::arch::is_arm_feature_detected!` is currently unstable on stable Rust.
+    // Use compile-time detection instead to keep release builds working everywhere.
+    cfg!(target_feature = "neon")
 }
 
 #[cfg(not(target_arch = "arm"))]

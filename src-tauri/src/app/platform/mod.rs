@@ -1,5 +1,7 @@
 use log::LevelFilter;
-use tauri::{App, Manager, Window};
+#[cfg(desktop)]
+use tauri::Manager;
+use tauri::{App, Window};
 
 use crate::AppState;
 
@@ -9,10 +11,10 @@ pub mod shared;
 
 #[tauri::command]
 #[specta::specta]
-pub async fn screen_capture(window: Window) -> Result<(), String> {
+pub async fn screen_capture(_window: Window) -> Result<(), String> {
     #[cfg(desktop)]
     {
-        let main_window = window.get_webview_window("main").ok_or_else(|| {
+        let main_window = _window.get_webview_window("main").ok_or_else(|| {
             let error_msg = "No window labeled 'main' found";
             log::error!("{}", error_msg);
             String::from(error_msg)
