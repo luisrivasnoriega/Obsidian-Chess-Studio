@@ -251,21 +251,43 @@ jobs:
 
       - name: Build the app (Android)
         id: android_build
-        continue-on-error: true
+        shell: bash
         env:
           CI: true
-        run: pnpm android:build
+          TAURI_CLI_VERBOSITY: "2"
+        run: |
+          set +e
+          mkdir -p dist/logs
+
+          echo "=== pnpm android:build (captured) ==="
+          pnpm android:build 2>&1 | tee dist/logs/android-build.log
+          status=${PIPESTATUS[0]}
+
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "Android build exit code: $status"
+          exit 0
 
       - name: Gradle verbose logs (only if build failed)
-        if: steps.android_build.outcome == 'failure'
+        if: always() && steps.android_build.outputs.exit_code != '0'
         shell: bash
         run: |
           echo "=== Android/Java/Gradle diagnostics ==="
           java -version || true
+          node --version || true
+          pnpm --version || true
+          rustc -V || true
+          cargo -V || true
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "NDK_HOME=$NDK_HOME"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+
+          echo "=== sdkmanager list_installed (best-effort) ==="
+          sdkmanager --list_installed || true
+
+          echo "=== NDK dir listing ==="
+          ls -la "$ANDROID_SDK_ROOT/ndk" || true
+          ls -la "$ANDROID_SDK_ROOT/ndk/29.0.14206865" || true
 
           echo "=== List gen/android ==="
           ls -la src-tauri/gen/android || true
@@ -279,10 +301,24 @@ jobs:
           echo "=== If release task name differs, list tasks ==="
           ./gradlew tasks --all --stacktrace --info --no-daemon || true
 
+          echo "=== Tail of android-build.log ==="
+          tail -n 200 dist/logs/android-build.log || true
+
+      - name: Upload Android build logs (only if build failed)
+        if: always() && steps.android_build.outputs.exit_code != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-logs
+          if-no-files-found: warn
+          path: |
+            dist/logs/android-build.log
+
       - name: Fail if Android build failed
-        if: steps.android_build.outcome == 'failure'
+        if: steps.android_build.outputs.exit_code != '0'
         shell: bash
-        run: exit 1
+        run: |
+          echo "Android build failed (exit code: ${{ steps.android_build.outputs.exit_code }})."
+          exit 1
 
       - name: Sign Release APK (zipalign + apksigner)
         shell: bash
