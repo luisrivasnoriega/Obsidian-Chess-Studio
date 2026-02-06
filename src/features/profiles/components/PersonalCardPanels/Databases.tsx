@@ -101,7 +101,7 @@ function Databases({
 }: {
   initialPlayer?: string;
   profileId?: string;
-  visibleTabs?: Array<"overview" | "ratings" | "openings">;
+  visibleTabs?: Array<"overview" | "ratings" | "openings" | "stats">;
   showPlayerSelector?: boolean;
 }) {
   const { t } = useTranslation();

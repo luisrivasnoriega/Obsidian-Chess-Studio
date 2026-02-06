@@ -259,6 +259,46 @@ async initProfileDb(dbPath: string, title: string, description: string | null) :
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Persist computed, engine-derived analysis stats for a single profile database game.
+ * 
+ * This is called by the frontend after an engine analysis run completes (individual report or Analyze All).
+ */
+async saveProfileGameAnalysisStats(profileId: string, gameId: number, initialFen: string, moves: string[], analysis: MoveAnalysis[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("save_profile_game_analysis_stats", { profileId, gameId, initialFen, moves, analysis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aggregate analyzed-game outcomes by the phase in which the game became decisively won/lost.
+ * 
+ * Returned counts are computed from the profile DB (Games + GameAnalysisStats) and respect the
+ * same global filters used in other profile stats panels (platform, time control, opponent ELO, date range).
+ */
+async getProfilePhaseOutcomes(profileId: string, filters: PlayerStatsFilters) : Promise<Result<PhaseOutcomeBucket[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_phase_outcomes", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * List analyzed games for a given phase bucket.
+ * 
+ * This powers the Profiles -> Stats detail table when clicking a phase category.
+ */
+async getProfilePhaseGames(profileId: string, filters: PlayerStatsFilters, phase: string, limit: number, offset: number) : Promise<Result<PhaseGameRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_phase_games", { profileId, filters, phase, limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getPlayer(file: string, id: number) : Promise<Result<Player | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_player", { file, id }) };
@@ -1489,6 +1529,8 @@ structureFilters?: string[];
  */
 structureNameFilters?: string[] }
 export type PawnStructureStat = { structure: string; frequency: number; win_rate: number; sample_fen: string | null; games: PawnStructureGame[] }
+export type PhaseGameRow = { gameId: number; date: string | null; site: string; white: string; black: string; result: string | null; winPhase: string }
+export type PhaseOutcomeBucket = { phase: string; won: number; drawn: number; lost: number }
 /**
  * Planning controls and safety bounds.
  */

@@ -1,4 +1,5 @@
 mod bulk_insert;
+mod analysis_stats;
 mod core;
 mod encoding;
 mod models;
@@ -351,6 +352,10 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
     // If a previous version created Players as WITHOUT ROWID, inserts that omit ID will fail.
     // Migrate it back to a rowid table in-place (keeps existing data).
     ensure_players_rowid_table(db)?;
+
+    // Profile databases store additional computed/derived stats for analyzed games.
+    // This is safe to run on any DB file (CREATE TABLE IF NOT EXISTS), but primarily targets profiles.
+    analysis_stats::ensure_profile_analysis_tables(db)?;
 
     Ok(())
 }
@@ -744,6 +749,9 @@ pub async fn init_profile_db(
         let _ = db.batch_execute(INDEXES_SQL);
     }
 
+    // Ensure profile analysis tables exist (for older profiles and fresh ones).
+    analysis_stats::ensure_profile_analysis_tables(db)?;
+
     // Store the profile's active player name (used for opponent detection after imports).
     // Do not override if already present (profiles should be stable).
     if !title.trim().is_empty() {
@@ -759,6 +767,111 @@ pub async fn init_profile_db(
     }
 
     Ok(())
+}
+
+/// Persist computed, engine-derived analysis stats for a single profile database game.
+///
+/// This is called by the frontend after an engine analysis run completes (individual report or Analyze All).
+#[tauri::command]
+#[specta::specta]
+pub async fn save_profile_game_analysis_stats(
+    profile_id: String,
+    game_id: i32,
+    initial_fen: String,
+    moves: Vec<String>,
+    analysis: Vec<crate::chess::types::MoveAnalysis>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<()> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+
+    ensure_db_initialized(db)?;
+
+    #[derive(QueryableByName)]
+    struct GameRow {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Result")]
+        result: Option<String>,
+    }
+
+    let row: Option<GameRow> = sql_query("SELECT Result FROM Games WHERE ID = ?1 LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(game_id)
+        .load::<GameRow>(db)?
+        .into_iter()
+        .next();
+
+    let Some(row) = row else {
+        return Err(Error::PackageManager(format!(
+            "save_profile_game_analysis_stats: game not found (Games.ID={game_id})"
+        )));
+    };
+
+    let winner = analysis_stats::winner_from_result(row.result.as_deref());
+    let stats = analysis_stats::compute_game_analysis_stats(winner, &initial_fen, &moves, &analysis)?;
+    analysis_stats::upsert_game_analysis_stats(db, game_id, &stats)?;
+
+    Ok(())
+}
+
+/// Aggregate analyzed-game outcomes by the phase in which the game became decisively won/lost.
+///
+/// Returned counts are computed from the profile DB (Games + GameAnalysisStats) and respect the
+/// same global filters used in other profile stats panels (platform, time control, opponent ELO, date range).
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_phase_outcomes(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::PhaseOutcomeBucket>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_phase_outcomes(app, db, &profile_id, &filters)
+}
+
+/// List analyzed games for a given phase bucket.
+///
+/// This powers the Profiles -> Stats detail table when clicking a phase category.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_phase_games(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    phase: String,
+    limit: u32,
+    offset: u32,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::PhaseGameRow>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::get_profile_phase_games(app, db, &profile_id, &filters, &phase, limit, offset)
 }
 
 #[derive(Serialize, Type)]

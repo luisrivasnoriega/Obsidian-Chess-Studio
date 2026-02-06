@@ -38,6 +38,8 @@
     "elo": "ELO",
     "years": "años",
     "back": "Volver",
+    "previous": "Anterior",
+    "next": "Siguiente",
     "again": "De nuevo",
     "analyze": "Analizar",
     "flip": "Voltear",
@@ -45,6 +47,8 @@
     "clocks": "Relojes",
     "controls": "Controles",
     "opening": "Apertura",
+    "middlegame": "Medio juego",
+    "endgame": "Final",
     "pgn": "PGN",
     "fenAbbr": "FEN",
     "gameInfo": "Información de la partida",
@@ -985,8 +989,8 @@
       "win": "Victoria",
       "loss": "Derrota",
       "analyzeAllGames": "Analizar Todas las Partidas",
-      "selectAnalysisDepth_one": "Selecciona la profundidad de análisis para {{count}} partida. Esto analizará las partidas mostradas en el tablero usando el motor predeterminado.",
-      "selectAnalysisDepth_other": "Selecciona la profundidad de análisis para {{count}} partidas. Esto analizará las partidas mostradas en el tablero usando el motor predeterminado.",
+      "selectAnalysisDepth_one": "Selecciona la profundidad de análisis para {{count}} partida. Esto analizará las partidas mostradas en el tablero usando el motor seleccionado.",
+      "selectAnalysisDepth_other": "Selecciona la profundidad de análisis para {{count}} partidas. Esto analizará las partidas mostradas en el tablero usando el motor seleccionado.",
       "analyze": "Analizar",
       "onlyUnanalyzedGames": "Solo partidas sin analizar",
       "onlyUnanalyzedGamesWithCounts": "Solo partidas sin analizar ({{unanalyzed}} por analizar, {{analyzed}} ya analizadas)",
@@ -1006,6 +1010,14 @@
       "noEngineAvailable": "No hay motor disponible",
       "noEngineAvailableMessage": "Por favor instala un motor primero en la página de Motores.",
       "analysisStarted": "Análisis iniciado",
+      "analysisUsingEngine": "Analizando {{count}} partidas con {{engine}} ({{timeMs}} ms).",
+      "analyzeAllEngineLabel": "Motor",
+      "analyzeAllEnginePlaceholder": "Elige uno",
+      "analysisEngineError": "Error del motor durante el análisis. Motor: {{engine}}.",
+      "analysisUnexpectedError": "El análisis masivo falló antes de iniciar. {{error}}",
+      "analysisSelectedEngine": "Motor seleccionado: {{engine}}.",
+      "analysisInternalIdMissing": "No se pudo resolver el id de la partida en la base de datos del perfil para algunas partidas. Las estadísticas por fase pueden faltar para esas partidas.",
+      "analysisPhaseStatsSaveFailed": "No se pudieron guardar las estadísticas por fase para algunas partidas. La pestaña Estadísticas puede no mostrar datos todavía.",
       "analysisCancelled": "Análisis cancelado",
       "analysisProgress": "Progreso del análisis",
       "analysisComplete": "Análisis completado",
@@ -2197,7 +2209,40 @@
     "activeSet": "Perfil activo actualizado.",
     "tabs": {
       "selectSection": "Sección",
-      "simulate": "Simular"
+      "simulate": "Simular",
+      "database": "Base de datos",
+      "openings": "Aperturas",
+      "pawnStructures": "Estructuras de peones",
+      "stats": "Estadísticas"
+    },
+    "stats": {
+      "title": "Victorias / derrotas por fase de la partida",
+      "subtitle": "Muestra dónde las partidas quedaron decisivamente ganadas o perdidas, solo para partidas analizadas.",
+      "loading": "Cargando estadísticas...",
+      "noData": "No se encontraron partidas analizadas para los filtros seleccionados.",
+      "summary": "{{total}} partidas analizadas ({{won}}G {{drawn}}T {{lost}}P)",
+      "phaseCount": "{{total}} partidas",
+      "phaseBreakdown": "{{won}}G · {{drawn}}T · {{lost}}P",
+      "groupBy": {
+        "label": "Agrupar por",
+        "phase": "Fase de la partida"
+      },
+      "details": {
+        "title": "Partidas",
+        "subtitle": "Mostrando partidas para {{phase}}.",
+        "loading": "Cargando partidas...",
+        "noData": "No se encontraron partidas.",
+        "error": "No se pudieron cargar las partidas.",
+        "page": "Página {{page}}",
+        "columns": {
+          "date": "Fecha",
+          "white": "Blancas",
+          "black": "Negras",
+          "result": "Resultado",
+          "site": "Sitio",
+          "action": "Acción"
+        }
+      }
     },
     "simulate": {
       "desc": "Crea un plan personalizado contra un oponente específico usando tus partidas analizadas y Stockfish.",

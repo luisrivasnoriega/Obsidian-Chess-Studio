@@ -1,5 +1,6 @@
-import { Button, Group, Modal, Progress, Radio, Stack, Text } from "@mantine/core";
+import { Button, Group, Modal, Progress, Radio, Select, Stack, Text } from "@mantine/core";
 import { useForm } from "@mantine/form";
+import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -9,6 +10,7 @@ export interface AnalyzeAllConfig {
   speed: AnalysisSpeed;
   timeMs: number;
   analyzeMode: "all" | "unanalyzed";
+  enginePath: string;
 }
 
 const getAnalysisOptions = (): Record<AnalysisSpeed, { label: string; timeMs: number }> => ({
@@ -30,6 +32,8 @@ interface AnalyzeAllModalProps {
   gameCount: number;
   unanalyzedGameCount?: number;
   analyzeMode?: "all" | "unanalyzed";
+  engineOptions: Array<{ value: string; label: string }>;
+  initialEnginePath?: string | null;
 }
 
 export function AnalyzeAllModal({
@@ -39,11 +43,14 @@ export function AnalyzeAllModal({
   gameCount,
   unanalyzedGameCount,
   analyzeMode = "unanalyzed",
+  engineOptions,
+  initialEnginePath,
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
   const ANALYSIS_OPTIONS = getAnalysisOptions();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
   const stopAnalysisRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -61,6 +68,7 @@ export function AnalyzeAllModal({
       speed: "t1000",
       timeMs: 1000,
       analyzeMode: analyzeMode,
+      enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
     },
   });
 
@@ -70,6 +78,7 @@ export function AnalyzeAllModal({
   }, [form.values.analyzeMode, counts]);
 
   const handleSubmit = async () => {
+    setSubmitError(null);
     const selectedOption = ANALYSIS_OPTIONS[form.values.speed];
     const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
     setIsAnalyzing(true);
@@ -82,6 +91,7 @@ export function AnalyzeAllModal({
           speed: form.values.speed,
           timeMs: selectedOption.timeMs,
           analyzeMode: form.values.analyzeMode,
+          enginePath: form.values.enginePath,
         },
         (current, total) => {
           setProgress({ current, total });
@@ -92,6 +102,17 @@ export function AnalyzeAllModal({
       if (result && typeof result === "object" && "stop" in result) {
         stopAnalysisRef.current = result.stop;
       }
+    } catch (e) {
+      const msg = String(e);
+      setSubmitError(msg);
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: t("features.dashboard.analysisUnexpectedError", {
+          defaultValue: "Analyze all failed before starting. {{error}}",
+          error: msg,
+        }),
+        color: "red",
+      });
     } finally {
       setIsAnalyzing(false);
       if (!cancelledRef.current && progress.current === progress.total && progress.total > 0) {
@@ -127,18 +148,22 @@ export function AnalyzeAllModal({
       setIsAnalyzing(false);
       cancelledRef.current = false;
       stopAnalysisRef.current = null;
+      setSubmitError(null);
     } else {
       // Reset form to initial values when modal opens
       form.setValues({
         speed: "t1000",
         timeMs: 1000,
         analyzeMode: analyzeMode,
+        enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     opened,
     analyzeMode, // Reset form to initial values when modal opens
+    initialEnginePath,
+    engineOptions,
     form.setValues,
   ]);
 
@@ -151,6 +176,30 @@ export function AnalyzeAllModal({
               count: actualGameCount,
             })}
           </Text>
+
+          <Select
+            withAsterisk
+            label={t("features.dashboard.analyzeAllEngineLabel", { defaultValue: "Engine" })}
+            placeholder={t("features.dashboard.analyzeAllEnginePlaceholder", { defaultValue: "Pick one" })}
+            data={engineOptions}
+            allowDeselect={false}
+            disabled={isAnalyzing}
+            {...form.getInputProps("enginePath")}
+          />
+
+          {engineOptions.length === 0 && (
+            <Text size="sm" c="red">
+              {t("features.dashboard.noEngineAvailableMessage", {
+                defaultValue: "Please install an engine first in the Engines page.",
+              })}
+            </Text>
+          )}
+
+          {submitError && (
+            <Text size="sm" c="red">
+              {submitError}
+            </Text>
+          )}
 
           <Radio.Group
             label={t("features.dashboard.analyze")}
@@ -201,7 +250,12 @@ export function AnalyzeAllModal({
                 <Button variant="subtle" onClick={onClose} disabled={isAnalyzing}>
                   {t("common.cancel")}
                 </Button>
-                <Button type="submit" loading={isAnalyzing} disabled={isAnalyzing}>
+                <Button
+                  type="button"
+                  loading={isAnalyzing}
+                  disabled={isAnalyzing || engineOptions.length === 0 || !form.values.enginePath}
+                  onClick={() => void handleSubmit()}
+                >
                   {t("features.dashboard.analyze")}
                 </Button>
               </>

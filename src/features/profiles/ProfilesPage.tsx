@@ -119,7 +119,9 @@ export default function ProfilesPage() {
   const { layout } = useResponsiveLayout();
   const queryClient = useQueryClient();
   const [profileQuery, setProfileQuery] = useState("");
-  const [detailsTab, setDetailsTab] = useState<"database" | "overview" | "ratings" | "openings" | "pawnStructures">(
+  const [detailsTab, setDetailsTab] = useState<
+    "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
+  >(
     "database",
   );
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
@@ -167,6 +169,7 @@ export default function ProfilesPage() {
       { value: "overview", label: t("accounts.personalCard.tabs.overview", { defaultValue: "Overview" }) },
       { value: "ratings", label: t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" }) },
       { value: "openings", label: t("profiles.tabs.openings", { defaultValue: "Openings" }) },
+      { value: "stats", label: t("profiles.tabs.stats", { defaultValue: "Stats" }) },
       { value: "pawnStructures", label: t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" }) },
     ],
     [t],
@@ -199,6 +202,7 @@ export default function ProfilesPage() {
       queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["profilePhaseStats"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerOpeningsWhite"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerOpeningsBlack"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerRatingTimeline"] }).catch(() => {});
@@ -1528,6 +1532,7 @@ export default function ProfilesPage() {
                       {t("accounts.personalCard.tabs.ratings", { defaultValue: "Ratings" })}
                     </Tabs.Tab>
                     <Tabs.Tab value="openings">{t("profiles.tabs.openings", { defaultValue: "Openings" })}</Tabs.Tab>
+                    <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
                     <Tabs.Tab value="pawnStructures">
                       {t("profiles.tabs.pawnStructures", { defaultValue: "Pawn structures" })}
                     </Tabs.Tab>
@@ -1590,6 +1595,22 @@ export default function ProfilesPage() {
                       profileId={activeProfile?.id}
                       initialPlayer={activeProfile?.name}
                       visibleTabs={["openings"]}
+                      showPlayerSelector={false}
+                    />
+                  </div>
+                </Tabs.Panel>
+                <Tabs.Panel value="stats" pt="sm" style={{ minHeight: 320 }}>
+                  <div
+                    style={{
+                      height: useTabDropdown ? undefined : "65vh",
+                      minHeight: 320,
+                      overflow: useTabDropdown ? "visible" : "hidden",
+                    }}
+                  >
+                    <Databases
+                      profileId={activeProfile?.id}
+                      initialPlayer={activeProfile?.name}
+                      visibleTabs={["stats"]}
                       showPlayerSelector={false}
                     />
                   </div>

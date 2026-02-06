@@ -82,7 +82,7 @@ pub struct PlayersTime {
 }
 
 /// Best-move line from engine output, including PV, score, and stats.
-#[derive(Clone, Serialize, Debug, Derivative, Type)]
+#[derive(Clone, Serialize, Deserialize, Debug, Derivative, Type)]
 #[derivative(Default)]
 pub struct BestMoves {
     pub nodes: u32,
@@ -110,7 +110,7 @@ pub struct BestMovesPayload {
 }
 
 /// Analysis result for a single move/position.
-#[derive(Serialize, Debug, Default, Type)]
+#[derive(Serialize, Deserialize, Debug, Default, Type)]
 pub struct MoveAnalysis {
     pub best: Vec<BestMoves>,
     pub novelty: bool,

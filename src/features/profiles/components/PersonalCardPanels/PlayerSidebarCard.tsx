@@ -1,5 +1,6 @@
 import { Badge, Box, Card, Divider, Group, Image, Loader, Select, Stack, Text, Tooltip } from "@mantine/core";
 import { IconBolt, IconCircleDot, IconGauge } from "@tabler/icons-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerSidebarModel } from "@/bindings/playerStats";
 import DateRangeTabs, { type DateRange } from "./DateRangeTabs";
@@ -80,6 +81,7 @@ type PlayerSidebarCardProps = {
   onOpponentEloChange?: (value: string) => void;
   dateRange?: DateRange | null;
   onDateRangeChange?: (value: DateRange | null) => void;
+  extraFilters?: ReactNode;
   profileId?: string;
   isLoading?: boolean;
   /**
@@ -102,6 +104,7 @@ export default function PlayerSidebarCard({
   onOpponentEloChange,
   dateRange,
   onDateRangeChange,
+  extraFilters,
   isLoading = false,
   fullHeight = true,
 }: PlayerSidebarCardProps) {
@@ -205,6 +208,7 @@ export default function PlayerSidebarCard({
           {dateRange !== undefined && onDateRangeChange && (
             <DateRangeTabs timeRange={dateRange} onTimeRangeChange={(value) => onDateRangeChange(value)} />
           )}
+          {extraFilters}
         </Stack>
         <Divider />
         <Stack gap="xs">

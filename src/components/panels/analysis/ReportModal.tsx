@@ -10,6 +10,7 @@ import { TreeStateContext } from "@/components/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
 import type { LocalEngine } from "@/utils/engines";
+import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
 import { unwrap } from "@/utils/unwrap";
 
 function ReportModal({
@@ -17,6 +18,8 @@ function ReportModal({
   initialFen,
   moves,
   is960,
+  profileId,
+  profileDbGameId,
   reportingMode,
   toggleReportingMode,
   setInProgress,
@@ -26,6 +29,8 @@ function ReportModal({
   initialFen: string;
   moves: string[];
   is960: boolean;
+  profileId: string | null;
+  profileDbGameId: number | null;
   reportingMode: boolean;
   toggleReportingMode: () => void;
   setInProgress: (progress: boolean) => void;
@@ -128,6 +133,19 @@ function ReportModal({
         if (analysisEngineRef.current) {
           const analysisData = unwrap(analysis);
           addAnalysis(analysisData);
+
+          // Persist derived analysis stats into the profile DB (only when this tab is bound to a profile DB game).
+          if (profileId && profileDbGameId != null) {
+            saveProfileGameAnalysisStats({
+              profileId,
+              gameId: profileDbGameId,
+              initialFen,
+              moves,
+              analysis: analysisData,
+            }).catch(() => {
+              // best-effort
+            });
+          }
         }
       })
       .catch(() => {})

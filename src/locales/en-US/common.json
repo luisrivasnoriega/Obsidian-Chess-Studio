@@ -38,6 +38,8 @@
     "elo": "ELO",
     "years": "years",
     "back": "Back",
+    "previous": "Previous",
+    "next": "Next",
     "again": "Again",
     "analyze": "Analyze",
     "flip": "Flip",
@@ -45,6 +47,8 @@
     "clocks": "Clocks",
     "controls": "Controls",
     "opening": "Opening",
+    "middlegame": "Middlegame",
+    "endgame": "Endgame",
     "pgn": "PGN",
     "fenAbbr": "FEN",
     "gameInfo": "Game info",
@@ -447,7 +451,40 @@
     "activeSet": "Active profile updated.",
     "tabs": {
       "selectSection": "Section",
-      "simulate": "Simulate"
+      "simulate": "Simulate",
+      "database": "Database",
+      "openings": "Openings",
+      "pawnStructures": "Pawn structures",
+      "stats": "Stats"
+    },
+    "stats": {
+      "title": "Wins / losses by game phase",
+      "subtitle": "Shows where games became decisively won or lost, based on analyzed games only.",
+      "loading": "Loading stats...",
+      "noData": "No analyzed games found for the selected filters.",
+      "summary": "{{total}} analyzed games ({{won}}W {{drawn}}D {{lost}}L)",
+      "phaseCount": "{{total}} games",
+      "phaseBreakdown": "{{won}}W · {{drawn}}D · {{lost}}L",
+      "groupBy": {
+        "label": "Group by",
+        "phase": "Game phase"
+      },
+      "details": {
+        "title": "Games",
+        "subtitle": "Showing games for {{phase}}.",
+        "loading": "Loading games...",
+        "noData": "No games found.",
+        "error": "Failed to load games.",
+        "page": "Page {{page}}",
+        "columns": {
+          "date": "Date",
+          "white": "White",
+          "black": "Black",
+          "result": "Result",
+          "site": "Site",
+          "action": "Action"
+        }
+      }
     },
     "simulate": {
       "desc": "Build a personalized plan against a specific opponent using your analyzed games and Stockfish.",
@@ -1157,8 +1194,10 @@
       "win": "Win",
       "loss": "Loss",
       "analyzeAllGames": "Analyze All Games",
-      "selectAnalysisDepth_one": "Select analysis depth for {{count}} game. This will analyze games shown in the dashboard using the default engine.",
-      "selectAnalysisDepth_other": "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the default engine.",
+      "analyzeAllEngineLabel": "Engine",
+      "analyzeAllEnginePlaceholder": "Pick one",
+      "selectAnalysisDepth_one": "Select analysis depth for {{count}} game. This will analyze games shown in the dashboard using the selected engine.",
+      "selectAnalysisDepth_other": "Select analysis depth for {{count}} games. This will analyze games shown in the dashboard using the selected engine.",
       "analyze": "Analyze",
       "onlyUnanalyzedGames": "Only unanalyzed games",
       "onlyUnanalyzedGamesWithCounts": "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
@@ -1178,6 +1217,12 @@
       "noEngineAvailable": "No Engine Available",
       "noEngineAvailableMessage": "Please install an engine first in the Engines page.",
       "analysisStarted": "Analysis Started",
+      "analysisUsingEngine": "Analyzing {{count}} games using {{engine}} ({{timeMs}} ms).",
+      "analysisEngineError": "Engine error while analyzing. Engine: {{engine}}.",
+      "analysisUnexpectedError": "Analyze all failed before starting. {{error}}",
+      "analysisSelectedEngine": "Selected engine: {{engine}}.",
+      "analysisInternalIdMissing": "Could not resolve profile DB game id for some games. Stats by phase may be missing for those games.",
+      "analysisPhaseStatsSaveFailed": "Failed to save phase stats for some games. The Stats tab may not show phase data yet.",
       "analysisCancelled": "Analysis Cancelled",
       "analysisProgress": "Analysis Progress",
       "analysisComplete": "Analysis Complete",

@@ -535,6 +535,49 @@ pub fn analysis_db_get_analyzed_games_bulk(
     get_analyzed_games_bulk_conn(&conn, &pid, &game_ids)
 }
 
+/// Returns recently updated analyzed game ids for a profile (no PGN payload).
+///
+/// Intended for internal backfills/maintenance tasks that first need a candidate list.
+pub fn analysis_db_get_analyzed_game_ids(
+    app: AppHandle,
+    profile_id: Option<String>,
+    limit: usize,
+) -> Result<Vec<String>> {
+    let pid = normalize_profile_id(profile_id);
+    if limit == 0 {
+        return Ok(vec![]);
+    }
+
+    let conn = get_analysis_db(&app)?;
+
+    let run = |profile_id: &str| -> Result<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT game_id
+             FROM game_analysis
+             WHERE profile_id = ?1 AND analyzed_pgn IS NOT NULL
+             ORDER BY updated_at DESC
+             LIMIT ?2",
+        )?;
+
+        let mut rows = stmt.query(params![profile_id, limit as i64])?;
+        let mut out: Vec<String> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let gid: String = row.get(0)?;
+            if let Some(n) = normalize_game_id(&gid) {
+                out.push(n.to_string());
+            }
+        }
+        Ok(out)
+    };
+
+    let out = run(&pid)?;
+    if out.is_empty() && !pid.is_empty() {
+        // Backwards compatibility: allow enumerating legacy entries stored under the empty profile id.
+        return run("");
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn analysis_db_delete_entries(

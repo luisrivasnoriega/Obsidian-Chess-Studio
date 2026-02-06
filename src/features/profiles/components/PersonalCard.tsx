@@ -13,8 +13,9 @@ import type { DatabaseViewStore } from "@/state/store/database";
 import OpeningsPanel from "./PersonalCardPanels/OpeningsPanel";
 import OverviewPanel from "./PersonalCardPanels/OverviewPanel";
 import RatingsPanel from "./PersonalCardPanels/RatingsPanel";
+import StatsPanel from "./PersonalCardPanels/StatsPanel";
 
-type PlayerTabs = Array<"overview" | "ratings" | "openings">;
+type PlayerTabs = Array<"overview" | "ratings" | "openings" | "stats">;
 
 function PersonalPlayerCard({
   name,
@@ -49,10 +50,11 @@ function PersonalPlayerCard({
   ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
   const allowedTabs = useMemo<PlayerTabs>(() => {
-    const defaults: PlayerTabs = ["overview", "ratings", "openings"];
+    const defaults: PlayerTabs = ["overview", "ratings", "openings", "stats"];
     return defaults.filter((tab) => visibleTabs.includes(tab));
   }, [visibleTabs]);
   const isOpeningsTab = (activeTab ?? allowedTabs[0]) === "openings";
+  const isStatsTab = (activeTab ?? allowedTabs[0]) === "stats";
   const showHeaderSelector = !isOpeningsTab && showPlayerSelector && setName != null;
 
   useEffect(() => {
@@ -118,9 +120,12 @@ function PersonalPlayerCard({
             {allowedTabs.includes("ratings") && (
               <Tabs.Tab value="ratings">{t("accounts.personalCard.tabs.ratings")}</Tabs.Tab>
             )}
-            {allowedTabs.includes("openings") && (
-              <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
-            )}
+          {allowedTabs.includes("openings") && (
+            <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
+          )}
+          {allowedTabs.includes("stats") && (
+            <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
+          )}
           </Tabs.List>
           {allowedTabs.includes("overview") && (
             <Tabs.Panel value="overview">
@@ -142,6 +147,16 @@ function PersonalPlayerCard({
               <RatingsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
             </Tabs.Panel>
           )}
+          {allowedTabs.includes("stats") && (
+            <Tabs.Panel
+              value="stats"
+              style={{ flex: 1, minHeight: 0, overflow: isStatsTab ? "visible" : "hidden", display: "flex" }}
+            >
+              <Box style={{ flex: 1, minHeight: 0, overflow: isStackedLayout ? "visible" : "hidden" }}>
+                <StatsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
+              </Box>
+            </Tabs.Panel>
+          )}
         </Tabs>
       ) : (
         <>
@@ -158,6 +173,14 @@ function PersonalPlayerCard({
           )}
           {allowedTabs.includes("ratings") && (
             <RatingsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
+          )}
+          {allowedTabs.includes("stats") && (
+            <Box
+              mt={showHeaderSelector ? "xs" : 0}
+              style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}
+            >
+              <StatsPanel playerName={name} info={info} profileId={profileId} isLoading={isLoading} />
+            </Box>
           )}
         </>
       )}

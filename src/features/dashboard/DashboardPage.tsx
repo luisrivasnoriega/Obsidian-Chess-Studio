@@ -19,6 +19,7 @@ import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
+import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
 import {
   type FavoriteGame,
   getAllFavoriteGames,
@@ -210,7 +211,7 @@ export default function DashboardPage() {
   }, [profileLichessUsernames, profileChessComUsernames]);
   const engines = useAtomValue(enginesAtom);
   const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
-  const defaultEngine = localEngines.length > 0 ? localEngines[0] : null;
+  const defaultEngine = localEngines.find((e) => e.enabled) ?? (localEngines.length > 0 ? localEngines[0] : null);
 
   // Map external key -> internal profile DB game id (Games.ID as string).
   // This guarantees analysis.db3 is keyed by (profileId, Games.ID) even when callers don't pass meta.
@@ -1332,8 +1333,20 @@ export default function DashboardPage() {
             setUnanalyzedGameCount(null);
             setAnalyzeAllCounts(null);
           }}
+          engineOptions={localEngines.map((e) => ({ value: e.path, label: e.name }))}
+          initialEnginePath={defaultEngine?.path ?? null}
           onAnalyze={async (config, onProgress, isCancelled) => {
-            if (!defaultEngine) {
+            notifications.show({
+              title: t("features.dashboard.analysisStarted"),
+              message: t("features.dashboard.analysisSelectedEngine", {
+                defaultValue: "Selected engine: {{engine}}.",
+                engine: localEngines.find((e) => e.path === config.enginePath)?.name ?? "(unknown)",
+              }),
+              color: "blue",
+            });
+
+            const selectedEngine = localEngines.find((e) => e.path === config.enginePath) ?? defaultEngine ?? null;
+            if (!selectedEngine) {
               notifications.show({
                 title: t("features.dashboard.noEngineAvailable"),
                 message: t("features.dashboard.noEngineAvailableMessage"),
@@ -1342,19 +1355,38 @@ export default function DashboardPage() {
               return;
             }
 
+            let warnedMissingInternalId = false;
+            let warnedStatsPersistFailed = false;
+
             // Create activeAnalysisIds set early so stop function can access it
             const activeAnalysisIds = new Set<string>();
 
             // Function to stop all active engines - defined early so it can be returned immediately
             const stopAllEngines = async () => {
               const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
-                commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                commands.stopEngine(selectedEngine.path, analysisId).catch(() => {
                   // Ignore errors when stopping
                 }),
               );
               await Promise.all(stopPromises);
               activeAnalysisIds.clear();
             };
+
+            let analyzedGames: Record<string, string> = {};
+            try {
+              // Get all analyzed games for this profile to filter out already analyzed ones if needed
+              analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
+            } catch (e) {
+              notifications.show({
+                title: t("common.error"),
+                message: t("features.dashboard.analysisUnexpectedError", {
+                  defaultValue: "Analyze all failed before starting. {{error}}",
+                  error: String(e),
+                }),
+                color: "red",
+              });
+              return;
+            }
 
             // If we're on an active profile, build a map from external key -> internal profile DB game id (Games.ID).
             // This is required so analysis.db3 is saved under (profileId, Games.ID) and the dashboard LEFT JOIN can match.
@@ -1389,8 +1421,22 @@ export default function DashboardPage() {
               }
             }
 
-            // Get all analyzed games for this profile to filter out already analyzed ones if needed
-            const analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
+            const resolveInternalId = async (kind: "chesscom" | "lichess", gameKey: string): Promise<string | null> => {
+              if (!activeProfileId) return null;
+              try {
+                const id = await invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+                  profileId: activeProfileId,
+                  kind,
+                  gameKey,
+                });
+                const v = (id ?? "").trim();
+                if (!v) return null;
+                internalIdByExternalKey.set(`${kind}:${gameKey}`, v);
+                return v;
+              } catch {
+                return null;
+              }
+            };
 
             const hasEnoughMovesPgn = (pgn?: string | null) => {
               if (!pgn) return false;
@@ -1406,6 +1452,11 @@ export default function DashboardPage() {
               } catch {
                 return false;
               }
+            };
+
+            const hasEnoughMovesLocal = (g: GameRecord) => {
+              if (g.moves && g.moves.length >= 5) return true;
+              return hasEnoughMovesPgn(g.pgn);
             };
 
             let chessbaseRows: GamesHistoryRow[] = [];
@@ -1442,8 +1493,7 @@ export default function DashboardPage() {
             const getFilteredGames = (type: "local" | "chesscom" | "lichess" | "chessbase") => {
               if (type === "local") {
                 return recentGames.filter((g) => {
-                  if (!g.moves || g.moves.length === 0) return false;
-                  return g.moves.length >= 5;
+                  return hasEnoughMovesLocal(g);
                 });
               } else if (type === "chesscom") {
                 return chessComGames.filter((g) => {
@@ -1547,6 +1597,17 @@ export default function DashboardPage() {
               return;
             }
 
+            notifications.show({
+              title: t("features.dashboard.analysisStarted"),
+              message: t("features.dashboard.analysisUsingEngine", {
+                defaultValue: "Analyzing {{count}} games using {{engine}} ({{timeMs}} ms).",
+                count: gamesToAnalyze.length,
+                engine: selectedEngine.name,
+                timeMs: config.timeMs,
+              }),
+              color: "blue",
+            });
+
             const goMode: GoMode = { t: "Time", c: config.timeMs };
             const engineSettings = (defaultEngine.settings ?? []).map((s) => ({
               ...s,
@@ -1567,9 +1628,22 @@ export default function DashboardPage() {
             }
 
             // Create directory for analyzed games
-            const baseDir = await appDataDir();
-            const analyzedDir = await resolve(baseDir, "analyzed-games");
-            await mkdir(analyzedDir, { recursive: true });
+            let analyzedDir: string;
+            try {
+              const baseDir = await appDataDir();
+              analyzedDir = await resolve(baseDir, "analyzed-games");
+              await mkdir(analyzedDir, { recursive: true });
+            } catch (e) {
+              notifications.show({
+                title: t("common.error"),
+                message: t("features.dashboard.analysisUnexpectedError", {
+                  defaultValue: "Analyze all failed before starting. {{error}}",
+                  error: String(e),
+                }),
+                color: "red",
+              });
+              return;
+            }
 
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
             const folderName = `${analyzedDir}/${analyzeAllGameType}-analyzed-${timestamp}`;
@@ -1606,7 +1680,8 @@ export default function DashboardPage() {
                   const pgn =
                     gameRecord.pgn || createPGNFromMoves(gameRecord.moves, gameRecord.result, gameRecord.initialFen);
                   tree = await parsePGN(pgn, gameRecord.initialFen);
-                  moves = gameRecord.moves;
+                  const is960 = tree.headers?.variant === "Chess960";
+                  moves = getMainLine(tree.root, is960);
                   initialFen = gameRecord.initialFen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
                   gameHeaders = createLocalGameHeaders(gameRecord);
                 } else if (gameType === "chesscom") {
@@ -1669,7 +1744,7 @@ export default function DashboardPage() {
                 // Analyze the game
                 const analysisPromise = commands.analyzeGame(
                   analysisId,
-                  defaultEngine.path,
+                  selectedEngine.path,
                   goMode,
                   {
                     annotateNovelties: false,
@@ -1687,7 +1762,7 @@ export default function DashboardPage() {
                   if (isCancelled()) {
                     analysisCancelled = true;
                     // Stop the engine immediately
-                    commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                    commands.stopEngine(selectedEngine.path, analysisId).catch(() => {
                       // Ignore errors when stopping
                     });
                     clearInterval(cancellationCheckInterval);
@@ -1702,7 +1777,7 @@ export default function DashboardPage() {
                   // If cancelled, stop the engine and return
                   if (analysisCancelled || isCancelled()) {
                     try {
-                      await commands.stopEngine(defaultEngine.path, analysisId);
+                      await commands.stopEngine(selectedEngine.path, analysisId);
                     } catch {
                       // Ignore errors when stopping
                     }
@@ -1813,14 +1888,51 @@ export default function DashboardPage() {
                     const chessComGame = game as ChessComGameWithEvent;
                     chessComGame.pgn = analyzedPgn;
                     // Persist using profile DB Games.ID (required for dashboard joins)
-                    const internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`);
+                    let internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`) ?? null;
                     if (activeProfileId && !internalId) {
-                      // If we can't resolve the DB id, do NOT save under external url.
-                      activeAnalysisIds.delete(analysisId);
-                      return;
+                      internalId = await resolveInternalId("chesscom", chessComGame.url);
+                      if (!internalId && !warnedMissingInternalId) {
+                        warnedMissingInternalId = true;
+                        notifications.show({
+                          title: t("common.warning", { defaultValue: "Warning" }),
+                          message: t("features.dashboard.analysisInternalIdMissing", {
+                            defaultValue:
+                              "Could not resolve profile DB game id for some games. Stats by phase may be missing for those games.",
+                          }),
+                          color: "yellow",
+                        });
+                      }
                     }
+
                     const gameIdToSave = internalId ?? chessComGame.url;
                     await saveAnalyzedGame(gameIdToSave, analyzedPgn, activeProfileId ?? null);
+
+                    if (activeProfileId && internalId) {
+                      const n = Number.parseInt(internalId, 10);
+                      if (Number.isFinite(n)) {
+                        try {
+                          await saveProfileGameAnalysisStats({
+                            profileId: activeProfileId,
+                            gameId: n,
+                            initialFen,
+                            moves,
+                            analysis,
+                          });
+                        } catch {
+                          if (!warnedStatsPersistFailed) {
+                            warnedStatsPersistFailed = true;
+                            notifications.show({
+                              title: t("common.warning", { defaultValue: "Warning" }),
+                              message: t("features.dashboard.analysisPhaseStatsSaveFailed", {
+                                defaultValue:
+                                  "Failed to save phase stats for some games. The Stats tab may not show phase data yet.",
+                              }),
+                              color: "yellow",
+                            });
+                          }
+                        }
+                      }
+                    }
 
                     // Calculate and save stats
                     const whiteUsername = chessComGame.white.username.toLowerCase();
@@ -1861,6 +1973,21 @@ export default function DashboardPage() {
                       : `chessbase:${row.analysisGameId}`;
                     await saveAnalyzedGame(gameIdToSave, analyzedPgn, activeProfileId ?? null);
 
+                    if (activeProfileId) {
+                      const n = Number.parseInt(String(row.analysisGameId), 10);
+                      if (Number.isFinite(n)) {
+                        saveProfileGameAnalysisStats({
+                          profileId: activeProfileId,
+                          gameId: n,
+                          initialFen,
+                          moves,
+                          analysis,
+                        }).catch(() => {
+                          // best-effort
+                        });
+                      }
+                    }
+
                     const normalize = (s: string) => stripAccountKey((s ?? "").trim()).toLowerCase();
                     const usernamesLower = profileUsernames.map(normalize);
                     const whiteName = normalize(gameHeaders.white);
@@ -1885,14 +2012,51 @@ export default function DashboardPage() {
                     const lichessGame = game as (typeof lichessGames)[0];
                     lichessGame.pgn = analyzedPgn;
                     // Persist using profile DB Games.ID (required for dashboard joins)
-                    const internalId = internalIdByExternalKey.get(`lichess:${lichessGame.id}`);
+                    let internalId = internalIdByExternalKey.get(`lichess:${lichessGame.id}`) ?? null;
                     if (activeProfileId && !internalId) {
-                      // If we can't resolve the DB id, do NOT save under external id.
-                      activeAnalysisIds.delete(analysisId);
-                      return;
+                      internalId = await resolveInternalId("lichess", lichessGame.id);
+                      if (!internalId && !warnedMissingInternalId) {
+                        warnedMissingInternalId = true;
+                        notifications.show({
+                          title: t("common.warning", { defaultValue: "Warning" }),
+                          message: t("features.dashboard.analysisInternalIdMissing", {
+                            defaultValue:
+                              "Could not resolve profile DB game id for some games. Stats by phase may be missing for those games.",
+                          }),
+                          color: "yellow",
+                        });
+                      }
                     }
+
                     const gameIdToSave = internalId ?? lichessGame.id;
                     await saveAnalyzedGame(gameIdToSave, analyzedPgn, activeProfileId ?? null);
+
+                    if (activeProfileId && internalId) {
+                      const n = Number.parseInt(internalId, 10);
+                      if (Number.isFinite(n)) {
+                        try {
+                          await saveProfileGameAnalysisStats({
+                            profileId: activeProfileId,
+                            gameId: n,
+                            initialFen,
+                            moves,
+                            analysis,
+                          });
+                        } catch {
+                          if (!warnedStatsPersistFailed) {
+                            warnedStatsPersistFailed = true;
+                            notifications.show({
+                              title: t("common.warning", { defaultValue: "Warning" }),
+                              message: t("features.dashboard.analysisPhaseStatsSaveFailed", {
+                                defaultValue:
+                                  "Failed to save phase stats for some games. The Stats tab may not show phase data yet.",
+                              }),
+                              color: "yellow",
+                            });
+                          }
+                        }
+                      }
+                    }
 
                     // Calculate and save stats
                     const whiteUsername = (lichessGame.players.white.user?.name || "").toLowerCase();
@@ -1932,6 +2096,16 @@ export default function DashboardPage() {
                 }
               } catch (_error) {
                 failCount++;
+                if (failCount === 1) {
+                  notifications.show({
+                    title: t("common.error"),
+                    message: t("features.dashboard.analysisEngineError", {
+                      defaultValue: "Engine error while analyzing. Engine: {{engine}}.",
+                      engine: selectedEngine.name,
+                    }),
+                    color: "red",
+                  });
+                }
               } finally {
                 activeAnalysisIds.delete(analysisId);
                 completedCount++;
@@ -1957,7 +2131,7 @@ export default function DashboardPage() {
                 // Stop all active engines
                 for (const analysisId of activeAnalysisIds) {
                   try {
-                    await commands.stopEngine(defaultEngine.path, analysisId);
+                    await commands.stopEngine(selectedEngine.path, analysisId);
                   } catch {
                     // Ignore errors when stopping
                   }
@@ -1984,7 +2158,7 @@ export default function DashboardPage() {
               if (isCancelled()) {
                 // Stop all remaining active engines immediately
                 const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
-                  commands.stopEngine(defaultEngine.path, analysisId).catch(() => {
+                  commands.stopEngine(selectedEngine.path, analysisId).catch(() => {
                     // Ignore errors when stopping
                   }),
                 );
@@ -2004,7 +2178,7 @@ export default function DashboardPage() {
               // Stop any remaining active engines
               for (const analysisId of activeAnalysisIds) {
                 try {
-                  await commands.stopEngine(defaultEngine.path, analysisId);
+                  await commands.stopEngine(selectedEngine.path, analysisId);
                 } catch {
                   // Ignore errors when stopping
                 }

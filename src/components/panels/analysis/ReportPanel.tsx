@@ -44,6 +44,16 @@ function ReportPanel() {
 
   const [stats, setStats] = useState(() => getGameStats(root));
 
+  const profileIdFromTab =
+    typeof window !== "undefined" && activeTab ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
+  const profileDbGameIdRaw =
+    typeof window !== "undefined" && activeTab ? sessionStorage.getItem(`${activeTab}_profileDbGameId`) : null;
+  const profileDbGameId = useMemo(() => {
+    if (!profileDbGameIdRaw) return null;
+    const n = Number.parseInt(profileDbGameIdRaw, 10);
+    return Number.isFinite(n) ? n : null;
+  }, [profileDbGameIdRaw]);
+
   // Avoid recalculating stats on every tree mutation while the engine is actively analyzing.
   // Compute on idle/debounced to keep the UI responsive.
   const prevRootRef = useRef(root);
@@ -412,6 +422,8 @@ function ReportPanel() {
           initialFen={root.fen}
           moves={getMainLine(root, headers.variant === "Chess960")}
           is960={headers.variant === "Chess960"}
+          profileId={profileIdFromTab}
+          profileDbGameId={profileDbGameId}
           reportingMode={reportingMode}
           toggleReportingMode={toggleReportingMode}
           setInProgress={setInProgress}
