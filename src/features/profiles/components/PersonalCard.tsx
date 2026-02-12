@@ -54,7 +54,7 @@ function PersonalPlayerCard({
     return defaults.filter((tab) => visibleTabs.includes(tab));
   }, [visibleTabs]);
   const isOpeningsTab = (activeTab ?? allowedTabs[0]) === "openings";
-  const isStatsTab = (activeTab ?? allowedTabs[0]) === "stats";
+  const isStatsTab = String(activeTab ?? allowedTabs[0]) === "stats";
   const showHeaderSelector = !isOpeningsTab && showPlayerSelector && setName != null;
 
   useEffect(() => {
@@ -120,12 +120,12 @@ function PersonalPlayerCard({
             {allowedTabs.includes("ratings") && (
               <Tabs.Tab value="ratings">{t("accounts.personalCard.tabs.ratings")}</Tabs.Tab>
             )}
-          {allowedTabs.includes("openings") && (
-            <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
-          )}
-          {allowedTabs.includes("stats") && (
-            <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
-          )}
+            {allowedTabs.includes("openings") && (
+              <Tabs.Tab value="openings">{t("accounts.personalCard.tabs.openings")}</Tabs.Tab>
+            )}
+            {allowedTabs.includes("stats") && (
+              <Tabs.Tab value="stats">{t("profiles.tabs.stats", { defaultValue: "Stats" })}</Tabs.Tab>
+            )}
           </Tabs.List>
           {allowedTabs.includes("overview") && (
             <Tabs.Panel value="overview">

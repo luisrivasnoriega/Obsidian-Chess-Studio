@@ -23,12 +23,28 @@ describe("AnalyzeAllModal", () => {
   const mockOnAnalyze = vi.fn().mockResolvedValue(undefined);
 
   test("renders when opened", () => {
-    render(<AnalyzeAllModal opened={true} onClose={mockOnClose} onAnalyze={mockOnAnalyze} gameCount={10} />);
+    render(
+      <AnalyzeAllModal
+        opened={true}
+        onClose={mockOnClose}
+        onAnalyze={mockOnAnalyze}
+        gameCount={10}
+        engineOptions={[{ value: "/path/to/engine", label: "Stockfish" }]}
+      />,
+    );
     expect(document.body).toBeTruthy();
   });
 
   test("does not render when closed", () => {
-    render(<AnalyzeAllModal opened={false} onClose={mockOnClose} onAnalyze={mockOnAnalyze} gameCount={10} />);
+    render(
+      <AnalyzeAllModal
+        opened={false}
+        onClose={mockOnClose}
+        onAnalyze={mockOnAnalyze}
+        gameCount={10}
+        engineOptions={[{ value: "/path/to/engine", label: "Stockfish" }]}
+      />,
+    );
     // Modal should not be visible when closed
     expect(document.body).toBeTruthy();
   });

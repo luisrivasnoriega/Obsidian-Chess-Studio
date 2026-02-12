@@ -19,7 +19,6 @@ import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
-import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
 import {
   type FavoriteGame,
   getAllFavoriteGames,
@@ -36,6 +35,7 @@ import {
   updateGameRecord,
 } from "@/utils/gameRecords";
 import { getProfileDbPath } from "@/utils/profileDb";
+import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
 import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
@@ -1609,7 +1609,7 @@ export default function DashboardPage() {
             });
 
             const goMode: GoMode = { t: "Time", c: config.timeMs };
-            const engineSettings = (defaultEngine.settings ?? []).map((s) => ({
+            const engineSettings = (selectedEngine.settings ?? []).map((s) => ({
               ...s,
               value: s.value?.toString() ?? "",
             }));

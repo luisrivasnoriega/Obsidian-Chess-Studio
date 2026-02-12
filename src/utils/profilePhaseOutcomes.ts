@@ -14,4 +14,3 @@ export async function getProfilePhaseOutcomes(input: { profileId: string; filter
     filters: input.filters,
   });
 }
-

@@ -59,12 +59,12 @@ if "%MAJOR%"=="" (
 
 REM ----------------------------
 REM Determine next version
-REM - Default is a MINOR bump (e.g. 2.0.27 -> 2.1.0)
+REM - Default is a PATCH bump (e.g. 2.5.0 -> 2.5.1)
 REM - Override with:
 REM   - RELEASE_VERSION=2.1.0 (exact)
 REM   - RELEASE_BUMP=patch|minor|major
 REM ----------------------------
-if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=minor"
+if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=patch"
 
 REM Normalize RELEASE_VERSION (allow "v2.1.0") and guard against stale overrides
 if defined RELEASE_VERSION (
@@ -140,18 +140,7 @@ echo [OK] Code formatted successfully
 echo.
 
 echo ========================================
-echo Step 2: Updating version...
-echo ========================================
-call pnpm update-version v%NEW_VERSION%
-if errorlevel 1 (
-  echo ERROR: Failed to update version!
-  exit /b %errorlevel%
-)
-echo [OK] Version updated to v%NEW_VERSION%
-echo.
-
-echo ========================================
-echo Step 3: Running TypeScript type check...
+echo Step 2: Running TypeScript type check...
 echo ========================================
 call pnpm tsc --noEmit
 if errorlevel 1 (
@@ -162,7 +151,7 @@ echo [OK] TypeScript check passed
 echo.
 
 echo ========================================
-echo Step 4: Running frontend tests...
+echo Step 3: Running frontend tests...
 echo ========================================
 call pnpm vitest run --coverage --pool=forks --reporter=verbose --teardownTimeout=%TEARDOWN_TIMEOUT_MS% --testTimeout=%VITEST_TEST_TIMEOUT_MS%
 if errorlevel 1 (
@@ -173,7 +162,7 @@ echo [OK] Frontend tests passed
 echo.
 
 echo ========================================
-echo Step 5: Running backend tests...
+echo Step 4: Running backend tests...
 echo ========================================
 if exist "src-tauri\Cargo.toml" (
   pushd src-tauri
@@ -189,7 +178,7 @@ echo [OK] Backend tests passed
 echo.
 
 echo ========================================
-echo Step 6: Generating backend coverage...
+echo Step 5: Generating backend coverage...
 echo ========================================
 if exist "src-tauri\Cargo.toml" (
   pushd src-tauri
@@ -203,7 +192,7 @@ echo [OK] Coverage analysis completed
 echo.
 
 echo ========================================
-echo Step 7: Updating documentation...
+echo Step 6: Updating documentation...
 echo ========================================
 call pnpm update-coverage
 if errorlevel 1 (
@@ -217,6 +206,17 @@ if errorlevel 1 (
   exit /b %errorlevel%
 )
 echo [OK] Documentation updated
+echo.
+
+echo ========================================
+echo Step 7: Updating version...
+echo ========================================
+call pnpm update-version v%NEW_VERSION%
+if errorlevel 1 (
+  echo ERROR: Failed to update version!
+  exit /b %errorlevel%
+)
+echo [OK] Version updated to v%NEW_VERSION%
 echo.
 
 echo ========================================

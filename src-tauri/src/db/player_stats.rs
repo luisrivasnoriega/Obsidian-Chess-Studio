@@ -4,7 +4,7 @@
 //! including game stats, ratings, openings, and ELO buckets.
 
 use crate::db::{GameOutcome, SiteStatsData, StatsData};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
@@ -554,6 +554,23 @@ fn parse_date_to_timestamp(date: &str) -> Option<i64> {
     )
 }
 
+fn parse_date_time_to_timestamp(date: &str, time: Option<&str>) -> Option<i64> {
+    let day = parse_date_to_timestamp(date)?;
+    let t = time.unwrap_or("").trim();
+    if t.is_empty() {
+        return Some(day);
+    }
+
+    let nt = NaiveTime::parse_from_str(t, "%H:%M:%S")
+        .or_else(|_| NaiveTime::parse_from_str(t, "%H:%M"))
+        .ok()?;
+
+    let date_only = NaiveDateTime::from_timestamp_millis(day)?;
+    let day_only = date_only.date();
+    let dt = NaiveDateTime::new(day_only, nt);
+    Some(Utc.from_utc_datetime(&dt).timestamp_millis())
+}
+
 /// Calculate rating timeline from games
 ///
 /// NOTE: this function groups ratings under a single platform key based on the `site` argument.
@@ -866,7 +883,9 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
     // ELO blocks:
     // - If the player has BOTH platforms, show one row per platform.
     // - If the player has only ONE platform and multiple accounts, show one row per account.
-    let mut by_platform_account: HashMap<(String, String), [i32; 3]> = HashMap::new();
+    // Keep latest rating (by game date) for bullet/blitz/rapid:
+    // value = ([elos], [timestamps_ms]) indexed as [bullet, blitz, rapid].
+    let mut by_platform_account: HashMap<(String, String), ([i32; 3], [i64; 3])> = HashMap::new();
     for site in site_stats_data {
         let platform = normalize_platform(&site.site);
         if platform == "unknown" {
@@ -885,18 +904,22 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
             };
             let Some(i) = idx else { continue };
             let elo = game.player_elo;
+            let ts = parse_date_time_to_timestamp(&game.date, game.time.as_deref())
+                .or_else(|| parse_date_to_timestamp(&game.date));
+            let Some(ts) = ts else { continue };
             let entry = by_platform_account
                 .entry((platform.clone(), account.clone()))
-                .or_insert([0i32; 3]);
-            if elo > entry[i] {
-                entry[i] = elo;
+                .or_insert(([0i32; 3], [i64::MIN; 3]));
+            if ts >= entry.1[i] {
+                entry.0[i] = elo;
+                entry.1[i] = ts;
             }
         }
     }
 
     let mut platforms: HashSet<String> = HashSet::new();
-    for ((platform, _account), maxes) in &by_platform_account {
-        if maxes.iter().any(|v| *v > 0) {
+    for ((platform, _account), (elos, _timestamps)) in &by_platform_account {
+        if elos.iter().any(|v| *v > 0) {
             platforms.insert(platform.clone());
         }
     }
@@ -914,13 +937,17 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
         let mut list: Vec<String> = platforms.into_iter().collect();
         list.sort();
         for platform in list {
-            let mut agg = [0i32; 3];
-            for ((p, _account), maxes) in &by_platform_account {
+            let mut agg_elos = [0i32; 3];
+            let mut agg_timestamps = [i64::MIN; 3];
+            for ((p, _account), (elos, timestamps)) in &by_platform_account {
                 if p != &platform {
                     continue;
                 }
                 for i in 0..3 {
-                    agg[i] = agg[i].max(maxes[i]);
+                    if timestamps[i] >= agg_timestamps[i] {
+                        agg_timestamps[i] = timestamps[i];
+                        agg_elos[i] = elos[i];
+                    }
                 }
             }
             let label = platform_label(&platform);
@@ -928,19 +955,19 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
                 platform: label.clone(),
                 rows: vec![PlayerSidebarEloRow {
                     label,
-                    bullet: format_elo(agg[0]),
-                    blitz: format_elo(agg[1]),
-                    rapid: format_elo(agg[2]),
+                    bullet: format_elo(agg_elos[0]),
+                    blitz: format_elo(agg_elos[1]),
+                    rapid: format_elo(agg_elos[2]),
                 }],
             });
         }
     } else if platforms.len() == 1 {
         let platform = platforms.into_iter().next().unwrap();
-        let mut accounts: Vec<(String, [i32; 3])> = by_platform_account
+        let mut accounts: Vec<(String, [i32; 3], [i64; 3])> = by_platform_account
             .iter()
-            .filter_map(|((p, a), maxes)| {
+            .filter_map(|((p, a), (elos, timestamps))| {
                 if p == &platform {
-                    Some((a.clone(), *maxes))
+                    Some((a.clone(), *elos, *timestamps))
                 } else {
                     None
                 }
@@ -950,14 +977,14 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
 
         let label = platform_label(&platform);
         if accounts.len() <= 1 {
-            let maxes = accounts.first().map(|a| a.1).unwrap_or([0i32; 3]);
+            let latest_elos = accounts.first().map(|a| a.1).unwrap_or([0i32; 3]);
             elo_blocks.push(PlayerSidebarEloBlock {
                 platform: label.clone(),
                 rows: vec![PlayerSidebarEloRow {
                     label,
-                    bullet: format_elo(maxes[0]),
-                    blitz: format_elo(maxes[1]),
-                    rapid: format_elo(maxes[2]),
+                    bullet: format_elo(latest_elos[0]),
+                    blitz: format_elo(latest_elos[1]),
+                    rapid: format_elo(latest_elos[2]),
                 }],
             });
         } else {
@@ -965,11 +992,11 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
                 platform: label,
                 rows: accounts
                     .into_iter()
-                    .map(|(account, maxes)| PlayerSidebarEloRow {
+                    .map(|(account, latest_elos, _timestamps)| PlayerSidebarEloRow {
                         label: account,
-                        bullet: format_elo(maxes[0]),
-                        blitz: format_elo(maxes[1]),
-                        rapid: format_elo(maxes[2]),
+                        bullet: format_elo(latest_elos[0]),
+                        blitz: format_elo(latest_elos[1]),
+                        rapid: format_elo(latest_elos[2]),
                     })
                     .collect(),
             });

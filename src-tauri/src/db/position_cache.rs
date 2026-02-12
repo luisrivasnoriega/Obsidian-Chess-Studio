@@ -1,11 +1,26 @@
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
+use shakmaty::{fen::Fen, Chess, EnPassantMode};
 use std::path::{Path, PathBuf};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 use crate::db::PositionStats;
 use crate::error::Error;
+
+/// Canonicalize a FEN string for cache lookups/storage.
+///
+/// The UI can provide FENs with varying halfmove/fullmove counters. However, the search logic
+/// does not depend on those counters. Precomputed caches are typically built from `Chess` positions
+/// (which don't retain counters), yielding `0 1`. If we store/query raw UI FENs, we fragment the
+/// cache and miss precomputed entries.
+#[inline]
+fn canonicalize_fen_for_cache(fen: &str) -> Result<String, Error> {
+    let fen = fen.trim_end();
+    let fen = Fen::from_ascii(fen.as_bytes())?;
+    let pos: Chess = fen.into_position(shakmaty::CastlingMode::Chess960)?;
+    Ok(Fen::from_position(pos, EnPassantMode::Legal).to_string())
+}
 
 /// Normalize database path for consistent comparison
 /// Extracts only the filename (without path) for cache storage
@@ -150,16 +165,30 @@ pub fn is_position_cached(
 ) -> Result<bool, Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
+    let fen_key = canonicalize_fen_for_cache(fen)?;
+    let fen_legacy = fen.trim_end();
 
     let count: i64 = position_cache::table
-        .filter(position_cache::fen.eq(fen))
+        .filter(position_cache::fen.eq(&fen_key))
         .filter(position_cache::database_path.eq(&db_path_str))
         .count()
         .get_result(&mut conn)?;
 
-    let cached = count > 0;
+    if count > 0 {
+        return Ok(true);
+    }
 
-    Ok(cached)
+    // Backward-compat: older versions stored the raw UI FEN (with counters).
+    if fen_legacy != fen_key {
+        let legacy_count: i64 = position_cache::table
+            .filter(position_cache::fen.eq(fen_legacy))
+            .filter(position_cache::database_path.eq(&db_path_str))
+            .count()
+            .get_result(&mut conn)?;
+        return Ok(legacy_count > 0);
+    }
+
+    Ok(false)
 }
 
 /// Get cached position data
@@ -170,19 +199,37 @@ pub fn get_cached_position(
 ) -> Result<Option<(Vec<PositionStats>, Vec<i32>)>, Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
+    let fen_key = canonicalize_fen_for_cache(fen)?;
+    let fen_legacy = fen.trim_end().to_string();
 
+    // Load by key (canonical first, then legacy).
+    let (position_id, used_legacy): (i32, bool) = {
+        let cache_entry: Option<i32> = position_cache::table
+            .select(position_cache::id)
+            .filter(position_cache::fen.eq(&fen_key))
+            .filter(position_cache::database_path.eq(&db_path_str))
+            .first(&mut conn)
+            .optional()?;
 
-    // Find the position cache entry
-    let cache_entry: Option<i32> = position_cache::table
-        .select(position_cache::id)
-        .filter(position_cache::fen.eq(fen))
-        .filter(position_cache::database_path.eq(&db_path_str))
-        .first(&mut conn)
-        .optional()?;
-
-    let position_id = match cache_entry {
-        Some(id) => id,
-        None => return Ok(None),
+        if let Some(id) = cache_entry {
+            (id, false)
+        } else {
+            // Backward-compat: older versions stored the raw UI FEN (with counters).
+            if fen_legacy != fen_key {
+                let legacy_entry: Option<i32> = position_cache::table
+                    .select(position_cache::id)
+                    .filter(position_cache::fen.eq(&fen_legacy))
+                    .filter(position_cache::database_path.eq(&db_path_str))
+                    .first(&mut conn)
+                    .optional()?;
+                match legacy_entry {
+                    Some(id) => (id, true),
+                    None => return Ok(None),
+                }
+            } else {
+                return Ok(None);
+            }
+        }
     };
 
     // Load stats
@@ -214,6 +261,12 @@ pub fn get_cached_position(
         .order(position_games::game_order.asc())
         .load(&mut conn)?;
 
+    // If this hit a legacy key, migrate it to the canonical key so future lookups
+    // match precomputed caches and don't depend on UI move counters.
+    if used_legacy && fen_key != fen_legacy {
+        let _ = save_position_cache(app, &fen_key, database_path, &stats, &game_ids);
+        let _ = clear_position_cache(app, &fen_legacy, database_path);
+    }
 
     Ok(Some((stats, game_ids)))
 }
@@ -228,6 +281,7 @@ pub fn save_position_cache(
 ) -> Result<(), Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
+    let fen_key = canonicalize_fen_for_cache(fen)?;
 
 
     conn.transaction::<_, Error, _>(|conn| {
@@ -236,7 +290,7 @@ pub fn save_position_cache(
             // Try to get existing entry
             let existing: Option<i32> = position_cache::table
                 .select(position_cache::id)
-                .filter(position_cache::fen.eq(fen))
+                .filter(position_cache::fen.eq(&fen_key))
                 .filter(position_cache::database_path.eq(&db_path_str))
                 .first(conn)
                 .optional()?;
@@ -256,7 +310,7 @@ pub fn save_position_cache(
                 // Insert new entry
                 diesel::insert_into(position_cache::table)
                     .values((
-                        position_cache::fen.eq(fen),
+                        position_cache::fen.eq(&fen_key),
                         position_cache::database_path.eq(&db_path_str),
                     ))
                     .execute(conn)?;
@@ -264,7 +318,7 @@ pub fn save_position_cache(
                 // Get the inserted ID
                 position_cache::table
                     .select(position_cache::id)
-                    .filter(position_cache::fen.eq(fen))
+                    .filter(position_cache::fen.eq(&fen_key))
                     .filter(position_cache::database_path.eq(&db_path_str))
                     .first(conn)?
             }
@@ -348,11 +402,13 @@ pub fn clear_position_cache(
 ) -> Result<(), Error> {
     let mut conn = get_cache_db(app)?;
     let db_path_str = normalize_db_path(database_path);
+    let fen_key = canonicalize_fen_for_cache(fen)?;
+    let fen_legacy = fen.trim_end().to_string();
 
     // Find the position cache entry
     let cache_entry: Option<i32> = position_cache::table
         .select(position_cache::id)
-        .filter(position_cache::fen.eq(fen))
+        .filter(position_cache::fen.eq(&fen_key))
         .filter(position_cache::database_path.eq(&db_path_str))
         .first(&mut conn)
         .optional()?;
@@ -373,6 +429,28 @@ pub fn clear_position_cache(
 
             Ok(())
         })?;
+    }
+
+    // Backward-compat: also clear the legacy raw-FEN entry if present.
+    if fen_legacy != fen_key {
+        let legacy_entry: Option<i32> = position_cache::table
+            .select(position_cache::id)
+            .filter(position_cache::fen.eq(&fen_legacy))
+            .filter(position_cache::database_path.eq(&db_path_str))
+            .first(&mut conn)
+            .optional()?;
+
+        if let Some(position_id) = legacy_entry {
+            conn.transaction::<_, Error, _>(|conn| {
+                diesel::delete(position_stats::table.filter(position_stats::position_id.eq(position_id)))
+                    .execute(conn)?;
+                diesel::delete(position_games::table.filter(position_games::position_id.eq(position_id)))
+                    .execute(conn)?;
+                diesel::delete(position_cache::table.filter(position_cache::id.eq(position_id)))
+                    .execute(conn)?;
+                Ok(())
+            })?;
+        }
     }
 
     Ok(())

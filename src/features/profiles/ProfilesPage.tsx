@@ -121,9 +121,7 @@ export default function ProfilesPage() {
   const [profileQuery, setProfileQuery] = useState("");
   const [detailsTab, setDetailsTab] = useState<
     "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
-  >(
-    "database",
-  );
+  >("database");
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
   const syncingAccountIdsRef = useRef<Set<string>>(new Set());
   const deletedSessionKeysRef = useRef<Set<string>>(new Set());
@@ -773,7 +771,7 @@ export default function ProfilesPage() {
   ]);
 
   const deleteProfile = useCallback(
-    (profile: Profile) => {
+    async (profile: Profile) => {
       const linked = sessions.some((s) => s.profileId === profile.id);
       if (linked) {
         notifications.show({
@@ -781,6 +779,26 @@ export default function ProfilesPage() {
           message: t("profiles.errors.cannotDeleteLinked", {
             defaultValue: "Unlink accounts from this profile before deleting it.",
           }),
+          color: "red",
+        });
+        return;
+      }
+
+      try {
+        const dbPath = await getProfileDbPath(profile.id);
+        const result = await commands.deleteDatabase(dbPath);
+        if (result.status === "error") {
+          notifications.show({
+            title: t("common.error"),
+            message: t("common.errorUnknown", { defaultValue: "Something went wrong." }),
+            color: "red",
+          });
+          return;
+        }
+      } catch {
+        notifications.show({
+          title: t("common.error"),
+          message: t("common.errorUnknown", { defaultValue: "Something went wrong." }),
           color: "red",
         });
         return;
@@ -1486,7 +1504,9 @@ export default function ProfilesPage() {
                               <ActionIcon
                                 variant="subtle"
                                 color="red"
-                                onClick={() => deleteProfile(profile)}
+                                onClick={() => {
+                                  void deleteProfile(profile);
+                                }}
                                 title={t("common.delete", { defaultValue: "Delete" })}
                               >
                                 <IconTrash size={16} />

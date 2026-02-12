@@ -25,10 +25,10 @@ import type { EloBucket } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
+import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { getProfilePhaseGames, type PhaseGameRow } from "@/utils/profilePhaseGames";
 import { getProfilePhaseOutcomes, type PhaseOutcomeBucket } from "@/utils/profilePhaseOutcomes";
-import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
@@ -89,9 +89,7 @@ function PhaseBar({ won, drawn, lost }: { won: number; drawn: number; lost: numb
         <Progress.Label>{won / total >= 0.2 ? `${Math.round((won / total) * 100)}%` : undefined}</Progress.Label>
       </Progress.Section>
       <Progress.Section value={(drawn / total) * 100} color="gray">
-        <Progress.Label>
-          {drawn / total >= 0.2 ? `${Math.round((drawn / total) * 100)}%` : undefined}
-        </Progress.Label>
+        <Progress.Label>{drawn / total >= 0.2 ? `${Math.round((drawn / total) * 100)}%` : undefined}</Progress.Label>
       </Progress.Section>
       <Progress.Section value={(lost / total) * 100} color="red">
         <Progress.Label>{lost / total >= 0.2 ? `${Math.round((lost / total) * 100)}%` : undefined}</Progress.Label>
@@ -151,7 +149,7 @@ export default function StatsPanel({
   const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
   const [platform, setPlatform] = useState<PlatformFilter>("all");
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
-  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.All);
+  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.AllTime);
   const [groupBy, setGroupBy] = useState<StatGroupBy>("phase");
   const [detailsPhase, setDetailsPhase] = useState<PhaseKey | null>(null);
   const [detailsPage, setDetailsPage] = useState(1);
@@ -433,26 +431,26 @@ export default function StatsPanel({
                       style={{ display: "block", textAlign: "left" }}
                     >
                       <Stack gap={6}>
-                      <Group justify="space-between" wrap="nowrap">
-                        <Text fw={600}>{phaseLabel(t, phase)}</Text>
-                        <Text size="sm" c="dimmed">
-                          {total > 0
-                            ? t("profiles.stats.phaseCount", {
-                                defaultValue: "{{total}} games",
-                                total,
-                              })
-                            : t("profiles.stats.phaseCount", { defaultValue: "0 games", total: 0 })}
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text fw={600}>{phaseLabel(t, phase)}</Text>
+                          <Text size="sm" c="dimmed">
+                            {total > 0
+                              ? t("profiles.stats.phaseCount", {
+                                  defaultValue: "{{total}} games",
+                                  total,
+                                })
+                              : t("profiles.stats.phaseCount", { defaultValue: "0 games", total: 0 })}
+                          </Text>
+                        </Group>
+                        <PhaseBar won={v.won} drawn={v.drawn} lost={v.lost} />
+                        <Text size="xs" c="dimmed">
+                          {t("profiles.stats.phaseBreakdown", {
+                            defaultValue: "{{won}}W · {{drawn}}D · {{lost}}L",
+                            won: v.won,
+                            drawn: v.drawn,
+                            lost: v.lost,
+                          })}
                         </Text>
-                      </Group>
-                      <PhaseBar won={v.won} drawn={v.drawn} lost={v.lost} />
-                      <Text size="xs" c="dimmed">
-                        {t("profiles.stats.phaseBreakdown", {
-                          defaultValue: "{{won}}W · {{drawn}}D · {{lost}}L",
-                          won: v.won,
-                          drawn: v.drawn,
-                          lost: v.lost,
-                        })}
-                      </Text>
                       </Stack>
                     </UnstyledButton>
                   );
@@ -538,12 +536,7 @@ export default function StatsPanel({
               >
                 {t("common.previous", { defaultValue: "Previous" })}
               </Button>
-              <Button
-                size="xs"
-                variant="default"
-                disabled={!hasNextPage}
-                onClick={() => setDetailsPage((p) => p + 1)}
-              >
+              <Button size="xs" variant="default" disabled={!hasNextPage} onClick={() => setDetailsPage((p) => p + 1)}>
                 {t("common.next", { defaultValue: "Next" })}
               </Button>
             </Group>

@@ -16,4 +16,3 @@ export async function saveProfileGameAnalysisStats(input: {
     analysis: input.analysis,
   });
 }
-

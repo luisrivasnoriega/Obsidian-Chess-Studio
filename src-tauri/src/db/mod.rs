@@ -916,11 +916,57 @@ pub async fn get_db_info(
         m.contains("database disk image is malformed") || m.contains("file is not a database")
     }
 
+    fn is_locked_sqlite_message(msg: &str) -> bool {
+        let m = msg.to_lowercase();
+        m.contains("database is locked")
+            || m.contains("database table is locked")
+            || m.contains("database schema is locked")
+    }
+
     fn cleanup_malformed_db(state: &tauri::State<'_, AppState>, path: &PathBuf) {
         let path_str = path.to_string_lossy().into_owned();
         let _ = state.connection_pool.remove(&path_str);
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(format!("{}.partial", path.display()));
+    }
+
+    fn read_database_info(db: &mut SqliteConnection, path: &PathBuf) -> Result<DatabaseInfo> {
+        let player_count = players::table.count().get_result::<i64>(db)? as i32;
+        let game_count = games::table.count().get_result::<i64>(db)? as i32;
+        let event_count = events::table.count().get_result::<i64>(db)? as i32;
+
+        let title = match info::table
+            .filter(info::name.eq("Title"))
+            .first(db)
+            .map(|title_info: Info| title_info.value)
+        {
+            Ok(Some(title)) => title,
+            _ => "Untitled".to_string(),
+        };
+
+        let description = match info::table
+            .filter(info::name.eq("Description"))
+            .first(db)
+            .map(|description_info: Info| description_info.value)
+        {
+            Ok(Some(description)) => description,
+            _ => "".to_string(),
+        };
+
+        let storage_size = path.metadata()?.len() as i64;
+        let filename = path.file_name().expect("get filename").to_string_lossy();
+
+        let is_indexed = check_index_exists(db)?;
+        Ok(DatabaseInfo {
+            title,
+            description,
+            player_count,
+            game_count,
+            event_count,
+            storage_size,
+            filename: filename.to_string(),
+            indexed: is_indexed,
+        })
     }
 
     // Avoid using the connection pool for lightweight metadata reads.
@@ -939,45 +985,15 @@ pub async fn get_db_info(
             return Err(e.into());
         }
     };
+    let _ = db.batch_execute(&PRAGMA_BUSY_TIMEOUT.replace("{0}", "60000"));
 
-    let res: Result<DatabaseInfo> = (|| {
-        let player_count = players::table.count().get_result::<i64>(&mut db)? as i32;
-        let game_count = games::table.count().get_result::<i64>(&mut db)? as i32;
-        let event_count = events::table.count().get_result::<i64>(&mut db)? as i32;
-
-        let title = match info::table
-            .filter(info::name.eq("Title"))
-            .first(&mut db)
-            .map(|title_info: Info| title_info.value)
-        {
-            Ok(Some(title)) => title,
-            _ => "Untitled".to_string(),
-        };
-
-        let description = match info::table
-            .filter(info::name.eq("Description"))
-            .first(&mut db)
-            .map(|description_info: Info| description_info.value)
-        {
-            Ok(Some(description)) => description,
-            _ => "".to_string(),
-        };
-
-        let storage_size = path.metadata()?.len() as i64;
-        let filename = path.file_name().expect("get filename").to_string_lossy();
-
-        let is_indexed = check_index_exists(&mut db)?;
-        Ok(DatabaseInfo {
-            title,
-            description,
-            player_count,
-            game_count,
-            event_count,
-            storage_size,
-            filename: filename.to_string(),
-            indexed: is_indexed,
-        })
-    })();
+    let mut res = read_database_info(&mut db, &path);
+    if let Err(e) = &res {
+        if is_locked_sqlite_message(&e.to_string()) {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+            res = read_database_info(&mut db, &path);
+        }
+    }
 
     match res {
         Ok(info) => Ok(info),
@@ -2361,6 +2377,7 @@ pub struct SiteStatsData {
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
 pub struct StatsData {
     pub date: String,
+    pub time: Option<String>,
     pub is_player_white: bool,
     pub player_elo: i32,
     pub opponent_elo: Option<i32>,
@@ -2394,6 +2411,7 @@ pub async fn get_players_game_info(
             games::black_id,
             games::result,
             games::date,
+            games::time,
             games::moves,
             games::white_elo,
             games::black_elo,
@@ -2407,6 +2425,7 @@ pub async fn get_players_game_info(
     type GameInfo = (
         i32,
         i32,
+        Option<String>,
         Option<String>,
         Option<String>,
         Vec<u8>,
@@ -2428,6 +2447,7 @@ pub async fn get_players_game_info(
                 black_id,
                 outcome,
                 date,
+                time,
                 moves,
                 white_elo,
                 black_elo,
@@ -2499,6 +2519,7 @@ pub async fn get_players_game_info(
                     player: player.clone().unwrap(),
                     data: vec![StatsData {
                         date: date.clone().unwrap(),
+                        time: time.clone(),
                         is_player_white: is_white,
                         player_elo: if is_white {
                             white_elo.unwrap()

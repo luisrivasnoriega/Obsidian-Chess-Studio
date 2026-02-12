@@ -31,6 +31,7 @@ use std::{
         Arc, Mutex,
     },
 };
+use std::time::Instant;
 use tauri::Emitter;
 
 use crate::{
@@ -627,6 +628,63 @@ impl<'a> MoveStream<'a> {
     }
 
     #[inline]
+    fn next_position(&mut self) -> Option<Chess> {
+        let bytes = self.bytes;
+        let len = bytes.len();
+
+        while self.index < len {
+            let byte = bytes[self.index];
+
+            match byte {
+                Self::COMMENT => {
+                    if self.index + 8 >= len {
+                        break;
+                    }
+                    let length_bytes = &bytes[self.index + 1..self.index + 9];
+                    if let Ok(length_array) = <[u8; 8]>::try_from(length_bytes) {
+                        let length = u64::from_be_bytes(length_array) as usize;
+                        self.index += 9 + length;
+                    } else {
+                        break;
+                    }
+                }
+                Self::NAG => {
+                    self.index += 2;
+                }
+                Self::START_VARIATION => {
+                    let mut depth = 1;
+                    self.index += 1;
+                    while self.index < len && depth > 0 {
+                        match bytes[self.index] {
+                            Self::START_VARIATION => depth += 1,
+                            Self::END_VARIATION => depth -= 1,
+                            _ => {}
+                        }
+                        self.index += 1;
+                    }
+                }
+                Self::END_VARIATION => {
+                    break;
+                }
+                move_byte => {
+                    let legal_moves = self.position.legal_moves();
+                    let idx = move_byte as usize;
+                    if idx < legal_moves.len() {
+                        if let Some(chess_move) = legal_moves.get(idx) {
+                            self.position.play_unchecked(chess_move);
+                            self.index += 1;
+                            return Some(self.position.clone());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        None
+    }
+
+    #[inline]
     fn next_move(&mut self) -> Option<(Chess, String)> {
         let bytes = self.bytes;
         let len = bytes.len();
@@ -717,7 +775,7 @@ fn get_move_after_match(
 
     let mut stream = MoveStream::new(move_blob, start_chess);
 
-    while let Some((position_after_move, _move_string)) = stream.next_move() {
+    while let Some(position_after_move) = stream.next_position() {
         // Early exit if unreachable
         let board = position_after_move.board();
         if !query.is_reachable_by(&get_material_count(board), get_pawn_home(board)) {
@@ -837,7 +895,7 @@ pub async fn build_position_checkpoints(
             let mut stream = MoveStream::new(moves, start_position);
             let mut ply: i32 = 0;
 
-            while let Some((pos, _san)) = stream.next_move() {
+            while let Some(pos) = stream.next_position() {
                 ply += 1;
                 if (ply as usize) % CHECKPOINT_STRIDE == 0 {
                     let (hh, tt) = position_hash_and_turn(&pos);
@@ -1678,13 +1736,21 @@ pub async fn search_position(
     tab_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(Vec<PositionStats>, Vec<NormalizedGame>), Error> {
+    let t_total = Instant::now();
     let file_str = file.to_str().ok_or_else(|| {
         Error::FenError("Invalid database path".to_string())
     })?;
     
+    let db_label = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(file_str);
+
+    let is_local_db = !is_online_database(&file);
+
+    // Get FEN from position query (trim trailing whitespace for stable caching and comparisons)
     let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
 
-    // Get FEN from position query
     let fen = match &query.position {
         Some(pos_query) => pos_query.fen.trim_end().to_string(),
         None => return Err(Error::NoMatchFound),
@@ -1698,23 +1764,16 @@ pub async fn search_position(
         || query.end_date.is_some()
         || query.wanted_result.is_some();
 
-    // If filters are active, clear any existing cache for this position
-    // This ensures that when filters are removed, we get fresh results instead of stale cached data
+    // If filters are active, clear any existing cache for this position.
+    // We never persist filtered searches, so this only invalidates legacy
+    // entries that might have been written by older versions.
     if has_filters {
         let _ = clear_position_cache(&app, &fen, &file);
     }
 
-    // IMPORTANT: Always clear cache when no filters are active to ensure fresh data
-    // This prevents using stale cache that may have been corrupted by previous filtered searches
-    // The cache will be rebuilt with correct unfiltered data after this search completes
-    if !has_filters {
-        let _ = clear_position_cache(&app, &fen, &file);
-    }
-
     // Check if position is cached in database (only if no filters are active)
-    // NOTE: This check will now always be false because we just cleared the cache above
-    // This ensures we always get fresh data when no filters are active
     if !has_filters && is_position_cached(&app, &fen, &file)? {
+        let t_cache_hit = Instant::now();
         // Load cached data
         if let Some((cached_stats, cached_game_ids)) = get_cached_position(&app, &fen, &file)? {
             // If we cached an empty result (common when DB schema/metadata was incomplete),
@@ -1736,6 +1795,7 @@ pub async fn search_position(
                 .take(game_details_limit)
                 .collect();
 
+            let t_load_games = Instant::now();
             // Load full game data from original database
             let (white_players, black_players) = diesel::alias!(players as white, players as black);
             let mut query_builder = games::table
@@ -1784,9 +1844,14 @@ pub async fn search_position(
                 Vec::new()
             };
 
+            let load_games_ms = t_load_games.elapsed().as_millis();
+
+            let t_normalize = Instant::now();
             let mut normalized_games = normalize_games(games_result)?;
+            let normalize_ms = t_normalize.elapsed().as_millis();
 
             // Sort by average ELO if needed
+            let t_sort = Instant::now();
             if let Some(options) = &query.options {
                 if matches!(options.sort, GameSort::AverageElo) {
                     let sort_direction = options.direction.clone();
@@ -1812,6 +1877,7 @@ pub async fn search_position(
                     });
                 }
             }
+            let sort_ms = t_sort.elapsed().as_millis();
 
             let _ = app.emit(
                 "search_progress",
@@ -1821,6 +1887,24 @@ pub async fn search_position(
                     finished: true,
                 },
             );
+
+                log::debug!(
+                    target: "db.search.timing",
+                    "search_position cache_hit=1 tab_id={} db={} local={} filters={} limit={} cached_openings={} cached_ids={} loaded_games={} cache_read_ms={} load_games_ms={} normalize_ms={} sort_ms={} total_ms={}",
+                    tab_id,
+                    db_label,
+                    is_local_db,
+                    has_filters,
+                    game_details_limit,
+                    cached_stats.len(),
+                    ids_to_load.len(),
+                    normalized_games.len(),
+                    t_cache_hit.elapsed().as_millis(),
+                    load_games_ms,
+                    normalize_ms,
+                    sort_ms,
+                    t_total.elapsed().as_millis(),
+                );
 
                 return Ok((cached_stats, normalized_games));
             }
@@ -1841,10 +1925,26 @@ pub async fn search_position(
     // Optional schema/index safety for large/foreign DBs
     // (kept behind flags and very cheap if already present)
     if ENABLE_AUX_INDEXES {
+        let t_indexes = Instant::now();
         ensure_aux_indexes(db);
+        log::debug!(
+            target: "db.search.timing",
+            "search_position ensure_aux_indexes_ms={} tab_id={} db={}",
+            t_indexes.elapsed().as_millis(),
+            tab_id,
+            db_label
+        );
     }
     if ENABLE_CHECKPOINT_TABLE_SCHEMA {
+        let t_checkpoints = Instant::now();
         ensure_checkpoint_table(db);
+        log::debug!(
+            target: "db.search.timing",
+            "search_position ensure_checkpoint_schema_ms={} tab_id={} db={}",
+            t_checkpoints.elapsed().as_millis(),
+            tab_id,
+            db_label
+        );
     }
 
     // Phase 1: scan and collect openings + sample IDs
@@ -1862,8 +1962,9 @@ pub async fn search_position(
     let total_count: i64 = games::table.count().get_result(db).unwrap_or(0);
     let total_games = total_count.max(0) as usize;
 
-    let (openings, ids): (Vec<PositionStats>, Vec<i32>) = if online {
-        search_position_online_internal(
+    let t_scan = Instant::now();
+    let (strategy, openings, ids): (&'static str, Vec<PositionStats>, Vec<i32>) = if online {
+        let (o, i) = search_position_online_internal(
             db,
             &position_query,
             &query,
@@ -1871,9 +1972,10 @@ pub async fn search_position(
             &tab_id,
             state.inner(),
             total_games,
-        )
+        );
+        ("online_db", o, i)
     } else if local_reachability_metadata_missing(db) {
-        search_position_online_internal(
+        let (o, i) = search_position_online_internal(
             db,
             &position_query,
             &query,
@@ -1881,14 +1983,15 @@ pub async fn search_position(
             &tab_id,
             state.inner(),
             total_games,
-        )
+        );
+        ("local_metadata_missing->online_scan", o, i)
     } else {
         let (openings_local, ids_local) =
             search_position_local_internal(db, &position_query, &query, &app, &tab_id, state.inner())?;
 
         // If the LOCAL strategy yields no matches, fall back to ONLINE strategy to avoid false negatives.
         if ids_local.is_empty() {
-            search_position_online_internal(
+            let (o, i) = search_position_online_internal(
                 db,
                 &position_query,
                 &query,
@@ -1896,14 +1999,23 @@ pub async fn search_position(
                 &tab_id,
                 state.inner(),
                 total_games,
-            )
+            );
+            ("local_scan->fallback_online_scan", o, i)
         } else {
-            (openings_local, ids_local)
+            ("local_scan", openings_local, ids_local)
         }
     };
+    let scan_ms = t_scan.elapsed().as_millis();
 
     if state.new_request.available_permits() == 0 {
         drop(permit);
+        log::debug!(
+            target: "db.search.timing",
+            "search_position aborted=1 tab_id={} db={} total_ms={}",
+            tab_id,
+            db_label,
+            t_total.elapsed().as_millis(),
+        );
         return Err(Error::SearchStopped);
     }
 
@@ -1919,6 +2031,7 @@ pub async fn search_position(
     let all_game_ids = ids.clone();
     let ids_to_load: Vec<i32> = ids.into_iter().take(game_details_limit).collect();
 
+    let t_load_games = Instant::now();
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
     let mut query_builder = games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
@@ -1962,10 +2075,14 @@ pub async fn search_position(
     } else {
         Vec::new()
     };
+    let load_games_ms = t_load_games.elapsed().as_millis();
 
+    let t_normalize = Instant::now();
     let mut normalized_games = normalize_games(games_result)?;
+    let normalize_ms = t_normalize.elapsed().as_millis();
 
     // Sort by average ELO if needed (after loading)
+    let t_sort = Instant::now();
     if let Some(options) = &query.options {
         if matches!(options.sort, GameSort::AverageElo) {
             let sort_direction = options.direction.clone();
@@ -1991,15 +2108,18 @@ pub async fn search_position(
             });
         }
     }
+    let sort_ms = t_sort.elapsed().as_millis();
 
     // Save results to persistent cache (save all game IDs, not just the loaded ones)
     // This allows us to load different subsets later based on game_details_limit
     // IMPORTANT: Only save to cache if NO filters are active, because cache doesn't account for filters
     // If we save filtered results to cache, they will overwrite the unfiltered cache
     // and cause incorrect results when filters are removed
+    let t_save_cache = Instant::now();
     if !has_filters {
         let _ = save_position_cache(&app, &fen, &file, &openings, &all_game_ids);
     }
+    let save_cache_ms = t_save_cache.elapsed().as_millis();
 
     let _ = app.emit(
         "search_progress",
@@ -2008,6 +2128,27 @@ pub async fn search_position(
             id: tab_id.clone(),
             finished: true,
         },
+    );
+
+    log::debug!(
+        target: "db.search.timing",
+        "search_position cache_hit=0 tab_id={} db={} local={} filters={} strategy={} total_games={} openings={} matched_ids={} limit={} loaded_games={} scan_ms={} load_games_ms={} normalize_ms={} sort_ms={} save_cache_ms={} total_ms={}",
+        tab_id,
+        db_label,
+        is_local_db,
+        has_filters,
+        strategy,
+        total_games,
+        openings.len(),
+        all_game_ids.len(),
+        game_details_limit,
+        normalized_games.len(),
+        scan_ms,
+        load_games_ms,
+        normalize_ms,
+        sort_ms,
+        save_cache_ms,
+        t_total.elapsed().as_millis(),
     );
 
     drop(permit);

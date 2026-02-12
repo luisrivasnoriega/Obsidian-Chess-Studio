@@ -112,6 +112,7 @@ function PuzzleBoard({
   }, [initialPos, puzzle]);
 
   const [pendingMove, setPendingMove] = useState<NormalMove | null>(null);
+  const [boardRenderKey, setBoardRenderKey] = useState(0);
 
   const dests = useMemo(() => (pos ? chessgroundDests(pos) : new Map()), [pos]);
   const showCoordinates = useAtomValue(showCoordinatesAtom);
@@ -196,6 +197,8 @@ function PuzzleBoard({
           makeMove({ payload: firstMove, mainline: true });
         }
       }
+      // Force Chessground remount so the dragged piece snaps back immediately.
+      setBoardRenderKey((k) => k + 1);
     } finally {
       isProcessingMoveRef.current = false;
     }
@@ -260,6 +263,7 @@ function PuzzleBoard({
           orientation={orientation}
         />
         <Chessground
+          key={boardRenderKey}
           animation={{
             enabled: true,
           }}

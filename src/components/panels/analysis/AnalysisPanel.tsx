@@ -217,8 +217,9 @@ function AnalysisPanel() {
   const navigate = useNavigate();
 
   const panelStyle = isCompact
-    ? { width: "100%" }
+    ? { width: "100%", display: "flex", flexDirection: "column" as const, minHeight: 0, minWidth: 0 }
     : {
+        display: "flex",
         overflow: "hidden",
         flex: 1,
         minHeight: 0,
@@ -268,6 +269,7 @@ function AnalysisPanel() {
         </Tabs.List>
         <Tabs.Panel value="engines" style={panelStyle}>
           <ScrollArea
+            h="100%"
             offsetScrollbars
             onScrollPositionChange={() => document.dispatchEvent(new Event("analysis-panel-scroll"))}
             style={{ flex: 1, minHeight: 0 }}
