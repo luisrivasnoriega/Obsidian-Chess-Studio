@@ -464,9 +464,99 @@
       "summary": "{{total}} analyzed games ({{won}}W {{drawn}}D {{lost}}L)",
       "phaseCount": "{{total}} games",
       "phaseBreakdown": "{{won}}W · {{drawn}}D · {{lost}}L",
+      "phaseAccuracyChart": {
+        "title": "Average accuracy by game phase",
+        "series": "Average accuracy"
+      },
       "groupBy": {
         "label": "Group by",
-        "phase": "Game phase"
+        "phase": "Game phase",
+        "outcomeAccuracy": "Average accuracy by result",
+        "outcomeReason": "Win/Loss by ending type",
+        "forks": "Forks / double attacks",
+        "intensity": "By intensity"
+      },
+      "tactical": {
+        "label": "Tactical filter",
+        "none": "None",
+        "forks": "Forks / double attacks"
+      },
+      "forks": {
+        "title": "Forks / double attacks",
+        "subtitle": "Detected from analyzed games: found, missed, and allowed forks.",
+        "foundByPiece": "Found by piece",
+        "missedByPiece": "Not found by piece",
+        "allowedByPiece": "Allowed forks by piece",
+        "puzzleGeneration": {
+          "button": "Generate puzzles",
+          "all": "Generate all",
+          "byPiece": "Generate by {{piece}}",
+          "success": "{{count}} puzzles created from missed forks",
+          "failed": "Failed to generate puzzles from missed forks.",
+          "noPositions": "No missed fork positions found for the selected scope."
+        },
+        "details": {
+          "title": "Missed forks - {{piece}}",
+          "ply": "Ply",
+          "openAtPosition": "Open at position",
+          "engineComment": "Engine comment",
+          "engineCommentUnavailable": "Engine line not available for this row."
+        },
+        "foundVsMissed": {
+          "found": "Found",
+          "missed": "Not found"
+        },
+        "pieces": {
+          "pawn": "Pawn",
+          "knight": "Knight",
+          "bishop": "Bishop",
+          "rook": "Rook",
+          "queen": "Queen",
+          "king": "King"
+        }
+      },
+      "accuracyByResult": {
+        "title": "Average accuracy by result",
+        "subtitle": "Average engine accuracy split by wins, draws, and losses.",
+        "rows": {
+          "won": "Won",
+          "drawn": "Drawn",
+          "lost": "Lost"
+        }
+      },
+      "outcomeReason": {
+        "title": "Win/Loss by ending type",
+        "subtitle": "Breakdown of game results by how the game ended.",
+        "winsTitle": "Wins",
+        "lossesTitle": "Losses",
+        "drawsTitle": "Draws",
+        "rows": {
+          "abandon": "Abandon",
+          "checkmate": "Checkmate",
+          "timeout": "Time out",
+          "resignForfeit": "Resign / inactivity / forfeit",
+          "agreement": "Agreement",
+          "fiftyMoveRule": "50-move rule",
+          "timeoutVsInsufficientMaterial": "Timeout vs insufficient material",
+          "insufficientMaterial": "Insufficient material",
+          "repetition": "Repetition",
+          "stalemate": "Stalemate"
+        }
+      },
+      "intensity": {
+        "title": "By intensity",
+        "subtitle": "Classifies analyzed games by graph tension and swing patterns.",
+        "chartTitle": "Intensity split by result (W/D/L)",
+        "accuracyChartTitle": "Average accuracy by intensity",
+        "rows": {
+          "calm": "Calm",
+          "balanced": "Balanced",
+          "edge": "On edge",
+          "intense": "Intense",
+          "sudden": "Sudden",
+          "wild": "Wild",
+          "gifted": "Gifted"
+        }
       },
       "details": {
         "title": "Games",
@@ -1202,6 +1292,7 @@
       "onlyUnanalyzedGamesWithCounts": "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
       "allGamesReanalyze": "All games (re-analyze)",
       "analysisDepth": "Analysis Depth",
+      "analysisDepthHelp": "Milliseconds per move for the engine. Higher values usually improve accuracy but take longer.",
       "analyzingGames": "Analyzing {{current}} of {{total}} games...",
       "stopAnalysis": "Stop Analysis",
       "analysisSpeeds": {

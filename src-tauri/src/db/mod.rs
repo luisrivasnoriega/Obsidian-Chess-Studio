@@ -131,6 +131,31 @@ fn ensure_events_columns(conn: &mut SqliteConnection) -> std::result::Result<(),
     Ok(())
 }
 
+fn ensure_games_columns(conn: &mut SqliteConnection) -> std::result::Result<(), diesel::result::Error> {
+    #[derive(QueryableByName)]
+    struct ColumnInfo {
+        #[diesel(sql_type = Text, column_name = "name")]
+        name: String,
+    }
+
+    let columns: Vec<ColumnInfo> = match sql_query("PRAGMA table_info('Games')").load(conn) {
+        Ok(cols) => cols,
+        Err(_) => return Ok(()),
+    };
+
+    let has_column = |column_name: &str| -> bool {
+        columns
+            .iter()
+            .any(|c| c.name.eq_ignore_ascii_case(column_name))
+    };
+
+    if !has_column("Termination") {
+        conn.batch_execute("ALTER TABLE Games ADD COLUMN Termination TEXT")?;
+    }
+
+    Ok(())
+}
+
 const WHITE_PAWN: Piece = Piece {
     color: shakmaty::Color::White,
     role: shakmaty::Role::Pawn,
@@ -193,6 +218,7 @@ impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
             // Only apply performance PRAGMAs if database is already initialized
             if tables_exist {
                 let _ = ensure_events_columns(conn);
+                let _ = ensure_games_columns(conn);
                 conn.batch_execute(PRAGMA_PERFORMANCE)?;
             }
 
@@ -320,6 +346,7 @@ pub fn insert_to_db_with_event_override(
         event_id,
         fen: game.fen.as_deref(),
         result: game.result.as_deref(),
+        termination: game.termination.as_deref(),
         moves: game.moves.as_slice(),
         pawn_home: pawn_home as i32,
     };
@@ -352,6 +379,7 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
     // If a previous version created Players as WITHOUT ROWID, inserts that omit ID will fail.
     // Migrate it back to a rowid table in-place (keeps existing data).
     ensure_players_rowid_table(db)?;
+    let _ = ensure_games_columns(db);
 
     // Profile databases store additional computed/derived stats for analyzed games.
     // This is safe to run on any DB file (CREATE TABLE IF NOT EXISTS), but primarily targets profiles.
@@ -799,9 +827,13 @@ pub async fn save_profile_game_analysis_stats(
     struct GameRow {
         #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Result")]
         result: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "WhiteID")]
+        white_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "BlackID")]
+        black_id: i32,
     }
 
-    let row: Option<GameRow> = sql_query("SELECT Result FROM Games WHERE ID = ?1 LIMIT 1")
+    let row: Option<GameRow> = sql_query("SELECT Result, WhiteID, BlackID FROM Games WHERE ID = ?1 LIMIT 1")
         .bind::<diesel::sql_types::Integer, _>(game_id)
         .load::<GameRow>(db)?
         .into_iter()
@@ -814,7 +846,45 @@ pub async fn save_profile_game_analysis_stats(
     };
 
     let winner = analysis_stats::winner_from_result(row.result.as_deref());
-    let stats = analysis_stats::compute_game_analysis_stats(winner, &initial_fen, &moves, &analysis)?;
+    let mut stats = analysis_stats::compute_game_analysis_stats(winner, &initial_fen, &moves, &analysis)?;
+
+    // Store additional computed stats (forks, etc.) into the Extra JSON blob.
+    #[derive(QueryableByName)]
+    struct InfoRow {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Value")]
+        value: Option<String>,
+    }
+    let profile_player_id: Option<i32> =
+        sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
+            .load::<InfoRow>(db)
+            .ok()
+            .and_then(|v| v.into_iter().next().and_then(|r| r.value))
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .filter(|v| *v > 0);
+
+    if let Some(pid) = profile_player_id {
+        let profile_color = if row.white_id == pid {
+            Some(shakmaty::Color::White)
+        } else if row.black_id == pid {
+            Some(shakmaty::Color::Black)
+        } else {
+            None
+        };
+
+        if let Some(profile_color) = profile_color {
+            if let Ok(forks) = analysis_stats::compute_engine_validated_forks_extra(
+                &initial_fen,
+                &moves,
+                &analysis,
+                profile_color,
+            ) {
+                if let Some(obj) = stats.extra.as_object_mut() {
+                    obj.insert("forks".to_string(), forks);
+                }
+            }
+        }
+    }
+
     analysis_stats::upsert_game_analysis_stats(db, game_id, &stats)?;
 
     Ok(())
@@ -846,6 +916,222 @@ pub async fn get_profile_phase_outcomes(
     analysis_stats::compute_profile_phase_outcomes(app, db, &profile_id, &filters)
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_phase_accuracy(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::PhaseAccuracyBucket>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_phase_accuracy(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_outcome_accuracy(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<analysis_stats::OutcomeAccuracyStats> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_outcome_accuracy(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_fork_stats(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<analysis_stats::ForkStats> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_fork_stats(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn generate_profile_missed_fork_puzzles(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    piece: Option<String>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<analysis_stats::ForkPuzzleGeneration> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::generate_profile_missed_fork_puzzles(
+        app,
+        db,
+        &profile_id,
+        &filters,
+        piece.as_deref(),
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_missed_fork_games(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    piece: String,
+    limit: u32,
+    offset: u32,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::MissedForkGameRow>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::get_profile_missed_fork_games(
+        app,
+        db,
+        &profile_id,
+        &filters,
+        &piece,
+        limit,
+        offset,
+    )
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_outcome_reason_breakdown(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<analysis_stats::OutcomeReasonBreakdown> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_outcome_reason_breakdown(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_intensity_breakdown(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<analysis_stats::IntensityBreakdown> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_intensity_breakdown(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_intensity_outcomes(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::IntensityOutcomeBucket>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_intensity_outcomes(app, db, &profile_id, &filters)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_intensity_accuracy(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::IntensityAccuracyBucket>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::compute_profile_intensity_accuracy(app, db, &profile_id, &filters)
+}
+
 /// List analyzed games for a given phase bucket.
 ///
 /// This powers the Profiles -> Stats detail table when clicking a phase category.
@@ -872,6 +1158,33 @@ pub async fn get_profile_phase_games(
     ensure_db_initialized(db)?;
 
     analysis_stats::get_profile_phase_games(app, db, &profile_id, &filters, &phase, limit, offset)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_intensity_games(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    intensity: String,
+    limit: u32,
+    offset: u32,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<analysis_stats::IntensityGameRow>> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    analysis_stats::get_profile_intensity_games(
+        app, db, &profile_id, &filters, &intensity, limit, offset,
+    )
 }
 
 #[derive(Serialize, Type)]
@@ -2306,6 +2619,7 @@ pub async fn create_event_game(
         white_material,
         black_material,
         result: Some(result_str.as_str()),
+        termination: None,
         time_control: event_time_control.as_deref(),
         eco: None,
         ply_count: 0,

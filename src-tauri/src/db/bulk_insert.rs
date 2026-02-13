@@ -150,6 +150,7 @@ impl<'a> BulkInsertContext<'a> {
                     event_id,
                     fen: g.fen.as_deref(),
                     result: g.result.as_deref(),
+                    termination: g.termination.as_deref(),
                     moves: g.moves.as_slice(),
                     pawn_home: pawn_home as i32,
                 });

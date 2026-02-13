@@ -995,6 +995,7 @@
       "onlyUnanalyzedGamesWithCounts": "Solo partidas sin analizar ({{unanalyzed}} por analizar, {{analyzed}} ya analizadas)",
       "allGamesReanalyze": "Todas las partidas (re-analizar)",
       "analysisDepth": "Profundidad de Análisis",
+      "analysisDepthHelp": "Milisegundos por jugada del motor. Valores mas altos suelen mejorar la precision, pero tardan mas.",
       "analyzingGames": "Analizando {{current}} de {{total}} partidas...",
       "stopAnalysis": "Detener Análisis",
       "analysisSpeeds": {
@@ -2222,9 +2223,99 @@
       "summary": "{{total}} partidas analizadas ({{won}}G {{drawn}}T {{lost}}P)",
       "phaseCount": "{{total}} partidas",
       "phaseBreakdown": "{{won}}G · {{drawn}}T · {{lost}}P",
+      "phaseAccuracyChart": {
+        "title": "Precision media por fase de partida",
+        "series": "Precision media"
+      },
       "groupBy": {
         "label": "Agrupar por",
-        "phase": "Fase de la partida"
+        "phase": "Fase de la partida",
+        "outcomeAccuracy": "Precision media por resultado",
+        "outcomeReason": "Victoria/derrota por tipo de finalizacion",
+        "forks": "Forks / ataques dobles",
+        "intensity": "Por intensidad"
+      },
+      "tactical": {
+        "label": "Filtro tactico",
+        "none": "Ninguno",
+        "forks": "Forks / ataques dobles"
+      },
+      "forks": {
+        "title": "Forks / ataques dobles",
+        "subtitle": "Detectados en partidas analizadas: encontrados, no encontrados y permitidos.",
+        "foundByPiece": "Encontrados por pieza",
+        "missedByPiece": "No encontrados por pieza",
+        "allowedByPiece": "Forks permitidos por pieza",
+        "puzzleGeneration": {
+          "button": "Generar puzzles",
+          "all": "Generar todos",
+          "byPiece": "Generar por {{piece}}",
+          "success": "{{count}} puzzles creados desde forks no encontrados",
+          "failed": "No se pudieron generar puzzles desde forks no encontrados.",
+          "noPositions": "No se encontraron posiciones de forks no encontrados para el alcance seleccionado."
+        },
+        "details": {
+          "title": "Forks no encontrados - {{piece}}",
+          "ply": "Ply",
+          "openAtPosition": "Abrir en posicion",
+          "engineComment": "Comentario del motor",
+          "engineCommentUnavailable": "La linea del motor no esta disponible para esta fila."
+        },
+        "foundVsMissed": {
+          "found": "Encontrados",
+          "missed": "No encontrados"
+        },
+        "pieces": {
+          "pawn": "Peon",
+          "knight": "Caballo",
+          "bishop": "Alfil",
+          "rook": "Torre",
+          "queen": "Dama",
+          "king": "Rey"
+        }
+      },
+      "accuracyByResult": {
+        "title": "Precision media por resultado",
+        "subtitle": "Precision media del motor separada por victorias, tablas y derrotas.",
+        "rows": {
+          "won": "Ganadas",
+          "drawn": "Tablas",
+          "lost": "Perdidas"
+        }
+      },
+      "outcomeReason": {
+        "title": "Victoria/derrota por tipo de finalizacion",
+        "subtitle": "Desglose de resultados segun como termino la partida.",
+        "winsTitle": "Victorias",
+        "lossesTitle": "Derrotas",
+        "drawsTitle": "Tablas",
+        "rows": {
+          "abandon": "Abandono",
+          "checkmate": "Jaque mate",
+          "timeout": "Tiempo agotado",
+          "resignForfeit": "Desistimiento / inactividad / forfeit",
+          "agreement": "Acuerdo",
+          "fiftyMoveRule": "Regla de 50 movimientos",
+          "timeoutVsInsufficientMaterial": "Tiempo agotado contra material insuficiente",
+          "insufficientMaterial": "Material insuficiente",
+          "repetition": "Repeticion",
+          "stalemate": "Ahogado"
+        }
+      },
+      "intensity": {
+        "title": "Por intensidad",
+        "subtitle": "Clasifica partidas analizadas por tension y cambios de la grafica.",
+        "chartTitle": "Intensidad por resultado (G/T/P)",
+        "accuracyChartTitle": "Precision media por intensidad",
+        "rows": {
+          "calm": "Tranquila",
+          "balanced": "Equilibrada",
+          "edge": "Al limite",
+          "intense": "Intensa",
+          "sudden": "Subita",
+          "wild": "Salvaje",
+          "gifted": "Regalada"
+        }
       },
       "details": {
         "title": "Partidas",

@@ -352,6 +352,56 @@ pub async fn get_account_import_stats(
     })
 }
 
+async fn delete_short_games_for_account(
+    profile_id: String,
+    platform: String,
+    username: String,
+    min_plies: i32,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<i64> {
+    let db_path = profile_db_path(&app, &profile_id)?;
+    let account_key = account_key(&platform, &username);
+
+    let db = &mut super::get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions {
+            enable_foreign_keys: false,
+            busy_timeout: Some(Duration::from_secs(30)),
+            journal_mode: JournalMode::Off,
+        },
+    )?;
+
+    super::ensure_db_initialized(db)?;
+
+    #[derive(diesel::QueryableByName)]
+    struct PlayerRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "ID")]
+        id: i32,
+    }
+
+    let rows: Vec<PlayerRow> =
+        sql_query("SELECT ID FROM Players WHERE lower(Name) = lower(?1) LIMIT 1")
+            .bind::<diesel::sql_types::Text, _>(account_key)
+            .load(db)?;
+
+    let Some(player_id) = rows.first().map(|r| r.id) else {
+        return Ok(0);
+    };
+
+    let deleted = sql_query(
+        "DELETE FROM Games
+         WHERE (WhiteID = ?1 OR BlackID = ?1)
+           AND COALESCE(PlyCount, 0) < ?2",
+    )
+    .bind::<diesel::sql_types::Integer, _>(player_id)
+    .bind::<diesel::sql_types::Integer, _>(min_plies)
+    .execute(db)? as i64;
+
+    Ok(deleted)
+}
+
 async fn reqwest_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(5_000))
@@ -2194,6 +2244,16 @@ pub async fn sync_account_games_to_profile_db(
 
         // Best-effort dedupe once at the end (much faster than per-batch)
         let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
+        // Profile account sync rule: drop ultra-short games (< 10 plies).
+        let _ = delete_short_games_for_account(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            10,
+            state.clone(),
+            app.clone(),
+        )
+        .await;
 
         let is_complete = sync_error.is_none();
         
@@ -2517,6 +2577,16 @@ pub async fn sync_account_games_to_profile_db(
 
         // Best-effort dedupe once at the end
         let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
+        // Profile account sync rule: drop ultra-short games (< 10 plies).
+        let _ = delete_short_games_for_account(
+            profile_id.clone(),
+            platform.clone(),
+            username.clone(),
+            10,
+            state.clone(),
+            app.clone(),
+        )
+        .await;
 
         // Calculate imported games count
         let stats_after = get_account_import_stats(

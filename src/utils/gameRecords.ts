@@ -109,7 +109,9 @@ export async function getRecentGames(profileId: string | null, limit = 20): Prom
       profileUsernames: [],
     });
     if (res.status !== "ok") return [];
-    return res.data.rows.map((row) => gamesHistoryRowToGameRecord(row, profileId));
+    return res.data.rows
+      .filter((row) => row.kind === "local")
+      .map((row) => gamesHistoryRowToGameRecord(row, profileId));
   } catch {
     return [];
   }

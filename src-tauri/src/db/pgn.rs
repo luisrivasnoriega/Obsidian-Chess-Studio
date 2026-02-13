@@ -222,6 +222,7 @@ pub struct TempGame {
     pub black_name: Option<String>,
     pub black_elo: Option<i32>,
     pub result: Option<String>,
+    pub termination: Option<String>,
     pub time_control: Option<String>,
     pub eco: Option<String>,
     pub fen: Option<String>,
@@ -287,6 +288,8 @@ impl Visitor for Importer {
             self.game.event_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"Result" {
             self.game.result = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+        } else if key == b"Termination" {
+            self.game.termination = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"FEN" {
             if value.as_bytes() == b"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" {
                 self.game.fen = None;

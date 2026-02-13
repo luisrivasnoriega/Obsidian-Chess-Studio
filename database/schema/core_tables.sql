@@ -48,6 +48,7 @@ CREATE TABLE Games (
     WhiteMaterial INTEGER,
     BlackMaterial INTEGER,
     Result INTEGER,
+    Termination TEXT,
     TimeControl TEXT,
     ECO TEXT,
     PlyCount INTEGER,

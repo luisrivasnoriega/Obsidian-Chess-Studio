@@ -3009,6 +3009,7 @@ mod tests {
             event_id,
             fen: None,
             result: Some("1/2-1/2"),
+            termination: None,
             moves: moves.as_slice(),
             pawn_home: 0b1111111111111111,
         };

@@ -286,6 +286,78 @@ async getProfilePhaseOutcomes(profileId: string, filters: PlayerStatsFilters) : 
     else return { status: "error", error: e  as any };
 }
 },
+async getProfilePhaseAccuracy(profileId: string, filters: PlayerStatsFilters) : Promise<Result<PhaseAccuracyBucket[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_phase_accuracy", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileOutcomeAccuracy(profileId: string, filters: PlayerStatsFilters) : Promise<Result<OutcomeAccuracyStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_outcome_accuracy", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileForkStats(profileId: string, filters: PlayerStatsFilters) : Promise<Result<ForkStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_fork_stats", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async generateProfileMissedForkPuzzles(profileId: string, filters: PlayerStatsFilters, piece: string | null) : Promise<Result<ForkPuzzleGeneration, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_profile_missed_fork_puzzles", { profileId, filters, piece }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileMissedForkGames(profileId: string, filters: PlayerStatsFilters, piece: string, limit: number, offset: number) : Promise<Result<MissedForkGameRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_missed_fork_games", { profileId, filters, piece, limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileOutcomeReasonBreakdown(profileId: string, filters: PlayerStatsFilters) : Promise<Result<OutcomeReasonBreakdown, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_outcome_reason_breakdown", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileIntensityBreakdown(profileId: string, filters: PlayerStatsFilters) : Promise<Result<IntensityBreakdown, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_intensity_breakdown", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileIntensityOutcomes(profileId: string, filters: PlayerStatsFilters) : Promise<Result<IntensityOutcomeBucket[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_intensity_outcomes", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileIntensityAccuracy(profileId: string, filters: PlayerStatsFilters) : Promise<Result<IntensityAccuracyBucket[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_intensity_accuracy", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * List analyzed games for a given phase bucket.
  * 
@@ -294,6 +366,14 @@ async getProfilePhaseOutcomes(profileId: string, filters: PlayerStatsFilters) : 
 async getProfilePhaseGames(profileId: string, filters: PlayerStatsFilters, phase: string, limit: number, offset: number) : Promise<Result<PhaseGameRow[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_profile_phase_games", { profileId, filters, phase, limit, offset }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileIntensityGames(profileId: string, filters: PlayerStatsFilters, intensity: string, limit: number, offset: number) : Promise<Result<IntensityGameRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_intensity_games", { profileId, filters, intensity, limit, offset }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1373,6 +1453,8 @@ export type EngineRequestDto = { name: string; path: string; extraOptions?: Engi
 export type Event = { id: number; name: string | null; event_type?: string | null; location?: string | null; start_date?: string | null; end_date?: string | null; time_control?: string | null }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
+export type ForkPuzzleGeneration = { count: number; pgn: string }
+export type ForkStats = { foundCount: number; missedCount: number; foundPawnCount: number; foundKnightCount: number; foundBishopCount: number; foundRookCount: number; foundQueenCount: number; foundKingCount: number; missedPawnCount: number; missedKnightCount: number; missedBishopCount: number; missedRookCount: number; missedQueenCount: number; missedKingCount: number; allowedPawnCount: number; allowedKnightCount: number; allowedBishopCount: number; allowedRookCount: number; allowedQueenCount: number; allowedKingCount: number }
 export type GameOutcome = "Won" | "Drawn" | "Lost"
 export type GameQueryJs = { options?: QueryOptions<GameSort> | null; 
 /**
@@ -1425,6 +1507,10 @@ export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
  * Engine search mode (depth, time, nodes, etc).
  */
 export type GoMode = { t: "PlayersTime"; c: PlayersTime } | { t: "Depth"; c: number } | { t: "Time"; c: number } | { t: "Nodes"; c: number } | { t: "Infinite" }
+export type IntensityAccuracyBucket = { intensity: string; avgAccuracy: number | null; count: number }
+export type IntensityBreakdown = { calmCount: number; balancedCount: number; edgeCount: number; intenseCount: number; suddenCount: number; wildCount: number; giftedCount: number }
+export type IntensityGameRow = { gameId: number; date: string | null; site: string; white: string; black: string; result: string | null; intensity: string }
+export type IntensityOutcomeBucket = { intensity: string; won: number; drawn: number; lost: number }
 /**
  * Entry for one Lc0 neural network file (e.g. maia-1100.pb.gz).
  */
@@ -1482,6 +1568,7 @@ ourColor: PlayerColor;
  * Starting position (FEN) or "startpos".
  */
 startFen: string }
+export type MissedForkGameRow = { gameId: number; date: string | null; site: string; white: string; black: string; result: string | null; ply: number; piece: string; engineLineComment: string | null }
 export type MonthData = { name: string; count: bigint }
 /**
  * Analysis result for a single move/position.
@@ -1510,6 +1597,8 @@ export type OpeningStats = { name: string; games: bigint; won: bigint; draw: big
 export type OpeningTagOption = { value: string; label: string }
 export type OutOpening = { name: string; fen: string }
 export type Outcome = "1-0" | "0-1" | "1/2-1/2" | "*"
+export type OutcomeAccuracyStats = { wonAvgAccuracy: number | null; drawnAvgAccuracy: number | null; lostAvgAccuracy: number | null; wonCount: number; drawnCount: number; lostCount: number }
+export type OutcomeReasonBreakdown = { wonCheckmateCount: number; wonTimeoutCount: number; wonAbandonCount: number; wonResignForfeitCount: number; lostCheckmateCount: number; lostTimeoutCount: number; lostAbandonCount: number; lostResignForfeitCount: number; drawnAgreementCount: number; drawnFiftyMoveRuleCount: number; drawnTimeoutVsInsufficientMaterialCount: number; drawnInsufficientMaterialCount: number; drawnRepetitionCount: number; drawnStalemateCount: number }
 export type PackageManagerResult = { success: boolean; stdout: string; stderr: string }
 export type PawnStructureGame = { game_id: number; white: string; black: string; white_elo: number | null; black_elo: number | null; result: string; fen: string }
 export type PawnStructureOptions = { playerIds: number[]; colorFilter: string; platformFilter: string; timeControlFilter: string; opponentEloBucket: string; 
@@ -1529,6 +1618,7 @@ structureFilters?: string[];
  */
 structureNameFilters?: string[] }
 export type PawnStructureStat = { structure: string; frequency: number; win_rate: number; sample_fen: string | null; games: PawnStructureGame[] }
+export type PhaseAccuracyBucket = { phase: string; avgAccuracy: number | null; count: number }
 export type PhaseGameRow = { gameId: number; date: string | null; site: string; white: string; black: string; result: string | null; winPhase: string }
 export type PhaseOutcomeBucket = { phase: string; won: number; drawn: number; lost: number }
 /**

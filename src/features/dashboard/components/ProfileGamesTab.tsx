@@ -252,6 +252,13 @@ export function ProfileGamesTab({
   const [isLoadingOpponentOptions, setIsLoadingOpponentOptions] = useState(false);
   const [debouncedOpponentFilter] = useDebouncedValue(opponentFilter, 250);
   const selectedOpponentRef = useRef<string | null>(null);
+  const [analyzeAllTypeCounts, setAnalyzeAllTypeCounts] = useState<{
+    all: number;
+    local: number;
+    chesscom: number;
+    lichess: number;
+    chessbase: number;
+  } | null>(null);
 
   useEffect(() => {
     const query = debouncedOpponentFilter.trim();
@@ -337,6 +344,53 @@ export function ProfileGamesTab({
     selectedOpponentId,
   ]);
 
+  useEffect(() => {
+    if (!profileId) {
+      setAnalyzeAllTypeCounts(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const targets = ["all", "local", "chesscom", "lichess", "chessbase"] as const;
+        const responses = await Promise.all(
+          targets.map((target) =>
+            invoke<{ total: number }>("dashboard_get_analyze_all_counts", {
+              req: {
+                profileId,
+                profileUsernames,
+                gameHistoryLimit,
+                eventFilterId,
+                selectedOpponentId,
+                timeControlCategory,
+                target,
+              },
+            }),
+          ),
+        );
+
+        if (cancelled) return;
+        setAnalyzeAllTypeCounts({
+          all: Math.max(0, responses[0]?.total ?? 0),
+          local: Math.max(0, responses[1]?.total ?? 0),
+          chesscom: Math.max(0, responses[2]?.total ?? 0),
+          lichess: Math.max(0, responses[3]?.total ?? 0),
+          chessbase: Math.max(0, responses[4]?.total ?? 0),
+        });
+      } catch {
+        if (!cancelled) {
+          setAnalyzeAllTypeCounts(null);
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, profileUsernames, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
+
   const handleSort = (field: "elo" | "date") => {
     if (sortBy === field) setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     else {
@@ -349,16 +403,21 @@ export function ProfileGamesTab({
   const totalPages = Math.ceil(totalCount / itemsPerPage);
   const now = useMemo(() => Date.now(), []);
   const analyzeAllOptions = useMemo(() => {
-    const chessbaseCount = Math.max(0, totalCount - (localGames.length + chessComGames.length + lichessGames.length));
-    const total = localGames.length + chessComGames.length + lichessGames.length + chessbaseCount;
+    const total = analyzeAllTypeCounts?.all ?? localGames.length + chessComGames.length + lichessGames.length;
+    const localCount = analyzeAllTypeCounts?.local ?? localGames.length;
+    const chesscomCount = analyzeAllTypeCounts?.chesscom ?? chessComGames.length;
+    const lichessCount = analyzeAllTypeCounts?.lichess ?? lichessGames.length;
+    const chessbaseCount =
+      analyzeAllTypeCounts?.chessbase ??
+      Math.max(0, totalCount - (localGames.length + chessComGames.length + lichessGames.length));
     return [
       { type: "all" as const, label: "All", count: total },
-      { type: "local" as const, label: "Local", count: localGames.length },
-      { type: "chesscom" as const, label: "Chess.com", count: chessComGames.length },
-      { type: "lichess" as const, label: "Lichess", count: lichessGames.length },
+      { type: "local" as const, label: "Local", count: localCount },
+      { type: "chesscom" as const, label: "Chess.com", count: chesscomCount },
+      { type: "lichess" as const, label: "Lichess", count: lichessCount },
       { type: "chessbase" as const, label: t("chessbase.title"), count: chessbaseCount },
     ];
-  }, [localGames.length, chessComGames.length, lichessGames.length, t, totalCount]);
+  }, [analyzeAllTypeCounts, localGames.length, chessComGames.length, lichessGames.length, t, totalCount]);
 
   const handleOpenGame = async (url: string | null) => {
     if (!url) return;

@@ -895,7 +895,11 @@ pub async fn dashboard_get_analyze_all_counts(
     // 2) Load online games if needed (single query; later split by platform).
     let include_online = matches!(
         req.target,
-        AnalyzeAllTarget::Chesscom | AnalyzeAllTarget::Lichess | AnalyzeAllTarget::Chessbase | AnalyzeAllTarget::All
+        AnalyzeAllTarget::Local
+            | AnalyzeAllTarget::Chesscom
+            | AnalyzeAllTarget::Lichess
+            | AnalyzeAllTarget::Chessbase
+            | AnalyzeAllTarget::All
     );
     if include_online {
         let db_path = parse_profile_db_path(&app, &profile_id)?;
@@ -923,7 +927,16 @@ pub async fn dashboard_get_analyze_all_counts(
             let mut external_url: Option<String> = None;
 
             if let Some(site) = site_tag.as_deref() {
-                if let Some(id) = extract_lichess_id_from_site(site) {
+                let site_lower = site.to_lowercase();
+                if site_lower.trim() == "local" {
+                    kind = Some(GamesHistoryKind::Local);
+                    external_key = g.id.to_string();
+                    external_url = None;
+                } else if site_lower.contains("lichess.org/broadcast/") {
+                    kind = Some(GamesHistoryKind::Lichess);
+                    external_key = g.id.to_string();
+                    external_url = normalize_https_url(site);
+                } else if let Some(id) = extract_lichess_id_from_site(site) {
                     kind = Some(GamesHistoryKind::Lichess);
                     external_key = id.clone();
                     external_url = Some(format!("https://lichess.org/{}", id));
@@ -931,12 +944,20 @@ pub async fn dashboard_get_analyze_all_counts(
                     kind = Some(GamesHistoryKind::Chesscom);
                     external_key = url.clone();
                     external_url = Some(url);
+                } else if site_lower.contains("chessbase.com") {
+                    kind = Some(GamesHistoryKind::Chessbase);
+                    external_key = g.id.to_string();
+                    external_url = None;
                 }
             }
 
             if kind.is_none() {
                 let site_lower = g.site.to_lowercase();
-                if site_lower.contains("lichess.org") {
+                if site_lower.trim() == "local" {
+                    kind = Some(GamesHistoryKind::Local);
+                    external_key = g.id.to_string();
+                    external_url = None;
+                } else if site_lower.contains("lichess.org") {
                     kind = Some(GamesHistoryKind::Lichess);
                     if let Some(id) = extract_lichess_id_from_site(&g.site) {
                         external_key = id.clone();
@@ -953,6 +974,10 @@ pub async fn dashboard_get_analyze_all_counts(
                         external_key = format!("https://www.chess.com/game/live/{}", g.id);
                         external_url = Some(external_key.clone());
                     }
+                } else if site_lower.contains("chessbase.com") {
+                    kind = Some(GamesHistoryKind::Chessbase);
+                    external_key = g.id.to_string();
+                    external_url = None;
                 }
             }
 

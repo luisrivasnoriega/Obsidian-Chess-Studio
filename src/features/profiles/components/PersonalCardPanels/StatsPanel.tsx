@@ -1,3 +1,4 @@
+import { BarChart } from "@mantine/charts";
 import {
   Box,
   Button,
@@ -5,6 +6,7 @@ import {
   Divider,
   Flex,
   Group,
+  Menu,
   Modal,
   Progress,
   Select,
@@ -23,10 +25,29 @@ import type { NormalizedGame, PlayerGameInfo } from "@/bindings";
 import { commands } from "@/bindings";
 import type { EloBucket } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
+import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
+import { getDocumentDir } from "@/utils/documentDir";
+import { createFile } from "@/utils/files";
+import { formatDateToPGN } from "@/utils/format";
 import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
 import { getProfileDbPath } from "@/utils/profileDb";
+import {
+  type ForkPiece,
+  type ForkStats,
+  generateProfileMissedForkPuzzles,
+  getProfileForkStats,
+  getProfileMissedForkGames,
+  type MissedForkGameRow,
+} from "@/utils/profileForkStats";
+import { getProfileIntensityAccuracy, type IntensityAccuracyBucket } from "@/utils/profileIntensityAccuracy";
+import { getProfileIntensityBreakdown, type IntensityBreakdown } from "@/utils/profileIntensityBreakdown";
+import { getProfileIntensityGames, type IntensityGameRow, type IntensityKey } from "@/utils/profileIntensityGames";
+import { getProfileIntensityOutcomes, type IntensityOutcomeBucket } from "@/utils/profileIntensityOutcomes";
+import { getProfileOutcomeAccuracy, type OutcomeAccuracyStats } from "@/utils/profileOutcomeAccuracy";
+import { getProfileOutcomeReasonBreakdown, type OutcomeReasonBreakdown } from "@/utils/profileOutcomeReasons";
+import { getProfilePhaseAccuracy, type PhaseAccuracyBucket } from "@/utils/profilePhaseAccuracy";
 import { getProfilePhaseGames, type PhaseGameRow } from "@/utils/profilePhaseGames";
 import { getProfilePhaseOutcomes, type PhaseOutcomeBucket } from "@/utils/profilePhaseOutcomes";
 import { createTab } from "@/utils/tabs";
@@ -35,9 +56,11 @@ import { DateRange } from "./DateRangeTabs";
 import { PanelLoadGate } from "./PanelLoadGate";
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 
-type StatGroupBy = "phase";
+type StatGroupBy = "phase" | "outcomeAccuracy" | "outcomeReason" | "intensity";
+type TacticalFilter = "none" | "forks";
 
 type PhaseKey = "opening" | "middlegame" | "endgame";
+const FORK_PIECES: ForkPiece[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
 
 function createPgnFromNormalizedGame(game: NormalizedGame): string {
   const resultTag = game.result || "*";
@@ -70,7 +93,6 @@ function createPgnFromNormalizedGame(game: NormalizedGame): string {
   pgn += movetext;
   return pgn;
 }
-
 function PhaseBar({ won, drawn, lost }: { won: number; drawn: number; lost: number }) {
   const total = won + drawn + lost;
   if (total <= 0) {
@@ -107,6 +129,27 @@ function phaseLabel(t: (key: string, opts?: any) => string, phase: PhaseKey) {
     case "endgame":
       return t("common.endgame", { defaultValue: "Endgame" });
   }
+}
+
+function formatAccuracy(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+  return `${value.toFixed(1)}%`;
+}
+
+type MainlineNode = { children: MainlineNode[] };
+
+function mainlinePathFromPly(root: MainlineNode, ply: number): number[] {
+  const path: number[] = [];
+  let node: MainlineNode | undefined = root;
+  const safePly = Math.max(0, Math.floor(ply));
+  for (let i = 0; i < safePly; i++) {
+    if (!node?.children?.length) break;
+    path.push(0);
+    node = node.children[0];
+  }
+  return path;
 }
 
 export default function StatsPanel({
@@ -151,8 +194,13 @@ export default function StatsPanel({
   const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.AllTime);
   const [groupBy, setGroupBy] = useState<StatGroupBy>("phase");
+  const [tacticalFilter, setTacticalFilter] = useState<TacticalFilter>("none");
   const [detailsPhase, setDetailsPhase] = useState<PhaseKey | null>(null);
+  const [detailsIntensity, setDetailsIntensity] = useState<IntensityKey | null>(null);
   const [detailsPage, setDetailsPage] = useState(1);
+  const [forkDetailsPiece, setForkDetailsPiece] = useState<ForkPiece | null>(null);
+  const [forkDetailsPage, setForkDetailsPage] = useState(1);
+  const [isGeneratingForkPuzzles, setIsGeneratingForkPuzzles] = useState(false);
 
   const { data: sidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
@@ -184,7 +232,7 @@ export default function StatsPanel({
       filters.time_control,
       filters.opponent_elo_bucket,
       filters.date_range,
-      groupBy,
+      tacticalFilter,
     ],
     queryFn: async () => {
       if (!profileId) return [];
@@ -194,19 +242,268 @@ export default function StatsPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
 
-  const isAnyLoading = isLoading || isLoadingBuckets || isFetchingBuckets;
+  const {
+    data: phaseAccuracy = [],
+    isLoading: isLoadingPhaseAccuracy,
+    isFetching: isFetchingPhaseAccuracy,
+  } = useQuery<PhaseAccuracyBucket[]>({
+    queryKey: [
+      "profilePhaseAccuracy",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return [];
+      if (groupBy !== "phase") return [];
+      return await getProfilePhaseAccuracy({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "phase",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: outcomeAccuracy,
+    isLoading: isLoadingOutcomeAccuracy,
+    isFetching: isFetchingOutcomeAccuracy,
+  } = useQuery<OutcomeAccuracyStats | null>({
+    queryKey: [
+      "profileOutcomeAccuracy",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return await getProfileOutcomeAccuracy({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "outcomeAccuracy",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: forkStats,
+    isLoading: isLoadingForkStats,
+    isFetching: isFetchingForkStats,
+  } = useQuery<ForkStats | null>({
+    queryKey: [
+      "profileForkStats",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return await getProfileForkStats({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter === "forks",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: outcomeReasonBreakdown,
+    isLoading: isLoadingOutcomeReasonBreakdown,
+    isFetching: isFetchingOutcomeReasonBreakdown,
+  } = useQuery<OutcomeReasonBreakdown | null>({
+    queryKey: [
+      "profileOutcomeReasonBreakdown",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return await getProfileOutcomeReasonBreakdown({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "outcomeReason",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: intensityBreakdown,
+    isLoading: isLoadingIntensityBreakdown,
+    isFetching: isFetchingIntensityBreakdown,
+  } = useQuery<IntensityBreakdown | null>({
+    queryKey: [
+      "profileIntensityBreakdown",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return await getProfileIntensityBreakdown({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: intensityOutcomes = [],
+    isLoading: isLoadingIntensityOutcomes,
+    isFetching: isFetchingIntensityOutcomes,
+  } = useQuery<IntensityOutcomeBucket[]>({
+    queryKey: [
+      "profileIntensityOutcomes",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return [];
+      return await getProfileIntensityOutcomes({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: intensityAccuracy = [],
+    isLoading: isLoadingIntensityAccuracy,
+    isFetching: isFetchingIntensityAccuracy,
+  } = useQuery<IntensityAccuracyBucket[]>({
+    queryKey: [
+      "profileIntensityAccuracy",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!profileId) return [];
+      return await getProfileIntensityAccuracy({ profileId, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const isAnyLoading =
+    isLoading ||
+    (tacticalFilter === "forks"
+      ? isLoadingForkStats || isFetchingForkStats
+      : (groupBy === "phase" &&
+          (isLoadingBuckets || isFetchingBuckets || isLoadingPhaseAccuracy || isFetchingPhaseAccuracy)) ||
+        (groupBy === "outcomeAccuracy" && (isLoadingOutcomeAccuracy || isFetchingOutcomeAccuracy)) ||
+        (groupBy === "outcomeReason" && (isLoadingOutcomeReasonBreakdown || isFetchingOutcomeReasonBreakdown)) ||
+        (groupBy === "intensity" &&
+          (isLoadingIntensityBreakdown ||
+            isFetchingIntensityBreakdown ||
+            isLoadingIntensityOutcomes ||
+            isFetchingIntensityOutcomes ||
+            isLoadingIntensityAccuracy ||
+            isFetchingIntensityAccuracy)));
   const hasDataContext = !!info;
-  const hasPanelData = buckets.some((b) => (b.won ?? 0) + (b.drawn ?? 0) + (b.lost ?? 0) > 0);
+  const hasPanelData =
+    tacticalFilter === "forks"
+      ? true
+      : groupBy === "phase"
+        ? buckets.some((b) => (b.won ?? 0) + (b.drawn ?? 0) + (b.lost ?? 0) > 0)
+        : groupBy === "outcomeAccuracy"
+          ? (outcomeAccuracy?.wonCount ?? 0) + (outcomeAccuracy?.drawnCount ?? 0) + (outcomeAccuracy?.lostCount ?? 0) >
+            0
+          : groupBy === "outcomeReason"
+            ? true
+            : (intensityBreakdown?.calmCount ?? 0) +
+                (intensityBreakdown?.balancedCount ?? 0) +
+                (intensityBreakdown?.edgeCount ?? 0) +
+                (intensityBreakdown?.intenseCount ?? 0) +
+                (intensityBreakdown?.suddenCount ?? 0) +
+                (intensityBreakdown?.wildCount ?? 0) +
+                (intensityBreakdown?.giftedCount ?? 0) >
+              0;
 
   const visiblePlatforms = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
   const groupByOptions = useMemo(() => {
-    return [{ value: "phase", label: t("profiles.stats.groupBy.phase", { defaultValue: "Game phase" }) }];
+    return [
+      { value: "phase", label: t("profiles.stats.groupBy.phase", { defaultValue: "Game phase" }) },
+      {
+        value: "outcomeAccuracy",
+        label: t("profiles.stats.groupBy.outcomeAccuracy", { defaultValue: "Average accuracy by result" }),
+      },
+      {
+        value: "outcomeReason",
+        label: t("profiles.stats.groupBy.outcomeReason", { defaultValue: "Win/Loss by ending type" }),
+      },
+      {
+        value: "intensity",
+        label: t("profiles.stats.groupBy.intensity", { defaultValue: "By intensity" }),
+      },
+    ];
+  }, [t]);
+
+  const tacticalFilterOptions = useMemo(() => {
+    return [
+      { value: "none", label: t("profiles.stats.tactical.none", { defaultValue: "None" }) },
+      { value: "forks", label: t("profiles.stats.tactical.forks", { defaultValue: "Forks / double attacks" }) },
+    ];
   }, [t]);
 
   const phaseOrder: PhaseKey[] = ["opening", "middlegame", "endgame"];
@@ -238,9 +535,120 @@ export default function StatsPanel({
     }
     return { won, drawn, lost, total: won + drawn + lost };
   }, [byPhase]);
+  const phaseAccuracyChartData = useMemo(() => {
+    const byKey = new Map(phaseAccuracy.map((p) => [p.phase, p]));
+    return (["opening", "middlegame", "endgame"] as const).map((phase) => {
+      const row = byKey.get(phase);
+      return {
+        phase: phaseLabel(t, phase),
+        avgAccuracy: row?.avgAccuracy ?? 0,
+        count: row?.count ?? 0,
+      };
+    });
+  }, [phaseAccuracy, t]);
 
   const detailsLimit = 50;
   const detailsOffset = (detailsPage - 1) * detailsLimit;
+  const intensityLabelByKey = useMemo(
+    (): Record<IntensityKey, string> => ({
+      calm: t("profiles.stats.intensity.rows.calm", { defaultValue: "Calm" }),
+      balanced: t("profiles.stats.intensity.rows.balanced", { defaultValue: "Balanced" }),
+      edge: t("profiles.stats.intensity.rows.edge", { defaultValue: "On edge" }),
+      intense: t("profiles.stats.intensity.rows.intense", { defaultValue: "Intense" }),
+      sudden: t("profiles.stats.intensity.rows.sudden", { defaultValue: "Sudden" }),
+      wild: t("profiles.stats.intensity.rows.wild", { defaultValue: "Wild" }),
+      gifted: t("profiles.stats.intensity.rows.gifted", { defaultValue: "Gifted" }),
+    }),
+    [t],
+  );
+  const intensityKeyByLabel = useMemo(() => {
+    return Object.fromEntries(
+      Object.entries(intensityLabelByKey).map(([key, label]) => [label, key as IntensityKey]),
+    ) as Record<string, IntensityKey>;
+  }, [intensityLabelByKey]);
+  const intensityChartData = useMemo(() => {
+    return intensityOutcomes.map((row) => ({
+      intensityKey: row.intensity,
+      intensity: intensityLabelByKey[row.intensity] ?? row.intensity,
+      won: row.won ?? 0,
+      drawn: row.drawn ?? 0,
+      lost: row.lost ?? 0,
+    }));
+  }, [intensityOutcomes, intensityLabelByKey]);
+  const intensityAccuracyChartData = useMemo(() => {
+    return intensityAccuracy.map((row) => ({
+      intensity: intensityLabelByKey[row.intensity] ?? row.intensity,
+      avgAccuracy: row.avgAccuracy ?? 0,
+      count: row.count ?? 0,
+    }));
+  }, [intensityAccuracy, intensityLabelByKey]);
+
+  const generateMissedForkPuzzles = async (piece: ForkPiece | "all") => {
+    if (!profileId || isGeneratingForkPuzzles) {
+      return;
+    }
+
+    setIsGeneratingForkPuzzles(true);
+    try {
+      const result = await generateProfileMissedForkPuzzles({
+        profileId,
+        filters,
+        piece: piece === "all" ? null : piece,
+      });
+
+      if ((result.count ?? 0) <= 0 || !result.pgn?.trim()) {
+        notifications.show({
+          title: t("common.puzzle", { defaultValue: "Puzzle" }),
+          message: t("profiles.stats.forks.puzzleGeneration.noPositions", {
+            defaultValue: "No missed fork positions found for the selected scope.",
+          }),
+          color: "yellow",
+        });
+        return;
+      }
+
+      const documentDir = await getDocumentDir();
+      const dayStamp = formatDateToPGN(new Date()) ?? "undated";
+      const fileScope = piece === "all" ? "all" : piece;
+      const filename = `missed-forks-${fileScope}-${dayStamp}-${Date.now()}`;
+      const file = await createFile({
+        filename,
+        filetype: "puzzle",
+        pgn: result.pgn,
+        tags: ["forks", "missed-forks", piece === "all" ? "scope:all" : `piece:${piece}`],
+        dir: documentDir,
+      });
+
+      if (file.isErr) {
+        throw file.error;
+      }
+
+      try {
+        window.dispatchEvent(new Event("puzzles:updated"));
+      } catch {
+        // no-op
+      }
+
+      notifications.show({
+        title: t("common.save"),
+        message: t("profiles.stats.forks.puzzleGeneration.success", {
+          defaultValue: "{{count}} puzzles created from missed forks",
+          count: result.count ?? 0,
+        }),
+        color: "green",
+      });
+    } catch {
+      notifications.show({
+        title: t("common.error"),
+        message: t("profiles.stats.forks.puzzleGeneration.failed", {
+          defaultValue: "Failed to generate puzzles from missed forks.",
+        }),
+        color: "red",
+      });
+    } finally {
+      setIsGeneratingForkPuzzles(false);
+    }
+  };
 
   const {
     data: detailGames = [],
@@ -276,9 +684,85 @@ export default function StatsPanel({
     refetchOnReconnect: false,
   });
 
-  const hasNextPage = detailGames.length === detailsLimit;
+  const {
+    data: intensityDetailGames = [],
+    isFetching: isFetchingIntensityDetails,
+    isLoading: isLoadingIntensityDetails,
+    error: intensityDetailsError,
+  } = useQuery<IntensityGameRow[]>({
+    queryKey: [
+      "profileIntensityGames",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      detailsIntensity ?? null,
+      detailsPage,
+    ],
+    queryFn: async () => {
+      if (!profileId || !detailsIntensity) return [];
+      return await getProfileIntensityGames({
+        profileId,
+        filters,
+        intensity: detailsIntensity,
+        limit: detailsLimit,
+        offset: detailsOffset,
+      });
+    },
+    enabled: !!profileId && !!detailsIntensity && statsSig.games > 0,
+    retry: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
 
-  const openGame = async (gameId: number) => {
+  const forkDetailsLimit = 50;
+  const forkDetailsOffset = (forkDetailsPage - 1) * forkDetailsLimit;
+  const {
+    data: missedForkDetailGames = [],
+    isFetching: isFetchingForkDetails,
+    isLoading: isLoadingForkDetails,
+    error: forkDetailsError,
+  } = useQuery<MissedForkGameRow[]>({
+    queryKey: [
+      "profileMissedForkGames",
+      profileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      forkDetailsPiece ?? null,
+      forkDetailsPage,
+    ],
+    queryFn: async () => {
+      if (!profileId || !forkDetailsPiece) return [];
+      return await getProfileMissedForkGames({
+        profileId,
+        filters,
+        piece: forkDetailsPiece,
+        limit: forkDetailsLimit,
+        offset: forkDetailsOffset,
+      });
+    },
+    enabled: !!profileId && !!forkDetailsPiece && statsSig.games > 0,
+    retry: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const activeDetailGames: Array<PhaseGameRow | IntensityGameRow> =
+    groupBy === "intensity" ? intensityDetailGames : detailGames;
+  const isLoadingActiveDetails = groupBy === "intensity" ? isLoadingIntensityDetails : isLoadingDetails;
+  const isFetchingActiveDetails = groupBy === "intensity" ? isFetchingIntensityDetails : isFetchingDetails;
+  const activeDetailsError = groupBy === "intensity" ? intensityDetailsError : detailsError;
+
+  const hasNextPage = activeDetailGames.length === detailsLimit;
+
+  const openGame = async (gameId: number, ply?: number) => {
     if (!profileId) return;
 
     try {
@@ -287,6 +771,7 @@ export default function StatsPanel({
       const game = unwrap(await commands.getGame(dbPath, gameId));
       const pgn = createPgnFromNormalizedGame(game);
       const tree = await parsePGN(pgn);
+      const position = typeof ply === "number" ? mainlinePathFromPly(tree.root, ply) : undefined;
 
       await createTab({
         tab: {
@@ -297,6 +782,7 @@ export default function StatsPanel({
         setActiveTab,
         pgn,
         headers: tree.headers,
+        position,
         autoActivate: false,
       });
 
@@ -355,14 +841,24 @@ export default function StatsPanel({
           onDateRangeChange={setDateRange}
           isLoading={isAnyLoading}
           extraFilters={
-            <Select
-              label={t("profiles.stats.groupBy.label", { defaultValue: "Group by" })}
-              data={groupByOptions}
-              value={groupBy}
-              onChange={(v) => setGroupBy((v as StatGroupBy) || "phase")}
-              clearable={false}
-              size="xs"
-            />
+            <Stack gap="xs">
+              <Select
+                label={t("profiles.stats.groupBy.label", { defaultValue: "Group by" })}
+                data={groupByOptions}
+                value={groupBy}
+                onChange={(v) => setGroupBy((v as StatGroupBy) || "phase")}
+                clearable={false}
+                size="xs"
+              />
+              <Select
+                label={t("profiles.stats.tactical.label", { defaultValue: "Tactical filter" })}
+                data={tacticalFilterOptions}
+                value={tacticalFilter}
+                onChange={(v) => setTacticalFilter((v as TacticalFilter) || "none")}
+                clearable={false}
+                size="xs"
+              />
+            </Stack>
           }
         />
       </Box>
@@ -381,89 +877,640 @@ export default function StatsPanel({
         <Box style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", width: "100%" }}>
           <PanelLoadGate
             isLoading={isAnyLoading}
-            isFetching={isFetchingBuckets}
+            isFetching={
+              tacticalFilter === "forks"
+                ? isFetchingForkStats
+                : groupBy === "phase"
+                  ? isFetchingBuckets || isFetchingPhaseAccuracy
+                  : groupBy === "outcomeAccuracy"
+                    ? isFetchingOutcomeAccuracy
+                    : groupBy === "outcomeReason"
+                      ? isFetchingOutcomeReasonBreakdown
+                      : isFetchingIntensityBreakdown
+            }
             hasData={hasDataContext && hasPanelData}
             message={t("profiles.stats.loading", { defaultValue: "Loading stats..." })}
           >
             <Stack p="md" gap="md">
-              <Stack gap={4}>
-                <Text fw={700}>{t("profiles.stats.title", { defaultValue: "Wins / losses by game phase" })}</Text>
-                <Text size="sm" c="dimmed">
-                  {t("profiles.stats.subtitle", {
-                    defaultValue: "Shows where games became decisively won or lost, based on analyzed games only.",
-                  })}
-                </Text>
-              </Stack>
+              {groupBy === "phase" ? (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>{t("profiles.stats.title", { defaultValue: "Wins / losses by game phase" })}</Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.subtitle", {
+                        defaultValue: "Shows where games became decisively won or lost, based on analyzed games only.",
+                      })}
+                    </Text>
+                  </Stack>
 
-              {totals.total > 0 ? (
-                <Group gap="md" wrap="wrap">
-                  <Text size="sm">
-                    {t("profiles.stats.summary", {
-                      defaultValue: "{{total}} analyzed games ({{won}}W {{drawn}}D {{lost}}L)",
-                      total: totals.total,
-                      won: totals.won,
-                      drawn: totals.drawn,
-                      lost: totals.lost,
+                  {totals.total > 0 ? (
+                    <Group gap="md" wrap="wrap">
+                      <Text size="sm">
+                        {t("profiles.stats.summary", {
+                          defaultValue: "{{total}} analyzed games ({{won}}W {{drawn}}D {{lost}}L)",
+                          total: totals.total,
+                          won: totals.won,
+                          drawn: totals.drawn,
+                          lost: totals.lost,
+                        })}
+                      </Text>
+                    </Group>
+                  ) : (
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.noData", {
+                        defaultValue: "No analyzed games found for the selected filters.",
+                      })}
+                    </Text>
+                  )}
+
+                  <Divider />
+
+                  <Stack gap="sm">
+                    {phaseOrder.map((phase) => {
+                      const v = byPhase.get(phase)!;
+                      const total = v.won + v.drawn + v.lost;
+                      return (
+                        <UnstyledButton
+                          key={phase}
+                          onClick={() => {
+                            setDetailsPhase(phase);
+                            setDetailsIntensity(null);
+                            setDetailsPage(1);
+                          }}
+                          style={{ display: "block", textAlign: "left" }}
+                        >
+                          <Stack gap={6}>
+                            <Group justify="space-between" wrap="nowrap">
+                              <Text fw={600}>{phaseLabel(t, phase)}</Text>
+                              <Text size="sm" c="dimmed">
+                                {total > 0
+                                  ? t("profiles.stats.phaseCount", {
+                                      defaultValue: "{{total}} games",
+                                      total,
+                                    })
+                                  : t("profiles.stats.phaseCount", { defaultValue: "0 games", total: 0 })}
+                              </Text>
+                            </Group>
+                            <PhaseBar won={v.won} drawn={v.drawn} lost={v.lost} />
+                            <Text size="xs" c="dimmed">
+                              {t("profiles.stats.phaseBreakdown", {
+                                defaultValue: "{{won}}W - {{drawn}}D - {{lost}}L",
+                                won: v.won,
+                                drawn: v.drawn,
+                                lost: v.lost,
+                              })}
+                            </Text>
+                          </Stack>
+                        </UnstyledButton>
+                      );
                     })}
-                  </Text>
-                </Group>
-              ) : (
-                <Text size="sm" c="dimmed">
-                  {t("profiles.stats.noData", {
-                    defaultValue: "No analyzed games found for the selected filters.",
-                  })}
-                </Text>
-              )}
+                  </Stack>
 
-              <Divider />
+                  <Divider />
 
-              <Stack gap="sm">
-                {phaseOrder.map((phase) => {
-                  const v = byPhase.get(phase)!;
-                  const total = v.won + v.drawn + v.lost;
-                  return (
-                    <UnstyledButton
-                      key={phase}
-                      onClick={() => {
-                        setDetailsPhase(phase);
-                        setDetailsPage(1);
-                      }}
-                      style={{ display: "block", textAlign: "left" }}
-                    >
-                      <Stack gap={6}>
-                        <Group justify="space-between" wrap="nowrap">
-                          <Text fw={600}>{phaseLabel(t, phase)}</Text>
-                          <Text size="sm" c="dimmed">
-                            {total > 0
-                              ? t("profiles.stats.phaseCount", {
-                                  defaultValue: "{{total}} games",
-                                  total,
-                                })
-                              : t("profiles.stats.phaseCount", { defaultValue: "0 games", total: 0 })}
-                          </Text>
-                        </Group>
-                        <PhaseBar won={v.won} drawn={v.drawn} lost={v.lost} />
-                        <Text size="xs" c="dimmed">
-                          {t("profiles.stats.phaseBreakdown", {
-                            defaultValue: "{{won}}W · {{drawn}}D · {{lost}}L",
-                            won: v.won,
-                            drawn: v.drawn,
-                            lost: v.lost,
+                  <Stack gap={6}>
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.phaseAccuracyChart.title", {
+                        defaultValue: "Average accuracy by game phase",
+                      })}
+                    </Text>
+                    <ChartSizeGuard height={320}>
+                      <BarChart
+                        h={320}
+                        data={phaseAccuracyChartData}
+                        dataKey="phase"
+                        gridAxis="y"
+                        valueFormatter={(value) => `${Number(value).toFixed(1)}%`}
+                        yAxisProps={{ domain: [0, 100] }}
+                        series={[
+                          {
+                            name: "avgAccuracy",
+                            label: t("profiles.stats.phaseAccuracyChart.series", {
+                              defaultValue: "Average accuracy",
+                            }),
+                            color: "cyan.6",
+                          },
+                        ]}
+                      />
+                    </ChartSizeGuard>
+                  </Stack>
+                </>
+              ) : groupBy === "outcomeAccuracy" ? (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>
+                      {t("profiles.stats.accuracyByResult.title", { defaultValue: "Average accuracy by result" })}
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.accuracyByResult.subtitle", {
+                        defaultValue: "Average engine accuracy split by wins, draws, and losses.",
+                      })}
+                    </Text>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text fw={600}>{t("profiles.stats.accuracyByResult.rows.won", { defaultValue: "Won" })}</Text>
+                      <Group gap="sm">
+                        <Text size="sm" c="dimmed">
+                          {t("profiles.stats.phaseCount", {
+                            defaultValue: "{{total}} games",
+                            total: outcomeAccuracy?.wonCount ?? 0,
                           })}
                         </Text>
-                      </Stack>
+                        <Text fw={700}>{formatAccuracy(outcomeAccuracy?.wonAvgAccuracy)}</Text>
+                      </Group>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text fw={600}>{t("profiles.stats.accuracyByResult.rows.drawn", { defaultValue: "Drawn" })}</Text>
+                      <Group gap="sm">
+                        <Text size="sm" c="dimmed">
+                          {t("profiles.stats.phaseCount", {
+                            defaultValue: "{{total}} games",
+                            total: outcomeAccuracy?.drawnCount ?? 0,
+                          })}
+                        </Text>
+                        <Text fw={700}>{formatAccuracy(outcomeAccuracy?.drawnAvgAccuracy)}</Text>
+                      </Group>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text fw={600}>{t("profiles.stats.accuracyByResult.rows.lost", { defaultValue: "Lost" })}</Text>
+                      <Group gap="sm">
+                        <Text size="sm" c="dimmed">
+                          {t("profiles.stats.phaseCount", {
+                            defaultValue: "{{total}} games",
+                            total: outcomeAccuracy?.lostCount ?? 0,
+                          })}
+                        </Text>
+                        <Text fw={700}>{formatAccuracy(outcomeAccuracy?.lostAvgAccuracy)}</Text>
+                      </Group>
+                    </Group>
+                  </Stack>
+                </>
+              ) : tacticalFilter === "forks" ? (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>{t("profiles.stats.forks.title", { defaultValue: "Forks / double attacks" })}</Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.forks.subtitle", {
+                        defaultValue: "Detected from analyzed games: found, missed, and allowed forks.",
+                      })}
+                    </Text>
+                  </Stack>
+
+                  <Divider />
+
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text fw={600}>{t("profiles.stats.forks.foundVsMissed.found", { defaultValue: "Found" })}</Text>
+                    <Text fw={700}>{forkStats?.foundCount ?? 0}</Text>
+                  </Group>
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text fw={600}>
+                      {t("profiles.stats.forks.foundVsMissed.missed", { defaultValue: "Not found" })}
+                    </Text>
+                    <Group gap="xs" wrap="nowrap">
+                      <Text fw={700}>{forkStats?.missedCount ?? 0}</Text>
+                      <Menu withinPortal position="bottom-end">
+                        <Menu.Target>
+                          <Button
+                            size="compact-sm"
+                            variant="subtle"
+                            loading={isGeneratingForkPuzzles}
+                            disabled={(forkStats?.missedCount ?? 0) <= 0}
+                          >
+                            {t("profiles.stats.forks.puzzleGeneration.button", {
+                              defaultValue: "Generate puzzles",
+                            })}
+                          </Button>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            onClick={() => {
+                              void generateMissedForkPuzzles("all");
+                            }}
+                          >
+                            {t("profiles.stats.forks.puzzleGeneration.all", {
+                              defaultValue: "Generate all",
+                            })}
+                          </Menu.Item>
+                          <Menu.Divider />
+                          {FORK_PIECES.map((piece) => (
+                            <Menu.Item
+                              key={piece}
+                              onClick={() => {
+                                void generateMissedForkPuzzles(piece);
+                              }}
+                            >
+                              {t("profiles.stats.forks.puzzleGeneration.byPiece", {
+                                defaultValue: "Generate by {{piece}}",
+                                piece: t(`profiles.stats.forks.pieces.${piece}`, { defaultValue: piece }),
+                              })}
+                            </Menu.Item>
+                          ))}
+                        </Menu.Dropdown>
+                      </Menu>
+                    </Group>
+                  </Group>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.forks.foundByPiece", { defaultValue: "Found by piece" })}
+                    </Text>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.pawn", { defaultValue: "Pawn" })}</Text>
+                      <Text fw={600}>{forkStats?.foundPawnCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.knight", { defaultValue: "Knight" })}</Text>
+                      <Text fw={600}>{forkStats?.foundKnightCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.bishop", { defaultValue: "Bishop" })}</Text>
+                      <Text fw={600}>{forkStats?.foundBishopCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.rook", { defaultValue: "Rook" })}</Text>
+                      <Text fw={600}>{forkStats?.foundRookCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.queen", { defaultValue: "Queen" })}</Text>
+                      <Text fw={600}>{forkStats?.foundQueenCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.king", { defaultValue: "King" })}</Text>
+                      <Text fw={600}>{forkStats?.foundKingCount ?? 0}</Text>
+                    </Group>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.forks.missedByPiece", { defaultValue: "Not found by piece" })}
+                    </Text>
+                    {[
+                      { piece: "pawn" as const, count: forkStats?.missedPawnCount ?? 0 },
+                      { piece: "knight" as const, count: forkStats?.missedKnightCount ?? 0 },
+                      { piece: "bishop" as const, count: forkStats?.missedBishopCount ?? 0 },
+                      { piece: "rook" as const, count: forkStats?.missedRookCount ?? 0 },
+                      { piece: "queen" as const, count: forkStats?.missedQueenCount ?? 0 },
+                      { piece: "king" as const, count: forkStats?.missedKingCount ?? 0 },
+                    ].map(({ piece, count }) => (
+                      <UnstyledButton
+                        key={piece}
+                        disabled={count <= 0}
+                        onClick={() => {
+                          if (count <= 0) return;
+                          setForkDetailsPiece(piece);
+                          setForkDetailsPage(1);
+                        }}
+                      >
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text>{t(`profiles.stats.forks.pieces.${piece}`, { defaultValue: piece })}</Text>
+                          <Text fw={600}>{count}</Text>
+                        </Group>
+                      </UnstyledButton>
+                    ))}
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.forks.allowedByPiece", { defaultValue: "Allowed forks by piece" })}
+                    </Text>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.pawn", { defaultValue: "Pawn" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedPawnCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.knight", { defaultValue: "Knight" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedKnightCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.bishop", { defaultValue: "Bishop" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedBishopCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.rook", { defaultValue: "Rook" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedRookCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.queen", { defaultValue: "Queen" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedQueenCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.forks.pieces.king", { defaultValue: "King" })}</Text>
+                      <Text fw={600}>{forkStats?.allowedKingCount ?? 0}</Text>
+                    </Group>
+                  </Stack>
+                </>
+              ) : groupBy === "outcomeReason" ? (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>
+                      {t("profiles.stats.outcomeReason.title", { defaultValue: "Win/Loss by ending type" })}
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.outcomeReason.subtitle", {
+                        defaultValue: "Breakdown of game results by how the game ended.",
+                      })}
+                    </Text>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.outcomeReason.winsTitle", { defaultValue: "Wins" })}
+                    </Text>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.abandon", { defaultValue: "Abandon" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.wonAbandonCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.checkmate", { defaultValue: "Checkmate" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.wonCheckmateCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.timeout", { defaultValue: "Time out" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.wonTimeoutCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>
+                        {t("profiles.stats.outcomeReason.rows.resignForfeit", {
+                          defaultValue: "Resign / inactivity / forfeit",
+                        })}
+                      </Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.wonResignForfeitCount ?? 0}</Text>
+                    </Group>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.outcomeReason.lossesTitle", { defaultValue: "Losses" })}
+                    </Text>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.abandon", { defaultValue: "Abandon" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.lostAbandonCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.checkmate", { defaultValue: "Checkmate" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.lostCheckmateCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.timeout", { defaultValue: "Time out" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.lostTimeoutCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>
+                        {t("profiles.stats.outcomeReason.rows.resignForfeit", {
+                          defaultValue: "Resign / inactivity / forfeit",
+                        })}
+                      </Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.lostResignForfeitCount ?? 0}</Text>
+                    </Group>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.outcomeReason.drawsTitle", { defaultValue: "Draws" })}
+                    </Text>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.agreement", { defaultValue: "Agreement" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnAgreementCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>
+                        {t("profiles.stats.outcomeReason.rows.fiftyMoveRule", {
+                          defaultValue: "50-move rule",
+                        })}
+                      </Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnFiftyMoveRuleCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>
+                        {t("profiles.stats.outcomeReason.rows.timeoutVsInsufficientMaterial", {
+                          defaultValue: "Timeout vs insufficient material",
+                        })}
+                      </Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnTimeoutVsInsufficientMaterialCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>
+                        {t("profiles.stats.outcomeReason.rows.insufficientMaterial", {
+                          defaultValue: "Insufficient material",
+                        })}
+                      </Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnInsufficientMaterialCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.repetition", { defaultValue: "Repetition" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnRepetitionCount ?? 0}</Text>
+                    </Group>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text>{t("profiles.stats.outcomeReason.rows.stalemate", { defaultValue: "Stalemate" })}</Text>
+                      <Text fw={600}>{outcomeReasonBreakdown?.drawnStalemateCount ?? 0}</Text>
+                    </Group>
+                  </Stack>
+                </>
+              ) : (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>{t("profiles.stats.intensity.title", { defaultValue: "By intensity" })}</Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.intensity.subtitle", {
+                        defaultValue: "Classifies analyzed games by graph tension and swing patterns.",
+                      })}
+                    </Text>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap="xs">
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("calm");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.calm", { defaultValue: "Calm" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.calmCount ?? 0}</Text>
+                      </Group>
                     </UnstyledButton>
-                  );
-                })}
-              </Stack>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("balanced");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.balanced", { defaultValue: "Balanced" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.balancedCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("edge");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.edge", { defaultValue: "On edge" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.edgeCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("intense");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.intense", { defaultValue: "Intense" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.intenseCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("sudden");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.sudden", { defaultValue: "Sudden" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.suddenCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("wild");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.wild", { defaultValue: "Wild" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.wildCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <UnstyledButton
+                      onClick={() => {
+                        setDetailsIntensity("gifted");
+                        setDetailsPhase(null);
+                        setDetailsPage(1);
+                      }}
+                    >
+                      <Group justify="space-between" wrap="nowrap">
+                        <Text>{t("profiles.stats.intensity.rows.gifted", { defaultValue: "Gifted" })}</Text>
+                        <Text fw={600}>{intensityBreakdown?.giftedCount ?? 0}</Text>
+                      </Group>
+                    </UnstyledButton>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap={6}>
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.intensity.chartTitle", {
+                        defaultValue: "Intensity split by result (W/D/L)",
+                      })}
+                    </Text>
+                    <ChartSizeGuard height={390}>
+                      <BarChart
+                        h={390}
+                        data={intensityChartData}
+                        dataKey="intensity"
+                        type="stacked"
+                        withLegend
+                        gridAxis="y"
+                        barChartProps={{
+                          onClick: (event) => {
+                            const activeLabel = `${(event as { activeLabel?: string } | null)?.activeLabel ?? ""}`;
+                            const key = intensityKeyByLabel[activeLabel];
+                            if (key) {
+                              setDetailsIntensity(key);
+                              setDetailsPhase(null);
+                              setDetailsPage(1);
+                            }
+                          },
+                        }}
+                        series={[
+                          {
+                            name: "won",
+                            label: t("profiles.stats.accuracyByResult.rows.won", { defaultValue: "Won" }),
+                            color: "green.6",
+                          },
+                          {
+                            name: "drawn",
+                            label: t("profiles.stats.accuracyByResult.rows.drawn", { defaultValue: "Drawn" }),
+                            color: "gray.6",
+                          },
+                          {
+                            name: "lost",
+                            label: t("profiles.stats.accuracyByResult.rows.lost", { defaultValue: "Lost" }),
+                            color: "red.6",
+                          },
+                        ]}
+                      />
+                    </ChartSizeGuard>
+                  </Stack>
+
+                  <Divider />
+
+                  <Stack gap={6}>
+                    <Text fw={700} size="sm">
+                      {t("profiles.stats.intensity.accuracyChartTitle", {
+                        defaultValue: "Average accuracy by intensity",
+                      })}
+                    </Text>
+                    <ChartSizeGuard height={360}>
+                      <BarChart
+                        h={360}
+                        data={intensityAccuracyChartData}
+                        dataKey="intensity"
+                        gridAxis="y"
+                        valueFormatter={(value) => `${Number(value).toFixed(1)}%`}
+                        yAxisProps={{ domain: [0, 100] }}
+                        series={[
+                          {
+                            name: "avgAccuracy",
+                            label: t("profiles.stats.accuracyByResult.title", {
+                              defaultValue: "Average accuracy by result",
+                            }),
+                            color: "blue.6",
+                          },
+                        ]}
+                      />
+                    </ChartSizeGuard>
+                  </Stack>
+                </>
+              )}
             </Stack>
           </PanelLoadGate>
         </Box>
       </Box>
 
       <Modal
-        opened={detailsPhase != null}
-        onClose={() => setDetailsPhase(null)}
+        opened={(groupBy === "phase" && detailsPhase != null) || (groupBy === "intensity" && detailsIntensity != null)}
+        onClose={() => {
+          setDetailsPhase(null);
+          setDetailsIntensity(null);
+        }}
         title={t("profiles.stats.details.title", { defaultValue: "Games" })}
         size="xl"
       >
@@ -471,23 +1518,30 @@ export default function StatsPanel({
           <Text size="sm" c="dimmed">
             {t("profiles.stats.details.subtitle", {
               defaultValue: "Showing games for {{phase}}.",
-              phase: detailsPhase ? phaseLabel(t, detailsPhase) : "",
+              phase:
+                groupBy === "intensity"
+                  ? detailsIntensity
+                    ? intensityLabelByKey[detailsIntensity]
+                    : ""
+                  : detailsPhase
+                    ? phaseLabel(t, detailsPhase)
+                    : "",
             })}
           </Text>
 
-          {detailsError ? (
+          {activeDetailsError ? (
             <Text size="sm" c="red">
               {t("profiles.stats.details.error", { defaultValue: "Failed to load games." })}
             </Text>
           ) : null}
 
           <PanelLoadGate
-            isLoading={isLoadingDetails}
-            isFetching={isFetchingDetails}
-            hasData={detailsPhase != null}
+            isLoading={isLoadingActiveDetails}
+            isFetching={isFetchingActiveDetails}
+            hasData={groupBy === "intensity" ? detailsIntensity != null : detailsPhase != null}
             message={t("profiles.stats.details.loading", { defaultValue: "Loading games..." })}
           >
-            {detailGames.length === 0 ? (
+            {activeDetailGames.length === 0 ? (
               <Text size="sm" c="dimmed">
                 {t("profiles.stats.details.noData", { defaultValue: "No games found." })}
               </Text>
@@ -504,7 +1558,7 @@ export default function StatsPanel({
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {detailGames.map((g) => (
+                  {activeDetailGames.map((g) => (
                     <Table.Tr key={g.gameId}>
                       <Table.Td>{g.date ?? "-"}</Table.Td>
                       <Table.Td>{g.white}</Table.Td>
@@ -537,6 +1591,103 @@ export default function StatsPanel({
                 {t("common.previous", { defaultValue: "Previous" })}
               </Button>
               <Button size="xs" variant="default" disabled={!hasNextPage} onClick={() => setDetailsPage((p) => p + 1)}>
+                {t("common.next", { defaultValue: "Next" })}
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={tacticalFilter === "forks" && forkDetailsPiece != null}
+        onClose={() => setForkDetailsPiece(null)}
+        title={t("profiles.stats.forks.details.title", {
+          defaultValue: "Missed forks - {{piece}}",
+          piece: forkDetailsPiece ? t(`profiles.stats.forks.pieces.${forkDetailsPiece}`) : "",
+        })}
+        size="xl"
+      >
+        <Stack gap="sm">
+          {forkDetailsError ? (
+            <Text size="sm" c="red">
+              {t("profiles.stats.details.error", { defaultValue: "Failed to load games." })}
+            </Text>
+          ) : null}
+
+          <PanelLoadGate
+            isLoading={isLoadingForkDetails}
+            isFetching={isFetchingForkDetails}
+            hasData={forkDetailsPiece != null}
+            message={t("profiles.stats.details.loading", { defaultValue: "Loading games..." })}
+          >
+            {missedForkDetailGames.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                {t("profiles.stats.details.noData", { defaultValue: "No games found." })}
+              </Text>
+            ) : (
+              <Table striped highlightOnHover withTableBorder>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>{t("profiles.stats.details.columns.date", { defaultValue: "Date" })}</Table.Th>
+                    <Table.Th>{t("profiles.stats.details.columns.white", { defaultValue: "White" })}</Table.Th>
+                    <Table.Th>{t("profiles.stats.details.columns.black", { defaultValue: "Black" })}</Table.Th>
+                    <Table.Th>{t("profiles.stats.details.columns.result", { defaultValue: "Result" })}</Table.Th>
+                    <Table.Th>{t("profiles.stats.details.columns.site", { defaultValue: "Site" })}</Table.Th>
+                    <Table.Th>{t("profiles.stats.forks.details.ply", { defaultValue: "Ply" })}</Table.Th>
+                    <Table.Th>
+                      {t("profiles.stats.forks.details.engineComment", { defaultValue: "Engine comment" })}
+                    </Table.Th>
+                    <Table.Th>{t("profiles.stats.details.columns.action", { defaultValue: "Action" })}</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {missedForkDetailGames.map((g, idx) => (
+                    <Table.Tr key={`${g.gameId}-${g.ply}-${idx}`}>
+                      <Table.Td>{g.date ?? "-"}</Table.Td>
+                      <Table.Td>{g.white}</Table.Td>
+                      <Table.Td>{g.black}</Table.Td>
+                      <Table.Td>{g.result ?? "-"}</Table.Td>
+                      <Table.Td>{g.site}</Table.Td>
+                      <Table.Td>{g.ply}</Table.Td>
+                      <Table.Td style={{ minWidth: 320 }}>
+                        <Text size="xs" c="dimmed">
+                          {g.engineLineComment ??
+                            t("profiles.stats.forks.details.engineCommentUnavailable", {
+                              defaultValue: "Engine line not available for this row.",
+                            })}
+                        </Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Button size="xs" variant="light" onClick={() => openGame(g.gameId, g.ply)}>
+                          {t("profiles.stats.forks.details.openAtPosition", { defaultValue: "Open at position" })}
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </PanelLoadGate>
+
+          <Group justify="space-between">
+            <Text size="xs" c="dimmed">
+              {t("profiles.stats.details.page", { defaultValue: "Page {{page}}", page: forkDetailsPage })}
+            </Text>
+            <Group>
+              <Button
+                size="xs"
+                variant="default"
+                disabled={forkDetailsPage <= 1}
+                onClick={() => setForkDetailsPage((p) => Math.max(1, p - 1))}
+              >
+                {t("common.previous", { defaultValue: "Previous" })}
+              </Button>
+              <Button
+                size="xs"
+                variant="default"
+                disabled={missedForkDetailGames.length < forkDetailsLimit}
+                onClick={() => setForkDetailsPage((p) => p + 1)}
+              >
                 {t("common.next", { defaultValue: "Next" })}
               </Button>
             </Group>

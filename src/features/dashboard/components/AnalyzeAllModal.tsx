@@ -1,25 +1,14 @@
-import { Button, Group, Modal, Progress, Radio, Select, Stack, Text } from "@mantine/core";
+import { Button, Group, Modal, NumberInput, Progress, Radio, Select, Stack, Text } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-export type AnalysisSpeed = "t500" | "t1000" | "t1500" | "t2500" | "t3500";
-
 export interface AnalyzeAllConfig {
-  speed: AnalysisSpeed;
   timeMs: number;
   analyzeMode: "all" | "unanalyzed";
   enginePath: string;
 }
-
-const getAnalysisOptions = (): Record<AnalysisSpeed, { label: string; timeMs: number }> => ({
-  t500: { label: "500 ms", timeMs: 500 },
-  t1000: { label: "1000 ms", timeMs: 1000 },
-  t1500: { label: "1500 ms", timeMs: 1500 },
-  t2500: { label: "2500 ms", timeMs: 2500 },
-  t3500: { label: "3500 ms", timeMs: 3500 },
-});
 
 interface AnalyzeAllModalProps {
   opened: boolean;
@@ -47,7 +36,6 @@ export function AnalyzeAllModal({
   initialEnginePath,
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
-  const ANALYSIS_OPTIONS = getAnalysisOptions();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -65,8 +53,7 @@ export function AnalyzeAllModal({
 
   const form = useForm<AnalyzeAllConfig>({
     initialValues: {
-      speed: "t1000",
-      timeMs: 1000,
+      timeMs: 1500,
       analyzeMode: analyzeMode,
       enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
     },
@@ -79,7 +66,7 @@ export function AnalyzeAllModal({
 
   const handleSubmit = async () => {
     setSubmitError(null);
-    const selectedOption = ANALYSIS_OPTIONS[form.values.speed];
+    const normalizedTimeMs = Math.max(1, Math.round(Number(form.values.timeMs) || 0));
     const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
     setIsAnalyzing(true);
     setProgress({ current: 0, total: countToAnalyze });
@@ -88,8 +75,7 @@ export function AnalyzeAllModal({
     try {
       const result = await onAnalyze(
         {
-          speed: form.values.speed,
-          timeMs: selectedOption.timeMs,
+          timeMs: normalizedTimeMs,
           analyzeMode: form.values.analyzeMode,
           enginePath: form.values.enginePath,
         },
@@ -152,8 +138,7 @@ export function AnalyzeAllModal({
     } else {
       // Reset form to initial values when modal opens
       form.setValues({
-        speed: "t1000",
-        timeMs: 1000,
+        timeMs: 1500,
         analyzeMode: analyzeMode,
         enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
       });
@@ -219,17 +204,23 @@ export function AnalyzeAllModal({
             </Stack>
           </Radio.Group>
 
-          <Radio.Group
+          <NumberInput
+            withAsterisk
             label={t("features.dashboard.analysisDepth")}
-            {...form.getInputProps("speed")}
+            min={1}
+            step={100}
+            allowNegative={false}
+            allowDecimal={false}
+            thousandSeparator={false}
             disabled={isAnalyzing}
-          >
-            <Stack gap="xs">
-              {Object.entries(ANALYSIS_OPTIONS).map(([key, option]) => (
-                <Radio key={key} value={key} label={option.label} />
-              ))}
-            </Stack>
-          </Radio.Group>
+            {...form.getInputProps("timeMs")}
+          />
+          <Text size="xs" c="dimmed">
+            {t("features.dashboard.analysisDepthHelp", {
+              defaultValue:
+                "Milliseconds per move for the engine. Higher values usually improve accuracy but take longer.",
+            })}
+          </Text>
 
           {isAnalyzing && (
             <Stack gap="xs" mt="md">
@@ -253,7 +244,7 @@ export function AnalyzeAllModal({
                 <Button
                   type="button"
                   loading={isAnalyzing}
-                  disabled={isAnalyzing || engineOptions.length === 0 || !form.values.enginePath}
+                  disabled={isAnalyzing || engineOptions.length === 0 || !form.values.enginePath || !form.values.timeMs}
                   onClick={() => void handleSubmit()}
                 >
                   {t("features.dashboard.analyze")}
