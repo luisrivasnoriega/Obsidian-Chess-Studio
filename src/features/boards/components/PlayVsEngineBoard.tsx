@@ -559,7 +559,9 @@ function PlayVsEngineBoardContent() {
     );
   }
 
-  const SIDE_W = 340;
+  // Prioritize board space on medium desktop resolutions (e.g. 1440x900)
+  // by shrinking side panels before the board starts clipping.
+  const sidePanelWidth = "clamp(220px, 18vw, 340px)";
 
   // Fallback: invalid/unknown position.
   if (!pos) {
@@ -579,7 +581,7 @@ function PlayVsEngineBoardContent() {
           padding: "1rem",
           boxSizing: "border-box",
           display: "grid",
-          gridTemplateColumns: `${SIDE_W}px minmax(0, 1fr) ${SIDE_W}px`,
+          gridTemplateColumns: `${sidePanelWidth} minmax(0, 1fr) ${sidePanelWidth}`,
           gridTemplateRows: "1fr",
           gap: "1rem",
           overflow: "hidden",

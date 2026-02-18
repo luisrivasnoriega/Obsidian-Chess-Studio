@@ -109,6 +109,11 @@ const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
 export type Speed = "UltraBullet" | "Bullet" | "Blitz" | "Rapid" | "Classical" | "Correspondence" | "Unknown";
 
 export type DatabaseSource = "local" | "online" | "external";
+export const CHESSBASE_DATABASE_SENTINEL = "chessbase://online";
+
+export function isChessbaseDatabasePath(path: string | null | undefined): boolean {
+  return (path ?? "").trim().toLowerCase() === CHESSBASE_DATABASE_SENTINEL;
+}
 
 function normalizeRange(range?: [number, number] | null): [number, number] | undefined {
   if (!range || range[1] - range[0] === 3000) {
@@ -262,6 +267,13 @@ export interface Opening {
   draw: number;
 }
 
+type ChessbasePositionSearchResult = {
+  stats: Opening[];
+  games: NormalizedGame[];
+  returned: number;
+  total: number;
+};
+
 /**
  * Recalculate opening stats from limited games.
  * This ensures stats reflect only the games that are actually returned (after limit is applied).
@@ -366,7 +378,14 @@ export async function getTournamentGames(file: string, id: number) {
   });
 }
 
-export async function searchPosition(options: LocalOptions, tab: string) {
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: string }).name;
+  const message = (error as { message?: string }).message;
+  return name === "AbortError" || message === "Search stopped";
+}
+
+export async function searchPosition(options: LocalOptions, tab: string, signal?: AbortSignal) {
   if (!options.path) {
     throw new Error("Missing reference database");
   }
@@ -390,12 +409,54 @@ export async function searchPosition(options: LocalOptions, tab: string) {
     ? Math.max(1, Math.min(1000, Math.floor(parsedLimit)))
     : 10;
 
-  // Convert result to wanted_result format (undefined for "any" to omit from payload)
-  const wantedResult = options.result === "any" ? undefined : options.result;
-
   const selectedPlayers = Array.isArray((options as unknown as { players?: unknown }).players)
     ? (options as unknown as { players: number[] }).players.filter((n) => Number.isFinite(n)).map((n) => Math.trunc(n))
     : [];
+
+  if (isChessbaseDatabasePath(options.path)) {
+    if (selectedPlayers.length > 0) {
+      throw new Error("ChessBase search does not support local player filters.");
+    }
+    if (signal?.aborted) {
+      throw new DOMException("Search stopped", "AbortError");
+    }
+
+    const abortListener = () => {
+      void invoke("chessbase_cancel_active_request").catch(() => {});
+    };
+    signal?.addEventListener("abort", abortListener, { once: true });
+
+    try {
+      await invoke("chessbase_cancel_active_request").catch(() => {});
+      if (signal?.aborted) {
+        throw new DOMException("Search stopped", "AbortError");
+      }
+
+      const res = await invoke<ChessbasePositionSearchResult>("chessbase_search_position", {
+        fen,
+        useMaterial: type === "partial",
+        maxGames: gameDetailsLimitValue,
+        color: options.color ?? "any",
+        wantedResult: options.result ?? "any",
+        startDate: options.start_date ?? null,
+        endDate: options.end_date ?? null,
+      });
+      if (signal?.aborted) {
+        throw new DOMException("Search stopped", "AbortError");
+      }
+      return [res.stats, res.games] as [Opening[], NormalizedGame[]];
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error("Search stopped");
+      }
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abortListener);
+    }
+  }
+
+  // Convert result to wanted_result format (undefined for "any" to omit from payload)
+  const wantedResult = options.result === "any" ? undefined : options.result;
 
   // If multiple players are selected, we issue one query per player and merge the results.
   // Note: this can over-count stats when a single game matches multiple selected players

@@ -9,12 +9,14 @@ import { Chessground } from "@/components/Chessground";
 import PiecesGrid from "@/features/boards/components/PiecesGrid";
 import { MultiPlayerSearchInput } from "@/features/databases/components/MultiPlayerSearchInput";
 import { currentLocalOptionsAtom } from "@/state/atoms";
+import { isChessbaseDatabasePath } from "@/utils/db";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 
 function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
   const boardRef = useRef(null);
   const [options, setOptions] = useAtom(currentLocalOptionsAtom);
   const { t } = useTranslation();
+  const searchableLocalDbPath = options.path && !isChessbaseDatabasePath(options.path) ? options.path : null;
   const setSimilarStructure = async (fen: string) => {
     const setup = parseFen(fen).unwrap();
     for (const square of setup.board.pawn.complement()) {
@@ -29,11 +31,11 @@ function LocalOptionsPanel({ boardFen }: { boardFen: string }) {
       <Group>
         <Group>
           <Text fw="bold">{t("databaseOptions.player")}:</Text>
-          {options.path && (
+          {searchableLocalDbPath && (
             <MultiPlayerSearchInput
               label={t("databaseOptions.search")}
               value={options.players}
-              file={options.path}
+              file={searchableLocalDbPath}
               setValue={(players) => setOptions((q) => ({ ...q, players }))}
             />
           )}

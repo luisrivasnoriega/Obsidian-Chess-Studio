@@ -1,17 +1,19 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use shakmaty::fen::Fen;
 use shakmaty::san::San;
 use shakmaty::uci::UciMove;
-use shakmaty::{CastlingMode, Chess, Position as _};
+use shakmaty::{CastlingMode, Chess, EnPassantMode, Position as _};
 use tauri::State;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use crate::db::{NormalizedGame, Outcome, PositionStats};
 
 #[derive(Debug, Serialize, specta::Type)]
 pub struct ChessbaseCredentialsSummary {
@@ -39,6 +41,14 @@ pub struct ChessbaseQuickSearchCount {
     pub total: u32,
 }
 
+#[derive(Serialize, specta::Type)]
+pub struct ChessbasePositionSearchResult {
+    pub stats: Vec<PositionStats>,
+    pub games: Vec<NormalizedGame>,
+    pub returned: u32,
+    pub total: u32,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct StoredCredentials {
     username: String,
@@ -54,6 +64,7 @@ const CHESSBASE_WS_URL: &str = "wss://dbserver.chessbase.com:443/";
 const LOGIN_WAIT_SECS: u64 = 10;
 const MAX_GAMES_PER_QUERY: u32 = 1000;
 const MAX_GAMES_PER_BATCH: usize = 100;
+const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 fn credentials_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME).map_err(|e| e.to_string())
@@ -102,9 +113,19 @@ enum ChessbaseWsRequest {
         max_games: u32,
         respond_to: oneshot::Sender<Result<ChessbaseDownloadResult, String>>,
     },
+    SearchByPosition {
+        query_fen: String,
+        search_mask: SearchMask,
+        wanted_result: Option<String>,
+        max_games: u32,
+        respond_to: oneshot::Sender<Result<ChessbasePositionSearchResult, String>>,
+    },
     CountByQuickSearch {
         query: String,
         respond_to: oneshot::Sender<Result<ChessbaseQuickSearchCount, String>>,
+    },
+    CancelActive {
+        respond_to: oneshot::Sender<Result<(), String>>,
     },
     Shutdown,
 }
@@ -480,7 +501,6 @@ impl VersionCode {
     }
 }
 
-#[derive(Default)]
 struct SearchMask {
     wh_mask: String,
     bl_mask: String,
@@ -494,12 +514,44 @@ struct SearchMask {
     min_white_elo: i32,
     min_black_elo: i32,
     flags: i32,
+    side_to_move: u8,
+    board: [u8; 64],
+}
+
+impl Default for SearchMask {
+    fn default() -> Self {
+        Self {
+            wh_mask: String::new(),
+            bl_mask: String::new(),
+            title: String::new(),
+            place: String::new(),
+            free_text: String::new(),
+            min_eco: 0,
+            max_eco: 0,
+            min_year: 0,
+            max_year: 0,
+            min_white_elo: 0,
+            min_black_elo: 0,
+            flags: 0,
+            side_to_move: 0,
+            board: [0; 64],
+        }
+    }
 }
 
 impl SearchMask {
+    const OLSM_USE_BOARD: i32 = 0x0001;
+    const OLSM_WINS: i32 = 0x0010;
+    const OLSM_DRAWS: i32 = 0x0020;
+    const OLSM_LOSSES: i32 = 0x0040;
+    const OLSM_IGNORE_COLORS: i32 = 0x0400;
+    const OLSM_WHITE: i32 = 0x0100;
+    const OLSM_BLACK: i32 = 0x0200;
+    const OLSM_USE_MATERIAL: i32 = 0x2000;
+
     fn new_quick_search(free_text: String) -> Self {
         // FilterFlagsEnum from SearchMask.js: wins=0x10 draws=0x20 losses=0x40 white=0x100 black=0x200.
-        let flags = 0x10 | 0x20 | 0x40 | 0x100 | 0x200;
+        let flags = Self::OLSM_WINS | Self::OLSM_DRAWS | Self::OLSM_LOSSES | Self::OLSM_WHITE | Self::OLSM_BLACK;
         Self {
             free_text,
             min_eco: 0,
@@ -511,6 +563,88 @@ impl SearchMask {
             flags,
             ..Default::default()
         }
+    }
+
+    fn new_position_search(fen: &str, use_material: bool) -> Result<Self, String> {
+        let (board, side_to_move) = fen_to_cb_board_and_side(fen)?;
+        let mut flags = Self::OLSM_WINS
+            | Self::OLSM_DRAWS
+            | Self::OLSM_LOSSES
+            | Self::OLSM_WHITE
+            | Self::OLSM_BLACK
+            | Self::OLSM_USE_BOARD;
+        if use_material {
+            flags |= Self::OLSM_USE_MATERIAL;
+        }
+
+        Ok(Self {
+            min_eco: 0,
+            max_eco: 0xffff,
+            min_year: 0,
+            max_year: 3000,
+            min_white_elo: 0,
+            min_black_elo: 0,
+            flags,
+            side_to_move,
+            board,
+            ..Default::default()
+        })
+    }
+
+    fn apply_position_filters(
+        &mut self,
+        color: Option<&str>,
+        wanted_result: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<(), String> {
+        let color_flags = match color.unwrap_or("any").trim().to_ascii_lowercase().as_str() {
+            "any" | "" => Self::OLSM_WHITE | Self::OLSM_BLACK,
+            "white" => Self::OLSM_WHITE,
+            "black" => Self::OLSM_BLACK,
+            other => return Err(format!("Unsupported ChessBase color filter: {other}")),
+        };
+
+        let result_flags = match wanted_result
+            .unwrap_or("any")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "any" | "" => Self::OLSM_WINS | Self::OLSM_DRAWS | Self::OLSM_LOSSES,
+            "whitewon" => Self::OLSM_WINS,
+            "draw" => Self::OLSM_DRAWS,
+            "blackwon" => Self::OLSM_LOSSES,
+            other => return Err(format!("Unsupported ChessBase result filter: {other}")),
+        };
+
+        let clear_color_and_result = Self::OLSM_WHITE
+            | Self::OLSM_BLACK
+            | Self::OLSM_IGNORE_COLORS
+            | Self::OLSM_WINS
+            | Self::OLSM_DRAWS
+            | Self::OLSM_LOSSES;
+
+        self.flags &= !clear_color_and_result;
+        self.flags |= color_flags | result_flags;
+
+        if color_flags == (Self::OLSM_WHITE | Self::OLSM_BLACK) {
+            self.flags &= !Self::OLSM_IGNORE_COLORS;
+        }
+
+        let min_year = start_date.map(parse_year_filter).transpose()?;
+        let max_year = end_date.map(parse_year_filter).transpose()?;
+        if let Some(min_year) = min_year {
+            self.min_year = min_year;
+        }
+        if let Some(max_year) = max_year {
+            self.max_year = max_year;
+        }
+        if self.min_year > self.max_year {
+            return Err("Invalid date range: start date is after end date".to_string());
+        }
+
+        Ok(())
     }
 
     fn write_to(&self, buf: &mut DataBuffer) -> Result<(), String> {
@@ -527,6 +661,12 @@ impl SearchMask {
         buf.write_u16_le(self.min_eco);
         buf.write_u16_le(self.max_eco);
         buf.write_i32_le(self.flags);
+        if (self.flags & Self::OLSM_USE_BOARD) != 0 {
+            buf.write_u8(self.side_to_move);
+            for square in self.board {
+                buf.write_u8(square);
+            }
+        }
         buf.write_ascii_string(&self.free_text);
         buf.end_sized_write()?;
         Ok(())
@@ -538,7 +678,9 @@ struct ParsedGameHeader {
     white: String,
     black: String,
     event: String,
-    _site: String,
+    site: String,
+    white_elo: Option<i32>,
+    black_elo: Option<i32>,
     date: (u16, u8, u8),
     result: u8,
 }
@@ -638,6 +780,82 @@ fn cb_board_to_fen_pieces(board: &[u8]) -> Result<String, String> {
     Ok(out)
 }
 
+fn fen_to_cb_board_and_side(fen: &str) -> Result<([u8; 64], u8), String> {
+    let mut board = [0u8; 64];
+    let mut parts = fen.split_whitespace();
+    let pieces_part = parts.next().ok_or("Invalid FEN: missing board")?;
+    let side_part = parts.next().ok_or("Invalid FEN: missing side")?;
+    let side_to_move = match side_part {
+        "w" => 0,
+        "b" => 1,
+        _ => return Err("Invalid FEN: side to move must be 'w' or 'b'".to_string()),
+    };
+
+    let ranks: Vec<&str> = pieces_part.split('/').collect();
+    if ranks.len() != 8 {
+        return Err("Invalid FEN: expected 8 ranks".to_string());
+    }
+
+    for (fen_rank_index, rank_str) in ranks.iter().enumerate() {
+        let rank = 7usize
+            .checked_sub(fen_rank_index)
+            .ok_or("Invalid FEN rank index".to_string())?;
+        let mut file = 0usize;
+        for ch in rank_str.chars() {
+            if ch.is_ascii_digit() {
+                let empty = ch
+                    .to_digit(10)
+                    .ok_or_else(|| format!("Invalid FEN digit: {ch}"))? as usize;
+                file += empty;
+                continue;
+            }
+            if file >= 8 {
+                return Err("Invalid FEN: rank overflows file count".to_string());
+            }
+            let piece_code = match ch {
+                'K' => 1,
+                'Q' => 2,
+                'N' => 3,
+                'B' => 4,
+                'R' => 5,
+                'P' => 6,
+                'k' => 9,
+                'q' => 10,
+                'n' => 11,
+                'b' => 12,
+                'r' => 13,
+                'p' => 14,
+                _ => return Err(format!("Invalid FEN piece: {ch}")),
+            };
+            let cb_index = file * 8 + rank;
+            board[cb_index] = piece_code;
+            file += 1;
+        }
+        if file != 8 {
+            return Err("Invalid FEN: rank does not contain 8 files".to_string());
+        }
+    }
+
+    Ok((board, side_to_move))
+}
+
+fn parse_year_filter(date: &str) -> Result<i32, String> {
+    let date = date.trim();
+    if date.is_empty() {
+        return Err("Empty date filter".to_string());
+    }
+    let year_part = date
+        .split(['.', '-'])
+        .next()
+        .ok_or("Invalid date filter".to_string())?;
+    if year_part.len() != 4 || !year_part.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(format!("Invalid date filter format: {date}"));
+    }
+    year_part
+        .parse::<i32>()
+        .map_err(|e| format!("Invalid date filter year '{year_part}': {e}"))
+}
+
 fn parse_game_header(buf: &mut DataBuffer) -> Result<ParsedGameHeader, String> {
     let white_last = buf.read_byte_len_ascii_string(50)?.trim().to_string();
     let white_first = buf.read_byte_len_ascii_string(50)?.trim().to_string();
@@ -662,8 +880,8 @@ fn parse_game_header(buf: &mut DataBuffer) -> Result<ParsedGameHeader, String> {
 
     let _annotator = buf.read_byte_len_ascii_string(100)?;
 
-    let _elo_wh = buf.read_i16_le()?;
-    let _elo_bl = buf.read_i16_le()?;
+    let elo_wh = buf.read_i16_le()?;
+    let elo_bl = buf.read_i16_le()?;
     let _eco = buf.read_u16_le()?;
 
     let result = buf.read_u8()?;
@@ -696,7 +914,9 @@ fn parse_game_header(buf: &mut DataBuffer) -> Result<ParsedGameHeader, String> {
         white,
         black,
         event,
-        _site: site,
+        site,
+        white_elo: if elo_wh > 0 { Some(elo_wh as i32) } else { None },
+        black_elo: if elo_bl > 0 { Some(elo_bl as i32) } else { None },
         date,
         result,
     })
@@ -790,6 +1010,123 @@ fn escape_pgn_tag_value(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn result_to_outcome(result: u8) -> Outcome {
+    match result {
+        0 => Outcome::BlackWin,
+        1 => Outcome::Draw,
+        2 => Outcome::WhiteWin,
+        _ => Outcome::Unknown,
+    }
+}
+
+fn matches_wanted_result(result: u8, wanted_result: Option<&str>) -> bool {
+    match wanted_result
+        .unwrap_or("any")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "any" | "" => true,
+        "whitewon" => result == 2,
+        "draw" => result == 1,
+        "blackwon" => result == 0,
+        _ => true,
+    }
+}
+
+fn date_to_option(date: (u16, u8, u8)) -> Option<String> {
+    let (y, m, d) = date;
+    if y == 0 {
+        None
+    } else {
+        Some(format!("{:04}.{:02}.{:02}", y, m, d))
+    }
+}
+
+fn normalize_fen_key(fen: &str) -> String {
+    fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
+}
+
+fn position_key(pos: &Chess) -> String {
+    let fen = Fen::from_position(pos.clone(), EnPassantMode::Legal).to_string();
+    normalize_fen_key(&fen)
+}
+
+fn starting_position_for_game(game: &ParsedGame) -> Result<Chess, String> {
+    if let Some(fen) = &game.fen {
+        let fen: Fen = fen.parse().map_err(|e| format!("Invalid FEN: {e}"))?;
+        fen.into_position(CastlingMode::Standard)
+            .map_err(|e| format!("Invalid position: {e}"))
+    } else {
+        Ok(Chess::default())
+    }
+}
+
+fn cb_move_to_uci(from: u8, to: u8, prom: Option<char>) -> Result<UciMove, String> {
+    let mut uci = format!("{}{}", cb_square_to_coord(from)?, cb_square_to_coord(to)?);
+    if let Some(p) = prom {
+        uci.push(p);
+    }
+    uci.parse().map_err(|e| format!("Invalid UCI: {e}"))
+}
+
+fn build_san_moves(game: &ParsedGame) -> Result<(Vec<String>, bool), String> {
+    let mut pos = starting_position_for_game(game)?;
+    let starts_white = pos.turn() == shakmaty::Color::White;
+
+    let mut sans: Vec<String> = Vec::with_capacity(game.moves.len());
+    for (from, to, prom) in &game.moves {
+        let uci = cb_move_to_uci(*from, *to, *prom)?;
+        let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
+        let san = San::from_move(&pos, &mv);
+        pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
+        sans.push(san.to_string());
+    }
+
+    Ok((sans, starts_white))
+}
+
+fn movetext_from_sans(sans: &[String], starts_white: bool, result: &str) -> String {
+    let mut out = String::new();
+    let mut move_no: u32 = 1;
+    let mut idx = 0usize;
+
+    if !starts_white && !sans.is_empty() {
+        out.push_str(&format!("{}... {}", move_no, sans[0]));
+        idx = 1;
+        move_no += 1;
+        if idx < sans.len() {
+            out.push(' ');
+        }
+    }
+
+    while idx < sans.len() {
+        out.push_str(&format!("{}. {}", move_no, sans[idx]));
+        idx += 1;
+        if idx < sans.len() {
+            out.push(' ');
+            out.push_str(&sans[idx]);
+            idx += 1;
+        }
+        move_no += 1;
+        if idx < sans.len() {
+            out.push(' ');
+        }
+    }
+
+    if !out.ends_with(' ') && !out.is_empty() {
+        out.push(' ');
+    }
+    out.push_str(result);
+    out
+}
+
+fn game_to_movetext(game: &ParsedGame) -> Result<String, String> {
+    let result = result_to_pgn(game.header.result);
+    let (sans, starts_white) = build_san_moves(game)?;
+    Ok(movetext_from_sans(&sans, starts_white, result))
+}
+
 fn game_to_pgn_text(game: &ParsedGame) -> Result<String, String> {
     let (y, m, d) = game.header.date;
     let date = if y == 0 {
@@ -798,31 +1135,13 @@ fn game_to_pgn_text(game: &ParsedGame) -> Result<String, String> {
         format!("{:04}.{:02}.{:02}", y, m, d)
     };
     let result = result_to_pgn(game.header.result);
-
-    let mut pos: Chess = if let Some(fen) = &game.fen {
-        let fen: Fen = fen.parse().map_err(|e| format!("Invalid FEN: {e}"))?;
-        fen.into_position(CastlingMode::Standard)
-            .map_err(|e| format!("Invalid position: {e}"))?
+    let site_tag = if game.header.site.trim().is_empty() {
+        "database.chessbase.com"
     } else {
-        Chess::default()
+        game.header.site.as_str()
     };
-    let starts_white = pos.turn() == shakmaty::Color::White;
-
-    let mut sans: Vec<String> = Vec::with_capacity(game.moves.len());
-    for (from, to, prom) in &game.moves {
-        let mut uci = format!("{}{}", cb_square_to_coord(*from)?, cb_square_to_coord(*to)?);
-        if let Some(p) = prom {
-            uci.push(*p);
-        }
-        let uci: UciMove = uci.parse().map_err(|e| format!("Invalid UCI: {e}"))?;
-        let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
-        let san = San::from_move(&pos, &mv);
-        pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
-        sans.push(san.to_string());
-    }
 
     let mut out = String::new();
-    let site_tag = "database.chessbase.com";
     let tags = [
         ("Event", game.header.event.as_str()),
         ("Site", site_tag),
@@ -839,44 +1158,132 @@ fn game_to_pgn_text(game: &ParsedGame) -> Result<String, String> {
         out.push_str("[SetUp \"1\"]\n");
     }
     out.push('\n');
-
-    let mut move_no: u32 = 1;
-    let mut idx = 0usize;
-    if !starts_white && !sans.is_empty() {
-        out.push_str(&format!("{}... {}", move_no, sans[0]));
-        idx = 1;
-        move_no += 1;
-        if idx < sans.len() {
-            out.push(' ');
-        }
-    }
-    while idx < sans.len() {
-        out.push_str(&format!("{}. {}", move_no, sans[idx]));
-        idx += 1;
-        if idx < sans.len() {
-            out.push(' ');
-            out.push_str(&sans[idx]);
-            idx += 1;
-        }
-        move_no += 1;
-        if idx < sans.len() {
-            out.push(' ');
-        }
-    }
-    if !out.ends_with(' ') {
-        out.push(' ');
-    }
-    out.push_str(result);
+    out.push_str(&game_to_movetext(game)?);
     Ok(out)
 }
 
+fn parsed_game_to_normalized(game_no: u32, game: &ParsedGame) -> Result<NormalizedGame, String> {
+    Ok(NormalizedGame {
+        id: game_no as i32,
+        fen: game.fen.clone().unwrap_or_else(|| START_FEN.to_string()),
+        event: game.header.event.clone(),
+        event_id: 0,
+        site: if game.header.site.trim().is_empty() {
+            "database.chessbase.com".to_string()
+        } else {
+            game.header.site.clone()
+        },
+        site_id: 0,
+        date: date_to_option(game.header.date),
+        time: None,
+        round: None,
+        white: game.header.white.clone(),
+        white_id: 0,
+        white_elo: game.header.white_elo,
+        black: game.header.black.clone(),
+        black_id: 0,
+        black_elo: game.header.black_elo,
+        result: result_to_outcome(game.header.result),
+        time_control: None,
+        eco: None,
+        ply_count: Some(game.moves.len() as i32),
+        moves: game_to_movetext(game)?,
+    })
+}
+
+fn find_next_move_san_for_position(game: &ParsedGame, target_key: &str) -> Result<Option<String>, String> {
+    let mut pos = starting_position_for_game(game)?;
+    for (from, to, prom) in &game.moves {
+        if position_key(&pos) == target_key {
+            let uci = cb_move_to_uci(*from, *to, *prom)?;
+            let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
+            return Ok(Some(San::from_move(&pos, &mv).to_string()));
+        }
+        let uci = cb_move_to_uci(*from, *to, *prom)?;
+        let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
+        pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
+    }
+    Ok(None)
+}
+
+fn build_position_search_result(
+    query_fen: &str,
+    games: &[(u32, ParsedGame)],
+    returned: u32,
+    total: u32,
+    wanted_result: Option<&str>,
+) -> Result<ChessbasePositionSearchResult, String> {
+    let target_key = normalize_fen_key(query_fen);
+    let mut stats_map: HashMap<String, PositionStats> = HashMap::new();
+    let mut normalized_games = Vec::with_capacity(games.len());
+    let mut filtered_count = 0u32;
+
+    for (game_no, game) in games {
+        if !matches_wanted_result(game.header.result, wanted_result) {
+            continue;
+        }
+        filtered_count = filtered_count.saturating_add(1);
+
+        if let Ok(normalized) = parsed_game_to_normalized(*game_no, game) {
+            normalized_games.push(normalized);
+        }
+
+        if let Ok(Some(next_move)) = find_next_move_san_for_position(game, &target_key) {
+            let stat = stats_map.entry(next_move.clone()).or_insert(PositionStats {
+                move_: next_move,
+                white: 0,
+                draw: 0,
+                black: 0,
+            });
+            match result_to_outcome(game.header.result) {
+                Outcome::WhiteWin => stat.white += 1,
+                Outcome::BlackWin => stat.black += 1,
+                Outcome::Draw => stat.draw += 1,
+                Outcome::Unknown => {}
+            }
+        }
+    }
+
+    let mut stats = stats_map.into_values().collect::<Vec<_>>();
+    stats.sort_by_key(|s| -(s.white + s.draw + s.black));
+    let result_filter_is_any = wanted_result
+        .unwrap_or("any")
+        .trim()
+        .eq_ignore_ascii_case("any")
+        || wanted_result.unwrap_or("").trim().is_empty();
+
+    Ok(ChessbasePositionSearchResult {
+        stats,
+        games: normalized_games,
+        returned: if result_filter_is_any {
+            returned
+        } else {
+            filtered_count
+        },
+        total: if result_filter_is_any {
+            total
+        } else {
+            filtered_count
+        },
+    })
+}
+
+enum ActiveDownloadResponder {
+    Quick(oneshot::Sender<Result<ChessbaseDownloadResult, String>>),
+    Position(oneshot::Sender<Result<ChessbasePositionSearchResult, String>>),
+}
+
 struct ActiveDownload {
-    respond_to: oneshot::Sender<Result<ChessbaseDownloadResult, String>>,
+    respond_to: ActiveDownloadResponder,
     max_games: u32,
-    games: Vec<ParsedGame>,
+    games: Vec<(u32, ParsedGame)>,
     pending_ids: Vec<u32>,
     batch_expected: usize,
     batch_received: usize,
+    returned: u32,
+    total: u32,
+    query_fen: Option<String>,
+    wanted_result: Option<String>,
 }
 
 struct ActiveCount {
@@ -992,12 +1399,53 @@ async fn run_ws_session(
                         let out = msg.to_send_buf(true, true);
                         ws_write.send(Message::Binary(out)).await.map_err(|e| format!("Failed to send search: {e}"))?;
                         active_download = Some(ActiveDownload{
-                            respond_to,
+                            respond_to: ActiveDownloadResponder::Quick(respond_to),
                             max_games,
                             games: vec![],
                             pending_ids: vec![],
                             batch_expected: 0,
                             batch_received: 0,
+                            returned: 0,
+                            total: 0,
+                            query_fen: None,
+                            wanted_result: None,
+                        });
+                    }
+                    Some(ChessbaseWsRequest::SearchByPosition {
+                        query_fen,
+                        search_mask,
+                        wanted_result,
+                        max_games,
+                        respond_to,
+                    }) => {
+                        if !ready {
+                            let _ = respond_to.send(Err("ChessBase session is not ready yet".to_string()));
+                            continue;
+                        }
+                        if active_download.is_some() || active_count.is_some() {
+                            let _ = respond_to.send(Err("Another ChessBase request is already in progress".to_string()));
+                            continue;
+                        }
+                        let max_games = max_games.max(1).min(MAX_GAMES_PER_QUERY);
+                        let mut msg = WebSockMessage::new(SockMsgId::QueryOnlineDb);
+                        msg.id_sender = connect_id;
+                        msg.id_receiver = 1;
+                        msg.msg_id = { msg_cnt += 1; msg_cnt };
+                        search_mask.write_to(&mut msg.buf)?;
+
+                        let out = msg.to_send_buf(true, true);
+                        ws_write.send(Message::Binary(out)).await.map_err(|e| format!("Failed to send search: {e}"))?;
+                        active_download = Some(ActiveDownload{
+                            respond_to: ActiveDownloadResponder::Position(respond_to),
+                            max_games,
+                            games: vec![],
+                            pending_ids: vec![],
+                            batch_expected: 0,
+                            batch_received: 0,
+                            returned: 0,
+                            total: 0,
+                            query_fen: Some(query_fen),
+                            wanted_result,
                         });
                     }
                     Some(ChessbaseWsRequest::CountByQuickSearch { query, respond_to }) => {
@@ -1020,6 +1468,22 @@ async fn run_ws_session(
                         let out = msg.to_send_buf(true, true);
                         ws_write.send(Message::Binary(out)).await.map_err(|e| format!("Failed to send search: {e}"))?;
                         active_count = Some(ActiveCount { respond_to });
+                    }
+                    Some(ChessbaseWsRequest::CancelActive { respond_to }) => {
+                        if let Some(active) = active_download.take() {
+                            match active.respond_to {
+                                ActiveDownloadResponder::Quick(ch) => {
+                                    let _ = ch.send(Err("Search stopped".to_string()));
+                                }
+                                ActiveDownloadResponder::Position(ch) => {
+                                    let _ = ch.send(Err("Search stopped".to_string()));
+                                }
+                            }
+                        }
+                        if let Some(active) = active_count.take() {
+                            let _ = active.respond_to.send(Err("Search stopped".to_string()));
+                        }
+                        let _ = respond_to.send(Ok(()));
                     }
                 }
             }
@@ -1074,7 +1538,8 @@ async fn run_ws_session(
                         }
                         if let Some(active) = active_download.as_mut() {
                             let n_games = sock.buf.read_u32_le()? as usize;
-                            let _total = sock.buf.read_u32_le()?;
+                            let total = sock.buf.read_u32_le()?;
+                            active.total = total;
                             let mut ids = Vec::new();
                             for _ in 0..n_games {
                                 let id = sock.buf.read_u32_le()?;
@@ -1082,9 +1547,22 @@ async fn run_ws_session(
                                     ids.push(id);
                                 }
                             }
+                            active.returned = ids.len() as u32;
                             if ids.is_empty() {
                                 let active = active_download.take().unwrap();
-                                let _ = active.respond_to.send(Err("No games found".to_string()));
+                                match active.respond_to {
+                                    ActiveDownloadResponder::Quick(respond_to) => {
+                                        let _ = respond_to.send(Err("No games found".to_string()));
+                                    }
+                                    ActiveDownloadResponder::Position(respond_to) => {
+                                        let _ = respond_to.send(Ok(ChessbasePositionSearchResult {
+                                            stats: vec![],
+                                            games: vec![],
+                                            returned: 0,
+                                            total,
+                                        }));
+                                    }
+                                }
                                 continue;
                             }
                             active.pending_ids = ids;
@@ -1098,10 +1576,10 @@ async fn run_ws_session(
                             let n_read = sock.buf.read_u32_le()? as usize;
                             for _ in 0..n_read {
                                 sock.buf.begin_sized_read()?;
-                                let _game_no = sock.buf.read_u32_le()?;
+                                let game_no = sock.buf.read_u32_le()?;
                                 let game = parse_game(&mut sock.buf)?;
                                 sock.buf.end_sized_read()?;
-                                active.games.push(game);
+                                active.games.push((game_no, game));
                             }
                             active.batch_received = active.batch_received.saturating_add(n_read);
 
@@ -1120,18 +1598,36 @@ async fn run_ws_session(
                             }
 
                             let active = active_download.take().unwrap();
-                            let mut pgn = String::new();
-                            let mut ok_games = 0u32;
-                            for g in &active.games {
-                                if let Ok(txt) = game_to_pgn_text(g) {
-                                    if !pgn.is_empty() {
-                                        pgn.push_str("\n\n");
+                            match active.respond_to {
+                                ActiveDownloadResponder::Quick(respond_to) => {
+                                    let mut pgn = String::new();
+                                    let mut ok_games = 0u32;
+                                    for (_, g) in &active.games {
+                                        if let Ok(txt) = game_to_pgn_text(g) {
+                                            if !pgn.is_empty() {
+                                                pgn.push_str("\n\n");
+                                            }
+                                            pgn.push_str(&txt);
+                                            ok_games += 1;
+                                        }
                                     }
-                                    pgn.push_str(&txt);
-                                    ok_games += 1;
+                                    let _ = respond_to.send(Ok(ChessbaseDownloadResult { pgn, games: ok_games }));
+                                }
+                                ActiveDownloadResponder::Position(respond_to) => {
+                                    let query_fen = active
+                                        .query_fen
+                                        .as_deref()
+                                        .ok_or("Missing position query FEN")?;
+                                    let result = build_position_search_result(
+                                        query_fen,
+                                        &active.games,
+                                        active.returned,
+                                        active.total,
+                                        active.wanted_result.as_deref(),
+                                    )?;
+                                    let _ = respond_to.send(Ok(result));
                                 }
                             }
-                            let _ = active.respond_to.send(Ok(ChessbaseDownloadResult { pgn, games: ok_games }));
                         }
                     }
                     _ => {}
@@ -1262,6 +1758,41 @@ pub async fn chessbase_clear_credentials(state: State<'_, crate::AppState>) -> R
 
 #[tauri::command]
 #[specta::specta]
+pub async fn chessbase_session_status(state: State<'_, crate::AppState>) -> Result<ChessbaseSessionStatus, String> {
+    let session = {
+        let ws = state.chessbase_ws.lock().await;
+        ws.session.clone()
+    };
+
+    let Some(session) = session else {
+        return Ok(ChessbaseSessionStatus {
+            connected: false,
+            username: None,
+            state: "disconnected".to_string(),
+            last_error: None,
+        });
+    };
+
+    let connected = *session.ready_rx.borrow();
+    let last_error = session.last_error.lock().await.clone();
+    let state_str = if connected {
+        "ready"
+    } else if last_error.is_some() {
+        "error"
+    } else {
+        "connecting"
+    };
+
+    Ok(ChessbaseSessionStatus {
+        connected,
+        username: Some(session.username.clone()),
+        state: state_str.to_string(),
+        last_error,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn chessbase_login_background(state: State<'_, crate::AppState>) -> Result<ChessbaseSessionStatus, String> {
     let session = ensure_session(state.inner()).await?;
     let mut connected = *session.ready_rx.borrow();
@@ -1316,6 +1847,46 @@ pub async fn chessbase_download_games_quick_search(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn chessbase_search_position(
+    state: State<'_, crate::AppState>,
+    fen: String,
+    use_material: bool,
+    max_games: u32,
+    color: Option<String>,
+    wanted_result: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<ChessbasePositionSearchResult, String> {
+    let session = ensure_session(state.inner()).await?;
+    if !*session.ready_rx.borrow() {
+        return Err("ChessBase session is not ready yet".to_string());
+    }
+
+    let mut search_mask = SearchMask::new_position_search(&fen, use_material)?;
+    search_mask.apply_position_filters(
+        color.as_deref(),
+        wanted_result.as_deref(),
+        start_date.as_deref(),
+        end_date.as_deref(),
+    )?;
+
+    let (tx, rx) = oneshot::channel();
+    session
+        .requests_tx
+        .send(ChessbaseWsRequest::SearchByPosition {
+            query_fen: fen,
+            search_mask,
+            wanted_result,
+            max_games,
+            respond_to: tx,
+        })
+        .map_err(|_| "ChessBase session unavailable".to_string())?;
+
+    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn chessbase_quick_search_count(
     state: State<'_, crate::AppState>,
     query: String,
@@ -1329,6 +1900,26 @@ pub async fn chessbase_quick_search_count(
     session
         .requests_tx
         .send(ChessbaseWsRequest::CountByQuickSearch { query, respond_to: tx })
+        .map_err(|_| "ChessBase session unavailable".to_string())?;
+
+    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn chessbase_cancel_active_request(state: State<'_, crate::AppState>) -> Result<(), String> {
+    let ws = state.chessbase_ws.lock().await;
+    let session = ws
+        .session
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "ChessBase session not initialized".to_string())?;
+    drop(ws);
+
+    let (tx, rx) = oneshot::channel();
+    session
+        .requests_tx
+        .send(ChessbaseWsRequest::CancelActive { respond_to: tx })
         .map_err(|_| "ChessBase session unavailable".to_string())?;
 
     rx.await.map_err(|_| "ChessBase request canceled".to_string())?

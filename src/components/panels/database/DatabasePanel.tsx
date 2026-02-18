@@ -1,6 +1,7 @@
 import { Alert, Group, ScrollArea, SegmentedControl, Select, Stack, Tabs, Text } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { useAtom, useAtomValue } from "jotai";
 import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,7 +19,14 @@ import {
   lichessOptionsAtom,
   masterOptionsAtom,
 } from "@/state/atoms";
-import { type DatabaseInfo, getDatabases, type Opening, searchPosition } from "@/utils/db";
+import {
+  CHESSBASE_DATABASE_SENTINEL,
+  type DatabaseInfo,
+  getDatabases,
+  isChessbaseDatabasePath,
+  type Opening,
+  searchPosition,
+} from "@/utils/db";
 import { convertToNormalized, getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGamesOptions, MasterGamesOptions } from "@/utils/lichess/explorer";
 import DatabaseLoader from "./DatabaseLoader";
@@ -29,6 +37,12 @@ import LocalOptionsPanel from "./options/LocalOptionsPanel";
 import MasterOptionsPanel from "./options/MastersOptionsPanel";
 
 type OpeningData = { openings: Opening[]; games: NormalizedGame[] };
+type ChessbaseSessionStatus = {
+  connected: boolean;
+  username: string | null;
+  state: "ready" | "connecting" | "error" | "disconnected";
+  last_error: string | null;
+};
 
 type DBType =
   | { type: "local"; options: LocalOptions }
@@ -53,7 +67,7 @@ function sortOpenings(openings: Opening[]) {
   return openings.sort((a, b) => b.black + b.draw + b.white - (a.black + a.draw + a.white));
 }
 
-async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number) {
+async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number, signal?: AbortSignal) {
   return match(db)
     .with({ type: "lch_all" }, async ({ fen, options }) => {
       const data = await getLichessGames(fen, options);
@@ -84,7 +98,7 @@ async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number) {
       if (!options.fen || options.fen.trim() === "") {
         throw Error("Missing FEN for local database search");
       }
-      const positionData = await searchPosition({ ...options, gameDetailsLimit }, tab);
+      const positionData = await searchPosition({ ...options, gameDetailsLimit }, tab, signal);
       return {
         openings: sortOpenings(positionData[0]),
         games: positionData[1],
@@ -107,6 +121,19 @@ function DatabasePanel() {
   const [tabType, setTabType] = useAtom(currentDbTabAtom);
   const currentTabSelected = useAtomValue(currentTabSelectedAtom);
   const tabValue = tab?.value ?? "analysis";
+  const { data: chessbaseSessionStatus } = useQuery({
+    queryKey: ["chessbase", "session-status", "database-panel"],
+    queryFn: async () => {
+      try {
+        return await invoke<ChessbaseSessionStatus>("chessbase_session_status");
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 5000,
+    staleTime: 2000,
+  });
+  const chessbaseConnected = chessbaseSessionStatus?.connected === true;
 
   // Get available local databases
   const { data: databases } = useQuery({
@@ -129,6 +156,19 @@ function DatabasePanel() {
     if (localOptions.path) return localOptions.path;
     return gameDatabases[0]?.file ?? null;
   }, [gameDatabases, localOptions.path]);
+  const localDatabaseOptions = useMemo(() => {
+    const options = gameDatabases.map((database) => ({
+      label: database.title,
+      value: database.file,
+    }));
+    if (chessbaseConnected) {
+      options.unshift({
+        label: t("chessbase.title"),
+        value: CHESSBASE_DATABASE_SENTINEL,
+      });
+    }
+    return options;
+  }, [gameDatabases, chessbaseConnected, t]);
 
   // Only search when we're in the database tab and viewing stats or games
   const isDatabaseTabActive = currentTabSelected === "database";
@@ -221,6 +261,17 @@ function DatabasePanel() {
     }
   }, [db, defaultLocalDbPath, localOptions.path, localOptions.fen, setLocalOptions, store]);
 
+  useEffect(() => {
+    if (db !== "local") return;
+    if (!isChessbaseDatabasePath(localOptions.path)) return;
+    if (chessbaseConnected) return;
+
+    setLocalOptions((prev) => ({
+      ...prev,
+      path: gameDatabases[0]?.file ?? null,
+    }));
+  }, [db, localOptions.path, chessbaseConnected, setLocalOptions, gameDatabases]);
+
   // Memoize dbType to avoid recreating on every render
   // IMPORTANT: Always use localOptions.fen (updated immediately) for local DB to ensure synchronization
   const dbType: DBType = useMemo(
@@ -284,8 +335,8 @@ function DatabasePanel() {
   } = useQuery<OpeningData, Error, OpeningData, readonly unknown[]>({
     // Use localOptions.fen directly for queryKey to ensure it matches what's sent to backend
     queryKey,
-    queryFn: async () => {
-      const result = (await fetchOpening(dbType, tabValue, gameLimit)) as OpeningData;
+    queryFn: async ({ signal }) => {
+      const result = (await fetchOpening(dbType, tabValue, gameLimit, signal)) as OpeningData;
       return result;
     },
     enabled: queryEnabled && (db !== "local" || (!!localOptions.fen && !!localOptions.path)),
@@ -325,18 +376,17 @@ function DatabasePanel() {
 
       {db === "local" && (
         <Select
-          data={gameDatabases.map((db) => ({
-            label: db.title,
-            value: db.file,
-          }))}
+          data={localDatabaseOptions}
           value={localOptions.path ?? defaultLocalDbPath}
           onChange={(value) => {
             if (value) {
               const currentFenFromStore = store.getState().currentNode().fen;
+              const isChessbase = isChessbaseDatabasePath(value);
               setLocalOptions((prev) => ({
                 ...prev,
                 path: value,
                 fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                players: isChessbase ? [] : prev.players,
               }));
               // Invalidate queries to trigger new search with new database
               queryClient.invalidateQueries({ queryKey: ["database-opening"] });
@@ -361,7 +411,14 @@ function DatabasePanel() {
         style={{ overflow: "hidden" }}
       >
         <Tabs.List>
-          <Tabs.Tab value="stats" disabled={dbType.type === "local" && dbType.options.type === "partial"}>
+          <Tabs.Tab
+            value="stats"
+            disabled={
+              dbType.type === "local" &&
+              dbType.options.type === "partial" &&
+              !isChessbaseDatabasePath(dbType.options.path)
+            }
+          >
             {t("features.board.database.stats")}
           </Tabs.Tab>
           <Tabs.Tab value="games">{t("features.board.database.games")}</Tabs.Tab>
@@ -376,7 +433,11 @@ function DatabasePanel() {
             games={openingData?.games || []}
             loading={isLoading}
             fen={db === "local" ? localOptions.fen : debouncedFen}
-            databasePath={db === "local" ? (localOptions.path ?? undefined) : undefined}
+            databasePath={
+              db === "local" && localOptions.path && !isChessbaseDatabasePath(localOptions.path)
+                ? localOptions.path
+                : undefined
+            }
           />
         </PanelWithError>
         <PanelWithError value="options" error={error} type={db} hasLocalDatabase={!!localOptions.path}>

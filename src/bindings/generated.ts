@@ -1098,6 +1098,22 @@ async chessbaseClearCredentials() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async chessbaseCancelActiveRequest() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_cancel_active_request") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseSessionStatus() : Promise<Result<ChessbaseSessionStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_session_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async chessbaseLoginBackground() : Promise<Result<ChessbaseSessionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("chessbase_login_background") };
@@ -1109,6 +1125,14 @@ async chessbaseLoginBackground() : Promise<Result<ChessbaseSessionStatus, string
 async chessbaseDownloadGamesQuickSearch(query: string, maxGames: number) : Promise<Result<ChessbaseDownloadResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("chessbase_download_games_quick_search", { query, maxGames }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async chessbaseSearchPosition(fen: string, useMaterial: boolean, maxGames: number, color: string | null, wantedResult: string | null, startDate: string | null, endDate: string | null) : Promise<Result<ChessbasePositionSearchResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("chessbase_search_position", { fen, useMaterial, maxGames, color, wantedResult, startDate, endDate }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1417,6 +1441,7 @@ export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
 export type ChessbaseDownloadResult = { pgn: string; games: number }
 export type ChessbaseImportPreparedResult = { downloadedGames: number; importedGames: number }
+export type ChessbasePositionSearchResult = { stats: PositionStats[]; games: NormalizedGame[]; returned: number; total: number }
 export type ChessbasePreparedDownload = { query: string; maxGames: number; downloadedGames: number }
 export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }

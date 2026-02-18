@@ -105,8 +105,10 @@ use crate::variants_builder::build_variants_tree;
 use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
 use crate::chessbase::{
+    chessbase_cancel_active_request,
     chessbase_clear_credentials, chessbase_download_games_quick_search, chessbase_get_credentials,
-    chessbase_login_background, chessbase_quick_search_count, chessbase_set_credentials,
+    chessbase_login_background, chessbase_quick_search_count, chessbase_search_position,
+    chessbase_session_status, chessbase_set_credentials,
 };
 use crate::chessbase_service::{
     chessbase_clear_prepared_download, chessbase_get_prepared_download, chessbase_import_prepared_download,
@@ -282,8 +284,11 @@ pub async fn run() {
             chessbase_get_credentials,
             chessbase_set_credentials,
             chessbase_clear_credentials,
+            chessbase_cancel_active_request,
+            chessbase_session_status,
             chessbase_login_background,
             chessbase_download_games_quick_search,
+            chessbase_search_position,
             chessbase_quick_search_count,
             chessbase_get_prepared_download,
             chessbase_clear_prepared_download,
