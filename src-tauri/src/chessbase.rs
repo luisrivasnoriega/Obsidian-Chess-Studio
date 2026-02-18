@@ -1044,7 +1044,7 @@ fn date_to_option(date: (u16, u8, u8)) -> Option<String> {
 }
 
 fn normalize_fen_key(fen: &str) -> String {
-    fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ")
+    fen.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
 }
 
 fn position_key(pos: &Chess) -> String {
@@ -1422,9 +1422,18 @@ async fn run_ws_session(
                             let _ = respond_to.send(Err("ChessBase session is not ready yet".to_string()));
                             continue;
                         }
-                        if active_download.is_some() || active_count.is_some() {
-                            let _ = respond_to.send(Err("Another ChessBase request is already in progress".to_string()));
-                            continue;
+                        if let Some(active) = active_download.take() {
+                            match active.respond_to {
+                                ActiveDownloadResponder::Quick(ch) => {
+                                    let _ = ch.send(Err("Search stopped".to_string()));
+                                }
+                                ActiveDownloadResponder::Position(ch) => {
+                                    let _ = ch.send(Err("Search stopped".to_string()));
+                                }
+                            }
+                        }
+                        if let Some(active) = active_count.take() {
+                            let _ = active.respond_to.send(Err("Search stopped".to_string()));
                         }
                         let max_games = max_games.max(1).min(MAX_GAMES_PER_QUERY);
                         let mut msg = WebSockMessage::new(SockMsgId::QueryOnlineDb);

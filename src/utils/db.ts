@@ -274,6 +274,8 @@ type ChessbasePositionSearchResult = {
   total: number;
 };
 
+let chessbaseSearchGeneration = 0;
+
 /**
  * Recalculate opening stats from limited games.
  * This ensures stats reflect only the games that are actually returned (after limit is applied).
@@ -290,8 +292,8 @@ function _recalculateOpeningsFromGames(games: NormalizedGame[], currentFen: stri
   // Normalize FEN for comparison (remove move counters and halfmove clock)
   const normalizeFen = (fen: string): string => {
     const parts = fen.split(" ");
-    // Keep only position, active color, castling, en passant (first 4 parts)
-    return parts.slice(0, 4).join(" ");
+    // Keep only position + active color to match backend ChessBase position matching.
+    return parts.slice(0, 2).join(" ");
   };
   const normalizedCurrentFen = normalizeFen(currentFen);
 
@@ -379,10 +381,70 @@ export async function getTournamentGames(file: string, id: number) {
 }
 
 function isAbortError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const name = (error as { name?: string }).name;
-  const message = (error as { message?: string }).message;
-  return name === "AbortError" || message === "Search stopped";
+  const message =
+    typeof error === "string"
+      ? error
+      : error && typeof error === "object"
+        ? String((error as { message?: unknown }).message ?? "")
+        : "";
+  const name = error && typeof error === "object" ? String((error as { name?: unknown }).name ?? "") : "";
+  if (name === "AbortError") return true;
+  return /search stopped|request canceled|aborted|another chessbase request is already in progress/i.test(message);
+}
+
+async function invokeWithAbort<T>(
+  command: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+  timeoutMs = 30000,
+): Promise<T> {
+  if (signal?.aborted) {
+    throw new DOMException("Search stopped", "AbortError");
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void invoke("chessbase_cancel_active_request").catch(() => {});
+      reject(new DOMException("Search stopped", "AbortError"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void invoke("chessbase_cancel_active_request").catch(() => {});
+      reject(new Error("ChessBase search timeout"));
+    }, timeoutMs);
+
+    void invoke<T>(command, payload)
+      .then((result) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      });
+  });
 }
 
 export async function searchPosition(options: LocalOptions, tab: string, signal?: AbortSignal) {
@@ -417,9 +479,13 @@ export async function searchPosition(options: LocalOptions, tab: string, signal?
     if (selectedPlayers.length > 0) {
       throw new Error("ChessBase search does not support local player filters.");
     }
-    if (signal?.aborted) {
-      throw new DOMException("Search stopped", "AbortError");
-    }
+    const requestGeneration = ++chessbaseSearchGeneration;
+
+    const throwIfStaleOrAborted = () => {
+      if (signal?.aborted || requestGeneration !== chessbaseSearchGeneration) {
+        throw new DOMException("Search stopped", "AbortError");
+      }
+    };
 
     const abortListener = () => {
       void invoke("chessbase_cancel_active_request").catch(() => {});
@@ -427,27 +493,42 @@ export async function searchPosition(options: LocalOptions, tab: string, signal?
     signal?.addEventListener("abort", abortListener, { once: true });
 
     try {
+      throwIfStaleOrAborted();
       await invoke("chessbase_cancel_active_request").catch(() => {});
-      if (signal?.aborted) {
-        throw new DOMException("Search stopped", "AbortError");
+      throwIfStaleOrAborted();
+
+      const runSearch = async () =>
+        await invokeWithAbort<ChessbasePositionSearchResult>(
+          "chessbase_search_position",
+          {
+            fen,
+            useMaterial: type === "partial",
+            maxGames: gameDetailsLimitValue,
+            color: options.color ?? "any",
+            wantedResult: options.result ?? "any",
+            startDate: options.start_date ?? null,
+            endDate: options.end_date ?? null,
+          },
+          signal,
+        );
+
+      let res = await runSearch();
+      throwIfStaleOrAborted();
+
+      if (res.returned > 0 && res.games.length === 0) {
+        await invoke("chessbase_cancel_active_request").catch(() => {});
+        throwIfStaleOrAborted();
+        res = await runSearch();
+        throwIfStaleOrAborted();
       }
 
-      const res = await invoke<ChessbasePositionSearchResult>("chessbase_search_position", {
-        fen,
-        useMaterial: type === "partial",
-        maxGames: gameDetailsLimitValue,
-        color: options.color ?? "any",
-        wantedResult: options.result ?? "any",
-        startDate: options.start_date ?? null,
-        endDate: options.end_date ?? null,
-      });
-      if (signal?.aborted) {
-        throw new DOMException("Search stopped", "AbortError");
-      }
-      return [res.stats, res.games] as [Opening[], NormalizedGame[]];
+      const fallbackStats = _recalculateOpeningsFromGames(res.games, fen);
+      const stats = res.stats.length === 0 && fallbackStats.length > 0 ? fallbackStats : res.stats;
+
+      return [stats, res.games] as [Opening[], NormalizedGame[]];
     } catch (error) {
       if (isAbortError(error)) {
-        throw new Error("Search stopped");
+        throw new DOMException("Search stopped", "AbortError");
       }
       throw error;
     } finally {

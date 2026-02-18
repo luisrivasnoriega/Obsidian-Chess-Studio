@@ -1,4 +1,4 @@
-import { Alert, Group, ScrollArea, SegmentedControl, Select, Stack, Tabs, Text } from "@mantine/core";
+import { Alert, Group, LoadingOverlay, ScrollArea, SegmentedControl, Select, Stack, Tabs, Text } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
@@ -196,8 +196,11 @@ function DatabasePanel() {
     }
   }, [fenFromStore]);
 
-  // Reduced debounce for local DB to improve synchronization with analysis board
-  const [debouncedFen] = useDebouncedValue(fen, db === "local" ? 100 : 50);
+  const fenDebounceMs = db === "local" && isChessbaseDatabasePath(localOptions.path) ? 250 : db === "local" ? 100 : 50;
+  // Use a higher debounce for ChessBase to avoid flooding websocket requests while dragging pieces quickly.
+  const [debouncedFen] = useDebouncedValue(fen, fenDebounceMs);
+  const effectiveLocalFen =
+    db === "local" && isChessbaseDatabasePath(localOptions.path) ? debouncedFen || localOptions.fen : localOptions.fen;
 
   const prevFenRef = useRef<string>(localOptions.fen || "");
 
@@ -279,7 +282,7 @@ function DatabasePanel() {
       match(db)
         .with("local", (v) => ({
           type: v,
-          options: localOptions, // localOptions.fen is updated immediately when FEN changes
+          options: { ...localOptions, fen: effectiveLocalFen }, // Use debounced fen for ChessBase only
         }))
         .with("lch_all", (v) => ({
           type: v,
@@ -292,7 +295,7 @@ function DatabasePanel() {
           fen: debouncedFen,
         }))
         .exhaustive(),
-    [db, localOptions, lichessOptions, masterOptions, debouncedFen],
+    [db, localOptions, effectiveLocalFen, lichessOptions, masterOptions, debouncedFen],
   );
 
   // Ensure FEN is always set when we have a path but no FEN
@@ -310,12 +313,12 @@ function DatabasePanel() {
   // 2. We're viewing stats or games (not options)
   // 3. For local DB, we have FEN and path
   const queryEnabled =
-    shouldSearch && (db !== "local" || (!!localOptions.fen && !!localOptions.path && localOptions.fen.trim() !== ""));
+    shouldSearch && (db !== "local" || (!!effectiveLocalFen && !!localOptions.path && effectiveLocalFen.trim() !== ""));
 
   const queryKey = [
     "database-opening",
     db,
-    db === "local" ? localOptions.fen : debouncedFen, // include fen for all DBs to refetch on board move
+    db === "local" ? effectiveLocalFen : debouncedFen, // include fen for all DBs to refetch on board move
     db === "local" ? localOptions.path : null, // include path to refetch when database changes
     db === "local" ? localOptions.type : null,
     db === "local" ? localOptions.players : null,
@@ -331,6 +334,7 @@ function DatabasePanel() {
   const {
     data: openingData,
     isLoading,
+    isFetching,
     error,
   } = useQuery<OpeningData, Error, OpeningData, readonly unknown[]>({
     // Use localOptions.fen directly for queryKey to ensure it matches what's sent to backend
@@ -339,16 +343,18 @@ function DatabasePanel() {
       const result = (await fetchOpening(dbType, tabValue, gameLimit, signal)) as OpeningData;
       return result;
     },
-    enabled: queryEnabled && (db !== "local" || (!!localOptions.fen && !!localOptions.path)),
+    enabled: queryEnabled && (db !== "local" || (!!effectiveLocalFen && !!localOptions.path)),
     staleTime: 0, // Always refetch when FEN or parameters change to show latest results
     gcTime: 10000, // Keep in cache for 10 seconds (reduced from 30)
     refetchOnMount: true, // Refetch when component mounts to ensure fresh data
+    placeholderData: (previousData) => previousData,
   });
 
   const grandTotal = openingData?.openings?.reduce(
     (acc: number, curr: Opening) => acc + curr.black + curr.white + curr.draw,
     0,
   );
+  const isSearching = isLoading || isFetching;
 
   return (
     <Stack h="100%" gap={0}>
@@ -372,7 +378,7 @@ function DatabasePanel() {
         )}
       </Group>
 
-      <DatabaseLoader isLoading={isLoading} tab={tab?.value ?? null} />
+      <DatabaseLoader isLoading={isSearching} tab={tab?.value ?? null} />
 
       {db === "local" && (
         <Select
@@ -425,14 +431,28 @@ function DatabasePanel() {
           <Tabs.Tab value="options">{t("features.board.database.options")}</Tabs.Tab>
         </Tabs.List>
 
-        <PanelWithError value="stats" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
-          <OpeningsTable openings={openingData?.openings || []} loading={isLoading} />
+        <PanelWithError
+          value="stats"
+          error={error}
+          type={db}
+          hasLocalDatabase={!!localOptions.path}
+          loading={isSearching}
+          activeValue={tabType}
+        >
+          <OpeningsTable openings={openingData?.openings || []} loading={false} />
         </PanelWithError>
-        <PanelWithError value="games" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
+        <PanelWithError
+          value="games"
+          error={error}
+          type={db}
+          hasLocalDatabase={!!localOptions.path}
+          loading={isSearching}
+          activeValue={tabType}
+        >
           <GamesTable
             games={openingData?.games || []}
-            loading={isLoading}
-            fen={db === "local" ? localOptions.fen : debouncedFen}
+            loading={false}
+            fen={db === "local" ? effectiveLocalFen : debouncedFen}
             databasePath={
               db === "local" && localOptions.path && !isChessbaseDatabasePath(localOptions.path)
                 ? localOptions.path
@@ -440,7 +460,14 @@ function DatabasePanel() {
             }
           />
         </PanelWithError>
-        <PanelWithError value="options" error={error} type={db} hasLocalDatabase={!!localOptions.path}>
+        <PanelWithError
+          value="options"
+          error={error}
+          type={db}
+          hasLocalDatabase={!!localOptions.path}
+          loading={isSearching}
+          activeValue={tabType}
+        >
           <ScrollArea h="100%" offsetScrollbars>
             {match(db)
               .with("local", () => <LocalOptionsPanel boardFen={debouncedFen} />)
@@ -456,9 +483,11 @@ function DatabasePanel() {
 
 function PanelWithError(props: {
   value: string;
+  activeValue: string;
   error: Error | null;
   type: string;
   hasLocalDatabase: boolean;
+  loading: boolean;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -471,7 +500,13 @@ function PanelWithError(props: {
   }
 
   return (
-    <Tabs.Panel pt="xs" value={props.value} flex={1}>
+    <Tabs.Panel pt="xs" value={props.value} flex={1} pos="relative">
+      <LoadingOverlay
+        visible={props.loading && props.value !== "options" && props.value === props.activeValue}
+        zIndex={30}
+        overlayProps={{ blur: 1 }}
+        loaderProps={{ size: "md" }}
+      />
       {children}
     </Tabs.Panel>
   );
