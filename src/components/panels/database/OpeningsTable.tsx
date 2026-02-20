@@ -1,4 +1,4 @@
-import { Group, Progress, Text } from "@mantine/core";
+import { Box, Group, Progress, Text } from "@mantine/core";
 import { useForceUpdate } from "@mantine/hooks";
 import { DataTable } from "mantine-datatable";
 import { memo, useContext } from "react";
@@ -33,78 +33,83 @@ function OpeningsTable({ openings, loading }: { openings: Opening[]; loading: bo
   }
 
   return (
-    <DataTable
-      withTableBorder
-      highlightOnHover
-      records={openings}
-      fetching={loading || openings === null}
-      rowStyle={(_game, i) => {
-        if (i === openings.length - 1)
-          return {
-            fontWeight: 700,
-            position: "sticky",
-            bottom: 0,
-            zIndex: 10,
-          };
-        return {};
-      }}
-      columns={[
-        {
-          accessor: "move",
-          width: 100,
-          render: ({ move }) => {
-            if (move === "*")
+    <Box style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <DataTable
+        withTableBorder
+        height="100%"
+        style={{ flex: 1, minHeight: 0 }}
+        scrollAreaProps={{ type: "scroll", scrollbars: "y", style: { height: "100%" } }}
+        highlightOnHover
+        records={openings}
+        fetching={loading || openings === null}
+        rowStyle={(_game, i) => {
+          if (i === openings.length - 1)
+            return {
+              fontWeight: 700,
+              position: "sticky",
+              bottom: 0,
+              zIndex: 10,
+            };
+          return {};
+        }}
+        columns={[
+          {
+            accessor: "move",
+            width: 100,
+            render: ({ move }) => {
+              if (move === "*")
+                return (
+                  <Text fz="sm" fs="italic">
+                    Game end
+                  </Text>
+                );
+              return <Text fz="sm">{t("formatters.moveNotation", { move })}</Text>;
+            },
+          },
+          {
+            accessor: "total",
+            width: 180,
+            render: ({ move, white, draw, black }) => {
+              const total = white + draw + black;
+              const percentage = (total / grandTotal) * 100;
               return (
-                <Text fz="sm" fs="italic">
-                  Game end
-                </Text>
+                <Group>
+                  {move !== "Total" && <Text fz="sm">{percentage.toFixed(0)}%</Text>}
+                  <Text fz="sm" flex={1} ta="right">
+                    {t("units.count", { count: total })}
+                  </Text>
+                </Group>
               );
-            return <Text fz="sm">{t("formatters.moveNotation", { move })}</Text>;
+            },
           },
-        },
-        {
-          accessor: "total",
-          width: 180,
-          render: ({ move, white, draw, black }) => {
-            const total = white + draw + black;
-            const percentage = (total / grandTotal) * 100;
-            return (
-              <Group>
-                {move !== "Total" && <Text fz="sm">{percentage.toFixed(0)}%</Text>}
-                <Text fz="sm" flex={1} ta="right">
-                  {t("units.count", { count: total })}
-                </Text>
-              </Group>
-            );
+          {
+            accessor: "results",
+            render: ({ black, white, draw }) => {
+              const total = white + draw + black;
+              const whitePercent = (white / total) * 100;
+              const drawPercent = (draw / total) * 100;
+              const blackPercent = (black / total) * 100;
+              return (
+                <Progress.Root size="xl">
+                  <Progress.Section value={whitePercent} color="white">
+                    <Progress.Label c="black">{whitePercent > 10 ? `${whitePercent.toFixed(1)}%` : ""}</Progress.Label>
+                  </Progress.Section>
+                  <Progress.Section value={drawPercent} color="gray">
+                    <Progress.Label>{drawPercent > 10 ? `${drawPercent.toFixed(1)}%` : ""}</Progress.Label>
+                  </Progress.Section>
+                  <Progress.Section value={blackPercent} color="black">
+                    <Progress.Label>{blackPercent > 10 ? `${blackPercent.toFixed(1)}%` : ""}</Progress.Label>
+                  </Progress.Section>
+                </Progress.Root>
+              );
+            },
           },
-        },
-        {
-          accessor: "results",
-          render: ({ black, white, draw }) => {
-            const total = white + draw + black;
-            const whitePercent = (white / total) * 100;
-            const drawPercent = (draw / total) * 100;
-            const blackPercent = (black / total) * 100;
-            return (
-              <Progress.Root size="xl">
-                <Progress.Section value={whitePercent} color="white">
-                  <Progress.Label c="black">{whitePercent > 10 ? `${whitePercent.toFixed(1)}%` : ""}</Progress.Label>
-                </Progress.Section>
-                <Progress.Section value={drawPercent} color="gray">
-                  <Progress.Label>{drawPercent > 10 ? `${drawPercent.toFixed(1)}%` : ""}</Progress.Label>
-                </Progress.Section>
-                <Progress.Section value={blackPercent} color="black">
-                  <Progress.Label>{blackPercent > 10 ? `${blackPercent.toFixed(1)}%` : ""}</Progress.Label>
-                </Progress.Section>
-              </Progress.Root>
-            );
-          },
-        },
-      ]}
-      idAccessor="move"
-      emptyState={"No games found"}
-      onRowClick={({ record }) => makeMove({ payload: record.move })}
-    />
+        ]}
+        idAccessor="move"
+        emptyState={"No games found"}
+        onRowClick={({ record }) => makeMove({ payload: record.move })}
+      />
+    </Box>
   );
 }
 

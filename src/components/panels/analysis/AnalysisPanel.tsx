@@ -43,7 +43,12 @@ import ReportPanel from "./ReportPanel";
 import ScoreBubble from "./ScoreBubble";
 import TablebaseInfo from "./TablebaseInfo";
 
-function AnalysisPanel() {
+type AnalysisPanelProps = {
+  hideTabsList?: boolean;
+  forceTab?: "engines" | "report" | "logs";
+};
+
+function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
   const isCompact = layout.chessBoard.layoutType === "mobile";
@@ -104,8 +109,8 @@ function AnalysisPanel() {
   const [expanded, setExpanded] = useAtom(currentExpandedEnginesAtom);
   const defaultAppliedRef = useRef(false);
 
-  // Use the configured tab value if available, otherwise use the atom value
-  const effectiveTab = configTabOverride || tab;
+  // Use forced tab when provided (embedded contexts), otherwise configured/atom tab.
+  const effectiveTab = (forceTab || configTabOverride || tab) as "engines" | "report" | "logs";
 
   const hasPreexistingAnalysis = useMemo(() => {
     const stack: TreeNode[] = [root];
@@ -248,25 +253,27 @@ function AnalysisPanel() {
         }
         keepMounted={false}
       >
-        <Tabs.List
-          style={
-            isCompact
-              ? {
-                  flexWrap: "nowrap",
-                  overflowX: "auto",
-                  gap: "0.5rem",
-                  paddingBottom: "0.25rem",
-                  justifyContent: "center",
-                }
-              : undefined
-          }
-        >
-          <Tabs.Tab value="engines">{t("features.board.analysis.engines")}</Tabs.Tab>
-          <Tabs.Tab value="report">{t("features.board.analysis.report")}</Tabs.Tab>
-          <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
-            {t("features.board.analysis.logs")}
-          </Tabs.Tab>
-        </Tabs.List>
+        {!hideTabsList && (
+          <Tabs.List
+            style={
+              isCompact
+                ? {
+                    flexWrap: "nowrap",
+                    overflowX: "auto",
+                    gap: "0.5rem",
+                    paddingBottom: "0.25rem",
+                    justifyContent: "center",
+                  }
+                : undefined
+            }
+          >
+            <Tabs.Tab value="engines">{t("features.board.analysis.engines")}</Tabs.Tab>
+            <Tabs.Tab value="report">{t("features.board.analysis.report")}</Tabs.Tab>
+            <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
+              {t("features.board.analysis.logs")}
+            </Tabs.Tab>
+          </Tabs.List>
+        )}
         <Tabs.Panel value="engines" style={panelStyle}>
           <ScrollArea
             h="100%"

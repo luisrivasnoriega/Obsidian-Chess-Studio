@@ -1,5 +1,17 @@
 import type { Piece } from "@lichess-org/chessground/types";
-import { Box, Portal, ScrollArea, Stack } from "@mantine/core";
+import {
+  Box,
+  Button,
+  Group,
+  NumberInput,
+  Paper,
+  ScrollArea,
+  SegmentedControl,
+  Select,
+  Stack,
+  Tabs,
+  Text,
+} from "@mantine/core";
 import { useHotkeys, useToggle } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
@@ -9,12 +21,28 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { Platform } from "@tauri-apps/plugin-os";
 import { makeSan } from "chessops/san";
 import { useAtom, useAtomValue } from "jotai";
-import { Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  Suspense,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { loadDirectories } from "@/App";
 import { commands } from "@/bindings/generated";
 import MoveControls from "@/components/MoveControls";
+import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
+import LogsPanel from "@/components/panels/analysis/LogsPanel";
+import ReportPanel from "@/components/panels/analysis/ReportPanel";
+import AnnotationPanel from "@/components/panels/annotation/AnnotationPanel";
+import DatabasePanel from "@/components/panels/database/DatabasePanel";
+import InfoPanel from "@/components/panels/info/InfoPanel";
+import GraphPanel from "@/components/panels/practice/GraphPanel";
+import PracticePanel from "@/components/panels/practice/PracticePanel";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useDebouncedAutoSave } from "@/features/boards/hooks/useDebouncedAutoSave";
@@ -22,6 +50,7 @@ import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
   autoSaveAtom,
+  currentAnalysisTabAtom,
   currentDbTypeAtom,
   currentLocalOptionsAtom,
   currentPracticeTabAtom,
@@ -37,6 +66,7 @@ import {
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
+import { getDatabases } from "@/utils/db";
 import { createFile, isTempImportFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
@@ -52,6 +82,10 @@ import ResponsiveBoard from "./ResponsiveBoard";
 import { VariantsActions } from "./VariantsActions";
 import VariantsNotation from "./VariantsNotation";
 import { VariantsTreeBuilderModal } from "./VariantsTreeBuilderModal";
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function BoardVariants() {
   const { t } = useTranslation();
@@ -85,9 +119,10 @@ function BoardVariants() {
   const setHeaders = useStore(store, (s) => s.setHeaders);
   const boardOrientation = useStore(store, (s) => s.headers.orientation || "white");
   const is960 = useStore(store, (s) => s.headers.variant === "Chess960");
+  const currentFen = useStore(store, (s) => s.currentNode().fen);
   const engines = useAtomValue(enginesAtom);
   const [dbType, setDbType] = useAtom(currentDbTypeAtom);
-  const localOptions = useAtomValue(currentLocalOptionsAtom);
+  const [localOptions, setLocalOptions] = useAtom(currentLocalOptionsAtom);
   const lichessOptions = useAtomValue(lichessOptionsAtom);
   const masterOptions = useAtomValue(masterOptionsAtom);
   const referenceDatabase = useAtomValue(referenceDbAtom);
@@ -385,6 +420,7 @@ function BoardVariants() {
   ]);
 
   const [currentTabSelected, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
+  const [, setCurrentAnalysisTab] = useAtom(currentAnalysisTabAtom);
   const practiceTabSelected = useAtomValue(currentPracticeTabAtom);
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
@@ -395,6 +431,19 @@ function BoardVariants() {
     (currentTab.source.metadata?.type === "repertoire" || currentTab.source.metadata?.type === "variants");
   const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
+  const [analysisMainTab, setAnalysisMainTab] = useState<
+    "engines" | "build" | "practice" | "graph" | "annotate" | "info" | "report" | "logs"
+  >("engines");
+  const [collapsedDesktopPanels, setCollapsedDesktopPanels] = useState({
+    pgn: false,
+    analysis: false,
+    database: false,
+  });
+  const [mainLeftSplit, setMainLeftSplit] = useState(44);
+  const [mainCenterSplit, setMainCenterSplit] = useState(22);
+  const [rightColumnSplit, setRightColumnSplit] = useState(50);
+  const desktopRootRef = useRef<HTMLDivElement | null>(null);
+  const rightColumnRef = useRef<HTMLDivElement | null>(null);
   const [treeBuilderOpened, setTreeBuilderOpened] = useState(false);
   const [treeBuilderMode, setTreeBuilderMode] = useState<"engine" | "winrate">("engine");
   const [treeBuilderDepth, setTreeBuilderDepth] = useState(8);
@@ -411,7 +460,7 @@ function BoardVariants() {
     loadedEngines.find((engine) => (engine.type === "local" ? engine.path : engine.url) === selectedEngineKey) ??
     loadedEngines[0] ??
     null;
-  const [selectedEngineSettings] = useAtom(
+  const [selectedEngineSettings, setSelectedEngineSettings] = useAtom(
     tabEngineSettingsFamily({
       tab: activeTab ?? "analysis",
       engineName: selectedEngine?.name ?? "",
@@ -439,6 +488,189 @@ function BoardVariants() {
     value: engine.type === "local" ? engine.path : engine.url,
     label: engine.name,
   }));
+
+  const { data: databases = [] } = useQuery({
+    queryKey: ["databases"],
+    queryFn: getDatabases,
+  });
+
+  const localDatabaseOptions = databases
+    .filter((database) => database.type === "success")
+    .map((database) => ({
+      value: database.file,
+      label: database.title,
+    }));
+
+  useEffect(() => {
+    if (dbType !== "local") return;
+    if (localOptions.path) return;
+    if (localDatabaseOptions.length === 0) return;
+    setLocalOptions((prev) => ({ ...prev, path: localDatabaseOptions[0].value }));
+  }, [dbType, localDatabaseOptions, localOptions.path, setLocalOptions]);
+
+  useEffect(() => {
+    if (
+      analysisMainTab === "practice" ||
+      analysisMainTab === "build" ||
+      analysisMainTab === "graph" ||
+      analysisMainTab === "annotate" ||
+      analysisMainTab === "info"
+    )
+      return;
+    setCurrentAnalysisTab(analysisMainTab);
+  }, [analysisMainTab, setCurrentAnalysisTab]);
+
+  const toggleDesktopPanel = useCallback((panel: "pgn" | "analysis" | "database") => {
+    setCollapsedDesktopPanels((prev) => ({ ...prev, [panel]: !prev[panel] }));
+  }, []);
+
+  const startResizeDrag = useCallback(
+    (
+      event: ReactMouseEvent<HTMLElement>,
+      axis: "x" | "y",
+      container: HTMLElement | null,
+      onDeltaPercent: (deltaPercent: number) => void,
+    ) => {
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const size = axis === "x" ? rect.width : rect.height;
+      if (!Number.isFinite(size) || size <= 0) return;
+
+      event.preventDefault();
+      const startPos = axis === "x" ? event.clientX : event.clientY;
+      const startCursor = document.body.style.cursor;
+      const startUserSelect = document.body.style.userSelect;
+
+      document.body.style.cursor = axis === "x" ? "col-resize" : "row-resize";
+      document.body.style.userSelect = "none";
+
+      const handleMove = (moveEvent: MouseEvent) => {
+        const currentPos = axis === "x" ? moveEvent.clientX : moveEvent.clientY;
+        const deltaPercent = ((currentPos - startPos) / size) * 100;
+        onDeltaPercent(deltaPercent);
+      };
+
+      const handleUp = () => {
+        document.removeEventListener("mousemove", handleMove);
+        document.body.style.cursor = startCursor;
+        document.body.style.userSelect = startUserSelect;
+      };
+
+      document.addEventListener("mousemove", handleMove);
+      document.addEventListener("mouseup", handleUp, { once: true });
+    },
+    [],
+  );
+
+  const handleMainLeftResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const rightColumnCollapsed = collapsedDesktopPanels.analysis && collapsedDesktopPanels.database;
+
+      if (collapsedDesktopPanels.pgn) {
+        if (rightColumnCollapsed) return;
+
+        const startLeft = mainLeftSplit;
+        const startRight = 100 - mainLeftSplit - mainCenterSplit;
+        const minLeft = 24;
+        const minRight = 22;
+
+        startResizeDrag(event, "x", desktopRootRef.current, (deltaPercent) => {
+          const minDelta = minLeft - startLeft;
+          const maxDelta = startRight - minRight;
+          const safeDelta = clamp(deltaPercent, minDelta, maxDelta);
+          setMainLeftSplit(startLeft + safeDelta);
+        });
+        return;
+      }
+
+      const startLeft = mainLeftSplit;
+      const startCenter = mainCenterSplit;
+      const minLeft = 24;
+      const minCenter = 14;
+
+      startResizeDrag(event, "x", desktopRootRef.current, (deltaPercent) => {
+        const minDelta = minLeft - startLeft;
+        const maxDelta = startCenter - minCenter;
+        const safeDelta = clamp(deltaPercent, minDelta, maxDelta);
+        setMainLeftSplit(startLeft + safeDelta);
+        setMainCenterSplit(startCenter - safeDelta);
+      });
+    },
+    [
+      collapsedDesktopPanels.analysis,
+      collapsedDesktopPanels.database,
+      collapsedDesktopPanels.pgn,
+      mainCenterSplit,
+      mainLeftSplit,
+      startResizeDrag,
+    ],
+  );
+
+  const handleMainRightResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const rightColumnCollapsed = collapsedDesktopPanels.analysis && collapsedDesktopPanels.database;
+      if (collapsedDesktopPanels.pgn || rightColumnCollapsed) return;
+
+      const startCenter = mainCenterSplit;
+      const startRight = 100 - mainLeftSplit - mainCenterSplit;
+      const minCenter = 14;
+      const minRight = 22;
+
+      startResizeDrag(event, "x", desktopRootRef.current, (deltaPercent) => {
+        const minDelta = minCenter - startCenter;
+        const maxDelta = startRight - minRight;
+        const safeDelta = clamp(deltaPercent, minDelta, maxDelta);
+        setMainCenterSplit(startCenter + safeDelta);
+      });
+    },
+    [
+      collapsedDesktopPanels.analysis,
+      collapsedDesktopPanels.database,
+      collapsedDesktopPanels.pgn,
+      mainCenterSplit,
+      mainLeftSplit,
+      startResizeDrag,
+    ],
+  );
+
+  const handleRightVerticalResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (collapsedDesktopPanels.analysis || collapsedDesktopPanels.database) return;
+
+      const startTop = rightColumnSplit;
+      const startBottom = 100 - startTop;
+      const minTop = 26;
+      const minBottom = 20;
+
+      startResizeDrag(event, "y", rightColumnRef.current, (deltaPercent) => {
+        const minDelta = minTop - startTop;
+        const maxDelta = startBottom - minBottom;
+        const safeDelta = clamp(deltaPercent, minDelta, maxDelta);
+        setRightColumnSplit(startTop + safeDelta);
+      });
+    },
+    [collapsedDesktopPanels.analysis, collapsedDesktopPanels.database, rightColumnSplit, startResizeDrag],
+  );
+
+  const readEngineSettingNumber = useCallback(
+    (name: string, fallback = 1) => {
+      const raw = selectedEngineSettings.settings.find((setting) => setting.name === name)?.value;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    },
+    [selectedEngineSettings.settings],
+  );
+
+  const updateEngineSettingNumber = useCallback(
+    (name: string, value: number) => {
+      const normalized = String(Math.max(1, Number(value) || 1));
+      setSelectedEngineSettings((prev) => ({
+        ...prev,
+        settings: prev.settings.map((setting) => (setting.name === name ? { ...setting, value: normalized } : setting)),
+      }));
+    },
+    [setSelectedEngineSettings],
+  );
 
   const cancelTreeBuilder = useCallback(() => {
     treeBuilderCancelRef.current = true;
@@ -914,6 +1146,164 @@ function BoardVariants() {
     currentTab,
   ]);
 
+  const buildVariantsPanel = (
+    <ScrollArea h="100%" offsetScrollbars>
+      <Stack gap="sm" pb="xs">
+        <Group justify="space-between">
+          <Text fw={700}>{t("features.board.variants.treeBuilder.title")}</Text>
+          <Text size="xs" c="dimmed">
+            {treeBuilderRunning ? t("common.loading") : t("features.board.variants.treeBuilder.sideNote")}
+          </Text>
+        </Group>
+
+        <Stack gap="xs">
+          <Text size="sm" fw={700}>
+            {t("features.board.tabs.database")}
+          </Text>
+          <SegmentedControl
+            data={[
+              { label: t("features.board.database.local"), value: "local" },
+              { label: t("features.board.database.lichessAll"), value: "lch_all" },
+              { label: t("features.board.database.lichessMaster"), value: "lch_master" },
+            ]}
+            value={dbType}
+            onChange={(value) => setDbType(value as "local" | "lch_all" | "lch_master")}
+            fullWidth
+          />
+          {dbType === "local" && (
+            <Select
+              data={localDatabaseOptions}
+              value={localOptions.path ?? referenceDatabase ?? null}
+              onChange={(value) => {
+                setLocalOptions((prev) => ({
+                  ...prev,
+                  path: value ?? null,
+                  fen: currentFen || prev.fen,
+                }));
+              }}
+              placeholder={t("features.board.database.selectDatabase")}
+              searchable
+              clearable={false}
+              disabled={!localDatabaseOptions.length}
+            />
+          )}
+        </Stack>
+
+        <Stack gap="xs">
+          <Text size="sm" fw={700}>
+            {t("common.engine")}
+          </Text>
+          <SegmentedControl
+            data={[
+              { label: t("features.board.variants.treeBuilder.engine"), value: "engine" },
+              { label: t("features.board.variants.treeBuilder.winrate"), value: "winrate" },
+            ]}
+            value={treeBuilderMode}
+            onChange={(value) => setTreeBuilderMode(value as "engine" | "winrate")}
+            fullWidth
+          />
+          {treeBuilderMode === "engine" && (
+            <>
+              <Select
+                data={engineOptions}
+                value={
+                  selectedEngine ? (selectedEngine.type === "local" ? selectedEngine.path : selectedEngine.url) : null
+                }
+                onChange={setSelectedEngineKey}
+                placeholder={t("features.board.variants.treeBuilder.engineSelect")}
+                disabled={!engineOptions.length}
+                searchable
+              />
+              <Group grow>
+                <NumberInput
+                  label={t("features.board.variants.treeBuilder.engineTime")}
+                  value={treeBuilderEngineMs}
+                  onChange={(value) => setTreeBuilderEngineMs(Number(value) || 0)}
+                  min={1}
+                />
+                <NumberInput
+                  label={t("features.engines.settings.numOfCores")}
+                  value={readEngineSettingNumber("Threads")}
+                  onChange={(value) => updateEngineSettingNumber("Threads", Number(value) || 1)}
+                  min={1}
+                  disabled={!selectedEngineSettings.settings.some((setting) => setting.name === "Threads")}
+                />
+                <NumberInput
+                  label={t("features.engines.settings.sizeOfHash")}
+                  value={readEngineSettingNumber("Hash")}
+                  onChange={(value) => updateEngineSettingNumber("Hash", Number(value) || 1)}
+                  min={1}
+                  disabled={!selectedEngineSettings.settings.some((setting) => setting.name === "Hash")}
+                />
+              </Group>
+            </>
+          )}
+        </Stack>
+
+        <Stack gap="xs">
+          <Text size="sm" fw={700}>
+            {t("features.board.variants.treeBuilder.dbMoves")}
+          </Text>
+          <Group grow>
+            <NumberInput
+              label={t("features.board.variants.treeBuilder.coverage")}
+              value={treeBuilderCoverage}
+              onChange={(value) => setTreeBuilderCoverage(Number(value) || 0)}
+              min={1}
+              max={100}
+            />
+            <NumberInput
+              label={t("features.board.variants.treeBuilder.minMoves")}
+              value={treeBuilderMinMoves}
+              onChange={(value) => setTreeBuilderMinMoves(Number(value) || 0)}
+              min={1}
+            />
+            <NumberInput
+              label={t("features.board.variants.treeBuilder.depth")}
+              value={treeBuilderDepth}
+              onChange={(value) => setTreeBuilderDepth(Number(value) || 0)}
+              min={1}
+            />
+          </Group>
+        </Stack>
+
+        <Group justify="space-between" mt="xs">
+          <Button
+            variant="default"
+            onClick={() => {
+              const maxDepth = treeBuilderDepth;
+              if (maxDepth < 1) {
+                notifications.show({
+                  title: t("common.error"),
+                  message: t("errors.puzzleVariantsNeedSystemMove"),
+                  color: "red",
+                });
+                return;
+              }
+              setMaxPuzzleDepth(maxDepth);
+              setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
+              setPuzzleModalOpened(true);
+            }}
+          >
+            {t("common.generatePuzzles")}
+          </Button>
+          <Button
+            onClick={() => {
+              if (treeBuilderRunning) {
+                cancelTreeBuilder();
+              } else {
+                void buildVariantsTree();
+              }
+            }}
+            disabled={!treeBuilderRunning && treeBuilderMode === "engine" && !selectedEngine}
+          >
+            {treeBuilderRunning ? t("common.cancel") : t("features.board.variants.treeBuilder.run")}
+          </Button>
+        </Group>
+      </Stack>
+    </ScrollArea>
+  );
+
   if (isMobileLayout) {
     return (
       <>
@@ -1061,93 +1451,283 @@ function BoardVariants() {
     );
   }
 
+  const rightColumnCollapsed = collapsedDesktopPanels.analysis && collapsedDesktopPanels.database;
+  const showCenterColumn = !collapsedDesktopPanels.pgn;
+  const showRightColumn = !rightColumnCollapsed;
+
+  const baseLeftSplit = mainLeftSplit;
+  const baseCenterSplit = mainCenterSplit;
+  const baseRightSplit = 100 - mainLeftSplit - mainCenterSplit;
+  const totalVisibleMainSplit =
+    baseLeftSplit + (showCenterColumn ? baseCenterSplit : 0) + (showRightColumn ? baseRightSplit : 0);
+
+  const effectiveLeftSplit = totalVisibleMainSplit > 0 ? (baseLeftSplit / totalVisibleMainSplit) * 100 : 100;
+  const effectiveCenterSplit =
+    showCenterColumn && totalVisibleMainSplit > 0 ? (baseCenterSplit / totalVisibleMainSplit) * 100 : 0;
+  const effectiveRightSplit =
+    showRightColumn && totalVisibleMainSplit > 0 ? (baseRightSplit / totalVisibleMainSplit) * 100 : 0;
+  const rightTopSplit = rightColumnSplit;
+  const verticalHandleStyle = {
+    flex: "0 0 6px",
+    minHeight: 0,
+    minWidth: 6,
+    borderRadius: 4,
+    backgroundColor: "var(--mantine-color-dark-4)",
+    cursor: "col-resize",
+  } as const;
+  const horizontalHandleStyle = {
+    minWidth: 0,
+    height: 6,
+    borderRadius: 4,
+    backgroundColor: "var(--mantine-color-dark-4)",
+    cursor: "row-resize",
+  } as const;
+
   return (
     <>
       {/* Disable EvalListener during build variants to avoid engine event loops */}
       {!treeBuilderRunning && <EvalListener />}
-      <Portal target="#left" style={{ height: "100%" }}>
-        <ResponsiveBoard
-          practicing={practicing}
-          dirty={dirty}
-          editingMode={editingMode}
-          toggleEditingMode={toggleEditingMode}
-          boardRef={boardRef}
-          saveFile={saveFile}
-          copyPgn={copyPgn}
-          reload={reloadBoard}
-          addGame={addGame}
-          topBar={false}
-          showClock={false}
-          editingCard={
-            editingMode ? (
-              <EditingCard
-                boardRef={boardRef}
-                setEditingMode={toggleEditingMode}
-                selectedPiece={selectedPiece}
-                setSelectedPiece={setSelectedPiece}
-              />
-            ) : undefined
-          }
-          viewPawnStructure={viewPawnStructure}
-          setViewPawnStructure={setViewPawnStructure}
-          selectedPiece={selectedPiece}
-          setSelectedPiece={setSelectedPiece}
-          canTakeBack={false}
-          changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
-          currentTabType="analysis"
-          clearShapes={clearShapes}
-          toggleOrientation={flipBoard}
-          disableVariations={false}
-          currentTabSourceType={currentTab?.source?.type || undefined}
-        />
-      </Portal>
-
-      <Portal target="#topRight" style={{ height: "100%" }}>
-        <ResponsiveAnalysisPanels
-          currentTab={currentTabSelected}
-          onTabChange={(v) => setCurrentTabSelected(v || "info")}
-          isRepertoire={showRepertoirePanels}
-          isPuzzle={isPuzzle}
-          showSimulate
-        />
-      </Portal>
-
-      <GameNotationWrapper
-        topBar
-        editingMode={editingMode}
-        editingCard={
-          <EditingCard
-            boardRef={boardRef}
-            setEditingMode={toggleEditingMode}
-            selectedPiece={selectedPiece}
-            setSelectedPiece={setSelectedPiece}
-          />
-        }
-      >
-        <VariantsNotation topBar={topBar} editingMode={editingMode} />
-        <MoveControls readOnly />
-        <VariantsActions
-          treeBuilderRunning={treeBuilderRunning}
-          onOpenPuzzle={() => {
-            // Use treeBuilderDepth as the maximum depth for puzzles
-            // This ensures the puzzle depth matches the depth configured in build variants
-            const maxDepth = treeBuilderDepth;
-            if (maxDepth < 1) {
-              notifications.show({
-                title: t("common.error"),
-                message: t("errors.puzzleVariantsNeedSystemMove"),
-                color: "red",
-              });
-              return;
-            }
-            setMaxPuzzleDepth(maxDepth);
-            setPuzzleDepth(Math.min(puzzleDepth, maxDepth));
-            setPuzzleModalOpened(true);
+      <Stack h="100%" gap="xs" style={{ minHeight: 0, minWidth: 0 }}>
+        <Paper withBorder p="xs">
+          <Group gap="xs" wrap="wrap">
+            <Button
+              size="xs"
+              variant={collapsedDesktopPanels.pgn ? "default" : "light"}
+              onClick={() => toggleDesktopPanel("pgn")}
+            >
+              {t("features.board.simulate.pgn")}
+            </Button>
+            <Button
+              size="xs"
+              variant={collapsedDesktopPanels.analysis ? "default" : "light"}
+              onClick={() => toggleDesktopPanel("analysis")}
+            >
+              {t("features.board.variants.engine")}
+            </Button>
+            <Button
+              size="xs"
+              variant={collapsedDesktopPanels.database ? "default" : "light"}
+              onClick={() => toggleDesktopPanel("database")}
+            >
+              {t("features.board.tabs.database")}
+            </Button>
+          </Group>
+        </Paper>
+        <Box
+          ref={desktopRootRef}
+          h="100%"
+          style={{
+            display: "flex",
+            gap: "var(--mantine-spacing-xs)",
+            minHeight: 0,
+            minWidth: 0,
           }}
-          onOpenTreeBuilder={() => setTreeBuilderOpened(true)}
-          onCancelTreeBuilder={cancelTreeBuilder}
-        />
-      </GameNotationWrapper>
+        >
+          <Box
+            style={{
+              minHeight: 0,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--mantine-spacing-xs)",
+              flex: `${effectiveLeftSplit} 1 0`,
+            }}
+          >
+            <Paper
+              withBorder
+              p="xs"
+              style={{
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                flex: "1 1 0",
+              }}
+            >
+              <Box style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                <ResponsiveBoard
+                  practicing={practicing}
+                  dirty={dirty}
+                  editingMode={editingMode}
+                  toggleEditingMode={toggleEditingMode}
+                  boardRef={boardRef}
+                  saveFile={saveFile}
+                  copyPgn={copyPgn}
+                  reload={reloadBoard}
+                  addGame={addGame}
+                  topBar={false}
+                  showClock={false}
+                  editingCard={
+                    editingMode ? (
+                      <EditingCard
+                        boardRef={boardRef}
+                        setEditingMode={toggleEditingMode}
+                        selectedPiece={selectedPiece}
+                        setSelectedPiece={setSelectedPiece}
+                      />
+                    ) : undefined
+                  }
+                  viewPawnStructure={viewPawnStructure}
+                  setViewPawnStructure={setViewPawnStructure}
+                  selectedPiece={selectedPiece}
+                  setSelectedPiece={setSelectedPiece}
+                  canTakeBack={false}
+                  changeTabType={() => setCurrentTab((prev: Tab) => ({ ...prev, type: "play" }))}
+                  currentTabType="analysis"
+                  clearShapes={clearShapes}
+                  toggleOrientation={flipBoard}
+                  disableVariations={false}
+                  currentTabSourceType={currentTab?.source?.type || undefined}
+                />
+              </Box>
+              {!editingMode && (
+                <Box pt="xs">
+                  <MoveControls readOnly />
+                </Box>
+              )}
+            </Paper>
+          </Box>
+
+          {(showCenterColumn || showRightColumn) && (
+            <Box onMouseDown={handleMainLeftResize} style={verticalHandleStyle} />
+          )}
+
+          {showCenterColumn && (
+            <Box
+              style={{
+                minHeight: 0,
+                minWidth: 160,
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--mantine-spacing-xs)",
+                overflow: "hidden",
+                flex: `${effectiveCenterSplit} 1 0`,
+              }}
+            >
+              {editingMode ? (
+                <EditingCard
+                  boardRef={boardRef}
+                  setEditingMode={toggleEditingMode}
+                  selectedPiece={selectedPiece}
+                  setSelectedPiece={setSelectedPiece}
+                />
+              ) : (
+                <VariantsNotation topBar={topBar} editingMode={editingMode} />
+              )}
+            </Box>
+          )}
+
+          {showCenterColumn && showRightColumn && (
+            <Box onMouseDown={handleMainRightResize} style={verticalHandleStyle} />
+          )}
+
+          {showRightColumn && (
+            <Box
+              ref={rightColumnRef}
+              style={{
+                minHeight: 0,
+                minWidth: 260,
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--mantine-spacing-xs)",
+                flex: `${effectiveRightSplit} 1 0`,
+              }}
+            >
+              {!collapsedDesktopPanels.analysis && (
+                <Paper
+                  withBorder
+                  p="xs"
+                  style={{
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    flex: collapsedDesktopPanels.database ? "1 1 0" : `0 0 ${rightTopSplit}%`,
+                  }}
+                >
+                  <Tabs
+                    value={analysisMainTab}
+                    onChange={(value) =>
+                      setAnalysisMainTab(
+                        (value as
+                          | "engines"
+                          | "build"
+                          | "practice"
+                          | "graph"
+                          | "annotate"
+                          | "info"
+                          | "report"
+                          | "logs") || "engines",
+                      )
+                    }
+                    keepMounted={false}
+                    style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+                  >
+                    <Tabs.List>
+                      <Tabs.Tab value="engines">{t("features.board.variants.engine")}</Tabs.Tab>
+                      <Tabs.Tab value="build">{t("features.board.variants.treeBuilder.button")}</Tabs.Tab>
+                      <Tabs.Tab value="practice">{t("features.board.tabs.practice")}</Tabs.Tab>
+                      <Tabs.Tab value="graph" disabled={!showRepertoirePanels}>
+                        {t("features.board.tabs.graph")}
+                      </Tabs.Tab>
+                      <Tabs.Tab value="annotate">{t("features.board.tabs.annotate")}</Tabs.Tab>
+                      <Tabs.Tab value="info">{t("features.board.tabs.info")}</Tabs.Tab>
+                      <Tabs.Tab value="report">{t("features.board.analysis.report")}</Tabs.Tab>
+                      <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
+                        {t("features.board.analysis.logs")}
+                      </Tabs.Tab>
+                    </Tabs.List>
+                    <Tabs.Panel value="engines" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <AnalysisPanel hideTabsList forceTab="engines" />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="build" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      {buildVariantsPanel}
+                    </Tabs.Panel>
+                    <Tabs.Panel value="practice" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <PracticePanel />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="graph" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      {showRepertoirePanels && <GraphPanel />}
+                    </Tabs.Panel>
+                    <Tabs.Panel value="annotate" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <AnnotationPanel />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="info" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <InfoPanel />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="report" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <ReportPanel />
+                    </Tabs.Panel>
+                    <Tabs.Panel value="logs" pt="xs" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                      <LogsPanel />
+                    </Tabs.Panel>
+                  </Tabs>
+                </Paper>
+              )}
+
+              {!collapsedDesktopPanels.analysis && !collapsedDesktopPanels.database && (
+                <Box onMouseDown={handleRightVerticalResize} style={horizontalHandleStyle} />
+              )}
+
+              {!collapsedDesktopPanels.database && (
+                <Paper
+                  withBorder
+                  p="xs"
+                  style={{
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    flex: collapsedDesktopPanels.analysis ? "1 1 0" : `0 0 ${100 - rightTopSplit}%`,
+                  }}
+                >
+                  <DatabasePanel forceActive />
+                </Paper>
+              )}
+            </Box>
+          )}
+        </Box>
+      </Stack>
 
       <PuzzleVariantsModal
         opened={puzzleModalOpened}
@@ -1156,33 +1736,6 @@ function BoardVariants() {
         maxPuzzleDepth={maxPuzzleDepth}
         setPuzzleDepth={setPuzzleDepth}
         onGenerate={(depth) => void generatePuzzles(depth)}
-      />
-
-      <VariantsTreeBuilderModal
-        opened={treeBuilderOpened}
-        onClose={() => setTreeBuilderOpened(false)}
-        dbType={dbType}
-        setDbType={setDbType}
-        localDbLabel={referenceDatabase}
-        treeBuilderMode={treeBuilderMode}
-        setTreeBuilderMode={setTreeBuilderMode}
-        engineOptions={engineOptions}
-        selectedEngineValue={
-          selectedEngine ? (selectedEngine.type === "local" ? selectedEngine.path : selectedEngine.url) : null
-        }
-        setSelectedEngineValue={setSelectedEngineKey}
-        treeBuilderEngineMs={treeBuilderEngineMs}
-        setTreeBuilderEngineMs={setTreeBuilderEngineMs}
-        treeBuilderCoverage={treeBuilderCoverage}
-        setTreeBuilderCoverage={setTreeBuilderCoverage}
-        treeBuilderMinMoves={treeBuilderMinMoves}
-        setTreeBuilderMinMoves={setTreeBuilderMinMoves}
-        treeBuilderDepth={treeBuilderDepth}
-        setTreeBuilderDepth={setTreeBuilderDepth}
-        treeBuilderRunning={treeBuilderRunning}
-        onRun={() => void buildVariantsTree()}
-        onCancel={cancelTreeBuilder}
-        runDisabled={!treeBuilderRunning && treeBuilderMode === "engine" && !selectedEngine}
       />
     </>
   );

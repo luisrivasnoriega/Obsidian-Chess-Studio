@@ -205,7 +205,7 @@ const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
     return (
       <Box style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <TreeStateProvider id={tab.value}>
-          {!isMobileLayout && (
+          {!isMobileLayout && !isVariantsFile && (
             <Box style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
               <Mosaic<ViewId>
                 renderTile={(id) => fullLayout[id]}
