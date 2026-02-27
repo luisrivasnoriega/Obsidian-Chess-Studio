@@ -1315,10 +1315,12 @@ function BoardVariants() {
             minHeight: "100%",
             maxHeight: "100%",
             overflowY: "auto",
+            overflowX: "hidden",
+            touchAction: "pan-y",
             WebkitOverflowScrolling: "touch",
           }}
         >
-          <Stack gap="md" style={{ minHeight: 0 }}>
+          <Stack gap="md" style={{ minHeight: 0, paddingBottom: "var(--mantine-spacing-md)" }}>
             <Box style={{ zIndex: 3 }}>
               <Suspense fallback={<ResponsiveSkeleton type="default" />}>
                 <ResponsiveAnalysisPanels
@@ -1372,7 +1374,7 @@ function BoardVariants() {
               />
             </Box>
 
-            <ScrollArea style={{ flex: 1 }} h="100%" offsetScrollbars>
+            <Box style={{ minHeight: 0, touchAction: "pan-y" }}>
               <GameNotationWrapper
                 topBar
                 editingMode={editingMode}
@@ -1408,7 +1410,7 @@ function BoardVariants() {
                   onCancelTreeBuilder={cancelTreeBuilder}
                 />
               </GameNotationWrapper>
-            </ScrollArea>
+            </Box>
           </Stack>
         </Box>
 

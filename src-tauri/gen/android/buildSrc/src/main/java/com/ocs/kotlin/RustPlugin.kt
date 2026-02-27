@@ -69,9 +69,9 @@ open class RustPlugin : Plugin<Project> {
                     ).apply {
                         group = TASK_GROUP
                         description = "Build dynamic library in $profile mode for $targetArch"
-                        rootDirRel = config.rootDirRel
-                        target = targetName
-                        release = profile == "release"
+                        rootDirRel.set(config.rootDirRel)
+                        target.set(targetName)
+                        release.set(profile == "release")
                     }
 
                     buildTask.dependsOn(targetBuildTask)

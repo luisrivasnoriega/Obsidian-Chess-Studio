@@ -20,8 +20,9 @@ import { notifications } from "@mantine/notifications";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { appDataDir, resolve } from "@tauri-apps/api/path";
+import { appCacheDir, appDataDir, basename, resolve } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
+import { readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, events, type PuzzleDatabaseInfo } from "@/bindings";
@@ -56,21 +57,50 @@ export function AddPuzzle({
   const [importError, setImportError] = useState<string | null>(null);
 
   async function importPuzzleFile(path: string, title: string, description?: string) {
+    let importSourcePath = path;
+    let tempImportPath: string | null = null;
+
     try {
       setImporting(true);
       setImportError(null);
 
+      // On Android, the dialog plugin returns `content://` / `file://` URIs instead of
+      // a normal filesystem path. Read the selected file through the fs plugin and
+      // persist it into app cache first so the Rust backend can open it with std::fs::File.
+      if (path.startsWith("content://") || path.startsWith("file://")) {
+        const cacheDir = await appCacheDir();
+        const selectedName = await basename(path).catch(() => "puzzle-import");
+        const extensionMatch = selectedName.match(/(\.[^.]+(?:\.[^.]+)?)$/);
+        const extension = extensionMatch?.[1] ?? "";
+        tempImportPath = await resolve(
+          cacheDir,
+          `puzzle-import-${Date.now()}-${Math.random().toString(36).slice(2)}${extension}`,
+        );
+        const fileBytes = await readFile(path);
+        await writeFile(tempImportPath, fileBytes);
+        importSourcePath = tempImportPath;
+      }
+
       const dbPath = await resolve(await appDataDir(), "puzzles", `${title}.db3`);
 
-      const result = await commands.importPuzzleFile(path, dbPath, title, description ?? null);
+      const result = await commands.importPuzzleFile(importSourcePath, dbPath, title, description ?? null);
       if (result.status === "error") {
         throw new Error(result.error);
       }
 
       setPuzzleDbs(await getPuzzleDatabases());
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : t("errors.failedToImportPuzzleFile"));
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : t("errors.failedToImportPuzzleFile");
+      setImportError(message);
     } finally {
+      if (tempImportPath) {
+        await remove(tempImportPath).catch(() => {});
+      }
       setImporting(false);
     }
   }
@@ -154,9 +184,14 @@ export function AddPuzzle({
                     },
                   ],
                 });
-                if (!selected || typeof selected === "object") return;
-                form.setFieldValue("file", selected);
-                const filename = selected.split(/(\\|\/)/g).pop();
+                if (!selected) return;
+                const selectedPath = Array.isArray(selected) ? selected[0] : selected;
+                if (typeof selectedPath !== "string") return;
+
+                form.setFieldValue("file", selectedPath);
+                const filename = await basename(selectedPath).catch(
+                  () => selectedPath.split(/(\\|\/)/g).pop() || selectedPath,
+                );
                 if (filename) {
                   form.setFieldValue("filename", filename);
                   if (!form.values.title) {

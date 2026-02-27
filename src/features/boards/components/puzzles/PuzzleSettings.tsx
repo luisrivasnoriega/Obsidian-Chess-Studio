@@ -60,6 +60,10 @@ export const PuzzleSettings = ({
 
   const isProgressiveDisabled = !dbRatingRange || (dbRatingRange && dbRatingRange[0] === dbRatingRange[1]);
   const isProgressiveChecked = dbRatingRange && dbRatingRange[0] === dbRatingRange[1] ? false : progressive;
+  const showThemeFilters = hasThemes || hasOpeningTags;
+  const hasUsefulRatingRange = Boolean(dbRatingRange && dbRatingRange[0] !== dbRatingRange[1]);
+  const showRatingOptions = hasUsefulRatingRange;
+  const showAdvancedOptions = Boolean(selectedDb) && (showThemeFilters || showRatingOptions);
 
   const handleSelectChange = (value: string | null) => {
     if (value === "add") {
@@ -97,65 +101,78 @@ export const PuzzleSettings = ({
           </ActionIcon>
         )}
       </Group>
-      <Divider my="sm" />
-      {hasThemes && (
-        <MultiSelect
-          label={t("features.puzzle.themes")}
-          data={themesOptions}
-          value={themes}
-          onChange={onThemesChange}
-          placeholder={t("features.puzzle.selectThemes")}
-          clearable
-          searchable
-        />
-      )}
-      {hasOpeningTags && (
-        <MultiSelect
-          label={t("features.puzzle.openingTags")}
-          data={openingTagsOptions}
-          value={openingTags}
-          onChange={onOpeningTagsChange}
-          placeholder={t("features.puzzle.selectOpeningTags")}
-          clearable
-          searchable
-        />
-      )}
-      {(hasThemes || hasOpeningTags) && <Divider my="sm" />}
-      <Group>
-        <Input.Wrapper label={t("features.puzzle.ratingRange")} flex={1}>
-          <RangeSlider
-            min={minRating}
-            max={maxRating}
-            value={ratingRange}
-            onChange={onRatingRangeChange}
-            disabled={progressive || !dbRatingRange || (dbRatingRange && dbRatingRange[0] === dbRatingRange[1])}
-          />
-          {!dbRatingRange && selectedDb && (
-            <div style={{ fontSize: "0.75rem", color: "var(--mantine-color-dimmed)", marginTop: "4px" }}>
-              {t("features.puzzle.loadingRatingRange")}
-            </div>
+      {showAdvancedOptions && (
+        <>
+          <Divider my="sm" />
+          {showThemeFilters && (
+            <>
+              {hasThemes && (
+                <MultiSelect
+                  label={t("features.puzzle.themes")}
+                  data={themesOptions}
+                  value={themes}
+                  onChange={onThemesChange}
+                  placeholder={t("features.puzzle.selectThemes")}
+                  clearable
+                  searchable
+                />
+              )}
+              {hasOpeningTags && (
+                <MultiSelect
+                  label={t("features.puzzle.openingTags")}
+                  data={openingTagsOptions}
+                  value={openingTags}
+                  onChange={onOpeningTagsChange}
+                  placeholder={t("features.puzzle.selectOpeningTags")}
+                  clearable
+                  searchable
+                />
+              )}
+            </>
           )}
-        </Input.Wrapper>
-        <Input.Wrapper label={t("features.puzzle.progressive")}>
-          <Center>
-            <Checkbox
-              checked={isProgressiveChecked}
-              onChange={(event) => onProgressiveChange(event.currentTarget.checked)}
-              disabled={isProgressiveDisabled}
-            />
-          </Center>
-        </Input.Wrapper>
-        <Input.Wrapper label={t("features.puzzle.hideRating")}>
-          <Center>
-            <Checkbox checked={hideRating} onChange={(event) => onHideRatingChange(event.currentTarget.checked)} />
-          </Center>
-        </Input.Wrapper>
-        <Input.Wrapper label={t("features.puzzle.inOrder")}>
-          <Center>
-            <Checkbox checked={inOrder} onChange={(event) => onInOrderChange(event.currentTarget.checked)} />
-          </Center>
-        </Input.Wrapper>
-      </Group>
+          {showThemeFilters && showRatingOptions && <Divider my="sm" />}
+          {showRatingOptions && (
+            <Group>
+              <Input.Wrapper label={t("features.puzzle.ratingRange")} flex={1}>
+                <RangeSlider
+                  min={minRating}
+                  max={maxRating}
+                  value={ratingRange}
+                  onChange={onRatingRangeChange}
+                  disabled={progressive || !dbRatingRange || (dbRatingRange && dbRatingRange[0] === dbRatingRange[1])}
+                />
+                {!dbRatingRange && selectedDb && (
+                  <div style={{ fontSize: "0.75rem", color: "var(--mantine-color-dimmed)", marginTop: "4px" }}>
+                    {t("features.puzzle.loadingRatingRange")}
+                  </div>
+                )}
+              </Input.Wrapper>
+              <Input.Wrapper label={t("features.puzzle.progressive")}>
+                <Center>
+                  <Checkbox
+                    checked={isProgressiveChecked}
+                    onChange={(event) => onProgressiveChange(event.currentTarget.checked)}
+                    disabled={isProgressiveDisabled}
+                  />
+                </Center>
+              </Input.Wrapper>
+              <Input.Wrapper label={t("features.puzzle.hideRating")}>
+                <Center>
+                  <Checkbox
+                    checked={hideRating}
+                    onChange={(event) => onHideRatingChange(event.currentTarget.checked)}
+                  />
+                </Center>
+              </Input.Wrapper>
+              <Input.Wrapper label={t("features.puzzle.inOrder")}>
+                <Center>
+                  <Checkbox checked={inOrder} onChange={(event) => onInOrderChange(event.currentTarget.checked)} />
+                </Center>
+              </Input.Wrapper>
+            </Group>
+          )}
+        </>
+      )}
     </>
   );
 };

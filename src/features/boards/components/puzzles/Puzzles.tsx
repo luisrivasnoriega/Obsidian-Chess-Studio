@@ -205,6 +205,13 @@ function Puzzles({ id }: { id: string }) {
       return;
     }
 
+    // Reset immediately so we don't show stale filters from the previously selected database
+    // while the new database metadata is loading.
+    setHasThemes(false);
+    setHasOpeningTags(false);
+    setThemesOptions([]);
+    setOpeningTagsOptions([]);
+
     // Use a flag to prevent multiple simultaneous loads
     let cancelled = false;
 
@@ -245,8 +252,6 @@ function Puzzles({ id }: { id: string }) {
 
         if (columnsResult.status === "ok") {
           const [hasThemesCol, hasOpeningTagsCol] = columnsResult.data;
-          setHasThemes(hasThemesCol);
-          setHasOpeningTags(hasOpeningTagsCol);
 
           const [themesResult, tagsResult] = await Promise.all([
             hasThemesCol
@@ -265,30 +270,34 @@ function Puzzles({ id }: { id: string }) {
               group: string;
               items: Array<{ value: string; label: string }>;
             }>;
-            setThemesOptions(
-              themesData.map((group) => ({
+            const nextThemeOptions = themesData
+              .map((group) => ({
                 group: group.group,
                 items: group.items.map((opt) => ({
                   value: opt.value,
                   label: opt.label,
                 })),
-              })),
-            );
+              }))
+              .filter((group) => group.items.length > 0);
+            setThemesOptions(nextThemeOptions);
+            setHasThemes(nextThemeOptions.length > 0);
           } else {
             setThemesOptions([]);
+            setHasThemes(false);
           }
 
           if (hasOpeningTagsCol && tagsResult.status === "ok") {
             // Backend returns OpeningTagOption[] with value and label, convert to format for MultiSelect
             const tagsData = tagsResult.data as unknown as Array<{ value: string; label: string }>;
-            setOpeningTagsOptions(
-              tagsData.map((opt) => ({
-                value: opt.value,
-                label: opt.label,
-              })),
-            );
+            const nextOpeningTagOptions = tagsData.map((opt) => ({
+              value: opt.value,
+              label: opt.label,
+            }));
+            setOpeningTagsOptions(nextOpeningTagOptions);
+            setHasOpeningTags(nextOpeningTagOptions.length > 0);
           } else {
             setOpeningTagsOptions([]);
+            setHasOpeningTags(false);
           }
         } else {
           // Database doesn't exist or is empty - silently handle this

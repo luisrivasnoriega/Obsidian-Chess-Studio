@@ -32,6 +32,11 @@ type PuzzleCacheEntry = {
   puzzles: CachedPuzzle[];
 };
 
+type LoadedRatingRange = {
+  dbRange: [number, number] | null;
+  effectiveRange: [number, number] | null;
+};
+
 const PuzzleDbFromPgnCache = new Map<string, PuzzleCacheEntry>();
 
 export const usePuzzleDatabase = () => {
@@ -82,18 +87,16 @@ export const usePuzzleDatabase = () => {
     })();
   }, [selectedDb, setSelectedDb]);
 
-  const loadDb3RatingRange = useCallback(
-    async (dbPath: string) => {
-      PUZZLE_DEBUG_LOGS && logger.debug("Loading DB3 rating range:", dbPath);
-      const result = await commands.getPuzzleRatingRange(dbPath);
-      if (result.status === "ok") {
-        PUZZLE_DEBUG_LOGS && logger.debug("DB3 rating range loaded:", result.data);
-        setDbRatingRange(result.data);
-        setRatingRange(result.data);
-      }
-    },
-    [setRatingRange],
-  );
+  const loadDb3RatingRange = useCallback(async (dbPath: string): Promise<[number, number] | null> => {
+    PUZZLE_DEBUG_LOGS && logger.debug("Loading DB3 rating range:", dbPath);
+    const result = await commands.getPuzzleRatingRange(dbPath);
+    if (result.status === "ok") {
+      PUZZLE_DEBUG_LOGS && logger.debug("DB3 rating range loaded:", result.data);
+      return result.data;
+    }
+
+    return null;
+  }, []);
 
   const calculateRatingBounds = useCallback((puzzles: { rating: number }[]) => {
     let minRating = Infinity;
@@ -108,7 +111,7 @@ export const usePuzzleDatabase = () => {
   }, []);
 
   const loadPgnRatingRange = useCallback(
-    async (dbPath: string) => {
+    async (dbPath: string): Promise<LoadedRatingRange> => {
       PUZZLE_DEBUG_LOGS && logger.debug("Loading PGN rating range:", dbPath);
       const count = unwrap(await commands.countPgnGames(dbPath));
 
@@ -140,20 +143,28 @@ export const usePuzzleDatabase = () => {
         });
 
         if (puzzles.length > 0) {
-          setDbRatingRange([minRating, maxRating]);
-          setRatingRange([minRating, maxRating]);
-        } else {
-          setDbRatingRange([1500, 1500]);
+          return {
+            dbRange: [minRating, maxRating],
+            effectiveRange: [minRating, maxRating],
+          };
         }
-      } else {
-        setDbRatingRange([600, 2800]);
+
+        return {
+          dbRange: null,
+          effectiveRange: [1500, 1500],
+        };
       }
+
+      return {
+        dbRange: null,
+        effectiveRange: [600, 2800],
+      };
     },
-    [setRatingRange, calculateRatingBounds],
+    [calculateRatingBounds],
   );
 
   const loadRatingRange = useCallback(
-    async (dbPath: string) => {
+    async (dbPath: string): Promise<LoadedRatingRange> => {
       try {
         // First verify the file exists before attempting to load rating range.
         // `selectedDb` is stored as an absolute path (`PuzzleDatabaseInfo.path`).
@@ -162,21 +173,35 @@ export const usePuzzleDatabase = () => {
           const fileExists = await exists(dbPath);
           if (!fileExists) {
             PUZZLE_DEBUG_LOGS && logger.debug("Database file does not exist yet:", dbPath);
-            setDbRatingRange([600, 2800]);
-            return;
+            return {
+              dbRange: null,
+              effectiveRange: [600, 2800],
+            };
           }
 
-          await loadDb3RatingRange(dbPath);
+          const range = await loadDb3RatingRange(dbPath);
+          return {
+            dbRange: range,
+            effectiveRange: range,
+          };
         } else if (dbPath.endsWith(".pgn")) {
-          await loadPgnRatingRange(dbPath);
+          return await loadPgnRatingRange(dbPath);
         }
+
+        return {
+          dbRange: null,
+          effectiveRange: null,
+        };
       } catch (error) {
         // Silently handle "file not found" or "file is empty" errors
         const errorMsg = error instanceof Error ? error.message : String(error);
         if (!errorMsg.includes("does not exist") && !errorMsg.includes("is empty")) {
           logger.error("Failed to load puzzle rating range:", error);
         }
-        setDbRatingRange([600, 2800]);
+        return {
+          dbRange: null,
+          effectiveRange: [600, 2800],
+        };
       }
     },
     [loadDb3RatingRange, loadPgnRatingRange],
@@ -184,12 +209,26 @@ export const usePuzzleDatabase = () => {
 
   // Load rating range when database is selected
   useEffect(() => {
-    if (selectedDb) {
-      loadRatingRange(selectedDb);
-    } else {
+    if (!selectedDb) {
       setDbRatingRange(null);
+      return;
     }
-  }, [selectedDb, loadRatingRange]);
+
+    let cancelled = false;
+    setDbRatingRange(null);
+
+    void loadRatingRange(selectedDb).then(({ dbRange, effectiveRange }) => {
+      if (cancelled) return;
+      setDbRatingRange(dbRange);
+      if (effectiveRange) {
+        setRatingRange(effectiveRange);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDb, loadRatingRange, setRatingRange]);
 
   const generatePuzzleFromPgn = async (
     db: string,

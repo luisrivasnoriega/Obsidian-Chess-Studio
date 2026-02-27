@@ -20,6 +20,7 @@ import { useStore } from "zustand";
 import { Comment } from "@/components/Comment";
 import OpeningName from "@/components/OpeningName";
 import { TreeStateContext } from "@/components/TreeStateContext";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { currentInvisibleAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { VariantsNotationTree } from "./VariantsNotationTree";
@@ -63,10 +64,60 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
   const getExtraDepth = useCallback((pathKey: string) => expandedDepths.get(pathKey) ?? 0, [expandedDepths]);
 
   const currentMoveRef = useRef<HTMLSpanElement | null>(null);
+  const { layout } = useResponsiveLayout();
+  const isMobileLayout = layout.chessBoard.layoutType === "mobile";
+
+  const notationBody = (
+    <Box style={{ position: "relative" }}>
+      {invisible && (
+        <Overlay
+          backgroundOpacity={0.6}
+          color={colorScheme === "dark" || (osColorScheme === "dark" && colorScheme === "auto") ? "#1a1b1e" : undefined}
+          blur={8}
+          zIndex={2}
+        />
+      )}
+      <Box
+        style={{
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        {deferredRoot.children.length === 0 ? (
+          <Text c="dimmed" size="sm">
+            {t("features.gameNotation.noMoves")}
+          </Text>
+        ) : (
+          <>
+            {showComments && deferredRoot.comment && <Comment comment={deferredRoot.comment} />}
+            <VariantsNotationTree
+              root={deferredRoot}
+              start={headers.start}
+              showComments={showComments}
+              targetRef={currentMoveRef}
+              maxVariationDepth={maxVariationDepth}
+              getExtraDepth={getExtraDepth}
+              onToggleExpanded={toggleExpandedPath}
+              expansionVersion={expansionVersion}
+            />
+          </>
+        )}
+      </Box>
+    </Box>
+  );
 
   return (
-    <Paper withBorder p="md" flex={1} style={{ position: "relative", overflow: "hidden" }}>
-      <Stack h="100%" gap={0}>
+    <Paper
+      withBorder
+      p="md"
+      flex={isMobileLayout ? undefined : 1}
+      style={{
+        position: "relative",
+        overflow: isMobileLayout ? "visible" : "hidden",
+        touchAction: isMobileLayout ? "pan-y" : undefined,
+      }}
+    >
+      <Stack h={isMobileLayout ? "auto" : "100%"} gap={0}>
         {topBar && (
           <NotationHeader
             showComments={showComments}
@@ -75,46 +126,13 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
             setInvisible={setInvisible}
           />
         )}
-        <ScrollArea flex={1} offsetScrollbars viewportRef={viewportRef}>
-          <Box style={{ position: "relative" }}>
-            {invisible && (
-              <Overlay
-                backgroundOpacity={0.6}
-                color={
-                  colorScheme === "dark" || (osColorScheme === "dark" && colorScheme === "auto") ? "#1a1b1e" : undefined
-                }
-                blur={8}
-                zIndex={2}
-              />
-            )}
-            <Box
-              style={{
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              {deferredRoot.children.length === 0 ? (
-                <Text c="dimmed" size="sm">
-                  {t("features.gameNotation.noMoves")}
-                </Text>
-              ) : (
-                <>
-                  {showComments && deferredRoot.comment && <Comment comment={deferredRoot.comment} />}
-                  <VariantsNotationTree
-                    root={deferredRoot}
-                    start={headers.start}
-                    showComments={showComments}
-                    targetRef={currentMoveRef}
-                    maxVariationDepth={maxVariationDepth}
-                    getExtraDepth={getExtraDepth}
-                    onToggleExpanded={toggleExpandedPath}
-                    expansionVersion={expansionVersion}
-                  />
-                </>
-              )}
-            </Box>
-          </Box>
-        </ScrollArea>
+        {isMobileLayout ? (
+          <Box style={{ touchAction: "pan-y" }}>{notationBody}</Box>
+        ) : (
+          <ScrollArea flex={1} offsetScrollbars viewportRef={viewportRef}>
+            {notationBody}
+          </ScrollArea>
+        )}
       </Stack>
     </Paper>
   );
