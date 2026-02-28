@@ -103,6 +103,8 @@ function ResponsiveAnalysisPanels({
   // Determine if panels should be collapsible
   const shouldCollapse = !disableCollapse && layout.chessBoard.touchOptimized;
   const showControlsRail = !shouldCollapse && !renderAsSelect && layout.chessBoard.layoutType !== "mobile";
+  const isInlineMobilePanel = layout.chessBoard.layoutType === "mobile" && renderAsSelect;
+  const mobilePanelHeight = "min(42vh, 28rem)";
 
   // Set default collapsed state based on layout
   useEffect(() => {
@@ -136,13 +138,23 @@ function ResponsiveAnalysisPanels({
 
   // Render the analysis panels
   const containerStyle = {
-    height: "100%",
-    minHeight: 0,
+    height: isInlineMobilePanel ? mobilePanelHeight : "100%",
+    minHeight: isInlineMobilePanel ? "16rem" : 0,
     minWidth: 0,
     overflow: "hidden",
     display: "flex",
     flexDirection: "row",
+    touchAction: isInlineMobilePanel ? ("pan-y" as const) : undefined,
   } as const;
+  const tabPanelStyle = {
+    overflow: isInlineMobilePanel ? ("auto" as const) : ("hidden" as const),
+    minHeight: 0,
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column" as const,
+    touchAction: isInlineMobilePanel ? ("pan-y" as const) : undefined,
+    WebkitOverflowScrolling: isInlineMobilePanel ? ("touch" as const) : undefined,
+  };
 
   const Container = unstyledContainer ? Box : Paper;
   const containerProps = unstyledContainer
@@ -190,6 +202,7 @@ function ResponsiveAnalysisPanels({
           minHeight: 0,
           minWidth: 0,
           overflow: "hidden",
+          touchAction: isInlineMobilePanel ? "pan-y" : undefined,
         }}
       >
         {renderAsSelect ? (
@@ -263,62 +276,34 @@ function ResponsiveAnalysisPanels({
           </Tabs.List>
         )}
         {isRepertoire && (
-          <Tabs.Panel
-            value="practice"
-            flex={1}
-            style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-          >
+          <Tabs.Panel value="practice" flex={1} style={tabPanelStyle}>
             <Suspense>
               <PracticePanel />
             </Suspense>
           </Tabs.Panel>
         )}
         {isRepertoire && (
-          <Tabs.Panel
-            value="graph"
-            flex={1}
-            style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-          >
+          <Tabs.Panel value="graph" flex={1} style={tabPanelStyle}>
             <Suspense>
               <GraphPanel />
             </Suspense>
           </Tabs.Panel>
         )}
         {!isPuzzle && showSimulate && (
-          <Tabs.Panel
-            value="simulate"
-            flex={1}
-            style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-          >
+          <Tabs.Panel value="simulate" flex={1} style={tabPanelStyle}>
             <SimulatePanel />
           </Tabs.Panel>
         )}
-        <Tabs.Panel
-          value="info"
-          flex={1}
-          style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-        >
+        <Tabs.Panel value="info" flex={1} style={tabPanelStyle}>
           <InfoPanel />
         </Tabs.Panel>
-        <Tabs.Panel
-          value="database"
-          flex={1}
-          style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-        >
+        <Tabs.Panel value="database" flex={1} style={tabPanelStyle}>
           <DatabasePanel />
         </Tabs.Panel>
-        <Tabs.Panel
-          value="annotate"
-          flex={1}
-          style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-        >
+        <Tabs.Panel value="annotate" flex={1} style={tabPanelStyle}>
           <AnnotationPanel />
         </Tabs.Panel>
-        <Tabs.Panel
-          value="analysis"
-          flex={1}
-          style={{ overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}
-        >
+        <Tabs.Panel value="analysis" flex={1} style={tabPanelStyle}>
           <Suspense>
             <AnalysisPanel />
           </Suspense>
