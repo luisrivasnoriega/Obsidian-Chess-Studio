@@ -232,8 +232,123 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
         flexDirection: "column" as const,
       };
 
+  const enginesContent = (
+    <Box style={isCompact ? { display: "flex", flexDirection: "column", alignItems: "center" } : undefined}>
+      {pos && (getPiecesCount(pos) <= 7 || (getPiecesCount(pos) === 8 && hasCaptures(pos))) && (
+        <>
+          <TablebaseInfo fen={currentNodeFen} turn={pos.turn} />
+          <Space h="sm" />
+        </>
+      )}
+      {loadedEngines.length > 1 && (
+        <Paper
+          withBorder
+          p="xs"
+          flex={1}
+          style={isCompact ? { width: "100%", display: "flex", justifyContent: "center" } : undefined}
+        >
+          <Group w="100%" justify={isCompact ? "center" : "flex-start"}>
+            <Stack w="6rem" gap="xs">
+              <Text ta="center" fw="bold">
+                {t("features.board.analysis.summary")}
+              </Text>
+              <Button
+                rightSection={allEnabled ? <IconPlayerPause size="1.2rem" /> : <IconChevronsRight size="1.2rem" />}
+                variant={allEnabled ? "filled" : "default"}
+                onClick={() => enable(!allEnabled)}
+              >
+                {allEnabled ? t("common.stop") : t("common.run")}
+              </Button>
+            </Stack>
+            <Group grow flex={1}>
+              {loadedEngines.map((engine, i) => (
+                <EngineSummary key={engine.name} engine={engine} fen={rootFen} moves={moves} i={i} />
+              ))}
+            </Group>
+          </Group>
+        </Paper>
+      )}
+      <Stack mt="sm" style={isCompact ? { width: "100%", alignItems: "center" } : undefined}>
+        <Accordion
+          variant="separated"
+          multiple
+          chevronSize={0}
+          defaultValue={loadedEngines.map((e) => e.name)}
+          value={expanded}
+          onChange={(v) => setExpanded(v)}
+          styles={{
+            label: {
+              paddingTop: 0,
+              paddingBottom: 0,
+            },
+            content: {
+              padding: "0.3rem",
+            },
+          }}
+          style={isCompact ? { width: "100%" } : undefined}
+        >
+          <Droppable droppableId="engines-droppable" direction="vertical">
+            {(provided) => (
+              <div ref={provided.innerRef} {...provided.droppableProps}>
+                <Stack w="100%">
+                  {loadedEngines.map((engine, i) => (
+                    <Draggable key={engine.name + i.toString()} draggableId={`engine-${engine.name}`} index={i}>
+                      {(provided) => (
+                        <div ref={provided.innerRef} {...provided.draggableProps}>
+                          <Accordion.Item value={engine.name}>
+                            <BestMoves
+                              id={i}
+                              engine={engine}
+                              fen={rootFen}
+                              moves={moves}
+                              halfMoves={currentNodeHalfMoves}
+                              dragHandleProps={provided.dragHandleProps}
+                              orientation={headers.orientation || "white"}
+                            />
+                          </Accordion.Item>
+                        </div>
+                      )}
+                    </Draggable>
+                  ))}
+                </Stack>
+
+                {provided.placeholder}
+              </div>
+            )}
+          </Droppable>
+        </Accordion>
+        <Group gap="xs" justify={isCompact ? "center" : "flex-start"}>
+          <Button
+            flex={isCompact ? undefined : 1}
+            variant="default"
+            onClick={() => {
+              navigate({ to: "/engines" });
+            }}
+            leftSection={<IconSettings size="0.875rem" />}
+          >
+            Manage Engines
+          </Button>
+          <Popover width={250} position="top-end" shadow="md">
+            <Popover.Target>
+              <ActionIcon variant="default" size="lg">
+                <IconSelector />
+              </ActionIcon>
+            </Popover.Target>
+
+            <Popover.Dropdown>
+              <EngineSelection />
+            </Popover.Dropdown>
+          </Popover>
+        </Group>
+      </Stack>
+    </Box>
+  );
+
   return (
-    <Stack h={isCompact ? "auto" : "100%"} style={{ minHeight: isCompact ? undefined : 0, minWidth: 0 }}>
+    <Stack
+      h={isCompact ? "auto" : "100%"}
+      style={{ minHeight: isCompact ? undefined : 0, minWidth: 0, touchAction: isCompact ? "pan-y" : undefined }}
+    >
       <Tabs
         h={isCompact ? undefined : "100%"}
         orientation={isCompact ? "horizontal" : "vertical"}
@@ -242,7 +357,7 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
         onChange={(v) => setTab(v!)}
         style={
           isCompact
-            ? { minWidth: 0 }
+            ? { minWidth: 0, touchAction: "pan-y" }
             : {
                 display: "flex",
                 flex: 1,
@@ -263,6 +378,7 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
                     gap: "0.5rem",
                     paddingBottom: "0.25rem",
                     justifyContent: "center",
+                    touchAction: "pan-y",
                   }
                 : undefined
             }
@@ -275,124 +391,18 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
           </Tabs.List>
         )}
         <Tabs.Panel value="engines" style={panelStyle}>
-          <ScrollArea
-            h="100%"
-            offsetScrollbars
-            onScrollPositionChange={() => document.dispatchEvent(new Event("analysis-panel-scroll"))}
-            style={{ flex: 1, minHeight: 0 }}
-          >
-            <Box style={isCompact ? { display: "flex", flexDirection: "column", alignItems: "center" } : undefined}>
-              {pos && (getPiecesCount(pos) <= 7 || (getPiecesCount(pos) === 8 && hasCaptures(pos))) && (
-                <>
-                  <TablebaseInfo fen={currentNodeFen} turn={pos.turn} />
-                  <Space h="sm" />
-                </>
-              )}
-              {loadedEngines.length > 1 && (
-                <Paper
-                  withBorder
-                  p="xs"
-                  flex={1}
-                  style={isCompact ? { width: "100%", display: "flex", justifyContent: "center" } : undefined}
-                >
-                  <Group w="100%" justify={isCompact ? "center" : "flex-start"}>
-                    <Stack w="6rem" gap="xs">
-                      <Text ta="center" fw="bold">
-                        {t("features.board.analysis.summary")}
-                      </Text>
-                      <Button
-                        rightSection={
-                          allEnabled ? <IconPlayerPause size="1.2rem" /> : <IconChevronsRight size="1.2rem" />
-                        }
-                        variant={allEnabled ? "filled" : "default"}
-                        onClick={() => enable(!allEnabled)}
-                      >
-                        {allEnabled ? t("common.stop") : t("common.run")}
-                      </Button>
-                    </Stack>
-                    <Group grow flex={1}>
-                      {loadedEngines.map((engine, i) => (
-                        <EngineSummary key={engine.name} engine={engine} fen={rootFen} moves={moves} i={i} />
-                      ))}
-                    </Group>
-                  </Group>
-                </Paper>
-              )}
-              <Stack mt="sm" style={isCompact ? { width: "100%", alignItems: "center" } : undefined}>
-                <Accordion
-                  variant="separated"
-                  multiple
-                  chevronSize={0}
-                  defaultValue={loadedEngines.map((e) => e.name)}
-                  value={expanded}
-                  onChange={(v) => setExpanded(v)}
-                  styles={{
-                    label: {
-                      paddingTop: 0,
-                      paddingBottom: 0,
-                    },
-                    content: {
-                      padding: "0.3rem",
-                    },
-                  }}
-                  style={isCompact ? { width: "100%" } : undefined}
-                >
-                  <Droppable droppableId="engines-droppable" direction="vertical">
-                    {(provided) => (
-                      <div ref={provided.innerRef} {...provided.droppableProps}>
-                        <Stack w="100%">
-                          {loadedEngines.map((engine, i) => (
-                            <Draggable key={engine.name + i.toString()} draggableId={`engine-${engine.name}`} index={i}>
-                              {(provided) => (
-                                <div ref={provided.innerRef} {...provided.draggableProps}>
-                                  <Accordion.Item value={engine.name}>
-                                    <BestMoves
-                                      id={i}
-                                      engine={engine}
-                                      fen={rootFen}
-                                      moves={moves}
-                                      halfMoves={currentNodeHalfMoves}
-                                      dragHandleProps={provided.dragHandleProps}
-                                      orientation={headers.orientation || "white"}
-                                    />
-                                  </Accordion.Item>
-                                </div>
-                              )}
-                            </Draggable>
-                          ))}
-                        </Stack>
-
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </Accordion>
-                <Group gap="xs" justify={isCompact ? "center" : "flex-start"}>
-                  <Button
-                    flex={isCompact ? undefined : 1}
-                    variant="default"
-                    onClick={() => {
-                      navigate({ to: "/engines" });
-                    }}
-                    leftSection={<IconSettings size="0.875rem" />}
-                  >
-                    Manage Engines
-                  </Button>
-                  <Popover width={250} position="top-end" shadow="md">
-                    <Popover.Target>
-                      <ActionIcon variant="default" size="lg">
-                        <IconSelector />
-                      </ActionIcon>
-                    </Popover.Target>
-
-                    <Popover.Dropdown>
-                      <EngineSelection />
-                    </Popover.Dropdown>
-                  </Popover>
-                </Group>
-              </Stack>
-            </Box>
-          </ScrollArea>
+          {isCompact ? (
+            <Box style={{ width: "100%", touchAction: "pan-y" }}>{enginesContent}</Box>
+          ) : (
+            <ScrollArea
+              h="100%"
+              offsetScrollbars
+              onScrollPositionChange={() => document.dispatchEvent(new Event("analysis-panel-scroll"))}
+              style={{ flex: 1, minHeight: 0 }}
+            >
+              {enginesContent}
+            </ScrollArea>
+          )}
         </Tabs.Panel>
         <Tabs.Panel value="report" pt="xs" style={panelStyle}>
           <ReportPanel />

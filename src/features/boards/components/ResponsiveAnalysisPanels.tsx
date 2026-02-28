@@ -141,19 +141,19 @@ function ResponsiveAnalysisPanels({
     height: isInlineMobilePanel ? mobilePanelHeight : "100%",
     minHeight: isInlineMobilePanel ? "16rem" : 0,
     minWidth: 0,
-    overflow: "hidden",
+    overflowX: "hidden" as const,
+    overflowY: isInlineMobilePanel ? ("auto" as const) : ("hidden" as const),
     display: "flex",
     flexDirection: "row",
     touchAction: isInlineMobilePanel ? ("pan-y" as const) : undefined,
+    WebkitOverflowScrolling: isInlineMobilePanel ? ("touch" as const) : undefined,
   } as const;
   const tabPanelStyle = {
-    overflow: isInlineMobilePanel ? ("auto" as const) : ("hidden" as const),
+    overflow: isInlineMobilePanel ? ("visible" as const) : ("hidden" as const),
     minHeight: 0,
     minWidth: 0,
     display: "flex",
     flexDirection: "column" as const,
-    touchAction: isInlineMobilePanel ? ("pan-y" as const) : undefined,
-    WebkitOverflowScrolling: isInlineMobilePanel ? ("touch" as const) : undefined,
   };
 
   const Container = unstyledContainer ? Box : Paper;
@@ -189,7 +189,7 @@ function ResponsiveAnalysisPanels({
 
       <Tabs
         w="100%"
-        h="100%"
+        h={isInlineMobilePanel ? undefined : "100%"}
         value={currentTab}
         onChange={onTabChange}
         color="gold.4"
@@ -216,10 +216,14 @@ function ResponsiveAnalysisPanels({
             w="100%"
             variant="unstyled"
             styles={{
+              root: {
+                touchAction: isInlineMobilePanel ? "pan-y" : undefined,
+              },
               input: {
                 border: "none",
                 background: "transparent",
                 textAlign: "center",
+                touchAction: isInlineMobilePanel ? "pan-y" : undefined,
               },
               section: {
                 border: "none",
@@ -236,6 +240,7 @@ function ResponsiveAnalysisPanels({
                 ? {
                     justifyContent: "center",
                     display: "flex",
+                    touchAction: isInlineMobilePanel ? "pan-y" : undefined,
                   }
                 : undefined
             }
