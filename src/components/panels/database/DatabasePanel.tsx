@@ -22,6 +22,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { NormalizedGame } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import {
+  activeProfileIdAtom,
   currentDbTabAtom,
   currentDbTypeAtom,
   currentLocalOptionsAtom,
@@ -29,6 +30,7 @@ import {
   currentTabSelectedAtom,
   lichessOptionsAtom,
   masterOptionsAtom,
+  profilesAtom,
 } from "@/state/atoms";
 import {
   CHESSBASE_DATABASE_SENTINEL,
@@ -78,10 +80,16 @@ function sortOpenings(openings: Opening[]) {
   return openings.sort((a, b) => b.black + b.draw + b.white - (a.black + a.draw + a.white));
 }
 
-async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number, signal?: AbortSignal) {
+async function fetchOpening(
+  db: DBType,
+  tab: string,
+  gameDetailsLimit: number,
+  lichessToken?: string,
+  signal?: AbortSignal,
+) {
   return match(db)
     .with({ type: "lch_all" }, async ({ fen, options }) => {
-      const data = await getLichessGames(fen, options);
+      const data = await getLichessGames(fen, options, lichessToken);
       return {
         openings: data.moves.map((move) => ({
           move: move.san,
@@ -93,7 +101,7 @@ async function fetchOpening(db: DBType, tab: string, gameDetailsLimit: number, s
       };
     })
     .with({ type: "lch_master" }, async ({ fen, options }) => {
-      const data = await getMasterGames(fen, options);
+      const data = await getMasterGames(fen, options, lichessToken);
       return {
         openings: data.moves.map((move) => ({
           move: move.san,
@@ -132,7 +140,13 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   const tab = useAtomValue(currentTabAtom);
   const [tabType, setTabType] = useAtom(currentDbTabAtom);
   const currentTabSelected = useAtomValue(currentTabSelectedAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
+  const profiles = useAtomValue(profilesAtom);
   const tabValue = tab?.value ?? "analysis";
+  const lichessAuthToken = useMemo(() => {
+    const profileToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() || "";
+    return profileToken || undefined;
+  }, [activeProfileId, profiles]);
   const { data: chessbaseSessionStatus } = useQuery({
     queryKey: ["chessbase", "session-status", "database-panel"],
     queryFn: async () => {
@@ -342,6 +356,8 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     db === "local" ? localOptions.direction : null,
     tabValue,
     gameLimit,
+    db === "local" ? null : (lichessAuthToken ?? null),
+    db === "local" ? null : activeProfileId,
   ];
   const {
     data: openingData,
@@ -352,7 +368,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     // Use localOptions.fen directly for queryKey to ensure it matches what's sent to backend
     queryKey,
     queryFn: async ({ signal }) => {
-      const result = (await fetchOpening(dbType, tabValue, gameLimit, signal)) as OpeningData;
+      const result = (await fetchOpening(dbType, tabValue, gameLimit, lichessAuthToken, signal)) as OpeningData;
       return result;
     },
     enabled: queryEnabled && (db !== "local" || (!!effectiveLocalFen && !!localOptions.path)),

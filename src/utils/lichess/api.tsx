@@ -203,6 +203,50 @@ type PositionData = {
   topGames?: PositionGames;
 };
 
+function getExplorerHeaders(token?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    // Some edge/proxy setups reject requests without a UA.
+    "User-Agent": "ObsidianChessStudio/1.0",
+  };
+  const trimmedToken = token?.trim();
+  if (trimmedToken) {
+    headers.Authorization = `Bearer ${trimmedToken}`;
+  }
+  return headers;
+}
+
+async function parseJsonResponse<T>(res: Response, context: string): Promise<T> {
+  const raw = await res.text();
+  let parsed: T | null = null;
+
+  if (raw.trim().length > 0) {
+    try {
+      parsed = JSON.parse(raw) as T;
+    } catch {
+      if (!res.ok) {
+        const bodyPreview = raw.trim().slice(0, 160).replace(/\s+/g, " ");
+        throw new Error(`${context} failed (${res.status}): non-JSON response: ${bodyPreview}`);
+      }
+      throw new Error(`${context} returned invalid JSON`);
+    }
+  }
+
+  if (!res.ok) {
+    const message =
+      parsed && typeof parsed === "object" && "error" in (parsed as Record<string, unknown>)
+        ? String((parsed as Record<string, unknown>).error)
+        : raw.trim() || res.statusText || "request failed";
+    throw new Error(`${context} failed (${res.status}): ${message}`);
+  }
+
+  if (parsed == null) {
+    throw new Error(`${context} returned empty response`);
+  }
+
+  return parsed;
+}
+
 export async function getLichessAccount({
   token,
   username,
@@ -379,36 +423,42 @@ async function getCloudEvaluation(fen: string, multipv: number): Promise<Lichess
   url.searchParams.append("multiPv", multipv.toString());
 
   const response = await fetch(url.toString());
-  const data = (await response.json()) as LichessCloudData;
+  const data = await parseJsonResponse<LichessCloudData>(response as unknown as Response, "Lichess cloud evaluation");
   cache.set(`${fen}-${multipv}`, data);
   return data;
 }
 
-export async function getLichessGames(fen: string, options: LichessGamesOptions): Promise<PositionData> {
+export async function getLichessGames(
+  fen: string,
+  options: LichessGamesOptions,
+  token?: string,
+): Promise<PositionData> {
   const url = match(options.player)
     .with(P.union(undefined, ""), () => `${explorerURL}/lichess?${getLichessGamesQueryParams(fen, options)}`)
     .otherwise(() => `${explorerURL}/player?${getLichessGamesQueryParams(fen, options)}`);
-  const res = await fetch(url);
-  const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(`${data}`);
-  }
-  return data;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: getExplorerHeaders(token),
+  });
+  return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess explorer");
 }
 
-export async function getMasterGames(fen: string, options: MasterGamesOptions): Promise<PositionData> {
+export async function getMasterGames(fen: string, options: MasterGamesOptions, token?: string): Promise<PositionData> {
   const url = `${explorerURL}/masters?${getMasterGamesQueryParams(fen, options)}`;
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(`${data}`);
-  }
-  return data;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: getExplorerHeaders(token),
+  });
+  return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess masters explorer");
 }
 
-export async function getPlayerGames(fen: string, player: string, color: Color) {
-  return (await fetch(`${explorerURL}/player?fen=${fen}&player=${player}&color=${color}`)).json();
+export async function getPlayerGames(fen: string, player: string, color: Color, token?: string) {
+  return (
+    await fetch(`${explorerURL}/player?fen=${fen}&player=${player}&color=${color}`, {
+      method: "GET",
+      headers: getExplorerHeaders(token),
+    })
+  ).json();
 }
 
 export async function downloadLichess(
