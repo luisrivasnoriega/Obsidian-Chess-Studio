@@ -86,6 +86,13 @@ function ResponsiveAnalysisPanels({
     }, []);
   }, [isPuzzle, isRepertoire, t, showSimulate]);
 
+  const resolvedTabValue = useMemo(() => {
+    if (tabOptions.some((option) => option.value === currentTab)) {
+      return currentTab;
+    }
+    return tabOptions[0]?.value ?? null;
+  }, [currentTab, tabOptions]);
+
   useEffect(() => {
     if (!renderAsSelect) return;
     if (selectStartsEmpty) return;
@@ -101,7 +108,7 @@ function ResponsiveAnalysisPanels({
   }, [retry]);
 
   // Determine if panels should be collapsible
-  const shouldCollapse = !disableCollapse && layout.chessBoard.touchOptimized;
+  const shouldCollapse = !disableCollapse && !renderAsSelect && layout.chessBoard.touchOptimized;
   const showControlsRail = !shouldCollapse && !renderAsSelect && layout.chessBoard.layoutType !== "mobile";
   const isInlineMobilePanel = layout.chessBoard.layoutType === "mobile" && renderAsSelect;
   const mobilePanelHeight = "min(42vh, 28rem)";
@@ -190,7 +197,7 @@ function ResponsiveAnalysisPanels({
       <Tabs
         w="100%"
         h={isInlineMobilePanel ? undefined : "100%"}
-        value={currentTab}
+        value={resolvedTabValue}
         onChange={onTabChange}
         color="gold.4"
         keepMounted={false}
@@ -209,21 +216,21 @@ function ResponsiveAnalysisPanels({
           <Select
             data={tabOptions}
             placeholder={t("common.options")}
-            value={tabOptions.some((option) => option.value === currentTab) ? currentTab : null}
-            onChange={(value) => onTabChange?.(value)}
+            value={resolvedTabValue}
+            onChange={(value) => onTabChange?.(value ?? tabOptions[0]?.value ?? null)}
             allowDeselect={false}
             mb="1rem"
             w="100%"
+            comboboxProps={{ withinPortal: false, zIndex: 4000 }}
             variant="unstyled"
             styles={{
               root: {
-                touchAction: isInlineMobilePanel ? "pan-y" : undefined,
+                width: "100%",
               },
               input: {
                 border: "none",
                 background: "transparent",
                 textAlign: "center",
-                touchAction: isInlineMobilePanel ? "pan-y" : undefined,
               },
               section: {
                 border: "none",

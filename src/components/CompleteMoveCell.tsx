@@ -14,18 +14,42 @@ import { type TreeNode, treeIterator } from "@/utils/treeReducer";
 import MoveCell from "./MoveCell";
 import { TreeStateContext } from "./TreeStateContext";
 
-function getTranspositions(fen: string, position: number[], root: TreeNode) {
-  if (position.length === 0 || position.every((v) => v === 0)) return [];
-  const transpositions: number[][] = [];
-  const strippedFen = stripClock(fen);
+const transpositionIndexCache = new WeakMap<TreeNode, Map<string, number[][]>>();
+
+function getTranspositionIndex(root: TreeNode): Map<string, number[][]> {
+  const cached = transpositionIndexCache.get(root);
+  if (cached) return cached;
+
+  const index = new Map<string, number[][]>();
   const iterator = treeIterator(root);
   for (const item of iterator) {
-    if (hasMorePriority(position, item.position)) {
+    const key = stripClock(item.node.fen);
+    const positions = index.get(key);
+    if (positions) {
+      positions.push(item.position);
+    } else {
+      index.set(key, [item.position]);
+    }
+  }
+
+  transpositionIndexCache.set(root, index);
+  return index;
+}
+
+function getTranspositions(fen: string, position: number[], root: TreeNode) {
+  if (position.length === 0 || position.every((v) => v === 0)) return [];
+
+  const index = getTranspositionIndex(root);
+  const strippedFen = stripClock(fen);
+  const sameFenPositions = index.get(strippedFen);
+  if (!sameFenPositions || sameFenPositions.length === 0) return [];
+
+  const transpositions: number[][] = [];
+  for (const candidatePosition of sameFenPositions) {
+    if (hasMorePriority(position, candidatePosition)) {
       continue;
     }
-    if (stripClock(item.node.fen) === strippedFen) {
-      transpositions.push(item.position);
-    }
+    transpositions.push(candidatePosition);
   }
   return transpositions;
 }
