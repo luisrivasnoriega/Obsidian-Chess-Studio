@@ -41,6 +41,7 @@ export type BuildVariantsTreeRequest = {
   localDbPath?: string | null;
   lichessOptions?: LichessGamesOptionsDto;
   masterOptions?: MasterGamesOptionsDto;
+  lichessToken?: string | null;
   mode: "engine" | "winrate";
   engine?: EngineRequestDto | null;
   engineMs: number;

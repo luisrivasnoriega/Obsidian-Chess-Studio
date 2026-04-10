@@ -8,7 +8,7 @@ use log;
 use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode};
 use specta::Type;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
@@ -80,16 +80,24 @@ fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-async fn fetch_explorer(url: reqwest::Url) -> Result<ExplorerPositionData> {
+async fn fetch_explorer(url: reqwest::Url, lichess_token: Option<&str>) -> Result<ExplorerPositionData> {
     // Retry/backoff on 429 and transient 5xx.
     const MAX_RETRIES: usize = 8;
     let mut backoff = Duration::from_millis(1000);
+    let auth_token = lichess_token.map(str::trim).filter(|s| !s.is_empty());
 
     for attempt in 0..=MAX_RETRIES {
         throttle_lichess().await;
         log::debug!("Lichess explorer request start: {}", url);
 
-        let res = match HTTP_CLIENT.get(url.clone()).send().await {
+        let mut request = HTTP_CLIENT
+            .get(url.clone())
+            .header(reqwest::header::ACCEPT, "application/json");
+        if let Some(token) = auth_token {
+            request = request.bearer_auth(token);
+        }
+
+        let res = match request.send().await {
             Ok(r) => r,
             Err(e) => {
                 if attempt < MAX_RETRIES {
@@ -117,6 +125,17 @@ async fn fetch_explorer(url: reqwest::Url) -> Result<ExplorerPositionData> {
             sleep(wait).await;
             backoff = (backoff * 2).min(Duration::from_secs(15));
             continue;
+        }
+
+        if res.status().is_client_error() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            let body_preview = body.trim().chars().take(160).collect::<String>();
+            return Err(Error::FenError(format!(
+                "Lichess explorer client error {}: {}",
+                status,
+                body_preview
+            )));
         }
 
         if res.status().is_server_error() {
@@ -262,6 +281,8 @@ pub struct BuildVariantsTreeRequest {
     pub lichess_options: Option<LichessGamesOptionsDto>,
     #[serde(default)]
     pub master_options: Option<MasterGamesOptionsDto>,
+    #[serde(default)]
+    pub lichess_token: Option<String>,
 
     pub mode: String, // "engine" | "winrate"
     #[serde(default)]
@@ -585,17 +606,28 @@ fn masters_explorer_url(fen: &str, opt: &MasterGamesOptionsDto) -> Result<reqwes
 }
 
 fn select_coverage_moves(moves: &[ExplorerMove], coverage: u32, min_moves: u32) -> Vec<ExplorerMove> {
+    let target_min = std::cmp::max(1, min_moves) as usize;
     let total: u32 = moves.iter().map(|m| m.white + m.black + m.draws).sum();
     if total == 0 {
-        return vec![];
+        // Fallback for sources without counts (e.g. existing tree moves):
+        // return up to `min_moves` entries so the builder can still progress.
+        let mut selected: Vec<ExplorerMove> = Vec::new();
+        for m in moves {
+            if selected.iter().any(|x| x.san == m.san) {
+                continue;
+            }
+            selected.push(m.clone());
+            if selected.len() >= target_min {
+                break;
+            }
+        }
+        return selected;
     }
 
     let mut sorted = moves.to_vec();
     sorted.sort_by_key(|m| std::cmp::Reverse(m.white + m.black + m.draws));
 
     let target_coverage = coverage.min(100) as f64;
-    let target_min = std::cmp::max(1, min_moves) as usize;
-
     let mut selected: Vec<ExplorerMove> = Vec::new();
     let mut cumulative = 0f64;
 
@@ -626,25 +658,79 @@ fn select_coverage_moves(moves: &[ExplorerMove], coverage: u32, min_moves: u32) 
     selected
 }
 
+fn winrate_score(m: &ExplorerMove, side: Side) -> Option<f64> {
+    let total = (m.white + m.black + m.draws) as f64;
+    if total <= 0.0 {
+        return None;
+    }
+    let wins = match side {
+        Side::White => m.white as f64,
+        Side::Black => m.black as f64,
+    };
+    Some((wins + (m.draws as f64) * 0.5) / total)
+}
+
+fn rank_moves_by_winrate(moves: &[ExplorerMove], side: Side) -> Vec<ExplorerMove> {
+    let mut indexed: Vec<(usize, ExplorerMove, f64, u32)> = moves
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(idx, m)| {
+            let score = winrate_score(&m, side).unwrap_or(-1.0);
+            let total = m.white + m.black + m.draws;
+            (idx, m, score, total)
+        })
+        .collect();
+
+    indexed.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.3.cmp(&a.3))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    indexed.into_iter().map(|(_, m, _, _)| m).collect()
+}
+
 fn pick_best_winrate_move(moves: &[ExplorerMove], side: Side) -> Option<ExplorerMove> {
-    let mut best: Option<(ExplorerMove, f64)> = None;
-    for m in moves {
-        let total = (m.white + m.black + m.draws) as f64;
-        if total <= 0.0 {
-            continue;
-        }
-        let wins = match side {
-            Side::White => m.white as f64,
-            Side::Black => m.black as f64,
-        };
-        let score = (wins + (m.draws as f64) * 0.5) / total;
-        match &best {
-            None => best = Some((m.clone(), score)),
-            Some((_, s)) if score > *s => best = Some((m.clone(), score)),
-            _ => {}
+    rank_moves_by_winrate(moves, side).into_iter().next()
+}
+
+fn pick_best_winrate_move_with_engine_constraint(
+    current_fen: &str,
+    moves: &[ExplorerMove],
+    side: Side,
+    engine_top_uci_moves: &[String],
+    is960: bool,
+) -> Option<ExplorerMove> {
+    let ranked = rank_moves_by_winrate(moves, side);
+    let fallback = pick_best_winrate_move(moves, side)?;
+
+    if engine_top_uci_moves.is_empty() {
+        return Some(fallback);
+    }
+
+    let mut allowed_next_positions: HashSet<String> = HashSet::new();
+    for uci in engine_top_uci_moves {
+        if let Ok(next_fen) = apply_move_to_fen(current_fen, uci, is960) {
+            allowed_next_positions.insert(fen_identity_key(&next_fen));
         }
     }
-    best.map(|(m, _)| m)
+
+    if allowed_next_positions.is_empty() {
+        return Some(fallback);
+    }
+
+    for candidate in ranked {
+        let candidate_value = move_value_db(&candidate);
+        if let Ok(next_fen) = apply_move_to_fen(current_fen, &candidate_value, is960) {
+            if allowed_next_positions.contains(&fen_identity_key(&next_fen)) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    Some(fallback)
 }
 
 /// Convert an engine UCI move into SAN for the given FEN.
@@ -713,18 +799,12 @@ async fn get_opening_moves(
     state: tauri::State<'_, AppState>,
     explorer_cache: &mut HashMap<String, Vec<ExplorerMove>>,
 ) -> Result<Vec<ExplorerMove>> {
-    // First, prefer using already-known moves from the incoming tree to avoid any DB / external calls.
+    // Keep existing-tree moves as fallback, but prefer fresh DB/explorer data.
+    // Existing tree moves do not include reliable counts for winrate/coverage.
     let k = fen_identity_key(fen);
-    if let Some(existing) = existing_moves_by_fen.get(&k) {
-        log::debug!(
-            "get_opening_moves: using existing tree moves ({} moves) for fen_key={}",
-            existing.len(),
-            k
-        );
-        return Ok(existing.clone());
-    }
+    let existing_fallback = existing_moves_by_fen.get(&k).cloned();
 
-    match req.db_type.as_str() {
+    let fetched = match req.db_type.as_str() {
         "lch_all" => {
             let opt = req
                 .lichess_options
@@ -743,22 +823,23 @@ async fn get_opening_moves(
             }
             if *requests_left == 0 {
                 log::warn!("Lichess request budget exhausted for this run; returning empty moves");
-                return Ok(vec![]);
-            }
-            *requests_left = requests_left.saturating_sub(1);
-            log::debug!(
-                "get_opening_moves: cache miss, fetching {} (budget_left={})",
-                key,
-                *requests_left
-            );
-            match fetch_explorer(url).await {
-                Ok(data) => {
-                    explorer_cache.insert(key, data.moves.clone());
-                    Ok(data.moves)
-                }
-                Err(e) => {
-                    log::warn!("Failed to fetch Lichess All explorer for FEN {}: {}", fen, e);
-                    Ok(vec![])
+                vec![]
+            } else {
+                *requests_left = requests_left.saturating_sub(1);
+                log::debug!(
+                    "get_opening_moves: cache miss, fetching {} (budget_left={})",
+                    key,
+                    *requests_left
+                );
+                match fetch_explorer(url, req.lichess_token.as_deref()).await {
+                    Ok(data) => {
+                        explorer_cache.insert(key, data.moves.clone());
+                        data.moves
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch Lichess All explorer for FEN {}: {}", fen, e);
+                        vec![]
+                    }
                 }
             }
         }
@@ -780,22 +861,23 @@ async fn get_opening_moves(
             }
             if *requests_left == 0 {
                 log::warn!("Lichess request budget exhausted for this run; returning empty moves");
-                return Ok(vec![]);
-            }
-            *requests_left = requests_left.saturating_sub(1);
-            log::debug!(
-                "get_opening_moves: cache miss, fetching {} (budget_left={})",
-                key,
-                *requests_left
-            );
-            match fetch_explorer(url).await {
-                Ok(data) => {
-                    explorer_cache.insert(key, data.moves.clone());
-                    Ok(data.moves)
-                }
-                Err(e) => {
-                    log::warn!("Failed to fetch Lichess Masters explorer for FEN {}: {}", fen, e);
-                    Ok(vec![])
+                vec![]
+            } else {
+                *requests_left = requests_left.saturating_sub(1);
+                log::debug!(
+                    "get_opening_moves: cache miss, fetching {} (budget_left={})",
+                    key,
+                    *requests_left
+                );
+                match fetch_explorer(url, req.lichess_token.as_deref()).await {
+                    Ok(data) => {
+                        explorer_cache.insert(key, data.moves.clone());
+                        data.moves
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to fetch Lichess Masters explorer for FEN {}: {}", fen, e);
+                        vec![]
+                    }
                 }
             }
         }
@@ -820,10 +902,23 @@ async fn get_opening_moves(
                 state,
             )
             .await?;
-            Ok(openings_from_local_stats(&stats))
+            openings_from_local_stats(&stats)
         }
-        other => Err(Error::FenError(format!("Unknown db_type: {other}"))),
+        other => return Err(Error::FenError(format!("Unknown db_type: {other}"))),
+    };
+
+    if fetched.is_empty() {
+        if let Some(existing) = existing_fallback {
+            log::debug!(
+                "get_opening_moves: DB/explorer empty, falling back to existing tree moves ({} moves) for fen_key={}",
+                existing.len(),
+                k
+            );
+            return Ok(existing);
+        }
     }
+
+    Ok(fetched)
 }
 
 async fn get_engine_best_move(
@@ -975,6 +1070,112 @@ async fn get_engine_best_move(
     }
 }
 
+async fn get_engine_top_moves(
+    fen: &str,
+    req: &BuildVariantsTreeRequest,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    min_lines: usize,
+) -> Result<Vec<String>> {
+    let engine = match req.engine.as_ref() {
+        None => return Ok(vec![]),
+        Some(e) => e,
+    };
+
+    let tab = "variants-builder-backend".to_string();
+    let requested_ms_u32 = std::cmp::max(1, req.engine_ms);
+    let go_mode = GoMode::Time(requested_ms_u32);
+
+    let mut extra = engine.extra_options.clone();
+    if req.is960 && !extra.iter().any(|o| o.name == "UCI_Chess960") {
+        extra.push(EngineOption {
+            name: "UCI_Chess960".to_string(),
+            value: "true".to_string(),
+        });
+    }
+
+    let required_multipv = std::cmp::max(1, min_lines) as u32;
+    let mut has_multipv = false;
+    for opt in &mut extra {
+        if opt.name == "MultiPV" {
+            has_multipv = true;
+            let current = opt.value.parse::<u32>().unwrap_or(1);
+            if current < required_multipv {
+                opt.value = required_multipv.to_string();
+            }
+        }
+    }
+    if !has_multipv {
+        extra.push(EngineOption {
+            name: "MultiPV".to_string(),
+            value: required_multipv.to_string(),
+        });
+    }
+
+    let options = EngineOptions {
+        fen: fen.to_string(),
+        moves: vec![],
+        extra_options: extra,
+    };
+
+    let started_at = Instant::now();
+    let max_wait = Duration::from_millis(req.engine_ms.saturating_add(3000) as u64);
+
+    let mut last_top_moves: Vec<String> = Vec::new();
+
+    loop {
+        let result = crate::chess::get_best_moves(
+            engine.name.clone(),
+            engine.path.clone(),
+            tab.clone(),
+            go_mode.clone(),
+            options.clone(),
+            app.clone(),
+            state.clone(),
+        )
+        .await?;
+
+        if let Some((progress, lines)) = result {
+            if !lines.is_empty() {
+                let mut sorted = lines;
+                sorted.sort_by_key(|bm| bm.multipv);
+                let mut top: Vec<String> = Vec::new();
+                for line in sorted {
+                    if let Some(first) = line
+                        .uci_moves
+                        .get(0)
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                    {
+                        if !top.iter().any(|m| m == &first) {
+                            top.push(first);
+                        }
+                        if top.len() >= required_multipv as usize {
+                            break;
+                        }
+                    }
+                }
+                if !top.is_empty() {
+                    last_top_moves = top;
+                }
+            }
+
+            if progress >= 99.9 && !last_top_moves.is_empty() {
+                break;
+            }
+        }
+
+        if started_at.elapsed() >= max_wait {
+            break;
+        }
+
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    Ok(last_top_moves)
+}
+
 fn apply_move_to_fen(fen: &str, mv: &str, is960: bool) -> Result<String> {
     let castling = if is960 {
         CastlingMode::Chess960
@@ -1094,7 +1295,33 @@ async fn build_variants_tree_impl(
                         explorer_cache,
                     )
                     .await?;
-                    pick_best_winrate_move(&opening_moves, my_side).map(|m| move_spec_from_db(&m))
+                    let engine_top_moves = match get_engine_top_moves(
+                        &current_fen,
+                        req,
+                        app.clone(),
+                        state.clone(),
+                        3,
+                    )
+                    .await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!(
+                                "winrate+engine validation failed for fen_key={} error={}",
+                                fen_identity_key(&current_fen),
+                                e
+                            );
+                            vec![]
+                        }
+                    };
+                    pick_best_winrate_move_with_engine_constraint(
+                        &current_fen,
+                        &opening_moves,
+                        my_side,
+                        &engine_top_moves,
+                        req.is960,
+                    )
+                    .map(|m| move_spec_from_db(&m))
                 };
 
                 let Some(step) = picked else {
@@ -1276,7 +1503,10 @@ pub async fn build_variants_tree(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<BuildVariantsTreeResponse> {
-    build_variants_tree_impl(&request, app, state).await
+    let result = build_variants_tree_impl(&request, app, state.clone()).await;
+    // Ensure backend variants-builder engine instances never outlive this command.
+    let _ = crate::chess::kill_engines("variants-builder-backend".to_string(), state).await;
+    result
 }
 
 #[cfg(test)]
@@ -1362,5 +1592,125 @@ mod tests {
         ];
         let best = pick_best_winrate_move(&moves, Side::White).unwrap();
         assert_eq!(best.san, "b");
+    }
+
+    #[test]
+    fn select_coverage_moves_falls_back_when_counts_are_missing() {
+        let moves = vec![
+            ExplorerMove {
+                uci: "".into(),
+                san: "a".into(),
+                white: 0,
+                black: 0,
+                draws: 0,
+            },
+            ExplorerMove {
+                uci: "".into(),
+                san: "b".into(),
+                white: 0,
+                black: 0,
+                draws: 0,
+            },
+            ExplorerMove {
+                uci: "".into(),
+                san: "c".into(),
+                white: 0,
+                black: 0,
+                draws: 0,
+            },
+        ];
+        let selected = select_coverage_moves(&moves, 90, 2);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].san, "a");
+        assert_eq!(selected[1].san, "b");
+    }
+
+    #[test]
+    fn pick_best_winrate_falls_back_to_first_when_counts_are_missing() {
+        let moves = vec![
+            ExplorerMove {
+                uci: "".into(),
+                san: "a".into(),
+                white: 0,
+                black: 0,
+                draws: 0,
+            },
+            ExplorerMove {
+                uci: "".into(),
+                san: "b".into(),
+                white: 0,
+                black: 0,
+                draws: 0,
+            },
+        ];
+        let best = pick_best_winrate_move(&moves, Side::White).unwrap();
+        assert_eq!(best.san, "a");
+    }
+
+    #[test]
+    fn winrate_with_engine_constraint_prefers_top_winrate_if_in_engine_top3() {
+        let moves = vec![
+            ExplorerMove {
+                uci: "e2e4".into(),
+                san: "e4".into(),
+                white: 60,
+                black: 30,
+                draws: 10,
+            },
+            ExplorerMove {
+                uci: "d2d4".into(),
+                san: "d4".into(),
+                white: 55,
+                black: 35,
+                draws: 10,
+            },
+        ];
+        let engine_top = vec!["e2e4".to_string(), "c2c4".to_string(), "g1f3".to_string()];
+        let picked = pick_best_winrate_move_with_engine_constraint(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            &moves,
+            Side::White,
+            &engine_top,
+            false,
+        )
+        .unwrap();
+        assert_eq!(picked.san, "e4");
+    }
+
+    #[test]
+    fn winrate_with_engine_constraint_falls_to_next_when_top_not_in_engine_top3() {
+        let moves = vec![
+            ExplorerMove {
+                uci: "e2e4".into(),
+                san: "e4".into(),
+                white: 60,
+                black: 30,
+                draws: 10,
+            },
+            ExplorerMove {
+                uci: "d2d4".into(),
+                san: "d4".into(),
+                white: 58,
+                black: 32,
+                draws: 10,
+            },
+            ExplorerMove {
+                uci: "g1f3".into(),
+                san: "Nf3".into(),
+                white: 57,
+                black: 33,
+                draws: 10,
+            },
+        ];
+        let engine_top = vec!["d2d4".to_string(), "g1f3".to_string(), "c2c4".to_string()];
+        let picked = pick_best_winrate_move_with_engine_constraint(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            &moves,
+            Side::White,
+            &engine_top,
+            false,
+        )
+        .unwrap();
+        assert_eq!(picked.san, "d4");
     }
 }

@@ -738,6 +738,26 @@ export function DatabaseDetails({
   }
 
   if (!isSuccessDatabase(selectedDatabase)) {
+    const handleDeleteErroredDatabase = () => {
+      modals.openConfirmModal({
+        title: t("features.databases.delete.title"),
+        withCloseButton: false,
+        children: (
+          <>
+            <Text>{t("features.databases.delete.message")}</Text>
+            <Text>{t("common.cannotUndo")}</Text>
+          </>
+        ),
+        labels: { confirm: t("common.remove"), cancel: t("common.cancel") },
+        confirmProps: { color: "red" },
+        onConfirm: async () => {
+          await commands.deleteDatabase(selectedDatabase.file);
+          mutate();
+          onSelect(null);
+        },
+      });
+    };
+
     return (
       <Paper withBorder p="md" h="100%">
         <ScrollArea h="100%" offsetScrollbars>
@@ -752,6 +772,11 @@ export function DatabaseDetails({
               {` ${selectedDatabase.error}`}
             </Text>
             <Text>{t("databases.checkFileError")}</Text>
+            <Group justify="flex-end">
+              <Button color="red" onClick={handleDeleteErroredDatabase}>
+                {t("common.delete")}
+              </Button>
+            </Group>
           </Stack>
         </ScrollArea>
       </Paper>

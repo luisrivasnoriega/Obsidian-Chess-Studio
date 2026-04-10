@@ -95,6 +95,7 @@ interface ChessboardProps {
   // Hide eval bar and footer controls for game mode (e.g., PlayVsEngineBoard)
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
+  allowPremove?: boolean;
 }
 
 function Board({
@@ -134,6 +135,7 @@ function Board({
   hideClockSpaces = false,
   hideEvalBar = false,
   hideFooterControls = false,
+  allowPremove = false,
 }: ChessboardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
@@ -528,7 +530,7 @@ function Board({
   // every render while dragging pieces.
 
   const animationConfig = useMemo(() => ({ enabled: !editingMode }), [editingMode]);
-  const premovableConfig = useMemo(() => ({ enabled: false }), []);
+  const premovableConfig = useMemo(() => ({ enabled: allowPremove }), [allowPremove]);
 
   const onAfterMove = useCallback(
     (orig: string, dest: string, metadata: { ctrlKey?: boolean }) => {

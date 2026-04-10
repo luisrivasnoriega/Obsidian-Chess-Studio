@@ -2162,6 +2162,7 @@ pub fn compute_profile_phase_outcomes(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -2172,6 +2173,7 @@ pub fn compute_profile_phase_outcomes(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -2326,6 +2328,7 @@ pub fn compute_profile_phase_accuracy(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -2336,6 +2339,7 @@ pub fn compute_profile_phase_accuracy(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -2543,6 +2547,7 @@ pub fn get_profile_phase_games(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -2553,6 +2558,7 @@ pub fn get_profile_phase_games(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -2716,6 +2722,7 @@ pub fn compute_profile_outcome_accuracy(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -2726,6 +2733,7 @@ pub fn compute_profile_outcome_accuracy(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -2953,6 +2961,7 @@ pub fn compute_profile_fork_stats(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -3118,6 +3127,7 @@ pub fn generate_profile_missed_fork_puzzles(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -3283,6 +3293,7 @@ pub fn get_profile_missed_fork_games(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -3293,6 +3304,7 @@ pub fn get_profile_missed_fork_games(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -3488,6 +3500,7 @@ pub fn get_profile_intensity_games(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -3498,6 +3511,7 @@ pub fn get_profile_intensity_games(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -3690,6 +3704,7 @@ pub fn compute_profile_outcome_reason_breakdown(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -3702,6 +3717,7 @@ pub fn compute_profile_outcome_reason_breakdown(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -4012,6 +4028,7 @@ pub fn compute_profile_intensity_breakdown(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -4020,6 +4037,7 @@ pub fn compute_profile_intensity_breakdown(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -4226,6 +4244,7 @@ pub fn compute_profile_intensity_outcomes(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -4236,6 +4255,7 @@ pub fn compute_profile_intensity_outcomes(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,
@@ -4474,6 +4494,7 @@ pub fn compute_profile_intensity_accuracy(
     #[derive(QueryableByName)]
     struct Row {
         #[diesel(sql_type = Integer, column_name = "game_id")]
+        #[allow(dead_code)]
         game_id: i32,
         #[diesel(sql_type = Nullable<Text>, column_name = "Date")]
         date: Option<String>,
@@ -4482,6 +4503,7 @@ pub fn compute_profile_intensity_accuracy(
         #[diesel(sql_type = Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = Integer, column_name = "BlackID")]
+        #[allow(dead_code)]
         black_id: i32,
         #[diesel(sql_type = Nullable<Integer>, column_name = "WhiteElo")]
         white_elo: Option<i32>,

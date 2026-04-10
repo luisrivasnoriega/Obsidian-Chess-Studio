@@ -127,6 +127,7 @@ struct LocalSide {
 #[serde(rename_all = "camelCase")]
 struct LocalGameRecord {
     id: String,
+    #[allow(dead_code)]
     profile_id: Option<String>,
     white: LocalSide,
     black: LocalSide,

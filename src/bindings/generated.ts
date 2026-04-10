@@ -954,6 +954,14 @@ async buildVariantsTree(request: BuildVariantsTreeRequest) : Promise<Result<Buil
     else return { status: "error", error: e  as any };
 }
 },
+async postGameReviewVariants(input: PostGameReviewVariantsInput) : Promise<Result<PostGameReviewVariantsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("post_game_review_variants", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async analysisDbSetAnalyzedGame(gameId: string, analyzedPgn: string, profileId: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("analysis_db_set_analyzed_game", { gameId, analyzedPgn, profileId }) };
@@ -1336,6 +1344,46 @@ async createLichessTournament(input: LichessTournamentCreateRequest) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async lichessFindHumanGame(input: LichessFindHumanGameInput) : Promise<Result<LichessFindHumanGameResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_find_human_game", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lichessChallengeAi(input: LichessAiChallengeInput) : Promise<Result<LichessAiChallengeResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_challenge_ai", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lichessGetBoardGameState(token: string, gameId: string) : Promise<Result<LichessBoardGameSnapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_get_board_game_state", { token, gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lichessMakeBoardMove(token: string, gameId: string, moveUci: string, offeringDraw: boolean | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_make_board_move", { token, gameId, moveUci, offeringDraw }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lichessResignBoardGame(token: string, gameId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_resign_board_game", { token, gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async upsertManagedEvent(file: string, payload: CreateManagedEventPayload) : Promise<Result<Event, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("upsert_managed_event", { file, payload }) };
@@ -1436,7 +1484,7 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
 export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; kind: EdgeKind; evCpFromOurPerspective: number | null; predictedProb: number | null }
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
-export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
+export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
 export type BuildVariantsTreeResponse = { lines: LineDto[] }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
 export type ChessbaseDownloadResult = { pgn: string; games: number }
@@ -1552,6 +1600,11 @@ display_name: string;
  * ELO if parsed from filename (e.g. maia-1100 -> 1100).
  */
 elo: number | null }
+export type LichessAiChallengeInput = { token: string; level: number; clockLimitSeconds: number; clockIncrementSeconds: number; color: string; variant: string | null; fen: string | null }
+export type LichessAiChallengeResponse = { id: string; fullId: string | null; color: string | null; raw: string }
+export type LichessBoardGameSnapshot = { gameId: string; initialFen: string | null; whiteName: string | null; blackName: string | null; moves: string[]; status: string; winner: string | null; turn: string | null; wtime: bigint | null; btime: bigint | null; raw: string }
+export type LichessFindHumanGameInput = { token: string; timeMinutes: number; incrementSeconds: number; color: string; rated: boolean; variant: string | null; timeoutSeconds: bigint | null }
+export type LichessFindHumanGameResponse = { gameId: string; color: string | null; source: string | null; fullId: string | null; raw: string }
 export type LichessGamesOptionsDto = { variant?: string | null; speeds?: string[] | null; ratings?: number[] | null; 
 /**
  * Serialized from JS Date as ISO string (or omitted).
@@ -1697,6 +1750,8 @@ export type PlayerStyleLabel = { label: string; description: string; color: stri
 export type PlayersTime = { white: number; black: number; winc: number; binc: number }
 export type PositionQueryJs = { fen: string; type_: string }
 export type PositionStats = { move: string; white: number; draw: number; black: number }
+export type PostGameReviewVariantsInput = { documentDir: string; initialFen: string; moves: string[]; humanColor: string | null }
+export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string }
 export type Puzzle = { id: number; fen: string; moves: string; rating: number; rating_deviation: number; popularity: number; nb_plays: number; themes: string | null; game_url: string | null; opening_tags: string | null }
 /**
  * Information about a puzzle database

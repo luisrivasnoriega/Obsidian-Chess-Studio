@@ -48,6 +48,7 @@ import { TreeStateContext } from "@/components/TreeStateContext";
 import { useDebouncedAutoSave } from "@/features/boards/hooks/useDebouncedAutoSave";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
+  activeProfileIdAtom,
   activeTabAtom,
   autoSaveAtom,
   currentAnalysisTabAtom,
@@ -59,6 +60,7 @@ import {
   enginesAtom,
   lichessOptionsAtom,
   masterOptionsAtom,
+  profilesAtom,
   referenceDbAtom,
   tabEngineSettingsFamily,
   tabsAtom,
@@ -126,6 +128,9 @@ function BoardVariants() {
   const lichessOptions = useAtomValue(lichessOptionsAtom);
   const masterOptions = useAtomValue(masterOptionsAtom);
   const referenceDatabase = useAtomValue(referenceDbAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
+  const profiles = useAtomValue(profilesAtom);
+  const lichessAuthToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() || undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -446,7 +451,7 @@ function BoardVariants() {
   const rightColumnRef = useRef<HTMLDivElement | null>(null);
   const [treeBuilderOpened, setTreeBuilderOpened] = useState(false);
   const [treeBuilderMode, setTreeBuilderMode] = useState<"engine" | "winrate">("engine");
-  const [treeBuilderDepth, setTreeBuilderDepth] = useState(8);
+  const [treeBuilderDepth, setTreeBuilderDepth] = useState(2);
   const [treeBuilderCoverage, setTreeBuilderCoverage] = useState(90);
   const [treeBuilderMinMoves, setTreeBuilderMinMoves] = useState(2);
   const [treeBuilderEngineMs, setTreeBuilderEngineMs] = useState(800);
@@ -674,6 +679,17 @@ function BoardVariants() {
 
   const cancelTreeBuilder = useCallback(() => {
     treeBuilderCancelRef.current = true;
+    void commands.killEngines("variants-builder-backend").catch(() => {
+      // Ignore kill errors while cancelling build variants.
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      void commands.killEngines("variants-builder-backend").catch(() => {
+        // Ignore cleanup errors on unmount.
+      });
+    };
   }, []);
 
   const buildVariantsTree = useCallback(async () => {
@@ -897,6 +913,7 @@ function BoardVariants() {
           localDbPath,
           lichessOptions: lichessOptionsDto as any,
           masterOptions: masterOptionsDto as any,
+          lichessToken: lichessAuthToken ?? null,
           mode: treeBuilderMode,
           engine:
             selectedEngine && selectedEngine.type === "local"
@@ -1123,12 +1140,18 @@ function BoardVariants() {
         color: "red",
       });
     } finally {
+      try {
+        await commands.killEngines("variants-builder-backend");
+      } catch {
+        // Ignore cleanup errors after build variants.
+      }
       setTreeBuilderRunning(false);
     }
   }, [
     boardOrientation,
     dbType,
     is960,
+    lichessAuthToken,
     lichessOptions,
     localOptions.path,
     masterOptions,

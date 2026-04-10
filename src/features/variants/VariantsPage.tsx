@@ -7,6 +7,7 @@ import {
   Center,
   Code,
   Group,
+  Loader,
   Modal,
   Stack,
   Text,
@@ -622,6 +623,15 @@ export default function VariantsPage() {
             onEditComments={handleEditComments}
             gridCols={gridCols}
           />
+        ) : isLoading ? (
+          <Center h="100%">
+            <Stack align="center" gap="xs">
+              <Loader size="sm" />
+              <Text size="sm" c="dimmed">
+                {t("common.loading")}
+              </Text>
+            </Stack>
+          </Center>
         ) : filteredAndSorted.length === 0 ? (
           <Center h="100%">
             <Alert

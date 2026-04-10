@@ -4,7 +4,7 @@ mod core;
 mod encoding;
 mod models;
 mod ops;
-mod pgn;
+pub mod pgn;
 mod player_stats;
 mod player_style;
 mod position_cache;
@@ -462,7 +462,7 @@ pub(crate) fn convert_pgn_impl<'a>(
         db_path.to_str().unwrap(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
+            busy_timeout: Some(Duration::from_secs(30)),
             journal_mode: JournalMode::Off,
         },
     )?;
@@ -588,7 +588,7 @@ pub(crate) fn convert_pgn_impl<'a>(
         db_path.to_str().unwrap(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
+            busy_timeout: Some(Duration::from_secs(30)),
             journal_mode: JournalMode::Off,
         },
     )?;
@@ -4341,11 +4341,55 @@ pub async fn import_online_tournament(
     let filename = format!("{base}_{broadcast_id}.db3");
     let db_rel = PathBuf::from("db").join(&filename);
     let db_path = app.path().resolve(db_rel, BaseDirectory::AppData)?;
-    if db_path.exists() {
-        return Err(Error::PackageManager(format!(
-            "Database already exists: {filename}"
-        )));
+    let db_path_str = db_path.to_string_lossy().into_owned();
+
+    #[derive(QueryableByName)]
+    struct TableInfo {
+        #[diesel(sql_type = Text, column_name = "name")]
+        _name: String,
     }
+
+    let cleanup_db_path = |path: &PathBuf| {
+        let path_str = path.to_string_lossy().into_owned();
+        if let Some((_, pool)) = state.connection_pool.remove(&path_str) {
+            drop(pool);
+        }
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}.partial", path.display()));
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    };
+
+    let has_players_table = |path: &PathBuf| -> bool {
+        if !path.exists() {
+            return false;
+        }
+        let mut conn = match SqliteConnection::establish(path.to_str().unwrap()) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        match sql_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1")
+            .load::<TableInfo>(&mut conn)
+        {
+            Ok(rows) => !rows.is_empty(),
+            Err(_) => false,
+        }
+    };
+
+    if db_path.exists() {
+        if has_players_table(&db_path) {
+            return Err(Error::PackageManager(format!(
+                "Database already exists: {filename}"
+            )));
+        }
+        // Previous failed import can leave an invalid .db3 without schema.
+        // Clean it so retrying the same URL works.
+        cleanup_db_path(&db_path);
+    }
+
+    // Use a temporary DB path and only move it into place if conversion succeeds.
+    let temp_db_path = PathBuf::from(format!("{}.partial", db_path.display()));
+    cleanup_db_path(&temp_db_path);
 
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -4358,7 +4402,7 @@ pub async fn import_online_tournament(
 
     let convert_res = convert_pgn_impl(
         temp_pgn_path.clone(),
-        db_path.clone(),
+        temp_db_path.clone(),
         None,
         app.clone(),
         db_title,
@@ -4367,15 +4411,88 @@ pub async fn import_online_tournament(
     );
 
     let _ = std::fs::remove_file(&temp_pgn_path);
-    convert_res?;
+    if let Err(e) = convert_res {
+        cleanup_db_path(&temp_db_path);
+        return Err(e);
+    }
+
+    // Ensure no open pooled connections keep the temp/final files locked on Windows.
+    if let Some((_, pool)) = state
+        .connection_pool
+        .remove(&temp_db_path.to_string_lossy().into_owned())
+    {
+        drop(pool);
+    }
+    if let Some((_, pool)) = state.connection_pool.remove(&db_path_str) {
+        drop(pool);
+    }
+
+    // Finalize with retries first (rename), then fallback to copy+delete for stubborn locks.
+    let mut finalize_err: Option<String> = None;
+    let mut finalized = false;
+
+    for attempt in 0..6u64 {
+        match std::fs::rename(&temp_db_path, &db_path) {
+            Ok(()) => {
+                finalized = true;
+                break;
+            }
+            Err(e) => {
+                finalize_err = Some(e.to_string());
+                if attempt < 5 {
+                    tokio::time::sleep(Duration::from_millis(120 * (attempt + 1))).await;
+                }
+            }
+        }
+    }
+
+    if !finalized {
+        for attempt in 0..6u64 {
+            match std::fs::copy(&temp_db_path, &db_path) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&temp_db_path);
+                    let _ = std::fs::remove_file(format!("{}-wal", temp_db_path.display()));
+                    let _ = std::fs::remove_file(format!("{}-shm", temp_db_path.display()));
+                    finalized = true;
+                    break;
+                }
+                Err(e) => {
+                    finalize_err = Some(e.to_string());
+                    if attempt < 5 {
+                        tokio::time::sleep(Duration::from_millis(120 * (attempt + 1))).await;
+                    }
+                }
+            }
+        }
+    }
+
+    if !finalized {
+        cleanup_db_path(&temp_db_path);
+        return Err(Error::PackageManager(format!(
+            "Failed to finalize imported database {filename}: {}",
+            finalize_err.unwrap_or_else(|| "unknown file lock error".to_string())
+        )));
+    }
 
     // Mark DB source so the frontend can display/filter it.
+    let _ = state.connection_pool.remove(&db_path_str);
     let db = &mut get_db_or_create(
         &state,
         db_path.to_str().unwrap(),
         ConnectionOptions::default(),
     )?;
-    upsert_info_value(db, "Source", "online")?;
+    if let Err(e) = upsert_info_value(db, "Source", "online") {
+        let lower = e.to_string().to_lowercase();
+        let is_locked = lower.contains("database is locked")
+            || lower.contains("database table is locked")
+            || lower.contains("database schema is locked");
+        if !is_locked {
+            return Err(e);
+        }
+        // Non-fatal: import already succeeded and data is on disk.
+        // Source metadata can be set later via set_db_source.
+        eprintln!("Warning: could not set Source=online for {}: {}", filename, e);
+    }
 
     Ok(())
 }

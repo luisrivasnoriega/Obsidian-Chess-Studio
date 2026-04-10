@@ -7,9 +7,29 @@ import { render } from "./test-utils";
 // -----------------------------
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: {
+    type: "3rdParty",
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
   }),
+}));
+
+vi.mock("@/App", () => ({
+  loadDirectories: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("../components/PlayVsLichessBoard", () => ({
+  default: () => null,
+}));
+
+vi.mock("../components/TournamentList", () => ({
+  TournamentList: () => null,
+}));
+
+vi.mock("../components/CreateTournamentForm", () => ({
+  CreateTournamentForm: () => null,
 }));
 
 // Jotai is provided by test-utils with a preconfigured store.

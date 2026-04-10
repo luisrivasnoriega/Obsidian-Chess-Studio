@@ -6,7 +6,7 @@ import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import LocalImage from "@/components/LocalImage";
 import { activeTabAtom, enginesAtom } from "@/state/atoms";
-import { type Engine, stopEngine } from "@/utils/engines";
+import { type Engine, killEngine } from "@/utils/engines";
 
 function EngineBox({ engine, toggleEnabled }: { engine: Engine; toggleEnabled: () => void }) {
   const activeTab = useAtomValue(activeTabAtom);
@@ -19,7 +19,7 @@ function EngineBox({ engine, toggleEnabled }: { engine: Engine; toggleEnabled: (
       h="3rem"
       onClick={() => {
         if (engine.loaded && engine.type === "local") {
-          stopEngine(engine, activeTab!);
+          killEngine(engine, activeTab!);
         }
         toggleEnabled();
       }}

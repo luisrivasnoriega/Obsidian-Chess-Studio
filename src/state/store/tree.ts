@@ -509,6 +509,17 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
           // auto-save loops and heavy IO while analyzing. Score is ephemeral UI state.
           const node = getNodeAtPath(state.root, state.position);
           if (node) {
+            const prev = node.score;
+            const sameWdl =
+              prev?.wdl === score.wdl ||
+              (!!prev?.wdl &&
+                !!score.wdl &&
+                prev.wdl[0] === score.wdl[0] &&
+                prev.wdl[1] === score.wdl[1] &&
+                prev.wdl[2] === score.wdl[2]);
+            const sameScore =
+              !!prev && prev.value.type === score.value.type && prev.value.value === score.value.value && sameWdl;
+            if (sameScore) return;
             node.score = score;
           }
         }),

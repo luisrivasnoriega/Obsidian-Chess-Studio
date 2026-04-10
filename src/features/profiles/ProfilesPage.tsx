@@ -21,11 +21,19 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconCheck, IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconTrash } from "@tabler/icons-react";
+import {
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconEdit,
+  IconPlus,
+  IconRefresh,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { mkdir, remove } from "@tauri-apps/plugin-fs";
+import { remove } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -152,10 +160,6 @@ export default function ProfilesPage() {
   const profilesPerPage = 5;
   const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
-  const didAutoUpdateAccountsRef = useRef(false);
-  const autoUpdateRetryTimerRef = useRef<number | null>(null);
-  const [_autoUpdateRetryNonce, setAutoUpdateRetryNonce] = useState(0);
-  const autoUpdateRetryAttemptRef = useRef(0);
   const backgroundSyncRetryTimersRef = useRef<Map<string, number>>(new Map());
   const backgroundSyncRetryAttemptsRef = useRef<Map<string, number>>(new Map());
   const syncNotificationIdsRef = useRef<Set<string>>(new Set());
@@ -351,227 +355,6 @@ export default function ProfilesPage() {
     void loadDatabases();
   }, [loadDatabases]);
 
-  // Auto-update statistics and download games for all accounts of all profiles
-  useEffect(() => {
-    // IMPORTANT: this effect updates `sessions` (via `setSessions`), so it must not re-run on every sessions change.
-    // We run it once when the page is loaded and sessions are available.
-    if (didAutoUpdateAccountsRef.current) return;
-    if (sessions.length === 0) return;
-    if (isAccountSyncRunning) return;
-    didAutoUpdateAccountsRef.current = true;
-
-    const run = async () => {
-      try {
-        const dbDir = await resolve(await appDataDir(), "db");
-        await mkdir(dbDir, { recursive: true });
-      } catch {
-        // Best-effort; downloads/conversion will surface errors if this fails.
-      }
-
-      const profileById = new Map(profiles.map((p) => [p.id, p] as const));
-
-      const sessionsToSync: Session[] = [];
-      for (const profile of profiles) {
-        const linked = sessionsByProfileId.get(profile.id) ?? [];
-        for (const session of linked) sessionsToSync.push(session);
-      }
-
-      const lichessSessions = sessionsToSync.filter((s) => !!s.lichess);
-      const chessComSessions = sessionsToSync.filter((s) => !!s.chessCom);
-
-      const syncOne = async (session: Session): Promise<"continue" | "stop"> => {
-        const profileId = session.profileId ?? null;
-        if (!profileId) return "continue"; // Only linked sessions are auto-synced.
-        const profile = profileById.get(profileId) ?? null;
-        if (!profile) return "continue";
-
-        const { platform, username } = sessionMeta(session);
-        if (platform !== "lichess" && platform !== "chesscom") return "continue";
-        const id = `sync:${profile.id}:${platform}:${username}`;
-
-        // Prevent duplicate syncs for the same account
-        if (syncingAccountIdsRef.current.has(id)) {
-          return "continue"; // Already syncing, skip
-        }
-        syncingAccountIdsRef.current.add(id);
-
-        const showToasts = !(await shouldSuppressAccountSyncToasts({
-          profileId: profile.id,
-          platform,
-          username,
-        }));
-
-        setSyncingAccountIds((prev) => {
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
-
-        if (showToasts) {
-          notifications.show({
-            id,
-            title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
-            message: `${profile.name} - ${username} (${platform})`,
-            loading: true,
-            autoClose: false,
-          });
-          syncNotificationIdsRef.current.add(id);
-        }
-
-        try {
-          const res = await syncSessionGamesToProfileDb({
-            profile,
-            session,
-            onBatchUpdate: showToasts
-              ? (u) => {
-                  if (u.cooldownSeconds != null) {
-                    notifications.update({
-                      id,
-                      title: t("common.warning", { defaultValue: "Warning" }),
-                      message: t("accounts.sync.cooldown", {
-                        defaultValue: "Rate limit reached. Cooling down for {{seconds}}s...",
-                        seconds: u.cooldownSeconds,
-                      }),
-                      color: "yellow",
-                      loading: true,
-                      autoClose: false,
-                    });
-                    return;
-                  }
-                  // Show optimization message or batch progress
-                  const message =
-                    u.totalBatches > 0
-                      ? `${profile.name} - ${username} (${u.platform}) ${t("accounts.sync.batchProgress", {
-                          defaultValue: "Batch {{current}} of {{total}}",
-                          current: u.currentBatch,
-                          total: u.totalBatches,
-                        })}`
-                      : u.batchLabel || `${profile.name} - ${username} (${u.platform})`;
-
-                  // Determine if this is an optimization-related message
-                  const isOptimization =
-                    u.batchLabel?.toLowerCase().includes("optimiz") ||
-                    u.batchLabel?.toLowerCase().includes("cleaning") ||
-                    u.batchLabel?.toLowerCase().includes("deleted");
-                  const isComplete =
-                    u.batchLabel?.toLowerCase().includes("complete") ||
-                    u.batchLabel?.toLowerCase().includes("downloaded");
-
-                  notifications.update({
-                    id,
-                    message,
-                    loading: isOptimization || u.totalBatches > 0,
-                    autoClose: isComplete ? 3000 : false,
-                  });
-                }
-              : undefined,
-          });
-
-          if (res.updatedSession) {
-            setSessions((prev) => {
-              const updated = res.updatedSession as Session;
-              const updatedMeta = sessionMeta(updated);
-              const key = `${updated.profileId ?? ""}:${updatedMeta.platform}:${updatedMeta.username}`;
-              const next = prev.filter((s) => {
-                const otherMeta = sessionMeta(s);
-                const otherKey = `${s.profileId ?? ""}:${otherMeta.platform}:${otherMeta.username}`;
-                return otherKey !== key;
-              });
-              return [...next, { ...updated, updatedAt: updated.updatedAt ?? Date.now() }];
-            });
-          }
-
-          if ((res.importedGames ?? 0) > 0) {
-            mutateDatabases();
-            invalidateProfilePlayerStats(profile.id);
-          }
-
-          if (showToasts) {
-            notifications.update({
-              id,
-              title: t("common.success", { defaultValue: "Success" }),
-              message: `${profile.name} - ${username} (${platform})`,
-              color: "green",
-              loading: false,
-              autoClose: 2500,
-            });
-          }
-        } catch (e) {
-          if (showToasts) {
-            const details = truncateMiddle(formatSyncError(e), 600);
-            notifications.update({
-              id,
-              title: t("common.error", { defaultValue: "Error" }),
-              message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${details}`,
-              color: "red",
-              loading: false,
-              autoClose: 4000,
-            });
-          }
-
-          if (isFailedToFetchError(e)) {
-            didAutoUpdateAccountsRef.current = false;
-            autoUpdateRetryAttemptRef.current += 1;
-            const delay = Math.min(60_000, 3_000 * 2 ** Math.min(6, autoUpdateRetryAttemptRef.current - 1));
-            if (autoUpdateRetryTimerRef.current != null) {
-              window.clearTimeout(autoUpdateRetryTimerRef.current);
-            }
-            autoUpdateRetryTimerRef.current = window.setTimeout(() => {
-              autoUpdateRetryTimerRef.current = null;
-              setAutoUpdateRetryNonce((n) => n + 1);
-            }, delay);
-            return "stop";
-          }
-        } finally {
-          if (showToasts) {
-            syncNotificationIdsRef.current.delete(id);
-          }
-          syncingAccountIdsRef.current.delete(id);
-          setSyncingAccountIds((prev) => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-        }
-
-        return "continue";
-      };
-
-      for (const session of lichessSessions) {
-        const status = await syncOne(session);
-        if (status === "stop") break;
-      }
-
-      const CHESS_COM_DELAY_MS = 1200;
-      for (let i = 0; i < chessComSessions.length; i++) {
-        const session = chessComSessions[i]!;
-        if (i > 0) await new Promise((resolve) => setTimeout(resolve, CHESS_COM_DELAY_MS));
-        const status = await syncOne(session);
-        if (status === "stop") break;
-      }
-
-      autoUpdateRetryAttemptRef.current = 0;
-    };
-
-    void run();
-
-    return () => {
-      if (autoUpdateRetryTimerRef.current != null) {
-        window.clearTimeout(autoUpdateRetryTimerRef.current);
-        autoUpdateRetryTimerRef.current = null;
-      }
-    };
-  }, [
-    profiles,
-    sessions.length,
-    sessionsByProfileId,
-    setSessions,
-    t,
-    isAccountSyncRunning,
-    invalidateProfilePlayerStats,
-    mutateDatabases,
-  ]);
-
   const sortedProfiles = useMemo(() => {
     const list = [...filteredProfiles];
     list.sort((a, b) => {
@@ -616,6 +399,14 @@ export default function ProfilesPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
+  const activeProfileSyncableCount = useMemo(() => {
+    if (!activeProfile) return 0;
+    const linkedSessions = sessionsByProfileId.get(activeProfile.id) ?? [];
+    return linkedSessions.filter((session) => {
+      const meta = sessionMeta(session);
+      return (meta.platform === "lichess" || meta.platform === "chesscom") && meta.username !== "-";
+    }).length;
+  }, [activeProfile, sessionsByProfileId]);
   useEffect(() => {
     void loadDatabases();
   }, [loadDatabases]);
@@ -1101,6 +892,90 @@ export default function ProfilesPage() {
     };
   }, []);
 
+  const buildSyncId = useCallback((profile: Profile, session: Session) => {
+    const meta = sessionMeta(session);
+    return `sync:${profile.id}:${meta.platform}:${meta.username}`;
+  }, []);
+
+  const waitForSyncLifecycle = useCallback(async (syncId: string) => {
+    const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+    const waitUntil = Date.now() + 2_000;
+    while (Date.now() < waitUntil) {
+      if (syncingAccountIdsRef.current.has(syncId)) break;
+      await sleep(50);
+    }
+
+    while (syncingAccountIdsRef.current.has(syncId)) {
+      await sleep(200);
+    }
+  }, []);
+
+  const syncProfileSessions = useCallback(
+    async (profile: Profile) => {
+      if (isAccountSyncRunning) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.sync.inProgress", { defaultValue: "A profile update is already running." }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
+      const syncableSessions = linkedSessions.filter((session) => {
+        const meta = sessionMeta(session);
+        return (meta.platform === "lichess" || meta.platform === "chesscom") && meta.username !== "-";
+      });
+
+      if (syncableSessions.length === 0) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.sync.noAccounts", { defaultValue: "This profile has no linked accounts to update." }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      const orderedSessions = [...syncableSessions].sort((a, b) => {
+        const aPlatform = sessionMeta(a).platform;
+        const bPlatform = sessionMeta(b).platform;
+        if (aPlatform === bPlatform) return 0;
+        return aPlatform === "lichess" ? -1 : 1;
+      });
+
+      for (const session of orderedSessions) {
+        const syncId = buildSyncId(profile, session);
+        if (syncingAccountIdsRef.current.has(syncId)) continue;
+        startBackgroundSync(profile, session);
+        await waitForSyncLifecycle(syncId);
+      }
+
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.sync.completed", {
+          defaultValue: "Profile {{profile}} updated.",
+          profile: profile.name,
+        }),
+        color: "green",
+        autoClose: 2500,
+      });
+    },
+    [buildSyncId, isAccountSyncRunning, sessionsByProfileId, startBackgroundSync, t, waitForSyncLifecycle],
+  );
+
+  useEffect(() => {
+    try {
+      const pendingSync = sessionStorage.getItem("profiles_sync_request");
+      if (pendingSync !== "active") return;
+      if (!activeProfile) return;
+      sessionStorage.removeItem("profiles_sync_request");
+      void syncProfileSessions(activeProfile);
+    } catch {}
+  }, [activeProfile, syncProfileSessions]);
+
   const addAccountToProfile = useCallback(
     async (payload: AddProfileAccountPayload, skipVerification = false) => {
       const profile = profiles.find((p) => p.id === payload.profileId) ?? null;
@@ -1134,7 +1009,6 @@ export default function ProfilesPage() {
           updatedAt: now,
         };
         upsertSession(session);
-        startBackgroundSync(profile, session);
         return;
       }
 
@@ -1155,9 +1029,8 @@ export default function ProfilesPage() {
         updatedAt: now,
       };
       upsertSession(session);
-      startBackgroundSync(profile, session);
     },
-    [profiles, startBackgroundSync, upsertSession, verificationModal],
+    [profiles, upsertSession, verificationModal],
   );
 
   const handleVerificationResult = useCallback(
@@ -1224,7 +1097,6 @@ export default function ProfilesPage() {
         };
 
         upsertSession(session);
-        startBackgroundSync(profile, session);
       } finally {
         sessionStorage.removeItem("lichess_profile_id");
         sessionStorage.removeItem("lichess_profile_name");
@@ -1241,7 +1113,7 @@ export default function ProfilesPage() {
         unlisten?.();
       } catch {}
     };
-  }, [activeProfileId, profiles, startBackgroundSync, upsertSession]);
+  }, [activeProfileId, profiles, upsertSession]);
 
   const refreshPuzzleDatabases = useCallback(async () => {}, []);
 
@@ -1251,7 +1123,19 @@ export default function ProfilesPage() {
         title={t("profiles.title", { defaultValue: "Profiles" })}
         searchPlaceholder={undefined}
         showViewToggle={false}
-        actions={undefined}
+        actions={
+          <Button
+            size="xs"
+            variant="default"
+            leftSection={<IconRefresh size="1rem" />}
+            onClick={() => {
+              if (activeProfile) void syncProfileSessions(activeProfile);
+            }}
+            disabled={!activeProfile || activeProfileSyncableCount === 0 || isAccountSyncRunning}
+          >
+            {t("profiles.sync.active", { defaultValue: "Update active profile" })}
+          </Button>
+        }
       />
 
       <Stack flex={1} style={{ minHeight: 0 }}>
@@ -1372,6 +1256,10 @@ export default function ProfilesPage() {
                     {pagedProfiles.map((profile) => {
                       const isActive = profile.id === activeProfileId;
                       const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
+                      const syncableSessions = linkedSessions.filter((session) => {
+                        const meta = sessionMeta(session);
+                        return (meta.platform === "lichess" || meta.platform === "chesscom") && meta.username !== "-";
+                      });
 
                       return (
                         <Table.Tr
@@ -1486,6 +1374,16 @@ export default function ProfilesPage() {
                                   <IconCheck size={16} />
                                 </ActionIcon>
                               )}
+                              <ActionIcon
+                                variant="subtle"
+                                onClick={() => {
+                                  void syncProfileSessions(profile);
+                                }}
+                                disabled={isAccountSyncRunning || syncableSessions.length === 0}
+                                title={t("profiles.sync.profile", { defaultValue: "Update profile" })}
+                              >
+                                <IconRefresh size={16} />
+                              </ActionIcon>
                               <ActionIcon
                                 variant="subtle"
                                 onClick={() => openAddAccountModalForProfile(profile.id)}

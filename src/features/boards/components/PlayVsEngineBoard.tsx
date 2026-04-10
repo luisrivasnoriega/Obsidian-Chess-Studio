@@ -1,4 +1,4 @@
-import { Box, Button, Divider, Group, Paper, Stack, Text } from "@mantine/core";
+import { Box, Button, Divider, Group, Modal, Paper, Stack, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
   IconArrowLeft,
@@ -11,7 +11,7 @@ import {
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { INITIAL_FEN } from "chessops/fen";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Mosaic } from "react-mosaic-component";
@@ -25,15 +25,20 @@ import {
   activeTabAtom,
   currentGameStateAtom,
   currentPlayersAtom,
+  enginesAtom,
   profilesAtom,
+  selectedPuzzleDbAtom,
   tabsAtom,
 } from "@/state/atoms";
 import { getMainLine, getOpening, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
+import type { LocalEngine } from "@/utils/engines";
+import { openFile } from "@/utils/files";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
 import { createTab } from "@/utils/tabs";
 import type { GameHeaders, TreeNode } from "@/utils/treeReducer";
 import { createFullLayout, DEFAULT_MOSAIC_LAYOUT } from "../constants";
+import { type PostGameReviewResult, runPostGameAutoReview } from "../utils/postGameReview";
 import BoardGame, { useClockTimer } from "./BoardGame";
 import { GameTimeProvider, useGameTime } from "./GameTimeContext";
 import { useEngineMoves } from "./hooks/useEngineMoves";
@@ -68,12 +73,17 @@ function PlayVsEngineBoardContent() {
   const navigate = useNavigate();
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const profiles = useAtomValue(profilesAtom);
+  const engines = useAtomValue(enginesAtom);
   const activeTab = useAtomValue(activeTabAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
   const [gameState, setGameState] = useAtom(currentGameStateAtom);
   const [players] = useAtom(currentPlayersAtom);
   const [tabs, setTabs] = useAtom(tabsAtom);
+  const setSelectedPuzzleDb = useSetAtom(selectedPuzzleDbAtom);
   const boardRef = useRef<HTMLDivElement | null>(null);
+  const [postGameReview, setPostGameReview] = useState<PostGameReviewResult | null>(null);
+  const [isPostGameReviewRunning, setIsPostGameReviewRunning] = useState(false);
+  const [postGameReviewOpened, setPostGameReviewOpened] = useState(false);
 
   // Ensure a play tab exists when mounting, using the same createTab flow as the Sidebar
   // (Sidebar uses openTabAndNavigate({ tab: { name, type: "play" }, route: "/play" }))
@@ -197,6 +207,7 @@ function PlayVsEngineBoardContent() {
   const startDateRef = useRef<string>(formatPgnDateUtc(new Date()));
   const startTimeRef = useRef<string>(formatPgnTimeUtc(new Date()));
   const prevMoveCountRef = useRef<number>(root.children.length);
+  const postGameReviewInstanceIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const moveCount = root.children.length;
@@ -214,6 +225,10 @@ function PlayVsEngineBoardContent() {
       isFinalizingRef.current = false;
       profileIdAtGameStartRef.current = activeProfileId ?? null;
       profileIdAtGameEndRef.current = null;
+      postGameReviewInstanceIdRef.current = null;
+      setPostGameReview(null);
+      setIsPostGameReviewRunning(false);
+      setPostGameReviewOpened(false);
 
       const ts = Date.now();
       startTimestampRef.current = ts;
@@ -230,6 +245,159 @@ function PlayVsEngineBoardContent() {
       players.white.type === "human" ? "white" : players.black.type === "human" ? "black" : (pos?.turn ?? "white");
     return humanColor === "white" ? "0-1" : "1-0";
   }, [players, pos?.turn]);
+
+  const resolveHumanColorForReview = useCallback(
+    (headersSnapshot: GameHeaders): "white" | "black" | null => {
+      if (players.white.type === "human" && players.black.type !== "human") return "white";
+      if (players.black.type === "human" && players.white.type !== "human") return "black";
+
+      const activeProfile =
+        profiles.find((profile) => profile.id === activeProfileId) ??
+        profiles.find((profile) => profile.id === profileIdAtGameEndRef.current) ??
+        null;
+      const profileName = (activeProfile?.displayName ?? activeProfile?.name ?? "").trim().toLowerCase();
+      if (!profileName) return null;
+
+      if ((headersSnapshot.white ?? "").trim().toLowerCase() === profileName) return "white";
+      if ((headersSnapshot.black ?? "").trim().toLowerCase() === profileName) return "black";
+      return null;
+    },
+    [activeProfileId, players.black.type, players.white.type, profiles],
+  );
+
+  const openGeneratedPuzzles = useCallback(async () => {
+    if (!postGameReview?.puzzleFilePath) return;
+
+    setSelectedPuzzleDb(postGameReview.puzzleFilePath);
+    await createTab({
+      tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
+      setTabs,
+      setActiveTab,
+    });
+    navigate({ to: "/puzzles" });
+  }, [navigate, postGameReview?.puzzleFilePath, setActiveTab, setSelectedPuzzleDb, setTabs, t]);
+
+  const openVariantsTarget = useCallback(async () => {
+    if (postGameReview?.variantsBookPath) {
+      await openFile(postGameReview.variantsBookPath, setTabs as any, setActiveTab as any);
+      navigate({ to: "/analysis" });
+      return;
+    }
+    navigate({ to: "/variants" });
+  }, [navigate, postGameReview?.variantsBookPath, setActiveTab, setTabs]);
+
+  const runAutoPostGameReview = useCallback(
+    async (result: Outcome, instanceId: string) => {
+      if (postGameReviewInstanceIdRef.current === instanceId) return;
+      postGameReviewInstanceIdRef.current = instanceId;
+
+      const activeProfile =
+        profiles.find((profile) => profile.id === (profileIdAtGameEndRef.current ?? activeProfileId)) ??
+        profiles.find((profile) => profile.id === profileIdAtGameStartRef.current) ??
+        null;
+      const profileName = (activeProfile?.displayName ?? activeProfile?.name ?? "").trim() || null;
+
+      const rootSnapshot = structuredClone(root);
+      const headersSnapshot: GameHeaders = {
+        ...structuredClone(headers),
+        result,
+      };
+
+      const localEngines = engines.filter((engine): engine is LocalEngine => engine.type === "local");
+
+      setPostGameReviewOpened(true);
+      setIsPostGameReviewRunning(true);
+
+      try {
+        const review = await runPostGameAutoReview({
+          root: rootSnapshot,
+          headers: headersSnapshot,
+          humanColor: resolveHumanColorForReview(headersSnapshot),
+          profileId: activeProfile?.id ?? activeProfileId ?? null,
+          profileName,
+          engines: localEngines,
+          mode: "local",
+          minEngineMsPerMove: 1000,
+        });
+
+        setPostGameReview(review);
+        const shouldOpenVariants = review.openVariantsAfterReview;
+
+        if (review.status === "skipped" && review.reason === "no_engine") {
+          notifications.show({
+            title: t("features.postGameReview.title"),
+            message: t("features.postGameReview.noEngine"),
+            color: "yellow",
+          });
+          if (shouldOpenVariants) {
+            notifications.show({
+              title: t("features.postGameReview.title"),
+              message: t("features.postGameReview.openVariantsHint"),
+              color: "blue",
+            });
+          }
+          return;
+        }
+
+        if (review.status === "error") {
+          notifications.show({
+            title: t("common.error"),
+            message: t("features.postGameReview.failed"),
+            color: "red",
+          });
+          return;
+        }
+
+        if (review.puzzleFilePath) {
+          try {
+            window.dispatchEvent(new Event("puzzles:updated"));
+          } catch {
+            // ignore
+          }
+        }
+
+        notifications.show({
+          title: t("features.postGameReview.completed"),
+          message: t("features.postGameReview.completedMessage", {
+            puzzles: review.puzzlesGenerated,
+            mistakes: review.mistakeCount + review.blunderCount + review.dubiousCount,
+          }),
+          color: "green",
+        });
+
+        if (shouldOpenVariants) {
+          notifications.show({
+            title: t("features.postGameReview.title"),
+            message: t("features.postGameReview.openVariantsHint"),
+            color: "blue",
+          });
+        }
+      } catch {
+        setPostGameReview({
+          status: "error",
+          reason: "analysis_failed",
+          error: "review_failed",
+          engineName: null,
+          engineMsPerMove: 1000,
+          dubiousCount: 0,
+          mistakeCount: 0,
+          blunderCount: 0,
+          variantDeviationDetected: false,
+          variantDeviationPly: null,
+          newLineAdded: false,
+          variantsBookPath: null,
+          variantsBookName: null,
+          addedVariantLine: null,
+          openVariantsAfterReview: false,
+          puzzlesGenerated: 0,
+          puzzleFilePath: null,
+        });
+      } finally {
+        setIsPostGameReviewRunning(false);
+      }
+    },
+    [activeProfileId, engines, headers, profiles, resolveHumanColorForReview, root, t],
+  );
 
   const persistGameOnce = useCallback(
     async (result: Outcome) => {
@@ -369,9 +537,14 @@ function PlayVsEngineBoardContent() {
 
       const result =
         opts.forcedResult ?? (headers.result && headers.result !== "*" ? headers.result : inferAbortResult());
+      const shouldRunPostGameReview =
+        !!(headers.result && headers.result !== "*") || opts.reason === "resign" || opts.reason === "time";
 
       try {
         await persistGameOnce(result);
+        if (result !== "*" && shouldRunPostGameReview) {
+          void runAutoPostGameReview(result, instanceId);
+        }
       } catch {
         // If persistence fails, allow a later end path to retry.
         finalizedInstanceIdRef.current = null;
@@ -384,7 +557,15 @@ function PlayVsEngineBoardContent() {
         isFinalizingRef.current = false;
       }
     },
-    [activeProfileId, headers.result, inferAbortResult, persistGameOnce, root.children.length, t],
+    [
+      activeProfileId,
+      headers.result,
+      inferAbortResult,
+      persistGameOnce,
+      root.children.length,
+      runAutoPostGameReview,
+      t,
+    ],
   );
 
   // Save exactly once when the game result is first produced. This must not re-fire
@@ -758,6 +939,120 @@ function PlayVsEngineBoardContent() {
           </Stack>
         </Paper>
       </Box>
+
+      <Modal
+        opened={postGameReviewOpened}
+        onClose={() => {
+          if (!isPostGameReviewRunning) {
+            setPostGameReviewOpened(false);
+          }
+        }}
+        closeOnClickOutside={!isPostGameReviewRunning}
+        closeOnEscape={!isPostGameReviewRunning}
+        withCloseButton={!isPostGameReviewRunning}
+        title={t("features.postGameReview.title")}
+      >
+        <Stack gap="sm">
+          {isPostGameReviewRunning && (
+            <Text size="sm" c="dimmed">
+              {t("features.postGameReview.running")}
+            </Text>
+          )}
+
+          {!isPostGameReviewRunning && postGameReview?.status === "ok" && (
+            <>
+              <Text size="sm" c="dimmed">
+                {t("features.postGameReview.engineInfo", {
+                  engine: postGameReview.engineName ?? "-",
+                  ms: postGameReview.engineMsPerMove,
+                })}
+              </Text>
+              <Text size="sm">{t("features.postGameReview.dubiousCount", { count: postGameReview.dubiousCount })}</Text>
+              <Text size="sm">{t("features.postGameReview.mistakeCount", { count: postGameReview.mistakeCount })}</Text>
+              <Text size="sm">{t("features.postGameReview.blunderCount", { count: postGameReview.blunderCount })}</Text>
+              <Text size="sm">
+                {t("features.postGameReview.puzzleCount", { count: postGameReview.puzzlesGenerated })}
+              </Text>
+              {postGameReview.variantDeviationDetected && (
+                <Text size="sm">{t("features.postGameReview.variantDeviationDetected")}</Text>
+              )}
+              {postGameReview.newLineAdded && <Text size="sm">{t("features.postGameReview.newLineAdded")}</Text>}
+              {postGameReview.variantsBookName && (
+                <Text size="sm">
+                  {t("features.postGameReview.affectedBook", { book: postGameReview.variantsBookName })}
+                </Text>
+              )}
+              {postGameReview.addedVariantLine && (
+                <Text size="sm">
+                  {t("features.postGameReview.addedLine", { line: postGameReview.addedVariantLine })}
+                </Text>
+              )}
+              {postGameReview.openVariantsAfterReview && (
+                <Text size="sm">{t("features.postGameReview.openVariantsHint")}</Text>
+              )}
+
+              <Group grow>
+                <Button
+                  onClick={() => {
+                    void openGeneratedPuzzles();
+                  }}
+                  disabled={!postGameReview.puzzleFilePath}
+                >
+                  {postGameReview.puzzleFilePath
+                    ? t("features.postGameReview.openPuzzles")
+                    : t("features.postGameReview.noPuzzles")}
+                </Button>
+                <Button variant="default" onClick={() => setPostGameReviewOpened(false)}>
+                  {t("features.postGameReview.continuePlaying")}
+                </Button>
+              </Group>
+              {postGameReview.openVariantsAfterReview && (
+                <Button variant="default" onClick={() => void openVariantsTarget()}>
+                  {postGameReview.variantsBookPath
+                    ? t("features.postGameReview.openAffectedBook")
+                    : t("features.postGameReview.openVariants")}
+                </Button>
+              )}
+            </>
+          )}
+
+          {!isPostGameReviewRunning && postGameReview?.status === "skipped" && (
+            <Stack gap="xs">
+              <Text size="sm" c="dimmed">
+                {postGameReview.reason === "no_engine"
+                  ? t("features.postGameReview.noEngine")
+                  : t("features.postGameReview.noMoves")}
+              </Text>
+              {postGameReview.variantDeviationDetected && (
+                <Text size="sm">{t("features.postGameReview.variantDeviationDetected")}</Text>
+              )}
+              {postGameReview.variantsBookName && (
+                <Text size="sm">
+                  {t("features.postGameReview.affectedBook", { book: postGameReview.variantsBookName })}
+                </Text>
+              )}
+              {postGameReview.addedVariantLine && (
+                <Text size="sm">
+                  {t("features.postGameReview.addedLine", { line: postGameReview.addedVariantLine })}
+                </Text>
+              )}
+              {postGameReview.openVariantsAfterReview && (
+                <Button variant="default" onClick={() => void openVariantsTarget()}>
+                  {postGameReview.variantsBookPath
+                    ? t("features.postGameReview.openAffectedBook")
+                    : t("features.postGameReview.openVariants")}
+                </Button>
+              )}
+            </Stack>
+          )}
+
+          {!isPostGameReviewRunning && postGameReview?.status === "error" && (
+            <Text size="sm" c="red">
+              {t("features.postGameReview.failed")}
+            </Text>
+          )}
+        </Stack>
+      </Modal>
     </Box>
   );
 }

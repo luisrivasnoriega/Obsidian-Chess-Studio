@@ -1,8 +1,8 @@
 import { parseUci } from "chessops";
 import { INITIAL_FEN, makeFen } from "chessops/fen";
 import equal from "fast-deep-equal";
-import { useAtom, useAtomValue } from "jotai";
-import { startTransition, useContext, useEffect, useMemo, useRef } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { startTransition, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
@@ -110,11 +110,9 @@ function EngineListener({
   const store = useContext(TreeStateContext)!;
   const setScore = useStore(store, (s) => s.setScore);
   const activeTab = useAtomValue(activeTabAtom);
-
-  const [, setProgress] = useAtom(engineProgressFamily({ engine: engine.name, tab: activeTab! }));
-
-  const [, setEngineVariation] = useAtom(engineMovesFamily({ engine: engine.name, tab: activeTab! }));
-  const [settings] = useAtom(
+  const setProgress = useSetAtom(engineProgressFamily({ engine: engine.name, tab: activeTab! }));
+  const setEngineVariation = useSetAtom(engineMovesFamily({ engine: engine.name, tab: activeTab! }));
+  const settings = useAtomValue(
     tabEngineSettingsFamily({
       engineName: engine.name,
       defaultSettings: engine.settings ?? undefined,
@@ -123,23 +121,25 @@ function EngineListener({
     }),
   );
   const throttleMs = 100;
+  const searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
+  const movesKey = useMemo(() => moves.join(","), [moves]);
+  const settingsKey = useMemo(() => JSON.stringify(settings.settings), [settings.settings]);
   const pendingRef = useRef<{
     ev: typeof settings extends any ? any : any;
     progress: number;
   } | null>(null);
   const timerRef = useRef<number | null>(null);
-  const _searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
 
-  const flushPending = () => {
+  const flushPending = useCallback(() => {
     const pending = pendingRef.current;
     if (!pending) return;
     pendingRef.current = null;
     startTransition(() => {
       setEngineVariation((prev) => {
         const newMap = new Map(prev);
-        newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, pending.ev);
+        newMap.set(`${searchingFen}:${searchingMovesKey}`, pending.ev);
         if (threat) {
-          newMap.delete(`${fen}:${moves.join(",")}`);
+          newMap.delete(`${fen}:${movesKey}`);
         } else if (finalFen) {
           newMap.delete(`${swapMove(finalFen)}:`);
         }
@@ -148,7 +148,7 @@ function EngineListener({
       setProgress(pending.progress);
       setScore(pending.ev[0].score);
     });
-  };
+  }, [fen, finalFen, movesKey, searchingFen, searchingMovesKey, setEngineVariation, setProgress, setScore, threat]);
 
   useEffect(() => {
     if (!settings.enabled) return;
@@ -257,14 +257,16 @@ function EngineListener({
     50,
     [
       settings.enabled,
-      JSON.stringify(settings.settings),
+      settingsKey,
       settings.go,
       searchingFen,
-      JSON.stringify(searchingMoves),
+      searchingMovesKey,
+      chess960,
       isGameOver,
       activeTab,
       getBestMoves,
       setEngineVariation,
+      setProgress,
       engine,
     ],
   );

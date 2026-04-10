@@ -56,6 +56,7 @@ interface ResponsiveBoardProps {
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
   hideMobileAnalysisPanel?: boolean;
+  allowPremove?: boolean;
 }
 
 function ResponsiveBoard({
@@ -103,6 +104,7 @@ function ResponsiveBoard({
   hideEvalBar = false,
   hideFooterControls = false,
   hideMobileAnalysisPanel = false,
+  allowPremove = false,
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
@@ -209,6 +211,7 @@ function ResponsiveBoard({
             hideClockSpaces={hideClockSpaces}
             hideEvalBar={hideEvalBar}
             hideFooterControls={hideFooterControls}
+            allowPremove={allowPremove}
           />
         </ResponsiveLoadingWrapper>
       </Box>
@@ -278,6 +281,7 @@ function ResponsiveBoard({
             hideClockSpaces={hideClockSpaces}
             hideEvalBar={hideEvalBar}
             hideFooterControls={hideFooterControls}
+            allowPremove={allowPremove}
           />
         </Box>
       </ResponsiveLoadingWrapper>

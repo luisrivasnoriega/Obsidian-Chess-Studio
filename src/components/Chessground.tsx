@@ -29,9 +29,22 @@ export function Chessground({
   const setSelectedPieceRef = useRef(setSelectedPiece);
 
   // Use refs to track previous values and prevent unnecessary api.set() calls
-  const prevConfigRef = useRef<string>("");
-  const prevHandleChangeRef = useRef<(() => void) | null>(null);
-  const prevHandleSelectRef = useRef<((key: Key) => void) | null>(null);
+  const prevConfigRef = useRef<{
+    fen: string | undefined;
+    orientation: Config["orientation"];
+    turnColor: Config["turnColor"];
+    moveMethod: "drag" | "select" | "both";
+    movable: Config["movable"] | undefined;
+    premovable: Config["premovable"] | undefined;
+    draggable: Config["draggable"] | undefined;
+    selectable: Config["selectable"] | undefined;
+    drawable: Config["drawable"] | undefined;
+    check: Config["check"];
+    lastMove: Config["lastMove"];
+    coordinates: Config["coordinates"];
+    coordinatesOnSquares: Config["coordinatesOnSquares"];
+    animation: Config["animation"] | undefined;
+  } | null>(null);
   const isSettingRef = useRef(false);
 
   // Update refs without triggering effects - do this synchronously during render
@@ -67,7 +80,6 @@ export function Chessground({
       chessgroundConfigProps.animation,
       chessgroundConfigProps.events,
       chessgroundConfigProps,
-      // Removed chessgroundConfigProps itself - it's always a new object reference
     ],
   );
 
@@ -164,31 +176,46 @@ export function Chessground({
       return;
     }
 
-    // Create a stable hash of the config to detect actual changes
-    // Include all relevant config properties to catch any changes
-    const configHash = JSON.stringify({
+    const snapshot = {
       fen: chessgroundConfig.fen,
       orientation: chessgroundConfig.orientation,
       turnColor: chessgroundConfig.turnColor,
       moveMethod,
-      // Include nested config objects - use JSON.stringify for deep comparison
-      movable: chessgroundConfig.movable ? JSON.stringify(chessgroundConfig.movable) : null,
-      draggable: chessgroundConfig.draggable ? JSON.stringify(chessgroundConfig.draggable) : null,
-      selectable: chessgroundConfig.selectable ? JSON.stringify(chessgroundConfig.selectable) : null,
-      drawable: chessgroundConfig.drawable ? JSON.stringify(chessgroundConfig.drawable) : null,
+      movable: chessgroundConfig.movable,
+      premovable: chessgroundConfig.premovable,
+      draggable: chessgroundConfig.draggable,
+      selectable: chessgroundConfig.selectable,
+      drawable: chessgroundConfig.drawable,
       check: chessgroundConfig.check,
-      lastMove: chessgroundConfig.lastMove ? JSON.stringify(chessgroundConfig.lastMove) : null,
-    });
+      lastMove: chessgroundConfig.lastMove,
+      coordinates: chessgroundConfig.coordinates,
+      coordinatesOnSquares: chessgroundConfig.coordinatesOnSquares,
+      animation: chessgroundConfig.animation,
+    } as const;
 
-    // Skip if nothing has actually changed (ignore callback reference changes since they use refs)
-    if (prevConfigRef.current === configHash) {
+    const prev = prevConfigRef.current;
+    const unchanged =
+      prev !== null &&
+      prev.fen === snapshot.fen &&
+      prev.orientation === snapshot.orientation &&
+      prev.turnColor === snapshot.turnColor &&
+      prev.moveMethod === snapshot.moveMethod &&
+      prev.movable === snapshot.movable &&
+      prev.premovable === snapshot.premovable &&
+      prev.draggable === snapshot.draggable &&
+      prev.selectable === snapshot.selectable &&
+      prev.drawable === snapshot.drawable &&
+      prev.check === snapshot.check &&
+      prev.lastMove === snapshot.lastMove &&
+      prev.coordinates === snapshot.coordinates &&
+      prev.coordinatesOnSquares === snapshot.coordinatesOnSquares &&
+      prev.animation === snapshot.animation;
+
+    if (unchanged) {
       return;
     }
 
-    prevConfigRef.current = configHash;
-    // Update refs for logging (but don't use them for comparison)
-    prevHandleChangeRef.current = handleChange;
-    prevHandleSelectRef.current = handleSelect;
+    prevConfigRef.current = snapshot;
 
     // Set flag BEFORE creating config to prevent any synchronous events from triggering state updates
     isSettingRef.current = true;
@@ -221,7 +248,7 @@ export function Chessground({
     });
     // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfig is memoized and contains all necessary dependencies
     // Note: We don't include handleChange and handleSelect in dependencies since we use refs
-  }, [api, moveMethod, chessgroundConfig, handleChange, handleSelect]);
+  }, [api, moveMethod, chessgroundConfig]);
 
   // Clear selected piece when not in free move mode
   useEffect(() => {

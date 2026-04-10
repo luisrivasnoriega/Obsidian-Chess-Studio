@@ -18,6 +18,7 @@ mod oauth;
 mod online;
 mod opening;
 mod package_manager;
+mod post_game_review;
 mod player_match_planner;
 mod pawn_structures;
 mod pgn;
@@ -90,10 +91,15 @@ use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, s
 use crate::fs::{download_engine, list_lc0_networks, set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
-use crate::online::{create_lichess_tournament, get_chesscom_account, get_lichess_account};
+use crate::online::{
+    create_lichess_tournament, get_chesscom_account, get_lichess_account,
+    lichess_challenge_ai, lichess_find_human_game, lichess_get_board_game_state, lichess_make_board_move,
+    lichess_resign_board_game,
+};
 use crate::package_manager::{
     check_package_installed, check_package_manager_available, find_executable_path, install_package,
 };
+use crate::post_game_review::post_game_review_variants;
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
 use crate::puzzle::{
     check_puzzle_db_columns, get_puzzle, get_puzzle_db_info, get_puzzle_opening_tags,
@@ -266,6 +272,7 @@ pub async fn run() {
             upsert_variant_position,
             generate_puzzle_variants_from_tree,
             build_variants_tree,
+            post_game_review_variants,
             analysis_db_set_analyzed_game,
             analysis_db_get_analyzed_game,
             analysis_db_get_all_analyzed_games,
@@ -315,6 +322,11 @@ pub async fn run() {
             get_lichess_account,
             get_chesscom_account,
             create_lichess_tournament,
+            lichess_find_human_game,
+            lichess_challenge_ai,
+            lichess_get_board_game_state,
+            lichess_make_board_move,
+            lichess_resign_board_game,
             upsert_managed_event,
             list_managed_events,
             delete_managed_event,
@@ -602,6 +614,7 @@ fn has_avx512_icl_like() -> bool {
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 fn has_aarch64_dotprod() -> bool {
     // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
     //
@@ -612,11 +625,13 @@ fn has_aarch64_dotprod() -> bool {
 }
 
 #[cfg(not(target_arch = "aarch64"))]
+#[allow(dead_code)]
 fn has_aarch64_dotprod() -> bool {
     false
 }
 
 #[cfg(target_arch = "arm")]
+#[allow(dead_code)]
 fn has_arm_neon() -> bool {
     // `std::arch::is_arm_feature_detected!` is currently unstable on stable Rust.
     // Use compile-time detection instead to keep release builds working everywhere.
@@ -624,6 +639,7 @@ fn has_arm_neon() -> bool {
 }
 
 #[cfg(not(target_arch = "arm"))]
+#[allow(dead_code)]
 fn has_arm_neon() -> bool {
     false
 }

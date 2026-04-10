@@ -69,6 +69,7 @@ function Puzzles({ id }: { id: string }) {
 
   const [showingSolution, setShowingSolution] = useState(false);
   const isShowingSolutionRef = useRef<boolean>(false);
+  const [isGeneratingPuzzle, setIsGeneratingPuzzle] = useState(false);
 
   // Filter states
   const [hasThemes, setHasThemes] = useState(false);
@@ -94,6 +95,7 @@ function Puzzles({ id }: { id: string }) {
 
   // Event handlers
   const handleGeneratePuzzle = async () => {
+    if (isGeneratingPuzzle) return;
     if (!selectedDb) return;
 
     let range = ratingRange;
@@ -101,6 +103,7 @@ function Puzzles({ id }: { id: string }) {
       range = calculateProgressiveRange();
     }
 
+    setIsGeneratingPuzzle(true);
     try {
       const puzzle = await generatePuzzleFromDb(
         selectedDb,
@@ -110,7 +113,10 @@ function Puzzles({ id }: { id: string }) {
         openingTags.length > 0 ? openingTags : undefined,
       );
       addPuzzle(puzzle);
-    } catch {}
+    } catch {
+    } finally {
+      setIsGeneratingPuzzle(false);
+    }
   };
 
   const calculateProgressiveRange = (): [number, number] => {
@@ -389,6 +395,7 @@ function Puzzles({ id }: { id: string }) {
               <PuzzleControls
                 selectedDb={selectedDb}
                 onGeneratePuzzle={handleGeneratePuzzle}
+                generatingPuzzle={isGeneratingPuzzle}
                 onClearSession={handleClearSession}
                 changeCompletion={changeCompletion}
                 currentPuzzle={currentPuzzleData}
@@ -472,6 +479,7 @@ function Puzzles({ id }: { id: string }) {
               <PuzzleControls
                 selectedDb={selectedDb}
                 onGeneratePuzzle={handleGeneratePuzzle}
+                generatingPuzzle={isGeneratingPuzzle}
                 onClearSession={handleClearSession}
                 changeCompletion={changeCompletion}
                 currentPuzzle={currentPuzzleData}

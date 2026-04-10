@@ -10,6 +10,7 @@ import {
   IconLayoutDashboard,
   IconPlayerPlay,
   IconPuzzle,
+  IconRefresh,
   IconSettings,
   IconUserCircle,
   IconWorld,
@@ -17,7 +18,7 @@ import {
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
 import { useAtom } from "jotai";
-import type { ComponentType } from "react";
+import { type ComponentType, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
@@ -180,6 +181,36 @@ export function SideBar() {
     }
   };
 
+  const openProfilesPage = useCallback(async () => {
+    const existingProfileTab = tabs.find((t) => t.type === "profiles");
+    if (existingProfileTab) {
+      setActiveTab(existingProfileTab.value);
+      try {
+        navigate({ to: "/profiles" });
+      } catch (error) {
+        console.error("Navigation error in profiles link:", error);
+      }
+      return;
+    }
+
+    await createTab({
+      tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
+      setTabs,
+      setActiveTab,
+    });
+    try {
+      requestAnimationFrame(() => {
+        try {
+          navigate({ to: "/profiles" });
+        } catch (error) {
+          console.error("Navigation error in profiles link (after createTab):", error);
+        }
+      });
+    } catch (error) {
+      console.error("Navigation error in profiles link:", error);
+    }
+  }, [navigate, setActiveTab, setTabs, t, tabs]);
+
   const openTabAndNavigate = async ({
     tab,
     route,
@@ -223,34 +254,7 @@ export function SideBar() {
           key={link.label}
           icon={link.icon}
           label={t(`features.sidebar.${link.label}`)}
-          onClick={() => {
-            const existingProfileTab = tabs.find((t) => t.type === "profiles");
-            if (existingProfileTab) {
-              setActiveTab(existingProfileTab.value);
-              try {
-                navigate({ to: "/profiles" });
-              } catch (error) {
-                console.error("Navigation error in profiles link:", error);
-              }
-            } else {
-              void createTab({
-                tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
-                setTabs,
-                setActiveTab,
-              });
-              try {
-                requestAnimationFrame(() => {
-                  try {
-                    navigate({ to: "/profiles" });
-                  } catch (error) {
-                    console.error("Navigation error in profiles link (after createTab):", error);
-                  }
-                });
-              } catch (error) {
-                console.error("Navigation error in profiles link:", error);
-              }
-            }
-          }}
+          onClick={() => void openProfilesPage()}
         />
       );
     }
@@ -263,6 +267,20 @@ export function SideBar() {
       />
     );
   });
+
+  const profileSyncLink = (
+    <MayaActionLink
+      key="profiles-sync"
+      icon={IconRefresh}
+      label={t("profiles.sync.active", { defaultValue: "Update active profile" })}
+      onClick={() => {
+        try {
+          sessionStorage.setItem("profiles_sync_request", "active");
+        } catch {}
+        void openProfilesPage();
+      }}
+    />
+  );
 
   // Acciones principales: Play, Analysis, Puzzles
   const primaryActionLinks: React.ReactNode[] = [
@@ -368,32 +386,7 @@ export function SideBar() {
                   return;
                 }
                 if (link.url === "/profiles") {
-                  const existingProfileTab = tabs.find((t) => t.type === "profiles");
-                  if (existingProfileTab) {
-                    setActiveTab(existingProfileTab.value);
-                    try {
-                      navigate({ to: "/profiles" });
-                    } catch (error) {
-                      console.error("Navigation error in footer profiles link:", error);
-                    }
-                  } else {
-                    void createTab({
-                      tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
-                      setTabs,
-                      setActiveTab,
-                    });
-                    try {
-                      requestAnimationFrame(() => {
-                        try {
-                          navigate({ to: "/profiles" });
-                        } catch (error) {
-                          console.error("Navigation error in footer profiles link (after createTab):", error);
-                        }
-                      });
-                    } catch (error) {
-                      console.error("Navigation error in footer profiles link:", error);
-                    }
-                  }
+                  void openProfilesPage();
                   return;
                 }
 
@@ -413,6 +406,7 @@ export function SideBar() {
       <Stack justify="flex-start" gap={0} pt="xs" h="100%">
         {/* Sección principal: Dashboard y Profiles */}
         {primaryNavLinks}
+        {profileSyncLink}
         {/* Acciones principales: Play, Analysis, Puzzles */}
         {primaryActionLinks}
         {/* Sección secundaria: Databases, Engines, Files */}

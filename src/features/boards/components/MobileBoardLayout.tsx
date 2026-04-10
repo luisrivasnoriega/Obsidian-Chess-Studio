@@ -66,6 +66,7 @@ interface MobileBoardLayoutProps {
   hideClockSpaces?: boolean;
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
+  allowPremove?: boolean;
 }
 
 function MobileBoardLayout({
@@ -117,6 +118,7 @@ function MobileBoardLayout({
   hideClockSpaces = false,
   hideEvalBar = false,
   hideFooterControls = false,
+  allowPremove = false,
 }: MobileBoardLayoutProps) {
   const { t } = useTranslation();
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
@@ -289,6 +291,7 @@ function MobileBoardLayout({
           hideClockSpaces={hideClockSpacesResolved}
           hideEvalBar={true}
           hideFooterControls={true}
+          allowPremove={allowPremove}
         />
       </Box>
 

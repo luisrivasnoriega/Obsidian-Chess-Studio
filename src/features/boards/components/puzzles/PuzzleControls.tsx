@@ -15,6 +15,7 @@ import { defaultTree } from "@/utils/treeReducer";
 interface PuzzleControlsProps {
   selectedDb: string | null;
   onGeneratePuzzle: () => void;
+  generatingPuzzle: boolean;
   onClearSession: () => void;
   changeCompletion: (completion: Completion) => void;
   currentPuzzle?: Puzzle;
@@ -30,6 +31,7 @@ interface PuzzleControlsProps {
 export const PuzzleControls = ({
   selectedDb,
   onGeneratePuzzle,
+  generatingPuzzle,
   onClearSession,
   changeCompletion,
   currentPuzzle,
@@ -123,7 +125,7 @@ export const PuzzleControls = ({
           </Group>
 
           <Tooltip label={t("features.puzzle.newPuzzle")}>
-            <ActionIcon disabled={!selectedDb} onClick={handleGeneratePuzzle}>
+            <ActionIcon disabled={!selectedDb || generatingPuzzle} onClick={handleGeneratePuzzle}>
               <IconPlus />
             </ActionIcon>
           </Tooltip>

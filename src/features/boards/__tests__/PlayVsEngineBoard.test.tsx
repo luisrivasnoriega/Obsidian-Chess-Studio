@@ -131,14 +131,18 @@ vi.mock("@/state/atoms", () => {
   const activeTabAtom = Symbol("activeTabAtom");
   const currentGameStateAtom = Symbol("currentGameStateAtom");
   const currentPlayersAtom = Symbol("currentPlayersAtom");
+  const enginesAtom = Symbol("enginesAtom");
   const profilesAtom = Symbol("profilesAtom");
+  const selectedPuzzleDbAtom = Symbol("selectedPuzzleDbAtom");
   const tabsAtom = Symbol("tabsAtom");
   return {
     activeProfileIdAtom,
     activeTabAtom,
     currentGameStateAtom,
     currentPlayersAtom,
+    enginesAtom,
     profilesAtom,
+    selectedPuzzleDbAtom,
     tabsAtom,
   };
 });
@@ -153,6 +157,7 @@ vi.mock("jotai", async () => {
           { id: "p1", name: "LR", displayName: "LR" },
           { id: "p2", name: "P2" },
         ];
+      if (atom === atoms.enginesAtom) return [];
       if (atom === atoms.activeTabAtom) return "tab1";
       return null;
     },
@@ -163,6 +168,7 @@ vi.mock("jotai", async () => {
       if (atom === atoms.tabsAtom) return [[{ value: "tab1", type: "play", name: "Play" }], vi.fn()];
       return [null, vi.fn()];
     },
+    useSetAtom: (_atom: any) => vi.fn(),
   };
 });
 

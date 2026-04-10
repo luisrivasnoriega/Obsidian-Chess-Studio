@@ -283,6 +283,8 @@ fn get_opening_tag_friendly_name(tag: &str) -> String {
 /// Cache for puzzles to reduce database queries
 #[derive(Debug)]
 struct PuzzleCache {
+    /// Database file path used by the current cache
+    file: Option<String>,
     /// Queue of puzzles loaded from the database
     cache: VecDeque<Puzzle>,
     /// Current position in the cache
@@ -299,20 +301,27 @@ struct PuzzleCache {
     themes: Option<Vec<String>>,
     /// Opening tags filter used for the current cache
     opening_tags: Option<Vec<String>>,
+    /// Whether schema/table capabilities were checked for the current file
+    normalized_state_ready: bool,
+    /// Whether current file has normalized helper tables available
+    has_normalized_tables: bool,
 }
 
 impl PuzzleCache {
     /// Create a new puzzle cache with default settings
     fn new() -> Self {
         Self {
+            file: None,
             cache: VecDeque::new(),
             counter: 0,
             min_rating: 0,
             max_rating: 0,
-            cache_size: 20, // Default cache size
+            cache_size: 64, // Keep a larger in-memory window to reduce DB roundtrips
             random: true,
             themes: None,
             opening_tags: None,
+            normalized_state_ready: false,
+            has_normalized_tables: false,
         }
     }
 
@@ -326,8 +335,23 @@ impl PuzzleCache {
         self
     }
 
-    /// Optimized query using normalized tables with JOINs instead of LIKE
-    /// This is much faster for filtering by themes and opening_tags
+    fn normalize_filter_list(values: Option<Vec<String>>) -> Option<Vec<String>> {
+        let mut cleaned = values
+            .unwrap_or_default()
+            .into_iter()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<_>>();
+        if cleaned.is_empty() {
+            return None;
+        }
+        cleaned.sort_unstable();
+        cleaned.dedup();
+        Some(cleaned)
+    }
+
+    /// Optimized query using EXISTS against normalized tables.
+    /// This avoids JOIN fan-out + DISTINCT over large datasets.
     fn get_puzzles_with_normalized_tables(
         &self,
         db: &mut diesel::SqliteConnection,
@@ -373,11 +397,7 @@ impl PuzzleCache {
             opening_tags: Option<String>,
         }
 
-        // Build the query using raw SQL for maximum performance
-        let mut query_parts = Vec::new();
-        query_parts.push("SELECT DISTINCT p.* FROM puzzles p".to_string());
-
-        let mut join_clauses = Vec::new();
+        // Build WHERE clauses once and reuse them for count/select.
         let mut where_clauses = Vec::new();
 
         where_clauses.push(format!(
@@ -385,51 +405,41 @@ impl PuzzleCache {
             min_rating, max_rating
         ));
 
-        // Add theme filtering with JOIN
+        // Theme filtering
         if let Some(themes_list) = themes {
             if !themes_list.is_empty() {
-                join_clauses.push("INNER JOIN puzzle_themes pt ON p.id = pt.puzzle_id".to_string());
                 let theme_placeholders: Vec<String> = themes_list
                     .iter()
                     .map(|t| format!("'{}'", t.replace("'", "''")))
                     .collect();
-                where_clauses.push(format!("pt.theme IN ({})", theme_placeholders.join(", ")));
+                where_clauses.push(format!(
+                    "EXISTS (SELECT 1 FROM puzzle_themes pt WHERE pt.puzzle_id = p.id AND pt.theme IN ({}))",
+                    theme_placeholders.join(", ")
+                ));
             }
         }
 
-        // Add opening_tag filtering with JOIN
+        // Opening tag filtering
         if let Some(tags_list) = opening_tags {
             if !tags_list.is_empty() {
-                join_clauses
-                    .push("INNER JOIN puzzle_opening_tags pot ON p.id = pot.puzzle_id".to_string());
                 let tag_placeholders: Vec<String> = tags_list
                     .iter()
                     .map(|t| format!("'{}'", t.replace("'", "''")))
                     .collect();
                 where_clauses.push(format!(
-                    "pot.opening_tag IN ({})",
+                    "EXISTS (SELECT 1 FROM puzzle_opening_tags pot WHERE pot.puzzle_id = p.id AND pot.opening_tag IN ({}))",
                     tag_placeholders.join(", ")
                 ));
             }
         }
 
-        // Build final query
-        let mut sql_query_str = query_parts.join(" ");
-        if !join_clauses.is_empty() {
-            sql_query_str.push_str(" ");
-            sql_query_str.push_str(&join_clauses.join(" "));
-        }
-        sql_query_str.push_str(" WHERE ");
-        sql_query_str.push_str(&where_clauses.join(" AND "));
+        let where_sql = where_clauses.join(" AND ");
 
-        // Optimize random selection: instead of ORDER BY RANDOM() which is slow,
-        // we'll get a larger sample and randomly select from it, or use a more efficient method
+        let mut sql_query_str;
         if random {
-            // Get count first for efficient random selection
             let count_query = format!(
-                "SELECT COUNT(DISTINCT p.id) as count FROM puzzles p {} WHERE {}",
-                join_clauses.join(" "),
-                where_clauses.join(" AND ")
+                "SELECT COUNT(*) as count FROM puzzles p WHERE {}",
+                where_sql
             );
 
             let count_result: Vec<CountResult> = sql_query(&count_query).load(db)?;
@@ -439,21 +449,25 @@ impl PuzzleCache {
                 return Ok(Vec::new());
             }
 
-            // Use a more efficient random selection: get a random offset
+            // Random window sampling over stable ordering.
             let random_offset = if total_count > self.cache_size {
                 let mut rng = rand::thread_rng();
-                (rng.gen::<usize>() % (total_count - self.cache_size.min(total_count))) as i64
+                let max_offset = total_count.saturating_sub(self.cache_size);
+                rng.gen_range(0..=max_offset) as i64
             } else {
                 0
             };
 
-            sql_query_str.push_str(&format!(
-                " ORDER BY p.id LIMIT {} OFFSET {}",
+            sql_query_str = format!(
+                "SELECT p.* FROM puzzles p WHERE {} ORDER BY p.id LIMIT {} OFFSET {}",
+                where_sql,
                 self.cache_size, random_offset
-            ));
+            );
         } else {
-            sql_query_str.push_str(" ORDER BY p.id, p.rating LIMIT ");
-            sql_query_str.push_str(&self.cache_size.to_string());
+            sql_query_str = format!(
+                "SELECT p.* FROM puzzles p WHERE {} ORDER BY p.id, p.rating LIMIT {}",
+                where_sql, self.cache_size
+            );
         }
 
         // Execute query and convert to Puzzle
@@ -510,17 +524,27 @@ impl PuzzleCache {
         themes: Option<Vec<String>>,
         opening_tags: Option<Vec<String>>,
     ) -> Result<(), Error> {
+        let themes = Self::normalize_filter_list(themes);
+        let opening_tags = Self::normalize_filter_list(opening_tags);
+        let file_changed = self.file.as_deref() != Some(file);
+
+        if file_changed {
+            self.normalized_state_ready = false;
+            self.has_normalized_tables = false;
+        }
+
         // Check if we need to reload the cache
         let themes_changed = self.themes != themes;
         let opening_tags_changed = self.opening_tags != opening_tags;
 
         if self.cache.is_empty()
+            || file_changed
             || self.min_rating != min_rating
             || self.max_rating != max_rating
             || self.random != random
             || themes_changed
             || opening_tags_changed
-            || self.counter >= self.cache_size
+            || self.counter >= self.cache.len()
         {
             self.cache.clear();
             self.counter = 0;
@@ -531,48 +555,62 @@ impl PuzzleCache {
             // Diesel schema expects. Add them if needed to avoid runtime "no such column" errors.
             ensure_puzzles_optional_columns(&mut db)?;
 
-            // Check if migration is needed first (only migrate if tables don't exist)
-            let needs_migration = {
-                use diesel::prelude::*;
-                use diesel::sql_query;
-                #[derive(QueryableByName)]
-                struct CountResult {
-                    #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
-                    count: i64,
-                }
-                let result: Vec<CountResult> = sql_query(
-                    "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')"
-                ).load(&mut db).unwrap_or_default();
-                result.first().map(|r| r.count).unwrap_or(0) < 2
-            };
+            if !self.normalized_state_ready {
+                // Check if migration is needed first (only migrate if tables don't exist)
+                let needs_migration = {
+                    use diesel::prelude::*;
+                    use diesel::sql_query;
+                    #[derive(QueryableByName)]
+                    struct CountResult {
+                        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
+                        count: i64,
+                    }
+                    let result: Vec<CountResult> = sql_query(
+                        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')"
+                    )
+                    .load(&mut db)
+                    .unwrap_or_default();
+                    result.first().map(|r| r.count).unwrap_or(0) < 2
+                };
 
-            if needs_migration {
-                // Only migrate if tables don't exist
-                let db_path = PathBuf::from(file);
-                let _ = migrate_puzzle_database_to_normalized(&db_path);
-                // Re-establish connection after migration
-                db = diesel::SqliteConnection::establish(file)?;
+                if needs_migration {
+                    // Only migrate if tables don't exist
+                    let db_path = PathBuf::from(file);
+                    let _ = migrate_puzzle_database_to_normalized(&db_path);
+                    // Re-establish connection after migration
+                    db = diesel::SqliteConnection::establish(file)?;
+                }
+
+                // Check if normalized tables exist (for new databases or after migration)
+                self.has_normalized_tables = {
+                    use diesel::prelude::*;
+                    use diesel::sql_query;
+                    #[derive(QueryableByName)]
+                    struct CountResult {
+                        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
+                        count: i64,
+                    }
+                    let result: Vec<CountResult> = sql_query(
+                        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')",
+                    )
+                    .load(&mut db)
+                    .unwrap_or_default();
+                    result.first().map(|r| r.count).unwrap_or(0) == 2
+                };
+
+                if self.has_normalized_tables {
+                    const PUZZLES_INDEXES: &str =
+                        include_str!("../../database/indexes/puzzles_indexes.sql");
+                    db.batch_execute(PUZZLES_INDEXES)?;
+                }
+
+                self.normalized_state_ready = true;
             }
 
-            // Check if normalized tables exist (for new databases or after migration)
-            let has_normalized_tables = {
-                use diesel::prelude::*;
-                use diesel::sql_query;
-                #[derive(QueryableByName)]
-                struct CountResult {
-                    #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
-                    count: i64,
-                }
-                let result: Vec<CountResult> = sql_query(
-                    "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')"
-                ).load(&mut db).unwrap_or_default();
-                result.first().map(|r| r.count).unwrap_or(0) == 2
-            };
-
-            let new_puzzles = if has_normalized_tables
+            let new_puzzles = if self.has_normalized_tables
                 && (themes.is_some() || opening_tags.is_some())
             {
-                // Use optimized JOIN-based queries with normalized tables
+                // Use optimized EXISTS-based queries with normalized tables.
                 self.get_puzzles_with_normalized_tables(
                     &mut db,
                     min_rating,
@@ -645,6 +683,7 @@ impl PuzzleCache {
             self.random = random;
             self.themes = themes;
             self.opening_tags = opening_tags;
+            self.file = Some(file.to_string());
         }
 
         Ok(())

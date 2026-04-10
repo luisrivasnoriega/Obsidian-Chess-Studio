@@ -565,8 +565,7 @@ fn parse_date_time_to_timestamp(date: &str, time: Option<&str>) -> Option<i64> {
         .or_else(|_| NaiveTime::parse_from_str(t, "%H:%M"))
         .ok()?;
 
-    let date_only = NaiveDateTime::from_timestamp_millis(day)?;
-    let day_only = date_only.date();
+    let day_only = chrono::DateTime::<Utc>::from_timestamp_millis(day)?.date_naive();
     let dt = NaiveDateTime::new(day_only, nt);
     Some(Utc.from_utc_datetime(&dt).timestamp_millis())
 }

@@ -1,16 +1,17 @@
 import { ScrollArea, Stack, Tabs } from "@mantine/core";
-import { IconPlus, IconSearch } from "@tabler/icons-react";
+import { IconPlayerPlay, IconPlus, IconSearch } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
 import { CreateTournamentForm } from "./components/CreateTournamentForm";
+import PlayVsLichessBoard from "./components/PlayVsLichessBoard";
 import { TournamentList } from "./components/TournamentList";
 
 export default function TournamentsPage() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<string>("search");
+  const [activeTab, setActiveTab] = useState<string>("play");
   const [refreshKey, setRefreshKey] = useState(0);
 
   const profiles = useAtomValue(profilesAtom);
@@ -48,8 +49,11 @@ export default function TournamentsPage() {
       <Stack flex={1} style={{ minHeight: 0 }}>
         <ScrollArea h="100%" offsetScrollbars>
           <Stack px="md" pb="xl">
-            <Tabs value={activeTab} onChange={(v) => setActiveTab(v || "search")}>
+            <Tabs value={activeTab} onChange={(v) => setActiveTab(v || "play")}>
               <Tabs.List>
+                <Tabs.Tab value="play" leftSection={<IconPlayerPlay size={16} />}>
+                  {t("features.tournaments.play.title", "Play")}
+                </Tabs.Tab>
                 <Tabs.Tab value="search" leftSection={<IconSearch size={16} />}>
                   {t("features.tournaments.search", "Search")}
                 </Tabs.Tab>
@@ -70,6 +74,10 @@ export default function TournamentsPage() {
                     setRefreshKey((prev) => prev + 1);
                   }}
                 />
+              </Tabs.Panel>
+
+              <Tabs.Panel value="play" pt="md">
+                <PlayVsLichessBoard />
               </Tabs.Panel>
             </Tabs>
           </Stack>
