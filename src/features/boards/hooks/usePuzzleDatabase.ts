@@ -3,13 +3,13 @@ import { INITIAL_BOARD_FEN } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useState } from "react";
-import { commands, type PuzzleDatabaseInfo, type Token } from "@/bindings";
+import { commands, getPuzzleBatch, type PuzzleDatabaseInfo, type Token } from "@/bindings";
 import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
 import { getAttemptedPgnPuzzleCount, isPgnPuzzleAttempted } from "@/utils/pgnPuzzleProgress";
-import { getPuzzleDatabases, PUZZLE_DEBUG_LOGS, type Puzzle } from "@/utils/puzzles";
+import { getPuzzleDatabases, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
 type CachedPuzzle = {
@@ -38,34 +38,142 @@ type LoadedRatingRange = {
 };
 
 const PuzzleDbFromPgnCache = new Map<string, PuzzleCacheEntry>();
+const _DB3_PREFETCH_BATCH_SIZE = 80;
+const DB3_PREFETCH_MIN_BUFFER = 30;
+const DB3_PREFETCH_TARGET_SIZE = 120;
+const DB3_PREFETCH_CRITICAL_BUFFER = 1;
+const DB3_PREFETCH_BUCKET = 100;
+const DB3_PREFETCH_EXPANSION = 80;
+
+type Db3Puzzle = Omit<Puzzle, "moves" | "completion"> & { moves: string };
+
+type Db3PrefetchEntry = {
+  queue: Puzzle[];
+  refillPromise: Promise<void> | null;
+};
+
+const Db3PrefetchCache = new Map<string, Db3PrefetchEntry>();
+
+function normalizeFilterListForKey(values?: string[]): string[] {
+  if (!values || values.length === 0) return [];
+  return [...new Set(values.map((v) => v.trim()).filter((v) => v.length > 0))].sort((a, b) => a.localeCompare(b));
+}
+
+function toDb3Puzzle(dbPuzzle: Db3Puzzle): Puzzle {
+  return {
+    ...dbPuzzle,
+    moves: dbPuzzle.moves.split(" "),
+    completion: "incomplete",
+  };
+}
+
+function normalizeRangeForPrefetch(range: [number, number], dbRange: [number, number] | null): [number, number] {
+  let [min, max] = range;
+  min = Math.max(0, min - DB3_PREFETCH_EXPANSION);
+  max = max + DB3_PREFETCH_EXPANSION;
+
+  if (dbRange) {
+    min = Math.max(min, dbRange[0]);
+    max = Math.min(max, dbRange[1]);
+  }
+
+  min = Math.floor(min / DB3_PREFETCH_BUCKET) * DB3_PREFETCH_BUCKET;
+  max = Math.ceil(max / DB3_PREFETCH_BUCKET) * DB3_PREFETCH_BUCKET;
+  if (max < min) max = min;
+
+  if (dbRange) {
+    min = Math.max(min, dbRange[0]);
+    max = Math.min(max, dbRange[1]);
+    if (max < min) max = min;
+  }
+
+  return [min, max];
+}
+
+function createDb3PrefetchKey(db: string, random: boolean, themes: string[], openingTags: string[]): string {
+  return [db, random ? "rand" : "ordered", themes.join("|"), openingTags.join("|")].join("::");
+}
+
+function removeDb3PrefetchEntries(dbPath: string) {
+  const prefix = `${dbPath}::`;
+  const keys = [...Db3PrefetchCache.keys()].filter((key) => key.startsWith(prefix));
+  keys.forEach((key) => {
+    Db3PrefetchCache.delete(key);
+  });
+}
+
+function takePuzzleInRange(entry: Db3PrefetchEntry, minRating: number, maxRating: number): Puzzle | null {
+  if (entry.queue.length === 0) return null;
+
+  const exactIndex = entry.queue.findIndex((puzzle) => puzzle.rating >= minRating && puzzle.rating <= maxRating);
+  if (exactIndex >= 0) {
+    const [selected] = entry.queue.splice(exactIndex, 1);
+    return selected ?? null;
+  }
+
+  // Fallback: consume the closest puzzle to target rating instead of stalling.
+  // This keeps the session fluid even if adaptive range moved slightly.
+  const target = (minRating + maxRating) / 2;
+  let bestIndex = 0;
+  let bestDistance = Math.abs(entry.queue[0].rating - target);
+  for (let i = 1; i < entry.queue.length; i += 1) {
+    const distance = Math.abs(entry.queue[i].rating - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+
+  const [selected] = entry.queue.splice(bestIndex, 1);
+  return selected ?? null;
+}
 
 export const usePuzzleDatabase = () => {
   const [puzzleDbs, setPuzzleDbs] = useState<PuzzleDatabaseInfo[]>([]);
+  const [isLoadingPuzzleDbs, setIsLoadingPuzzleDbs] = useState(true);
   const [selectedDb, setSelectedDb] = useAtom(selectedPuzzleDbAtom);
   const [ratingRange, setRatingRange] = useAtom(puzzleRatingRangeAtom);
   const [dbRatingRange, setDbRatingRange] = useState<[number, number] | null>(null);
 
   // Load puzzle databases
   useEffect(() => {
-    const loadDatabases = () => {
-      getPuzzleDatabases().then((databases) => {
-        setPuzzleDbs(databases);
-        // Si hay un puzzle seleccionado pero ya no existe en la lista, limpiar la selección
-        if (selectedDb && !databases.some((db) => db.path === selectedDb)) {
-          setSelectedDb(null);
-        }
-      });
+    let cancelled = false;
+
+    const loadDatabases = (forceRefresh = false) => {
+      setIsLoadingPuzzleDbs(true);
+      getPuzzleDatabases(forceRefresh)
+        .then((databases) => {
+          if (cancelled) return;
+          setPuzzleDbs(databases);
+          setSelectedDb((current) => {
+            if (current && !databases.some((db) => db.path === current)) {
+              return null;
+            }
+            return current;
+          });
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          logger.error("Failed to load puzzle databases:", error);
+          setPuzzleDbs([]);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsLoadingPuzzleDbs(false);
+          }
+        });
     };
 
     loadDatabases();
 
-    // Listen for puzzle database updates (e.g., when a database is deleted)
-    window.addEventListener("puzzles:updated", loadDatabases);
+    const onPuzzlesUpdated = () => loadDatabases(true);
+    window.addEventListener("puzzles:updated", onPuzzlesUpdated);
 
     return () => {
-      window.removeEventListener("puzzles:updated", loadDatabases);
+      cancelled = true;
+      window.removeEventListener("puzzles:updated", onPuzzlesUpdated);
     };
-  }, [selectedDb, setSelectedDb]);
+  }, [setSelectedDb]);
 
   // Migrate legacy values where `selectedDb` was stored as a filename (e.g. "puzzles.db3")
   // into the full absolute path expected by the Rust commands.
@@ -88,10 +196,8 @@ export const usePuzzleDatabase = () => {
   }, [selectedDb, setSelectedDb]);
 
   const loadDb3RatingRange = useCallback(async (dbPath: string): Promise<[number, number] | null> => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Loading DB3 rating range:", dbPath);
     const result = await commands.getPuzzleRatingRange(dbPath);
     if (result.status === "ok") {
-      PUZZLE_DEBUG_LOGS && logger.debug("DB3 rating range loaded:", result.data);
       return result.data;
     }
 
@@ -112,7 +218,6 @@ export const usePuzzleDatabase = () => {
 
   const loadPgnRatingRange = useCallback(
     async (dbPath: string): Promise<LoadedRatingRange> => {
-      PUZZLE_DEBUG_LOGS && logger.debug("Loading PGN rating range:", dbPath);
       const count = unwrap(await commands.countPgnGames(dbPath));
 
       if (count > 0) {
@@ -127,8 +232,6 @@ export const usePuzzleDatabase = () => {
         );
 
         const { minRating, maxRating } = calculateRatingBounds(puzzles);
-        PUZZLE_DEBUG_LOGS && logger.debug("PGN rating bounds:", { minRating, maxRating, puzzleCount: puzzles.length });
-
         PuzzleDbFromPgnCache.set(dbPath, {
           generated: {
             minRating: 0,
@@ -172,7 +275,6 @@ export const usePuzzleDatabase = () => {
           const { exists } = await import("@tauri-apps/plugin-fs");
           const fileExists = await exists(dbPath);
           if (!fileExists) {
-            PUZZLE_DEBUG_LOGS && logger.debug("Database file does not exist yet:", dbPath);
             return {
               dbRange: null,
               effectiveRange: [600, 2800],
@@ -263,18 +365,10 @@ export const usePuzzleDatabase = () => {
               const totalPuzzles = unwrap(await commands.countPgnGames(db));
               const attemptedCount = getAttemptedPgnPuzzleCount(db);
               shouldFilterUnattempted = attemptedCount < totalPuzzles;
-
-              PUZZLE_DEBUG_LOGS &&
-                logger.debug("Puzzle variants progress check:", {
-                  totalPuzzles,
-                  attemptedCount,
-                  shouldFilterUnattempted,
-                });
             }
           }
         }
-      } catch (error) {
-        PUZZLE_DEBUG_LOGS && logger.debug("Error checking puzzle variants metadata:", error);
+      } catch (_error) {
         // Continue with normal logic if metadata check fails
       }
     }
@@ -292,13 +386,6 @@ export const usePuzzleDatabase = () => {
       // If puzzle variants and random mode and not 100% complete, filter out solved puzzles
       if (isPuzzleVariants && random && shouldFilterUnattempted) {
         puzzle_indexes = puzzle_indexes.filter((idx) => !isPgnPuzzleAttempted(db, idx));
-
-        PUZZLE_DEBUG_LOGS &&
-          logger.debug("Filtered unattempted puzzles:", {
-            db,
-            ratingRange: [minRating, maxRating],
-            unattemptedCount: puzzle_indexes.length,
-          });
       }
 
       // For random selection (inOrder=false), we want "random but no repeats" until exhausted.
@@ -431,6 +518,64 @@ export const usePuzzleDatabase = () => {
     };
   };
 
+  const refillDb3Prefetch = useCallback(
+    async (
+      key: string,
+      db: string,
+      minRating: number,
+      maxRating: number,
+      random: boolean,
+      themes: string[],
+      openingTags: string[],
+      targetSize: number,
+    ) => {
+      let entry = Db3PrefetchCache.get(key);
+      if (!entry) {
+        entry = { queue: [], refillPromise: null };
+        Db3PrefetchCache.set(key, entry);
+      }
+
+      if (entry.refillPromise) {
+        await entry.refillPromise;
+        return;
+      }
+
+      entry.refillPromise = (async () => {
+        const needed = Math.max(0, targetSize - entry.queue.length);
+        if (needed === 0) return;
+
+        const result = await getPuzzleBatch(
+          db,
+          minRating,
+          maxRating,
+          random,
+          themes.length > 0 ? themes : null,
+          openingTags.length > 0 ? openingTags : null,
+          needed,
+        );
+
+        if (result.status === "error") {
+          if (entry.queue.length === 0) {
+            throw new Error(result.error);
+          }
+          return;
+        }
+
+        const batch = result.data as Db3Puzzle[];
+        if (batch.length === 0) return;
+        entry.queue.push(...batch.map(toDb3Puzzle));
+      })().finally(() => {
+        const cacheEntry = Db3PrefetchCache.get(key);
+        if (cacheEntry) {
+          cacheEntry.refillPromise = null;
+        }
+      });
+
+      await entry.refillPromise;
+    },
+    [],
+  );
+
   const generatePuzzle = async (
     db: string,
     currentRange: [number, number],
@@ -442,52 +587,127 @@ export const usePuzzleDatabase = () => {
     if (!dbInfo) {
       throw new Error("Database not found");
     }
-
-    PUZZLE_DEBUG_LOGS &&
-      logger.debug("Generating puzzle from database:", {
-        db: dbInfo.title,
-        range: currentRange,
-        inOrder,
-        themes,
-        openingTags,
-      });
-
     if (dbInfo.path.endsWith(".db3")) {
-      const res = await commands.getPuzzle(
+      const normalizedThemes = normalizeFilterListForKey(themes);
+      const normalizedOpeningTags = normalizeFilterListForKey(openingTags);
+      const random = !inOrder;
+      const [prefetchMin, prefetchMax] = normalizeRangeForPrefetch(currentRange, dbRatingRange);
+      const prefetchKey = createDb3PrefetchKey(db, random, normalizedThemes, normalizedOpeningTags);
+
+      let entry = Db3PrefetchCache.get(prefetchKey);
+      let puzzle = entry ? takePuzzleInRange(entry, currentRange[0], currentRange[1]) : null;
+
+      // Fast path: if we already have puzzles in queue, return immediately and keep refill async.
+      if (puzzle) {
+        const queueAfterPop = entry?.queue.length ?? 0;
+        if (entry && queueAfterPop <= DB3_PREFETCH_CRITICAL_BUFFER && !entry.refillPromise) {
+          void refillDb3Prefetch(
+            prefetchKey,
+            db,
+            prefetchMin,
+            prefetchMax,
+            random,
+            normalizedThemes,
+            normalizedOpeningTags,
+            DB3_PREFETCH_TARGET_SIZE,
+          );
+        } else if (entry && queueAfterPop <= DB3_PREFETCH_MIN_BUFFER && !entry.refillPromise) {
+          void refillDb3Prefetch(
+            prefetchKey,
+            db,
+            prefetchMin,
+            prefetchMax,
+            random,
+            normalizedThemes,
+            normalizedOpeningTags,
+            DB3_PREFETCH_TARGET_SIZE,
+          );
+        }
+        return puzzle;
+      }
+
+      // Slow path: queue is empty or has no puzzle in exact requested range; wait for refill once.
+      await refillDb3Prefetch(
+        prefetchKey,
         db,
-        currentRange[0],
-        currentRange[1],
-        !inOrder,
-        themes ?? null,
-        openingTags ?? null,
+        prefetchMin,
+        prefetchMax,
+        random,
+        normalizedThemes,
+        normalizedOpeningTags,
+        DB3_PREFETCH_TARGET_SIZE,
       );
-      const dbPuzzle = unwrap(res);
-      PUZZLE_DEBUG_LOGS &&
-        logger.debug("Generated DB3 puzzle:", {
-          rating: dbPuzzle.rating,
-          moves: dbPuzzle.moves.split(" ").length,
-        });
-      return {
-        ...dbPuzzle,
-        moves: dbPuzzle.moves.split(" "),
-        completion: "incomplete",
-      };
+
+      entry = Db3PrefetchCache.get(prefetchKey);
+      puzzle = entry ? takePuzzleInRange(entry, currentRange[0], currentRange[1]) : null;
+
+      if (!puzzle) {
+        await refillDb3Prefetch(
+          prefetchKey,
+          db,
+          prefetchMin,
+          prefetchMax,
+          random,
+          normalizedThemes,
+          normalizedOpeningTags,
+          DB3_PREFETCH_TARGET_SIZE * 2,
+        );
+
+        const retriedEntry = Db3PrefetchCache.get(prefetchKey);
+        puzzle = retriedEntry ? takePuzzleInRange(retriedEntry, currentRange[0], currentRange[1]) : null;
+      }
+
+      if (!puzzle) {
+        const exactResult = await commands.getPuzzle(
+          db,
+          currentRange[0],
+          currentRange[1],
+          random,
+          normalizedThemes.length > 0 ? normalizedThemes : null,
+          normalizedOpeningTags.length > 0 ? normalizedOpeningTags : null,
+        );
+        if (exactResult.status === "error") {
+          throw new Error(exactResult.error);
+        }
+        puzzle = toDb3Puzzle(exactResult.data as Db3Puzzle);
+      }
+
+      const latestEntry = Db3PrefetchCache.get(prefetchKey);
+      if (latestEntry && latestEntry.queue.length <= DB3_PREFETCH_CRITICAL_BUFFER) {
+        void refillDb3Prefetch(
+          prefetchKey,
+          db,
+          prefetchMin,
+          prefetchMax,
+          random,
+          normalizedThemes,
+          normalizedOpeningTags,
+          DB3_PREFETCH_TARGET_SIZE,
+        );
+      } else if (latestEntry && latestEntry.queue.length <= DB3_PREFETCH_MIN_BUFFER) {
+        void refillDb3Prefetch(
+          prefetchKey,
+          db,
+          prefetchMin,
+          prefetchMax,
+          random,
+          normalizedThemes,
+          normalizedOpeningTags,
+          DB3_PREFETCH_TARGET_SIZE,
+        );
+      }
+      return puzzle;
     } else {
       const dbPuzzle = await generatePuzzleFromPgn(db, currentRange[0], currentRange[1], !inOrder);
       if (!dbPuzzle) {
         throw new Error("Unable to generate a puzzle from local file within the requested range");
       }
-      PUZZLE_DEBUG_LOGS &&
-        logger.debug("Generated PGN puzzle:", {
-          rating: dbPuzzle.rating,
-          moves: dbPuzzle.moves,
-        });
       return dbPuzzle;
     }
   };
 
   const clearPuzzleCache = (dbPath: string) => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Clearing puzzle cache for:", dbPath);
+    removeDb3PrefetchEntries(dbPath);
     const cachedDb = PuzzleDbFromPgnCache.get(dbPath);
     if (cachedDb) {
       cachedDb.generated = {
@@ -516,6 +736,7 @@ export const usePuzzleDatabase = () => {
     ratingRange,
     setRatingRange,
     dbRatingRange,
+    isLoadingPuzzleDbs,
     minRating,
     maxRating,
     generatePuzzle,

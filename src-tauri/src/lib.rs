@@ -102,7 +102,7 @@ use crate::package_manager::{
 use crate::post_game_review::post_game_review_variants;
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
 use crate::puzzle::{
-    check_puzzle_db_columns, get_puzzle, get_puzzle_db_info, get_puzzle_opening_tags,
+    check_puzzle_db_columns, get_puzzle, get_puzzle_batch, get_puzzle_db_info, get_puzzle_opening_tags,
     get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file, validate_puzzle_database,
     download_puzzle_database,
 };
@@ -191,6 +191,7 @@ pub async fn run() {
             get_engine_logs,
             memory_size,
             get_puzzle,
+            get_puzzle_batch,
             search_opening_name,
             get_opening_from_fen,
             get_opening_from_name,

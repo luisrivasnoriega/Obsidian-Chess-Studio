@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::File,
     io::{BufReader, Read, Seek, SeekFrom},
     path::PathBuf,
@@ -12,7 +12,7 @@ use diesel::{
     Connection, ExpressionMethods, QueryDsl, RunQueryDsl,
 };
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::seq::SliceRandom;
 use serde::Deserialize;
 use serde::Serialize;
 use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Position};
@@ -285,10 +285,12 @@ fn get_opening_tag_friendly_name(tag: &str) -> String {
 struct PuzzleCache {
     /// Database file path used by the current cache
     file: Option<String>,
-    /// Queue of puzzles loaded from the database
+    /// Queue of ready-to-serve puzzles
     cache: VecDeque<Puzzle>,
-    /// Current position in the cache
-    counter: usize,
+    /// Candidate deck (IDs only) matching the current filters
+    candidate_ids: Vec<i32>,
+    /// Cursor to the next ID in the candidate deck
+    candidate_index: usize,
     /// Minimum rating filter used for the current cache
     min_rating: u16,
     /// Maximum rating filter used for the current cache
@@ -308,15 +310,20 @@ struct PuzzleCache {
 }
 
 impl PuzzleCache {
+    const DEFAULT_INITIAL_PREFETCH: usize = 160;
+    const PREFETCH_BATCH_SIZE: usize = 64;
+    const LOW_WATERMARK: usize = 48;
+
     /// Create a new puzzle cache with default settings
     fn new() -> Self {
         Self {
             file: None,
             cache: VecDeque::new(),
-            counter: 0,
+            candidate_ids: Vec::new(),
+            candidate_index: 0,
             min_rating: 0,
             max_rating: 0,
-            cache_size: 64, // Keep a larger in-memory window to reduce DB roundtrips
+            cache_size: Self::DEFAULT_INITIAL_PREFETCH,
             random: true,
             themes: None,
             opening_tags: None,
@@ -331,7 +338,7 @@ impl PuzzleCache {
     /// * `size` - The maximum number of puzzles to cache at once
     #[allow(dead_code)]
     fn with_cache_size(mut self, size: usize) -> Self {
-        self.cache_size = size;
+        self.cache_size = size.max(1);
         self
     }
 
@@ -350,28 +357,342 @@ impl PuzzleCache {
         Some(cleaned)
     }
 
-    /// Optimized query using EXISTS against normalized tables.
-    /// This avoids JOIN fan-out + DISTINCT over large datasets.
-    fn get_puzzles_with_normalized_tables(
+    fn escape_sql_value(value: &str) -> String {
+        value.replace("'", "''")
+    }
+
+    fn dedupe_ids_preserve_order(ids: Vec<i32>) -> Vec<i32> {
+        let mut seen = HashSet::with_capacity(ids.len());
+        ids.into_iter().filter(|id| seen.insert(*id)).collect()
+    }
+
+    fn ensure_temp_query_tables(db: &mut diesel::SqliteConnection) -> Result<(), Error> {
+        db.batch_execute(
+            r#"
+            CREATE TEMP TABLE IF NOT EXISTS temp_theme_filter (
+                theme TEXT PRIMARY KEY
+            );
+            CREATE TEMP TABLE IF NOT EXISTS temp_opening_filter (
+                opening_tag TEXT PRIMARY KEY
+            );
+            CREATE TEMP TABLE IF NOT EXISTS temp_puzzle_batch_ids (
+                ord INTEGER PRIMARY KEY,
+                puzzle_id INTEGER NOT NULL
+            );
+            "#,
+        )?;
+        Ok(())
+    }
+
+    fn refill_temp_theme_filter(
+        db: &mut diesel::SqliteConnection,
+        themes: &[String],
+    ) -> Result<(), Error> {
+        use diesel::sql_query;
+        use diesel::sql_types::Text;
+
+        sql_query("DELETE FROM temp_theme_filter;").execute(db)?;
+        for theme in themes {
+            sql_query("INSERT OR IGNORE INTO temp_theme_filter(theme) VALUES (?1)")
+                .bind::<Text, _>(theme)
+                .execute(db)?;
+        }
+        Ok(())
+    }
+
+    fn refill_temp_opening_filter(
+        db: &mut diesel::SqliteConnection,
+        opening_tags: &[String],
+    ) -> Result<(), Error> {
+        use diesel::sql_query;
+        use diesel::sql_types::Text;
+
+        sql_query("DELETE FROM temp_opening_filter;").execute(db)?;
+        for tag in opening_tags {
+            sql_query("INSERT OR IGNORE INTO temp_opening_filter(opening_tag) VALUES (?1)")
+                .bind::<Text, _>(tag)
+                .execute(db)?;
+        }
+        Ok(())
+    }
+
+    fn refill_temp_batch_ids(
+        db: &mut diesel::SqliteConnection,
+        ids: &[i32],
+    ) -> Result<(), Error> {
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        sql_query("DELETE FROM temp_puzzle_batch_ids;").execute(db)?;
+        for (idx, id) in ids.iter().enumerate() {
+            sql_query("INSERT INTO temp_puzzle_batch_ids(ord, puzzle_id) VALUES (?1, ?2)")
+                .bind::<Integer, _>(idx as i32)
+                .bind::<Integer, _>(*id)
+                .execute(db)?;
+        }
+        Ok(())
+    }
+
+    fn load_ids_from_sql(
+        db: &mut diesel::SqliteConnection,
+        sql: &str,
+    ) -> Result<Vec<i32>, Error> {
+        use diesel::deserialize::QueryableByName;
+        use diesel::prelude::*;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        #[derive(QueryableByName)]
+        struct IdRow {
+            #[diesel(sql_type = Integer, column_name = "id")]
+            id: i32,
+        }
+
+        let rows: Vec<IdRow> = sql_query(sql).load(db)?;
+        Ok(rows.into_iter().map(|row| row.id).collect())
+    }
+
+    // Query candidates by theme (IDs only).
+    // Pattern:
+    // SELECT p.id
+    // FROM puzzle_themes pt
+    // JOIN puzzles p ON p.id = pt.puzzle_id
+    // WHERE pt.theme IN (...)
+    //   AND p.rating BETWEEN @minRating AND @maxRating;
+    fn query_candidate_ids_by_themes(
         &self,
+        db: &mut diesel::SqliteConnection,
+        min_rating: u16,
+        max_rating: u16,
+        themes: &[String],
+    ) -> Result<Vec<i32>, Error> {
+        use diesel::deserialize::QueryableByName;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        #[derive(QueryableByName)]
+        struct IdRow {
+            #[diesel(sql_type = Integer, column_name = "id")]
+            id: i32,
+        }
+
+        if themes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        Self::refill_temp_theme_filter(db, themes)?;
+
+        let rows: Vec<IdRow> = sql_query(
+            "SELECT DISTINCT p.id AS id
+             FROM puzzle_themes pt
+             JOIN temp_theme_filter tf ON tf.theme = pt.theme
+             JOIN puzzles p ON p.id = pt.puzzle_id
+             WHERE p.rating BETWEEN ?1 AND ?2",
+        )
+        .bind::<Integer, _>(i32::from(min_rating))
+        .bind::<Integer, _>(i32::from(max_rating))
+        .load(db)?;
+
+        Ok(rows.into_iter().map(|row| row.id).collect())
+    }
+
+    // Query candidates by opening tag (IDs only).
+    // Pattern:
+    // SELECT p.id
+    // FROM puzzle_opening_tags po
+    // JOIN puzzles p ON p.id = po.puzzle_id
+    // WHERE po.opening_tag IN (...)
+    //   AND p.rating BETWEEN @minRating AND @maxRating;
+    fn query_candidate_ids_by_openings(
+        &self,
+        db: &mut diesel::SqliteConnection,
+        min_rating: u16,
+        max_rating: u16,
+        opening_tags: &[String],
+    ) -> Result<Vec<i32>, Error> {
+        use diesel::deserialize::QueryableByName;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        #[derive(QueryableByName)]
+        struct IdRow {
+            #[diesel(sql_type = Integer, column_name = "id")]
+            id: i32,
+        }
+
+        if opening_tags.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        Self::refill_temp_opening_filter(db, opening_tags)?;
+
+        let rows: Vec<IdRow> = sql_query(
+            "SELECT DISTINCT p.id AS id
+             FROM puzzle_opening_tags po
+             JOIN temp_opening_filter tf ON tf.opening_tag = po.opening_tag
+             JOIN puzzles p ON p.id = po.puzzle_id
+             WHERE p.rating BETWEEN ?1 AND ?2",
+        )
+        .bind::<Integer, _>(i32::from(min_rating))
+        .bind::<Integer, _>(i32::from(max_rating))
+        .load(db)?;
+
+        Ok(rows.into_iter().map(|row| row.id).collect())
+    }
+
+    fn query_candidate_ids_by_rating_only(
+        &self,
+        db: &mut diesel::SqliteConnection,
+        min_rating: u16,
+        max_rating: u16,
+    ) -> Result<Vec<i32>, Error> {
+        use diesel::deserialize::QueryableByName;
+        use diesel::sql_query;
+        use diesel::sql_types::Integer;
+
+        #[derive(QueryableByName)]
+        struct IdRow {
+            #[diesel(sql_type = Integer, column_name = "id")]
+            id: i32,
+        }
+
+        let rows: Vec<IdRow> = sql_query(
+            "SELECT p.id AS id
+             FROM puzzles p
+             WHERE p.rating BETWEEN ?1 AND ?2",
+        )
+        .bind::<Integer, _>(i32::from(min_rating))
+        .bind::<Integer, _>(i32::from(max_rating))
+        .load(db)?;
+
+        Ok(rows.into_iter().map(|row| row.id).collect())
+    }
+
+    fn query_candidate_ids_legacy_columns(
+        &self,
+        db: &mut diesel::SqliteConnection,
+        min_rating: u16,
+        max_rating: u16,
+        themes: Option<&Vec<String>>,
+        opening_tags: Option<&Vec<String>>,
+    ) -> Result<Vec<i32>, Error> {
+        let mut where_clauses = vec![format!(
+            "rating >= {} AND rating <= {}",
+            min_rating, max_rating
+        )];
+
+        if let Some(themes_list) = themes {
+            if !themes_list.is_empty() {
+                let or_clauses = themes_list
+                    .iter()
+                    .map(|theme| {
+                        let escaped_theme = Self::escape_sql_value(theme);
+                        format!(
+                            "(themes LIKE '% {} %' OR themes LIKE '{} %' OR themes LIKE '% {}' OR themes = '{}')",
+                            escaped_theme, escaped_theme, escaped_theme, escaped_theme
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                where_clauses.push(format!("themes IS NOT NULL AND ({})", or_clauses));
+            }
+        }
+
+        if let Some(tags_list) = opening_tags {
+            if !tags_list.is_empty() {
+                let or_clauses = tags_list
+                    .iter()
+                    .map(|tag| {
+                        let escaped_tag = Self::escape_sql_value(tag);
+                        format!(
+                            "(opening_tags LIKE '{} %' OR opening_tags = '{}')",
+                            escaped_tag, escaped_tag
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                where_clauses.push(format!("opening_tags IS NOT NULL AND ({})", or_clauses));
+            }
+        }
+
+        let sql = format!(
+            "SELECT id
+             FROM puzzles
+             WHERE {}",
+            where_clauses.join(" AND ")
+        );
+
+        Self::load_ids_from_sql(db, &sql)
+    }
+
+    fn build_candidate_deck(
+        &mut self,
         db: &mut diesel::SqliteConnection,
         min_rating: u16,
         max_rating: u16,
         random: bool,
         themes: Option<&Vec<String>>,
         opening_tags: Option<&Vec<String>>,
+    ) -> Result<(), Error> {
+        let mut candidate_ids = if self.has_normalized_tables {
+            match (themes, opening_tags) {
+                (Some(theme_list), Some(opening_list))
+                    if !theme_list.is_empty() && !opening_list.is_empty() =>
+                {
+                    let theme_ids =
+                        self.query_candidate_ids_by_themes(db, min_rating, max_rating, theme_list)?;
+                    let opening_ids = self.query_candidate_ids_by_openings(
+                        db,
+                        min_rating,
+                        max_rating,
+                        opening_list,
+                    )?;
+                    let opening_set: HashSet<i32> = opening_ids.into_iter().collect();
+                    theme_ids
+                        .into_iter()
+                        .filter(|id| opening_set.contains(id))
+                        .collect::<Vec<_>>()
+                }
+                (Some(theme_list), _) if !theme_list.is_empty() => {
+                    self.query_candidate_ids_by_themes(db, min_rating, max_rating, theme_list)?
+                }
+                (_, Some(opening_list)) if !opening_list.is_empty() => self
+                    .query_candidate_ids_by_openings(db, min_rating, max_rating, opening_list)?,
+                _ => self.query_candidate_ids_by_rating_only(db, min_rating, max_rating)?,
+            }
+        } else {
+            self.query_candidate_ids_legacy_columns(
+                db,
+                min_rating,
+                max_rating,
+                themes,
+                opening_tags,
+            )?
+        };
+
+        candidate_ids = Self::dedupe_ids_preserve_order(candidate_ids);
+
+        if random {
+            let mut rng = rand::thread_rng();
+            candidate_ids.shuffle(&mut rng);
+        } else {
+            candidate_ids.sort_unstable();
+        }
+
+        self.candidate_ids = candidate_ids;
+        self.candidate_index = 0;
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn fetch_puzzles_by_ids(
+        db: &mut diesel::SqliteConnection,
+        ids: &[i32],
     ) -> Result<Vec<Puzzle>, Error> {
         use diesel::deserialize::QueryableByName;
         use diesel::prelude::*;
         use diesel::sql_query;
-        use diesel::sql_types::{BigInt, Integer, Nullable, Text};
-
-        // Structs for query results
-        #[derive(QueryableByName)]
-        struct CountResult {
-            #[diesel(sql_type = BigInt, column_name = "count")]
-            count: i64,
-        }
+        use diesel::sql_types::{Integer, Text};
 
         #[derive(QueryableByName)]
         struct PuzzleRow {
@@ -385,94 +706,23 @@ impl PuzzleCache {
             rating: i32,
             #[diesel(sql_type = Integer, column_name = "rating_deviation")]
             rating_deviation: i32,
-            #[diesel(sql_type = Integer, column_name = "popularity")]
-            popularity: i32,
-            #[diesel(sql_type = Integer, column_name = "nb_plays")]
-            nb_plays: i32,
-            #[diesel(sql_type = Nullable<Text>, column_name = "themes")]
-            themes: Option<String>,
-            #[diesel(sql_type = Nullable<Text>, column_name = "game_url")]
-            game_url: Option<String>,
-            #[diesel(sql_type = Nullable<Text>, column_name = "opening_tags")]
-            opening_tags: Option<String>,
         }
 
-        // Build WHERE clauses once and reuse them for count/select.
-        let mut where_clauses = Vec::new();
-
-        where_clauses.push(format!(
-            "p.rating >= {} AND p.rating <= {}",
-            min_rating, max_rating
-        ));
-
-        // Theme filtering
-        if let Some(themes_list) = themes {
-            if !themes_list.is_empty() {
-                let theme_placeholders: Vec<String> = themes_list
-                    .iter()
-                    .map(|t| format!("'{}'", t.replace("'", "''")))
-                    .collect();
-                where_clauses.push(format!(
-                    "EXISTS (SELECT 1 FROM puzzle_themes pt WHERE pt.puzzle_id = p.id AND pt.theme IN ({}))",
-                    theme_placeholders.join(", ")
-                ));
-            }
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
 
-        // Opening tag filtering
-        if let Some(tags_list) = opening_tags {
-            if !tags_list.is_empty() {
-                let tag_placeholders: Vec<String> = tags_list
-                    .iter()
-                    .map(|t| format!("'{}'", t.replace("'", "''")))
-                    .collect();
-                where_clauses.push(format!(
-                    "EXISTS (SELECT 1 FROM puzzle_opening_tags pot WHERE pot.puzzle_id = p.id AND pot.opening_tag IN ({}))",
-                    tag_placeholders.join(", ")
-                ));
-            }
-        }
+        Self::refill_temp_batch_ids(db, ids)?;
 
-        let where_sql = where_clauses.join(" AND ");
+        let rows: Vec<PuzzleRow> = sql_query(
+            "SELECT p.id, p.fen, p.moves, p.rating, p.rating_deviation
+             FROM puzzles p
+             JOIN temp_puzzle_batch_ids b ON b.puzzle_id = p.id
+             ORDER BY b.ord ASC",
+        )
+        .load(db)?;
 
-        let mut sql_query_str;
-        if random {
-            let count_query = format!(
-                "SELECT COUNT(*) as count FROM puzzles p WHERE {}",
-                where_sql
-            );
-
-            let count_result: Vec<CountResult> = sql_query(&count_query).load(db)?;
-            let total_count = count_result.first().map(|r| r.count).unwrap_or(0) as usize;
-
-            if total_count == 0 {
-                return Ok(Vec::new());
-            }
-
-            // Random window sampling over stable ordering.
-            let random_offset = if total_count > self.cache_size {
-                let mut rng = rand::thread_rng();
-                let max_offset = total_count.saturating_sub(self.cache_size);
-                rng.gen_range(0..=max_offset) as i64
-            } else {
-                0
-            };
-
-            sql_query_str = format!(
-                "SELECT p.* FROM puzzles p WHERE {} ORDER BY p.id LIMIT {} OFFSET {}",
-                where_sql,
-                self.cache_size, random_offset
-            );
-        } else {
-            sql_query_str = format!(
-                "SELECT p.* FROM puzzles p WHERE {} ORDER BY p.id, p.rating LIMIT {}",
-                where_sql, self.cache_size
-            );
-        }
-
-        // Execute query and convert to Puzzle
-        let puzzle_rows: Vec<PuzzleRow> = sql_query(&sql_query_str).load(db)?;
-        let puzzles: Vec<Puzzle> = puzzle_rows
+        Ok(rows
             .into_iter()
             .map(|row| Puzzle {
                 id: row.id,
@@ -480,24 +730,58 @@ impl PuzzleCache {
                 moves: row.moves,
                 rating: row.rating,
                 rating_deviation: row.rating_deviation,
-                popularity: row.popularity,
-                nb_plays: row.nb_plays,
-                themes: row.themes,
-                game_url: row.game_url,
-                opening_tags: row.opening_tags,
+                popularity: 0,
+                nb_plays: 0,
+                themes: None,
+                game_url: None,
+                opening_tags: None,
             })
-            .collect();
+            .collect())
+    }
 
-        // If random, shuffle the results
-        if random && !puzzles.is_empty() {
-            use rand::seq::SliceRandom;
-            let mut rng = rand::thread_rng();
-            let mut shuffled = puzzles;
-            shuffled.shuffle(&mut rng);
-            Ok(shuffled)
-        } else {
-            Ok(puzzles)
+    fn refill_ready_queue(
+        &mut self,
+        db: &mut diesel::SqliteConnection,
+        target_size: usize,
+    ) -> Result<(), Error> {
+        if self.candidate_ids.is_empty() {
+            return Ok(());
         }
+
+        while self.cache.len() < target_size {
+            if self.candidate_index >= self.candidate_ids.len() {
+                self.candidate_index = 0;
+                if self.random && self.candidate_ids.len() > 1 {
+                    let mut rng = rand::thread_rng();
+                    self.candidate_ids.shuffle(&mut rng);
+                }
+            }
+
+            let remaining_target = target_size.saturating_sub(self.cache.len());
+            let remaining_deck = self
+                .candidate_ids
+                .len()
+                .saturating_sub(self.candidate_index);
+            let take_count = remaining_target
+                .min(Self::PREFETCH_BATCH_SIZE)
+                .min(remaining_deck);
+
+            if take_count == 0 {
+                break;
+            }
+
+            let ids_batch =
+                self.candidate_ids[self.candidate_index..self.candidate_index + take_count].to_vec();
+            self.candidate_index += take_count;
+
+            let puzzles = Self::fetch_puzzles_by_ids(db, &ids_batch)?;
+            if puzzles.is_empty() {
+                break;
+            }
+            self.cache.extend(puzzles);
+        }
+
+        Ok(())
     }
 
     /// Loads puzzles into the cache if needed
@@ -533,157 +817,77 @@ impl PuzzleCache {
             self.has_normalized_tables = false;
         }
 
-        // Check if we need to reload the cache
         let themes_changed = self.themes != themes;
         let opening_tags_changed = self.opening_tags != opening_tags;
-
-        if self.cache.is_empty()
-            || file_changed
+        let filters_changed = file_changed
             || self.min_rating != min_rating
             || self.max_rating != max_rating
             || self.random != random
             || themes_changed
             || opening_tags_changed
-            || self.counter >= self.cache.len()
-        {
-            self.cache.clear();
-            self.counter = 0;
+            || self.candidate_ids.is_empty();
 
+        if filters_changed || self.cache.is_empty() || self.cache.len() < Self::LOW_WATERMARK {
             let mut db = diesel::SqliteConnection::establish(file)?;
+            apply_local_puzzle_read_pragmas(&mut db);
+            Self::ensure_temp_query_tables(&mut db)?;
 
-            // Some third-party or legacy puzzle databases may be missing nullable columns that our
-            // Diesel schema expects. Add them if needed to avoid runtime "no such column" errors.
-            ensure_puzzles_optional_columns(&mut db)?;
+            if filters_changed {
+                // Some third-party or legacy puzzle databases may be missing nullable columns that our
+                // schema expects. Add them if needed before querying.
+                ensure_puzzles_optional_columns(&mut db)?;
 
-            if !self.normalized_state_ready {
-                // Check if migration is needed first (only migrate if tables don't exist)
-                let needs_migration = {
-                    use diesel::prelude::*;
-                    use diesel::sql_query;
-                    #[derive(QueryableByName)]
-                    struct CountResult {
-                        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
-                        count: i64,
+                if !self.normalized_state_ready {
+                    self.has_normalized_tables = {
+                        use diesel::prelude::*;
+                        use diesel::sql_query;
+                        #[derive(QueryableByName)]
+                        struct CountResult {
+                            #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
+                            count: i64,
+                        }
+                        let result: Vec<CountResult> = sql_query(
+                            "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')",
+                        )
+                        .load(&mut db)
+                        .unwrap_or_default();
+                        result.first().map(|r| r.count).unwrap_or(0) == 2
+                    };
+
+                    if self.has_normalized_tables {
+                        const PUZZLES_INDEXES: &str =
+                            include_str!("../../database/indexes/puzzles_indexes.sql");
+                        db.batch_execute(PUZZLES_INDEXES)?;
                     }
-                    let result: Vec<CountResult> = sql_query(
-                        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')"
-                    )
-                    .load(&mut db)
-                    .unwrap_or_default();
-                    result.first().map(|r| r.count).unwrap_or(0) < 2
-                };
 
-                if needs_migration {
-                    // Only migrate if tables don't exist
-                    let db_path = PathBuf::from(file);
-                    let _ = migrate_puzzle_database_to_normalized(&db_path);
-                    // Re-establish connection after migration
-                    db = diesel::SqliteConnection::establish(file)?;
+                    self.normalized_state_ready = true;
                 }
 
-                // Check if normalized tables exist (for new databases or after migration)
-                self.has_normalized_tables = {
-                    use diesel::prelude::*;
-                    use diesel::sql_query;
-                    #[derive(QueryableByName)]
-                    struct CountResult {
-                        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "count")]
-                        count: i64,
-                    }
-                    let result: Vec<CountResult> = sql_query(
-                        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name IN ('puzzle_themes', 'puzzle_opening_tags')",
-                    )
-                    .load(&mut db)
-                    .unwrap_or_default();
-                    result.first().map(|r| r.count).unwrap_or(0) == 2
-                };
-
-                if self.has_normalized_tables {
-                    const PUZZLES_INDEXES: &str =
-                        include_str!("../../database/indexes/puzzles_indexes.sql");
-                    db.batch_execute(PUZZLES_INDEXES)?;
-                }
-
-                self.normalized_state_ready = true;
-            }
-
-            let new_puzzles = if self.has_normalized_tables
-                && (themes.is_some() || opening_tags.is_some())
-            {
-                // Use optimized EXISTS-based queries with normalized tables.
-                self.get_puzzles_with_normalized_tables(
+                self.build_candidate_deck(
                     &mut db,
                     min_rating,
                     max_rating,
                     random,
                     themes.as_ref(),
                     opening_tags.as_ref(),
-                )?
-            } else {
-                // Fallback to old LIKE-based queries for databases without normalized tables
-                let mut query = puzzles::table
-                    .filter(puzzles::rating.le(max_rating as i32))
-                    .filter(puzzles::rating.ge(min_rating as i32))
-                    .into_boxed();
+                )?;
 
-                // Apply themes filter if provided
-                if let Some(ref themes_list) = themes {
-                    if !themes_list.is_empty() {
-                        let or_clauses: Vec<String> = themes_list.iter()
-                            .map(|theme| {
-                                let escaped_theme = theme.replace("'", "''");
-                                format!(
-                                    "(themes LIKE '% {} %' OR themes LIKE '{} %' OR themes LIKE '% {}' OR themes = '{}')",
-                                    escaped_theme, escaped_theme, escaped_theme, escaped_theme
-                                )
-                            })
-                            .collect();
-                        let sql_condition =
-                            format!("themes IS NOT NULL AND ({})", or_clauses.join(" OR "));
-                        query = query.filter(sql::<Bool>(&sql_condition));
-                    }
-                }
+                self.min_rating = min_rating;
+                self.max_rating = max_rating;
+                self.random = random;
+                self.themes = themes.clone();
+                self.opening_tags = opening_tags.clone();
+                self.file = Some(file.to_string());
+            }
 
-                // Apply opening_tags filter if provided
-                if let Some(ref tags_list) = opening_tags {
-                    if !tags_list.is_empty() {
-                        let or_clauses: Vec<String> = tags_list
-                            .iter()
-                            .map(|tag| {
-                                let escaped_tag = tag.replace("'", "''");
-                                format!(
-                                    "(opening_tags LIKE '{} %' OR opening_tags = '{}')",
-                                    escaped_tag, escaped_tag
-                                )
-                            })
-                            .collect();
-                        let sql_condition =
-                            format!("opening_tags IS NOT NULL AND ({})", or_clauses.join(" OR "));
-                        query = query.filter(sql::<Bool>(&sql_condition));
-                    }
-                }
-
-                if random {
-                    query
-                        .order(sql::<Bool>("RANDOM()"))
-                        .limit(self.cache_size as i64)
-                        .load::<Puzzle>(&mut db)?
-                } else {
-                    query
-                        .order(puzzles::id.asc())
-                        .order(puzzles::rating.asc())
-                        .limit(self.cache_size as i64)
-                        .load::<Puzzle>(&mut db)?
-                }
-            };
-
-            self.cache = new_puzzles.into_iter().collect();
-            self.min_rating = min_rating;
-            self.max_rating = max_rating;
-            self.random = random;
-            self.themes = themes;
-            self.opening_tags = opening_tags;
-            self.file = Some(file.to_string());
+            if self.cache.is_empty() {
+                self.refill_ready_queue(&mut db, self.cache_size)?;
+            } else if self.cache.len() < Self::LOW_WATERMARK {
+                self.refill_ready_queue(
+                    &mut db,
+                    Self::LOW_WATERMARK + Self::PREFETCH_BATCH_SIZE,
+                )?;
+            }
         }
 
         Ok(())
@@ -692,15 +896,15 @@ impl PuzzleCache {
     /// Gets the next puzzle from the cache
     ///
     /// # Returns
-    /// * `Some(&Puzzle)` if a puzzle is available
+    /// * `Some(Puzzle)` if a puzzle is available
     /// * `None` if no more puzzles are available in the cache
-    fn get_next_puzzle(&mut self) -> Option<&Puzzle> {
-        if let Some(puzzle) = self.cache.get(self.counter) {
-            self.counter += 1;
-            Some(puzzle)
-        } else {
-            None
-        }
+    fn get_next_puzzle(&mut self) -> Option<Puzzle> {
+        self.cache.pop_front()
+    }
+
+    fn get_next_puzzles(&mut self, count: usize) -> Vec<Puzzle> {
+        let take = count.min(self.cache.len());
+        self.cache.drain(..take).collect()
     }
 }
 
@@ -733,6 +937,20 @@ fn ensure_puzzles_optional_columns(db: &mut diesel::SqliteConnection) -> Result<
     Ok(())
 }
 
+/// Applies local performance PRAGMAs for puzzle read workloads.
+/// Best-effort: failures are ignored because these are runtime hints.
+fn apply_local_puzzle_read_pragmas(db: &mut diesel::SqliteConnection) {
+    let _ = db.batch_execute("PRAGMA temp_store = MEMORY;");
+    let _ = db.batch_execute("PRAGMA cache_size = -64000;");
+    let _ = db.batch_execute("PRAGMA synchronous = NORMAL;");
+    let _ = db.batch_execute("PRAGMA mmap_size = 268435456;");
+    let _ = db.batch_execute("PRAGMA busy_timeout = 5000;");
+    // Keep WAL for local workloads where possible.
+    let _ = db.batch_execute("PRAGMA journal_mode = WAL;");
+}
+
+static PUZZLE_CACHE: Lazy<Mutex<PuzzleCache>> = Lazy::new(|| Mutex::new(PuzzleCache::new()));
+
 /// Gets a random puzzle from the database within the specified rating range
 ///
 /// This function uses a cache to avoid repeated database queries. The cache is
@@ -761,16 +979,54 @@ pub fn get_puzzle(
     themes: Option<Vec<String>>,
     opening_tags: Option<Vec<String>>,
 ) -> Result<Puzzle, Error> {
-    static PUZZLE_CACHE: Lazy<Mutex<PuzzleCache>> = Lazy::new(|| Mutex::new(PuzzleCache::new()));
-
     let mut cache = PUZZLE_CACHE
         .lock()
         .map_err(|e| Error::MutexLockFailed(format!("Failed to lock puzzle cache: {}", e)))?;
     cache.get_puzzles_with_filters(&file, min_rating, max_rating, random, themes, opening_tags)?;
-    // Get a reference to the next puzzle and clone it only if found
+    // Return the next ready puzzle from the queue
     match cache.get_next_puzzle() {
-        Some(puzzle) => Ok(puzzle.clone()),
+        Some(puzzle) => Ok(puzzle),
         None => Err(Error::NoPuzzles),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_puzzle_batch(
+    file: String,
+    min_rating: u16,
+    max_rating: u16,
+    random: bool,
+    themes: Option<Vec<String>>,
+    opening_tags: Option<Vec<String>>,
+    count: u16,
+) -> Result<Vec<Puzzle>, Error> {
+    let requested = usize::from(count).clamp(1, 128);
+
+    let mut cache = PUZZLE_CACHE
+        .lock()
+        .map_err(|e| Error::MutexLockFailed(format!("Failed to lock puzzle cache: {}", e)))?;
+
+    cache.get_puzzles_with_filters(
+        &file,
+        min_rating,
+        max_rating,
+        random,
+        themes.clone(),
+        opening_tags.clone(),
+    )?;
+
+    let mut puzzles = cache.get_next_puzzles(requested);
+    if puzzles.len() < requested {
+        cache.get_puzzles_with_filters(&file, min_rating, max_rating, random, themes, opening_tags)?;
+        let remaining = requested.saturating_sub(puzzles.len());
+        puzzles.extend(cache.get_next_puzzles(remaining));
+    }
+
+    if puzzles.is_empty() {
+        Err(Error::NoPuzzles)
+    } else {
+        Ok(puzzles)
     }
 }
 
@@ -2568,8 +2824,10 @@ fn migrate_puzzle_database_to_normalized(db_path: &PathBuf) -> Result<(), Error>
         r#"
         CREATE INDEX IF NOT EXISTS idx_puzzle_themes_puzzle_id ON puzzle_themes(puzzle_id);
         CREATE INDEX IF NOT EXISTS idx_puzzle_themes_theme ON puzzle_themes(theme);
+        CREATE INDEX IF NOT EXISTS idx_puzzle_themes_theme_puzzle ON puzzle_themes(theme, puzzle_id);
         CREATE INDEX IF NOT EXISTS idx_puzzle_opening_tags_puzzle_id ON puzzle_opening_tags(puzzle_id);
         CREATE INDEX IF NOT EXISTS idx_puzzle_opening_tags_tag ON puzzle_opening_tags(opening_tag);
+        CREATE INDEX IF NOT EXISTS idx_puzzle_opening_tags_tag_puzzle ON puzzle_opening_tags(opening_tag, puzzle_id);
         CREATE INDEX IF NOT EXISTS idx_puzzles_rating_id ON puzzles(rating, id);
         "#
     )?;
@@ -2856,7 +3114,7 @@ mod tests {
         cache.get_puzzles_with_filters(file, min_rating, max_rating, random, themes, opening_tags)?;
 
         match cache.get_next_puzzle() {
-            Some(p) => Ok(p.clone()),
+            Some(p) => Ok(p),
             None => Err(Error::NoPuzzles),
         }
     }
@@ -2924,8 +3182,8 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(puzzle.id, 1);
         assert_eq!(puzzle.rating, 1500);
-        assert_eq!(puzzle.themes.as_deref(), Some("advantage"));
     }
 
     #[test]
@@ -2944,8 +3202,8 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(puzzle.id, 1);
         assert_eq!(puzzle.rating, 1500);
-        assert_eq!(puzzle.opening_tags.as_deref(), Some("kings-gambit"));
     }
 
     #[test]
@@ -3127,7 +3385,7 @@ fn test_parse_puzzles_from_pgn_ignores_incomplete_entries() {
 
 #[test]
 fn test_puzzle_cache_counter_and_reload_when_exhausted() {
-    // Verify PuzzleCache advances counter and reloads when it reaches cache_size.
+    // Verify PuzzleCache advances through the candidate deck without repeats until wrap.
     let file = create_test_puzzle_db();
     let file_path = file.path().to_string_lossy().to_string();
 
@@ -3138,20 +3396,23 @@ fn test_puzzle_cache_counter_and_reload_when_exhausted() {
         .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None)
         .unwrap();
 
-    let p1 = cache.get_next_puzzle().cloned().unwrap();
-    let p2 = cache.get_next_puzzle().cloned().unwrap();
+    let p1 = cache.get_next_puzzle().unwrap();
+    let p2 = cache.get_next_puzzle().unwrap();
     assert!(cache.get_next_puzzle().is_none());
+    assert_ne!(p1.id, p2.id);
 
-    // Reload should happen because counter >= cache_size.
+    // On next refill with same filters, deck cursor should continue (third unique),
+    // then wrap to the first entry.
     cache
         .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None)
         .unwrap();
 
-    let p1_again = cache.get_next_puzzle().cloned().unwrap();
+    let p3 = cache.get_next_puzzle().unwrap();
+    let p1_again = cache.get_next_puzzle().unwrap();
 
-    // With deterministic ordering (random=false), first puzzle should be the same as before.
+    assert_ne!(p3.id, p1.id);
+    assert_ne!(p3.id, p2.id);
     assert_eq!(p1.id, p1_again.id);
-    assert_ne!(p1.id, p2.id);
 }
 
 #[test]
@@ -3178,8 +3439,8 @@ fn test_puzzle_cache_reload_when_filters_change() {
         )
         .unwrap();
 
-    let p = cache.get_next_puzzle().cloned().unwrap();
+    let p = cache.get_next_puzzle().unwrap();
+    assert_eq!(p.id, 1);
     assert_eq!(p.rating, 1500);
-    assert_eq!(p.themes.as_deref(), Some("advantage"));
     }
 }

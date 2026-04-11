@@ -88,7 +88,7 @@ export function AddPuzzle({
         throw new Error(result.error);
       }
 
-      setPuzzleDbs(await getPuzzleDatabases());
+      setPuzzleDbs(await getPuzzleDatabases(true));
     } catch (error) {
       const message =
         error instanceof Error
@@ -315,7 +315,7 @@ function PuzzleDbCard({
         title: name,
         description: description || null,
       });
-      setPuzzleDbs(await getPuzzleDatabases());
+      setPuzzleDbs(await getPuzzleDatabases(true));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       notifications.update({

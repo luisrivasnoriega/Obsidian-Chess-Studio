@@ -16,7 +16,7 @@ import {
   hidePuzzleRatingAtom,
   inOrderPuzzlesAtom,
   jumpToNextPuzzleAtom,
-  progressivePuzzlesAtom,
+  puzzleAdaptiveOffsetAtom,
   puzzlePlayerRatingAtom,
 } from "@/state/atoms";
 import { positionFromFen } from "@/utils/chessops";
@@ -43,12 +43,11 @@ function Puzzles({ id }: { id: string }) {
   // Custom hooks for state management
   const {
     puzzleDbs,
+    isLoadingPuzzleDbs,
     setPuzzleDbs,
     selectedDb,
     setSelectedDb,
-    ratingRange,
     setRatingRange,
-    dbRatingRange,
     minRating,
     maxRating,
     generatePuzzle: generatePuzzleFromDb,
@@ -61,7 +60,7 @@ function Puzzles({ id }: { id: string }) {
   const { puzzles, currentPuzzle, changeCompletion, addPuzzle, clearSession, selectPuzzle } = usePuzzleSession(id);
 
   // Local state
-  const [progressive, setProgressive] = useAtom(progressivePuzzlesAtom);
+  const [adaptiveOffset, setAdaptiveOffset] = useAtom(puzzleAdaptiveOffsetAtom);
   const [hideRating, setHideRating] = useAtom(hidePuzzleRatingAtom);
   const [inOrder, setInOrder] = useAtom(inOrderPuzzlesAtom);
   const [jumpToNext, setJumpToNext] = useAtom(jumpToNextPuzzleAtom);
@@ -98,10 +97,7 @@ function Puzzles({ id }: { id: string }) {
     if (isGeneratingPuzzle) return;
     if (!selectedDb) return;
 
-    let range = ratingRange;
-    if (progressive && minRating !== maxRating) {
-      range = calculateProgressiveRange();
-    }
+    const range = calculateAdaptiveRange();
 
     setIsGeneratingPuzzle(true);
     try {
@@ -119,13 +115,15 @@ function Puzzles({ id }: { id: string }) {
     }
   };
 
-  const calculateProgressiveRange = (): [number, number] => {
+  const calculateAdaptiveRange = (): [number, number] => {
     const completedResults = puzzles
       .filter((puzzle) => puzzle.completion !== "incomplete")
       .map((puzzle) => puzzle.completion)
       .slice(-10);
 
-    const range = getAdaptivePuzzleRange(playerRating, completedResults);
+    const safePlayerRating = Number.isFinite(playerRating) ? playerRating : 1500;
+    const targetRating = safePlayerRating + adaptiveOffset;
+    const range = getAdaptivePuzzleRange(targetRating, completedResults);
 
     // Clamp to database bounds
     let [min, max] = range;
@@ -156,6 +154,13 @@ function Puzzles({ id }: { id: string }) {
     setOpeningTags([]);
   };
 
+  const handleAdaptiveOffsetChange = (value: number) => {
+    setAdaptiveOffset(value);
+    if (selectedDb) {
+      clearPuzzleCache(selectedDb);
+    }
+  };
+
   const handleAddNew = useCallback(() => {
     setAddPuzzleModalOpened(true);
   }, []);
@@ -183,12 +188,12 @@ function Puzzles({ id }: { id: string }) {
           // Delete the file in the background
           commands.deleteDatabase(dbPath).catch((_error) => {
             // If it fails, reload the list to restore state
-            getPuzzleDatabases().then((updatedPuzzleDbs) => {
+            getPuzzleDatabases(true).then((updatedPuzzleDbs) => {
               setPuzzleDbs(updatedPuzzleDbs);
             });
           });
           // Reload the list in the background to sync
-          getPuzzleDatabases()
+          getPuzzleDatabases(true)
             .then((updatedPuzzleDbs) => {
               setPuzzleDbs(updatedPuzzleDbs);
             })
@@ -370,13 +375,9 @@ function Puzzles({ id }: { id: string }) {
                 onDatabaseChange={handleDatabaseChange}
                 onAddNew={handleAddNew}
                 onDelete={handleDeletePuzzle}
-                ratingRange={ratingRange}
-                onRatingRangeChange={setRatingRange}
-                minRating={minRating}
-                maxRating={maxRating}
-                dbRatingRange={dbRatingRange}
-                progressive={progressive}
-                onProgressiveChange={setProgressive}
+                loadingDatabases={isLoadingPuzzleDbs}
+                adaptiveOffset={adaptiveOffset}
+                onAdaptiveOffsetChange={handleAdaptiveOffsetChange}
                 hideRating={hideRating}
                 onHideRatingChange={setHideRating}
                 inOrder={inOrder}
@@ -454,13 +455,9 @@ function Puzzles({ id }: { id: string }) {
                 onDatabaseChange={handleDatabaseChange}
                 onAddNew={handleAddNew}
                 onDelete={handleDeletePuzzle}
-                ratingRange={ratingRange}
-                onRatingRangeChange={setRatingRange}
-                minRating={minRating}
-                maxRating={maxRating}
-                dbRatingRange={dbRatingRange}
-                progressive={progressive}
-                onProgressiveChange={setProgressive}
+                loadingDatabases={isLoadingPuzzleDbs}
+                adaptiveOffset={adaptiveOffset}
+                onAdaptiveOffsetChange={handleAdaptiveOffsetChange}
                 hideRating={hideRating}
                 onHideRatingChange={setHideRating}
                 inOrder={inOrder}

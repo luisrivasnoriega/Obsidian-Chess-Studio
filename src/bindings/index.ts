@@ -1,7 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import type {
   BestMoves as BestMovesT,
   DatabaseInfo as DatabaseInfoT,
   GameQueryJs,
+  Puzzle,
+  Result,
   Score as ScoreT,
   ScoreValue as ScoreValueT,
 } from "./generated";
@@ -29,3 +32,31 @@ export type DatabaseInfo =
     };
 
 export type GameQuery = GameQueryJs;
+
+export async function getPuzzleBatch(
+  file: string,
+  minRating: number,
+  maxRating: number,
+  random: boolean,
+  themes: string[] | null,
+  openingTags: string[] | null,
+  count: number,
+): Promise<Result<Puzzle[], string>> {
+  try {
+    return {
+      status: "ok",
+      data: await invoke("get_puzzle_batch", {
+        file,
+        minRating,
+        maxRating,
+        random,
+        themes,
+        openingTags,
+        count,
+      }),
+    };
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    return { status: "error", error: e as any };
+  }
+}

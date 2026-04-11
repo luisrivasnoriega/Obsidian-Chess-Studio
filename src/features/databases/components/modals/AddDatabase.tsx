@@ -577,7 +577,7 @@ function _PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Pu
           }
         }
 
-        await setPuzzleDbs(await getPuzzleDatabases());
+        await setPuzzleDbs(await getPuzzleDatabases(true));
       } finally {
         // Ensure all states are cleared when everything is done
         setInProgress(false);

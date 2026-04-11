@@ -1,11 +1,8 @@
-import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { loadDirectories } from "@/App";
 import { commands, type PuzzleDatabaseInfo } from "@/bindings";
 import type { FileInfoMetadata, FileMetadata } from "@/features/files/utils/file";
 import { logger } from "./logger";
 import { unwrap } from "./unwrap";
-
-export const PUZZLE_DEBUG_LOGS = false;
 
 export type Completion = "correct" | "incorrect" | "incomplete";
 
@@ -31,6 +28,10 @@ export const PROGRESSIVE_MAX_PROB = 0.6;
 export const ADAPTIVE_CONSECUTIVE_FAILURES = 3;
 export const ADAPTIVE_EASY_MIN_PROB = 0.6;
 export const ADAPTIVE_EASY_MAX_PROB = 0.8;
+const PUZZLE_DB_CACHE_TTL_MS = 15_000;
+
+let puzzleDbCache: { timestamp: number; value: PuzzleDatabaseInfo[] } | null = null;
+let puzzleDbLoadPromise: Promise<PuzzleDatabaseInfo[]> | null = null;
 
 // Helper functions to get data from different sections
 async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]> {
@@ -52,18 +53,14 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
         if (!db.name) return null;
         const path = await resolve(appDataDirPath, "puzzles", db.name);
         const fileExists = await exists(path);
-        return fileExists ? db : null;
+        return fileExists ? { name: db.name, path } : null;
       }),
     );
 
     const existingDbs = verifiedDbs.filter((db): db is NonNullable<typeof db> => db !== null);
-    logger.debug(
-      `Found ${existingDbs.length} existing puzzle database files:`,
-      existingDbs.map((db) => db.name),
-    );
 
     // Get puzzle database info, filtering out any that fail (e.g., file was deleted between check and read)
-    const results = await Promise.allSettled(existingDbs.map((db) => getPuzzleDatabase(db.name)));
+    const results = await Promise.allSettled(existingDbs.map((db) => getPuzzleDatabase(db.path)));
 
     // Log any failures so we know which databases couldn't be loaded
     for (const r of results) {
@@ -82,16 +79,9 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
         if (dbInfo.puzzleCount > 0 && dbInfo.storageSize > 0) {
           return true;
         }
-        logger.debug(
-          `Skipping empty or invalid puzzle database: ${dbInfo.title} (puzzles: ${dbInfo.puzzleCount}, size: ${dbInfo.storageSize})`,
-        );
         return false;
       })
       .map((r) => r.value);
-    logger.debug(
-      "Loaded puzzle databases:",
-      dbPuzzles.map((db) => ({ title: db.title, puzzleCount: db.puzzleCount })),
-    );
   } catch (err) {
     logger.error("Error loading .db3 puzzles:", err);
   }
@@ -141,13 +131,17 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
             ?.slice("depth:".length)
             .trim() || null;
 
-        const stats = unwrap(await commands.getFileMetadata(file.path));
+        const [statsResult, countResult] = await Promise.all([
+          commands.getFileMetadata(file.path),
+          commands.countPgnGames(file.path),
+        ]);
+        const stats = unwrap(statsResult);
         return {
           title: file.name.replace(".pgn", ""),
           description: isPuzzleVariants
             ? `Puzzle variants${variantName ? ` • ${variantName}` : ""}${depth ? ` • d${depth}` : ""}`
             : "Custom puzzle collection",
-          puzzleCount: unwrap(await commands.countPgnGames(file.path)),
+          puzzleCount: unwrap(countResult),
           storageSize: BigInt(stats.size),
           path: file.path,
         };
@@ -175,18 +169,6 @@ export function updateElo(
   const expected = expectedScore(playerRating, puzzleRating);
   const newRating = playerRating + kFactor * (score - expected);
 
-  PUZZLE_DEBUG_LOGS &&
-    logger.debug("Elo calculation:", {
-      playerRating: Math.round(playerRating),
-      puzzleRating,
-      solved,
-      kFactor,
-      expected: expected.toFixed(3),
-      score,
-      newRating: Math.round(newRating),
-      change: Math.round(newRating - playerRating),
-    });
-
   return Math.round(newRating);
 }
 
@@ -204,16 +186,6 @@ export function getPuzzleRangeProb(
   const lowerBound = invertElo(maxProb); // easier puzzles (higher success chance)
   const upperBound = invertElo(minProb); // harder puzzles (lower success chance)
   const range: [number, number] = [Math.round(lowerBound), Math.round(upperBound)];
-
-  PUZZLE_DEBUG_LOGS &&
-    logger.debug("Puzzle range calculation:", {
-      playerRating,
-      minProb,
-      maxProb,
-      lowerBound: Math.round(lowerBound),
-      upperBound: Math.round(upperBound),
-      range,
-    });
 
   return range;
 }
@@ -233,14 +205,6 @@ export function getAdaptiveProbabilities(recentResults: Completion[]): [number, 
     maxProb = ADAPTIVE_EASY_MAX_PROB;
   }
 
-  PUZZLE_DEBUG_LOGS &&
-    logger.debug("Adaptive probabilities:", {
-      recentResults,
-      consecutiveFailures: failureCount,
-      minProb,
-      maxProb,
-    });
-
   return [minProb, maxProb];
 }
 
@@ -252,11 +216,8 @@ export function getAdaptivePuzzleRange(playerRating: number, recentResults: Comp
   return getPuzzleRangeProb(playerRating, minProb, maxProb);
 }
 
-async function getPuzzleDatabase(name: string): Promise<PuzzleDatabaseInfo | null> {
-  const appDataDirPath = await appDataDir();
-  const path = await resolve(appDataDirPath, "puzzles", name);
-
-  // Check if file exists first to avoid showing errors for missing files
+async function getPuzzleDatabase(path: string): Promise<PuzzleDatabaseInfo | null> {
+  // Check if file exists first to avoid showing errors for missing files.
   const { exists } = await import("@tauri-apps/plugin-fs");
   const fileExists = await exists(path);
   if (!fileExists) {
@@ -277,13 +238,28 @@ async function getPuzzleDatabase(name: string): Promise<PuzzleDatabaseInfo | nul
   return result.data;
 }
 
-export async function getPuzzleDatabases(): Promise<PuzzleDatabaseInfo[]> {
-  // Get puzzle databases from the databases section (AppData/db folder)
-  const dbPuzzles = await getDatabasesFromDatabasesSection();
+export async function getPuzzleDatabases(forceRefresh = false): Promise<PuzzleDatabaseInfo[]> {
+  const now = Date.now();
+  if (!forceRefresh && puzzleDbCache && now - puzzleDbCache.timestamp < PUZZLE_DB_CACHE_TTL_MS) {
+    return puzzleDbCache.value;
+  }
 
-  // Get puzzle files from the files section (document directory)
-  const localPuzzles = await getFilesFromFilesSection();
+  if (!forceRefresh && puzzleDbLoadPromise) {
+    return puzzleDbLoadPromise;
+  }
 
-  // Combine both types of puzzle sources
-  return [...dbPuzzles, ...localPuzzles];
+  puzzleDbLoadPromise = (async () => {
+    const [dbPuzzles, localPuzzles] = await Promise.all([
+      getDatabasesFromDatabasesSection(),
+      getFilesFromFilesSection(),
+    ]);
+
+    const combined = [...dbPuzzles, ...localPuzzles];
+    puzzleDbCache = { timestamp: Date.now(), value: combined };
+    return combined;
+  })().finally(() => {
+    puzzleDbLoadPromise = null;
+  });
+
+  return puzzleDbLoadPromise;
 }

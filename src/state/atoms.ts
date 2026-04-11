@@ -212,6 +212,7 @@ export const jumpToNextPuzzleAtom = atomWithStorage<"off" | "success" | "success
   "success",
 );
 export const puzzleRatingRangeAtom = atomWithStorage<[number, number]>("puzzle-ratings", [1000, 1500]);
+export const puzzleAdaptiveOffsetAtom = atomWithStorage<number>("puzzle-adaptive-offset", 0);
 export const inOrderPuzzlesAtom = atomWithStorage<boolean>("puzzle-in-order", false);
 export const puzzlePlayerRatingAtom = atomWithStorage<number>("puzzle-player-rating", 1500);
 export const maxPuzzlePlayerRatingAtom = atomWithStorage<number>("puzzle-max-player-rating", 1500);

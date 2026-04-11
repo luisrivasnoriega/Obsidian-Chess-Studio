@@ -812,6 +812,7 @@
   "features.puzzle.selectPuzzle": "Select puzzle",
   "features.puzzle.ratingRange": "Rating Range",
   "features.puzzle.progressive": "Adaptive",
+  "features.puzzle.adaptiveOffset": "Adaptive offset (Elo)",
   "features.puzzle.hideRating": "Hide Rating",
   "features.puzzle.inOrder": "In Order",
   "features.puzzle.newPuzzle": "New Puzzle",

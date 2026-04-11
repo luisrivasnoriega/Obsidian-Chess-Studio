@@ -456,6 +456,7 @@
   "features.databases.sourceType.online": "Online",
   "features.databases.sourceType.external": "External",
   "features.puzzle.selectPuzzle": "Select puzzle",
+  "features.puzzle.adaptiveOffset": "Adaptive offset (Elo)",
   "features.puzzle.analysisTabName": "Puzzle Analysis",
   "features.puzzle.add.title": "Add Puzzle",
   "keybindings.goToDashboard": "Go to Dashboard",

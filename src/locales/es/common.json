@@ -1537,6 +1537,7 @@
       "selectPuzzle": "Seleccionar puzzle",
       "ratingRange": "Rango de Elo",
       "progressive": "Adaptativo",
+      "adaptiveOffset": "Ajuste adaptativo (Elo)",
       "hideRating": "Ocultar Elo",
       "inOrder": "En orden",
       "newPuzzle": "Nuevo puzzle",

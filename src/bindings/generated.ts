@@ -159,6 +159,14 @@ async getPuzzle(file: string, minRating: number, maxRating: number, random: bool
     else return { status: "error", error: e  as any };
 }
 },
+async getPuzzleBatch(file: string, minRating: number, maxRating: number, random: boolean, themes: string[] | null, openingTags: string[] | null, count: number) : Promise<Result<Puzzle[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_puzzle_batch", { file, minRating, maxRating, random, themes, openingTags, count }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async searchOpeningName(query: string) : Promise<Result<OutOpening[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("search_opening_name", { query }) };
