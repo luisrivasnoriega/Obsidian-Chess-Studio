@@ -489,6 +489,11 @@ export default function App() {
     rootElement.classList.toggle("rtl", direction === "rtl");
   }, []);
 
+  useEffect(() => {
+    localStorage.removeItem("orion-plan-api-key");
+    sessionStorage.removeItem("orion-plan-api-key");
+  }, []);
+
   // Use ref to prevent infinite loop from state updates triggering this effect
   const isProcessingProfilesRef = useRef(false);
   const lastProcessedHashRef = useRef<string>("");
@@ -499,20 +504,17 @@ export default function App() {
       return;
     }
 
-    // Create a stable hash of the current state to detect actual changes
-    const currentHash = JSON.stringify({
-      profiles: profiles.map((p) => ({ id: p.id, name: p.name })),
-      sessions: sessions.map((s) => {
+    // Build a compact deterministic fingerprint to avoid expensive JSON serialization
+    // of large arrays on every render.
+    const profileHash = profiles.map((p) => `${p.id}:${p.name}`).join("|");
+    const sessionHash = sessions
+      .map((s) => {
         const platform = s.lichess ? "lichess" : "chesscom";
         const username = s.lichess?.username ?? s.chessCom?.username ?? "";
-        return {
-          profileId: s.profileId,
-          player: s.player,
-          key: `${s.profileId ?? ""}:${platform}:${username}`,
-        };
-      }),
-      activeProfileId,
-    });
+        return `${s.profileId ?? ""}:${platform}:${username}:${s.player ?? ""}`;
+      })
+      .join("|");
+    const currentHash = `${activeProfileId ?? ""}::${profileHash}::${sessionHash}`;
 
     // Skip if nothing has actually changed
     if (lastProcessedHashRef.current === currentHash) {
@@ -552,18 +554,22 @@ export default function App() {
         return currentSessionKeys.has(key);
       });
 
+      const existingSessionsByKey = new Map(
+        sessions.map((existing) => {
+          const existingPlatform = existing.lichess ? "lichess" : "chesscom";
+          const existingUsername = existing.lichess?.username ?? existing.chessCom?.username ?? "";
+          const existingKey = `${existing.profileId ?? ""}:${existingPlatform}:${existingUsername}`;
+          return [existingKey, existing] as const;
+        }),
+      );
+
       const sessionsChanged =
         filteredResSessions.length !== sessions.length ||
         filteredResSessions.some((s) => {
           const platform = s.lichess ? "lichess" : "chesscom";
           const username = s.lichess?.username ?? s.chessCom?.username ?? "";
           const sessionKey = `${s.profileId ?? ""}:${platform}:${username}`;
-          const existing = sessions.find((existing) => {
-            const existingPlatform = existing.lichess ? "lichess" : "chesscom";
-            const existingUsername = existing.lichess?.username ?? existing.chessCom?.username ?? "";
-            const existingKey = `${existing.profileId ?? ""}:${existingPlatform}:${existingUsername}`;
-            return existingKey === sessionKey;
-          });
+          const existing = existingSessionsByKey.get(sessionKey);
           // Only consider it changed if profile/player name changed, not if it's a new session
           if (!existing) return false;
           return existing.profileId !== s.profileId || existing.player !== s.player;

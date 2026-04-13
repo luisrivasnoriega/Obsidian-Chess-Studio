@@ -92,7 +92,7 @@ use crate::fs::{download_engine, list_lc0_networks, set_file_as_executable, Down
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
 use crate::online::{
-    create_lichess_tournament, get_chesscom_account, get_lichess_account,
+    consult_orion_plan, consult_orion_plan_from_analysis, create_lichess_tournament, get_chesscom_account, get_lichess_account,
     lichess_challenge_ai, lichess_find_human_game, lichess_get_board_game_state, lichess_make_board_move,
     lichess_resign_board_game,
 };
@@ -103,7 +103,8 @@ use crate::post_game_review::post_game_review_variants;
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
 use crate::puzzle::{
     check_puzzle_db_columns, get_puzzle, get_puzzle_batch, get_puzzle_db_info, get_puzzle_opening_tags,
-    get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file, validate_puzzle_database,
+    get_puzzle_dependent_filters_metadata, get_puzzle_filters_metadata, get_puzzle_rating_range, get_puzzle_themes,
+    import_puzzle_file, validate_puzzle_database,
     download_puzzle_database,
 };
 use crate::puzzle_variants::generate_puzzle_variants_from_tree;
@@ -263,6 +264,8 @@ pub async fn run() {
             check_puzzle_db_columns,
             get_puzzle_themes,
             get_puzzle_opening_tags,
+            get_puzzle_filters_metadata,
+            get_puzzle_dependent_filters_metadata,
             validate_puzzle_database,
             download_puzzle_database,
             check_package_manager_available,
@@ -323,6 +326,8 @@ pub async fn run() {
             get_lichess_account,
             get_chesscom_account,
             create_lichess_tournament,
+            consult_orion_plan,
+            consult_orion_plan_from_analysis,
             lichess_find_human_game,
             lichess_challenge_ai,
             lichess_get_board_game_state,

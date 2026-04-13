@@ -21,6 +21,7 @@ interface PuzzleSettingsProps {
   onAddNew: () => void;
   onDelete: (dbPath: string) => void;
   loadingDatabases: boolean;
+  loadingFilters: boolean;
   adaptiveOffset: number;
   onAdaptiveOffsetChange: (value: number) => void;
   hideRating: boolean;
@@ -35,6 +36,8 @@ interface PuzzleSettingsProps {
   openingTags: string[];
   openingTagsOptions: Array<{ value: string; label: string }>;
   onOpeningTagsChange: (value: string[]) => void;
+  sideToMove: "any" | "white" | "black";
+  onSideToMoveChange: (value: "any" | "white" | "black") => void;
 }
 
 export const PuzzleSettings = ({
@@ -44,6 +47,7 @@ export const PuzzleSettings = ({
   onAddNew,
   onDelete,
   loadingDatabases,
+  loadingFilters,
   adaptiveOffset,
   onAdaptiveOffsetChange,
   hideRating,
@@ -58,6 +62,8 @@ export const PuzzleSettings = ({
   openingTags,
   openingTagsOptions,
   onOpeningTagsChange,
+  sideToMove,
+  onSideToMoveChange,
 }: PuzzleSettingsProps) => {
   const { t } = useTranslation();
 
@@ -110,6 +116,8 @@ export const PuzzleSettings = ({
               {hasThemes && (
                 <MultiSelect
                   label={t("features.puzzle.themes")}
+                  rightSection={loadingFilters ? <Loader size="xs" /> : undefined}
+                  disabled={loadingFilters}
                   data={themesOptions}
                   value={themes}
                   onChange={onThemesChange}
@@ -121,6 +129,8 @@ export const PuzzleSettings = ({
               {hasOpeningTags && (
                 <MultiSelect
                   label={t("features.puzzle.openingTags")}
+                  rightSection={loadingFilters ? <Loader size="xs" /> : undefined}
+                  disabled={loadingFilters}
                   data={openingTagsOptions}
                   value={openingTags}
                   onChange={onOpeningTagsChange}
@@ -133,6 +143,18 @@ export const PuzzleSettings = ({
           )}
           {showThemeFilters && <Divider my="sm" />}
           <Group align="end">
+            <Select
+              label={t("features.puzzle.sideToMove")}
+              data={[
+                { value: "any", label: t("features.puzzle.sideAny") },
+                { value: "white", label: t("features.puzzle.sideWhite") },
+                { value: "black", label: t("features.puzzle.sideBlack") },
+              ]}
+              value={sideToMove}
+              onChange={(value) => onSideToMoveChange((value as "any" | "white" | "black") ?? "any")}
+              allowDeselect={false}
+              flex={1}
+            />
             <NumberInput
               label={t("features.puzzle.adaptiveOffset")}
               value={adaptiveOffset}

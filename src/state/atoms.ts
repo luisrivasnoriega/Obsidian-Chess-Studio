@@ -123,12 +123,36 @@ export type Profile = {
   fideId?: string;
   displayName?: string;
   lichessToken?: string;
+  hasPremiumAccess?: boolean;
+  premiumUsername?: string;
+  premiumValidatedAt?: number;
   createdAt: number;
   updatedAt: number;
 };
 
 export const profilesAtom = atomWithStorage<Profile[]>("profiles", [], undefined, { getOnInit: true });
 export const activeProfileIdAtom = atomWithStorage<string | null>("activeProfileId", null, undefined, {
+  getOnInit: true,
+});
+
+export const activeProfileHasPremiumAccessAtom = atom((get) => {
+  const activeProfileId = get(activeProfileIdAtom);
+  if (!activeProfileId) return false;
+  const profiles = get(profilesAtom);
+  return profiles.some((profile) => profile.id === activeProfileId && profile.hasPremiumAccess === true);
+});
+
+export const activeProfilePremiumUsernameAtom = atom((get) => {
+  const activeProfileId = get(activeProfileIdAtom);
+  if (!activeProfileId) return null;
+  const profiles = get(profilesAtom);
+  const profile = profiles.find((item) => item.id === activeProfileId);
+  const username = profile?.premiumUsername?.trim();
+  return username && username.length > 0 ? username : null;
+});
+
+export const orionPlanApiKeyAtom = atom<string>("");
+export const orionPlanProviderSignatureAtom = atomWithStorage<string>("orion-plan-provider-signature", "", undefined, {
   getOnInit: true,
 });
 
@@ -214,6 +238,7 @@ export const jumpToNextPuzzleAtom = atomWithStorage<"off" | "success" | "success
 export const puzzleRatingRangeAtom = atomWithStorage<[number, number]>("puzzle-ratings", [1000, 1500]);
 export const puzzleAdaptiveOffsetAtom = atomWithStorage<number>("puzzle-adaptive-offset", 0);
 export const inOrderPuzzlesAtom = atomWithStorage<boolean>("puzzle-in-order", false);
+export const puzzleSideToMoveAtom = atomWithStorage<"any" | "white" | "black">("puzzle-side-to-move", "any");
 export const puzzlePlayerRatingAtom = atomWithStorage<number>("puzzle-player-rating", 1500);
 export const maxPuzzlePlayerRatingAtom = atomWithStorage<number>("puzzle-max-player-rating", 1500);
 

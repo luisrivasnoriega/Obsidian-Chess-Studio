@@ -1,39 +1,68 @@
 import {
   Accordion,
   ActionIcon,
+  Badge,
   Box,
+  Button,
   Code,
   Collapse,
+  Divider,
   Group,
+  Modal,
+  Paper,
   Progress,
+  ScrollArea,
   Skeleton,
   Stack,
   Table,
+  Tabs,
   Text,
+  TextInput,
   Tooltip,
+  TypographyStylesProvider,
   useMantineTheme,
 } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
-import { IconGripVertical, IconPlayerPause, IconPlayerPlay, IconSettings, IconTargetArrow } from "@tabler/icons-react";
+import { notifications } from "@mantine/notifications";
+import {
+  IconBrain,
+  IconGripVertical,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconSettings,
+  IconTargetArrow,
+} from "@tabler/icons-react";
 import { parseUci } from "chessops";
 import { INITIAL_FEN, makeFen } from "chessops/fen";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { match } from "ts-pattern";
 import type { BestMoves } from "@/bindings";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import {
+  activeProfileHasPremiumAccessAtom,
+  activeProfileIdAtom,
+  activeProfilePremiumUsernameAtom,
   activeTabAtom,
+  currentDbTypeAtom,
   currentThreatAtom,
   engineMovesFamily,
   engineProgressFamily,
   enginesAtom,
+  lichessOptionsAtom,
+  masterOptionsAtom,
+  orionPlanApiKeyAtom,
+  orionPlanProviderSignatureAtom,
+  profilesAtom,
   tabEngineSettingsFamily,
 } from "@/state/atoms";
 import { chessopsError, positionFromFen, swapMove } from "@/utils/chessops";
 import type { Engine } from "@/utils/engines";
+import { consultOrionPlanFromAnalysis, ORION_PLAN_PROVIDER_SIGNATURE } from "@/utils/orionPlan";
 import AnalysisRow from "./AnalysisRow";
 import * as classes from "./BestMoves.css";
 import EngineSettingsForm, { type Settings } from "./EngineSettingsForm";
@@ -55,8 +84,29 @@ interface BestMovesProps {
   orientation: "white" | "black";
 }
 
+type PlanSectionKey =
+  | "POSITION_VERDICT"
+  | "MAIN_PLAN"
+  | "SECONDARY_PLANS"
+  | "OPPONENT_COUNTERPLAY"
+  | "PLAN_TRIGGERS"
+  | "CANDIDATE_MOVES"
+  | "CRITICAL_RISKS"
+  | "PRACTICAL_ADVICE";
+
+const PLAN_SECTION_ORDER: PlanSectionKey[] = [
+  "POSITION_VERDICT",
+  "MAIN_PLAN",
+  "SECONDARY_PLANS",
+  "OPPONENT_COUNTERPLAY",
+  "PLAN_TRIGGERS",
+  "CANDIDATE_MOVES",
+  "CRITICAL_RISKS",
+  "PRACTICAL_ADVICE",
+];
+
 function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps, orientation }: BestMovesProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const activeTab = useAtomValue(activeTabAtom);
   const ev = useAtomValue(engineMovesFamily({ engine: engine.name, tab: activeTab! }));
@@ -99,6 +149,46 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
   const [settingsOn, toggleSettingsOn] = useToggle();
   const [threat, setThreat] = useAtom(currentThreatAtom);
   const theme = useMantineTheme();
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
+  const profiles = useAtomValue(profilesAtom);
+  const hasPremiumAccess = useAtomValue(activeProfileHasPremiumAccessAtom);
+  const premiumUsername = useAtomValue(activeProfilePremiumUsernameAtom);
+  const [orionPlanApiKey, setOrionPlanApiKey] = useAtom(orionPlanApiKeyAtom);
+  const [orionPlanProviderSignature, setOrionPlanProviderSignature] = useAtom(orionPlanProviderSignatureAtom);
+  const dbType = useAtomValue(currentDbTypeAtom);
+  const lichessOptions = useAtomValue(lichessOptionsAtom);
+  const masterOptions = useAtomValue(masterOptionsAtom);
+  const [apiKeyModalOpened, setApiKeyModalOpened] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState(orionPlanApiKey);
+  const [planModalOpened, setPlanModalOpened] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planText, setPlanText] = useState("");
+  const [planPromptText, setPlanPromptText] = useState("");
+  const canConsultPlan = hasPremiumAccess && Boolean(premiumUsername);
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
+    [profiles, activeProfileId],
+  );
+  const lichessToken = activeProfile?.lichessToken?.trim() || undefined;
+
+  useEffect(() => {
+    if (!apiKeyModalOpened) {
+      setApiKeyDraft(orionPlanApiKey);
+    }
+  }, [apiKeyModalOpened, orionPlanApiKey]);
+
+  useEffect(() => {
+    localStorage.removeItem("orion-plan-api-key");
+  }, []);
+
+  useEffect(() => {
+    if (orionPlanProviderSignature !== ORION_PLAN_PROVIDER_SIGNATURE) {
+      if (orionPlanApiKey.trim().length > 0) {
+        setOrionPlanApiKey("");
+      }
+      setOrionPlanProviderSignature(ORION_PLAN_PROVIDER_SIGNATURE);
+    }
+  }, [orionPlanProviderSignature, orionPlanApiKey, setOrionPlanApiKey, setOrionPlanProviderSignature]);
 
   const [pos, error] = positionFromFen(fen);
   if (pos) {
@@ -132,6 +222,327 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
   const engineVariations = useDeferredValue(
     useMemo(() => ev.get(`${searchingFen}:${searchingMoves.join(",")}`), [ev, searchingFen, searchingMoves]),
   );
+
+  const buildFenTrail = useCallback((): string[] => {
+    if (!finalFen) {
+      return [];
+    }
+    const [linePos] = positionFromFen(fen);
+    if (!linePos) {
+      return [finalFen];
+    }
+
+    const trail: string[] = [makeFen(linePos.toSetup())];
+    for (const uci of moves) {
+      const move = parseUci(uci);
+      if (!move) break;
+      try {
+        linePos.play(move);
+        trail.push(makeFen(linePos.toSetup()));
+      } catch {
+        break;
+      }
+    }
+    return trail;
+  }, [fen, moves, finalFen]);
+
+  const handleConsultPlan = useCallback(
+    async (apiKeyOverride?: string) => {
+      if (!finalFen || planLoading) {
+        return;
+      }
+
+      if (!engineVariations || engineVariations.length === 0) {
+        notifications.show({
+          title: t("common.warning"),
+          message: t("features.board.analysis.consultPlanNeedsEngine"),
+          color: "yellow",
+        });
+        return;
+      }
+
+      const apiKey = (apiKeyOverride ?? orionPlanApiKey).trim();
+      if (!apiKey) {
+        setApiKeyDraft(orionPlanApiKey);
+        setApiKeyModalOpened(true);
+        return;
+      }
+
+      setPlanLoading(true);
+      setPlanModalOpened(true);
+      setPlanText("");
+      setPlanPromptText("");
+
+      try {
+        const response = await consultOrionPlanFromAnalysis({
+          apiKey,
+          orientation,
+          uiLanguage: i18n.resolvedLanguage || i18n.language,
+          premiumUser: premiumUsername || undefined,
+          rootFen: fen,
+          finalFen,
+          fenTrail: buildFenTrail(),
+          gameMovesUci: moves,
+          engineName: engine.name,
+          engineGoJson: JSON.stringify(settings.go),
+          engineSettingsJson: JSON.stringify(settings.settings),
+          engineLinesJson: JSON.stringify(
+            engineVariations.map((line) => ({
+              multipv: line.multipv,
+              depth: line.depth,
+              nodes: line.nodes,
+              nps: line.nps,
+              score: line.score,
+              uciMoves: line.uciMoves,
+              sanMoves: line.sanMoves,
+            })),
+          ),
+          dbType,
+          lichessOptionsJson: JSON.stringify(lichessOptions),
+          masterOptionsJson: JSON.stringify(masterOptions),
+          lichessToken,
+        });
+        setPlanText(response.plan);
+        setPlanPromptText(
+          [
+            "=== SYSTEM PROMPT ===",
+            response.systemPrompt,
+            "",
+            "=== USER PROMPT ===",
+            response.userPrompt,
+            "",
+            "=== PAYLOAD JSON ===",
+            response.payloadJson,
+          ].join("\n"),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const authError = /(401|403|unauthorized|forbidden|invalid api[- ]?key|api key)/i.test(message);
+        if (authError) {
+          setOrionPlanApiKey("");
+          setApiKeyDraft("");
+          setApiKeyModalOpened(true);
+        }
+        notifications.show({
+          title: t("common.error"),
+          message: authError
+            ? t("features.board.analysis.consultPlanApiKeyInvalid")
+            : t("features.board.analysis.consultPlanFailed", { error: message }),
+          color: "red",
+        });
+      } finally {
+        setPlanLoading(false);
+      }
+    },
+    [
+      finalFen,
+      planLoading,
+      engineVariations,
+      orionPlanApiKey,
+      fen,
+      orientation,
+      premiumUsername,
+      engine.name,
+      settings.go,
+      settings.settings,
+      moves,
+      dbType,
+      lichessOptions,
+      masterOptions,
+      lichessToken,
+      i18n.language,
+      i18n.resolvedLanguage,
+      buildFenTrail,
+      setOrionPlanApiKey,
+      t,
+    ],
+  );
+
+  const handleSaveApiKey = useCallback(() => {
+    const trimmed = apiKeyDraft.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setOrionPlanApiKey(trimmed);
+    setApiKeyModalOpened(false);
+    void handleConsultPlan(trimmed);
+  }, [apiKeyDraft, setOrionPlanApiKey, handleConsultPlan]);
+
+  const planStructured = useMemo(() => {
+    const raw = planText.trim();
+    if (!raw) {
+      return {
+        sections: {} as Record<PlanSectionKey, string>,
+        isStructured: false,
+      };
+    }
+
+    const sections = {} as Record<PlanSectionKey, string>;
+    const normalized = raw.replace(/\r/g, "");
+    const headingRegex = /^##\s*([A-Z_]+)\s*$/gm;
+    const matches = [...normalized.matchAll(headingRegex)];
+
+    for (let i = 0; i < matches.length; i += 1) {
+      const key = matches[i][1] as PlanSectionKey;
+      if (!PLAN_SECTION_ORDER.includes(key)) continue;
+      const start = (matches[i].index ?? 0) + matches[i][0].length;
+      const end = i + 1 < matches.length ? (matches[i + 1].index ?? normalized.length) : normalized.length;
+      const content = normalized.slice(start, end).trim();
+      sections[key] = content;
+    }
+
+    const structuredCount = PLAN_SECTION_ORDER.filter((key) => (sections[key] ?? "").trim().length > 0).length;
+    let isStructured = structuredCount >= 4;
+
+    if (!isStructured) {
+      const toReadable = (value: unknown, depth = 0): string => {
+        if (value == null) return "";
+        if (typeof value === "string") return value.trim();
+        if (typeof value === "number" || typeof value === "boolean") return String(value);
+        if (Array.isArray(value)) {
+          const lines = value
+            .map((item) => {
+              if (typeof item === "string") return `- ${item}`;
+              if (item && typeof item === "object") {
+                const move = (item as Record<string, unknown>).move;
+                const purpose = (item as Record<string, unknown>).purpose;
+                const fit = (item as Record<string, unknown>).whyThisFitsThePlan;
+                if (typeof move === "string" || typeof purpose === "string" || typeof fit === "string") {
+                  return `- Move: ${String(move ?? "-")} | Purpose: ${String(purpose ?? "-")} | Fit: ${String(fit ?? "-")}`;
+                }
+                const parts = Object.entries(item as Record<string, unknown>)
+                  .map(([k, v]) => `${k}: ${toReadable(v, depth + 1)}`)
+                  .join(" | ");
+                return `- ${parts}`;
+              }
+              return `- ${String(item)}`;
+            })
+            .filter((line) => line.trim().length > 0);
+          return lines.join("\n");
+        }
+        if (typeof value === "object") {
+          const lines = Object.entries(value as Record<string, unknown>)
+            .map(([k, v]) => {
+              const humanKey = k.replace(/([A-Z])/g, " $1").replace(/^./, (ch) => ch.toUpperCase());
+              return `${depth > 0 ? "-" : "-"} ${humanKey}: ${toReadable(v, depth + 1)}`;
+            })
+            .filter((line) => line.trim().length > 0);
+          return lines.join("\n");
+        }
+        return "";
+      };
+
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const pickField = (...keys: string[]) => {
+          for (const key of keys) {
+            if (Object.hasOwn(parsed, key) && parsed[key] != null) {
+              return parsed[key];
+            }
+          }
+          return undefined;
+        };
+
+        const mapped: Array<[PlanSectionKey, unknown]> = [
+          ["POSITION_VERDICT", pickField("POSITION_VERDICT", "positionVerdict", "overview")],
+          ["MAIN_PLAN", pickField("MAIN_PLAN", "mainPlan", "strategicPlan")],
+          ["SECONDARY_PLANS", pickField("SECONDARY_PLANS", "secondaryPlans")],
+          ["OPPONENT_COUNTERPLAY", pickField("OPPONENT_COUNTERPLAY", "opponentCounterplay")],
+          ["PLAN_TRIGGERS", pickField("PLAN_TRIGGERS", "planTriggers")],
+          ["CANDIDATE_MOVES", pickField("CANDIDATE_MOVES", "candidateMoves")],
+          ["CRITICAL_RISKS", pickField("CRITICAL_RISKS", "criticalRisks", "tacticalAlerts")],
+          ["PRACTICAL_ADVICE", pickField("PRACTICAL_ADVICE", "practicalAdvice", "practicalTips")],
+        ];
+
+        for (const [key, value] of mapped) {
+          const readable = toReadable(value).trim();
+          if (readable.length > 0) {
+            sections[key] = readable;
+          }
+        }
+
+        const mappedCount = PLAN_SECTION_ORDER.filter((key) => (sections[key] ?? "").trim().length > 0).length;
+        isStructured = mappedCount >= 3;
+      } catch {
+        // keep non-structured fallback
+      }
+    }
+
+    return {
+      sections,
+      isStructured,
+    };
+  }, [planText]);
+
+  const sectionTitleByKey = useMemo(
+    (): Record<PlanSectionKey, string> => ({
+      POSITION_VERDICT: t("features.board.analysis.consultPlanSectionVerdict"),
+      MAIN_PLAN: t("features.board.analysis.consultPlanSectionMainPlan"),
+      SECONDARY_PLANS: t("features.board.analysis.consultPlanSectionSecondary"),
+      OPPONENT_COUNTERPLAY: t("features.board.analysis.consultPlanSectionCounterplay"),
+      PLAN_TRIGGERS: t("features.board.analysis.consultPlanSectionTriggers"),
+      CANDIDATE_MOVES: t("features.board.analysis.consultPlanSectionMoves"),
+      CRITICAL_RISKS: t("features.board.analysis.consultPlanSectionRisks"),
+      PRACTICAL_ADVICE: t("features.board.analysis.consultPlanSectionAdvice"),
+    }),
+    [t],
+  );
+
+  const planDisplayText = useMemo(() => {
+    if (planStructured.isStructured) {
+      return PLAN_SECTION_ORDER.map((key) => {
+        const content = planStructured.sections[key]?.trim();
+        if (!content) return "";
+        return `## ${sectionTitleByKey[key]}\n${content}`;
+      })
+        .filter(Boolean)
+        .join("\n\n");
+    }
+    return planText.trim();
+  }, [planStructured, sectionTitleByKey, planText]);
+
+  const handleCopyPlan = useCallback(async () => {
+    if (!planDisplayText.trim()) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(planDisplayText);
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.board.analysis.consultPlanCopied"),
+        color: "green",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.board.analysis.consultPlanFailed", { error: message }),
+        color: "red",
+      });
+    }
+  }, [planDisplayText, t]);
+
+  const handleCopyPrompt = useCallback(async () => {
+    if (!planPromptText.trim()) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(planPromptText);
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.board.analysis.consultPlanPromptCopied"),
+        color: "green",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.board.analysis.consultPlanFailed", { error: message }),
+        color: "red",
+      });
+    }
+  }, [planPromptText, t]);
 
   return (
     <>
@@ -198,6 +609,21 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
           remote={engine.type !== "local"}
         />
       </Collapse>
+      {canConsultPlan && (
+        <Box px={30} pb={10}>
+          <Divider mb="xs" />
+          <Button
+            leftSection={<IconBrain size="1rem" />}
+            variant="light"
+            size="xs"
+            loading={planLoading}
+            disabled={!finalFen || !engineVariations || engineVariations.length === 0}
+            onClick={() => void handleConsultPlan()}
+          >
+            {t("features.board.analysis.consultPlan")}
+          </Button>
+        </Box>
+      )}
 
       <Progress
         value={isGameOver ? 0 : progress}
@@ -277,6 +703,142 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
           </Table.Tbody>
         </Table>
       </Accordion.Panel>
+      <Modal
+        opened={apiKeyModalOpened}
+        onClose={() => setApiKeyModalOpened(false)}
+        title={t("features.board.analysis.consultPlanApiKeyTitle")}
+        centered
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            {t("features.board.analysis.consultPlanApiKeyDescription")}
+          </Text>
+          <TextInput
+            label={t("features.board.analysis.consultPlanApiKeyLabel")}
+            placeholder={t("features.board.analysis.consultPlanApiKeyPlaceholder")}
+            type="password"
+            value={apiKeyDraft}
+            onChange={(event) => setApiKeyDraft(event.currentTarget.value)}
+            autoFocus
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setApiKeyModalOpened(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={handleSaveApiKey} disabled={apiKeyDraft.trim().length === 0}>
+              {t("common.save")}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={planModalOpened}
+        onClose={() => setPlanModalOpened(false)}
+        title={t("features.board.analysis.consultPlanResult")}
+        centered
+        size="70rem"
+      >
+        <Tabs defaultValue="response">
+          <Tabs.List>
+            <Tabs.Tab value="response">{t("features.board.analysis.consultPlanTabResponse")}</Tabs.Tab>
+            <Tabs.Tab value="prompt">{t("features.board.analysis.consultPlanTabPrompt")}</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="response" pt="sm">
+            <Stack>
+              {planLoading ? (
+                <Text size="sm">{t("features.board.analysis.consultPlanLoading")}</Text>
+              ) : planText.trim().length > 0 ? (
+                <Paper withBorder p="md" radius="md">
+                  <Group justify="space-between" mb="xs">
+                    <Badge variant="light">{t("features.board.analysis.consultPlanReadable")}</Badge>
+                    <Button variant="default" size="xs" onClick={() => void handleCopyPlan()}>
+                      {t("features.board.analysis.consultPlanCopyResponse")}
+                    </Button>
+                  </Group>
+                  <ScrollArea h={500} offsetScrollbars>
+                    {planStructured.isStructured ? (
+                      <Stack gap="md">
+                        {PLAN_SECTION_ORDER.map((key) => {
+                          const content = (planStructured.sections[key] ?? "").trim();
+                          if (!content) return null;
+                          return (
+                            <Paper key={key} withBorder radius="md" p="sm">
+                              <Text fw={700} mb={6}>
+                                {sectionTitleByKey[key]}
+                              </Text>
+                              <TypographyStylesProvider>
+                                <div className={classes.planMarkdownRoot}>
+                                  <ReactMarkdown
+                                    remarkPlugins={[remarkGfm]}
+                                    components={{
+                                      p: ({ children }) => <p>{children}</p>,
+                                      li: ({ children }) => <li>{children}</li>,
+                                    }}
+                                  >
+                                    {content}
+                                  </ReactMarkdown>
+                                </div>
+                              </TypographyStylesProvider>
+                            </Paper>
+                          );
+                        })}
+                      </Stack>
+                    ) : (
+                      <TypographyStylesProvider>
+                        <div className={classes.planMarkdownRoot}>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p: ({ children }) => <p>{children}</p>,
+                              li: ({ children }) => <li>{children}</li>,
+                            }}
+                          >
+                            {planDisplayText}
+                          </ReactMarkdown>
+                        </div>
+                      </TypographyStylesProvider>
+                    )}
+                  </ScrollArea>
+                </Paper>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  {t("features.board.analysis.consultPlanEmpty")}
+                </Text>
+              )}
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="prompt" pt="sm">
+            <Stack>
+              {planLoading ? (
+                <Text size="sm">{t("features.board.analysis.consultPlanLoading")}</Text>
+              ) : planPromptText.trim().length > 0 ? (
+                <>
+                  <Group justify="flex-end">
+                    <Button variant="default" size="xs" onClick={() => void handleCopyPrompt()}>
+                      {t("features.board.analysis.consultPlanCopyPrompt")}
+                    </Button>
+                  </Group>
+                  <ScrollArea h={420} offsetScrollbars>
+                    <Text
+                      size="xs"
+                      ff="monospace"
+                      style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}
+                    >
+                      {planPromptText}
+                    </Text>
+                  </ScrollArea>
+                </>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  {t("features.board.analysis.consultPlanEmpty")}
+                </Text>
+              )}
+            </Stack>
+          </Tabs.Panel>
+        </Tabs>
+      </Modal>
     </>
   );
 }

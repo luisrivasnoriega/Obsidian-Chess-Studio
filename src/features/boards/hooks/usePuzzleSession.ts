@@ -28,31 +28,36 @@ export const usePuzzleSession = (id: string) => {
 
   const setPuzzle = (puzzle: { fen: string; moves: string[] }) => {
     setFen(puzzle.fen);
-    if (puzzle.moves.length % 2 === 0) {
-      makeMove({ payload: parseUci(puzzle.moves[0])! });
+    if (puzzle.moves.length % 2 === 0 && puzzle.moves[0]) {
+      const firstMove = parseUci(puzzle.moves[0]);
+      if (firstMove) {
+        makeMove({ payload: firstMove });
+      }
     }
   };
 
   const changeCompletion = (completion: Completion) => {
     setPuzzles((puzzles) => {
       const puzzle = puzzles[currentPuzzle];
-      puzzle.completion = completion;
+      if (!puzzle) return puzzles;
+
+      const updatedPuzzle = { ...puzzle, completion };
+      const nextPuzzles = puzzles.map((item, index) => (index === currentPuzzle ? updatedPuzzle : item));
 
       // Update player rating using Elo system
-      if (puzzle.rating) {
-        const newRating = updateElo(playerRating, puzzle.rating, completion === "correct");
+      if (updatedPuzzle.rating) {
+        const newRating = updateElo(playerRating, updatedPuzzle.rating, completion === "correct");
         setPlayerRating(newRating);
       }
 
-      return [...puzzles];
+      return nextPuzzles;
     });
   };
 
   const addPuzzle = (puzzle: Puzzle) => {
-    setPuzzles((puzzles) => {
-      return [...puzzles, puzzle];
-    });
-    setCurrentPuzzle(puzzles.length);
+    const nextPuzzles = [...puzzles, puzzle];
+    setPuzzles(nextPuzzles);
+    setCurrentPuzzle(nextPuzzles.length - 1);
     setPuzzle(puzzle);
   };
 
@@ -61,8 +66,10 @@ export const usePuzzleSession = (id: string) => {
   };
 
   const selectPuzzle = (index: number) => {
+    const selectedPuzzle = puzzles[index];
+    if (!selectedPuzzle) return;
     setCurrentPuzzle(index);
-    setPuzzle(puzzles[index]);
+    setPuzzle(selectedPuzzle);
   };
 
   return {

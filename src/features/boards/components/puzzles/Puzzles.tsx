@@ -5,7 +5,7 @@ import { useAtom } from "jotai";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { commands } from "@/bindings";
+import { commands, getPuzzleDependentFiltersMetadata, getPuzzleFiltersMetadata } from "@/bindings";
 import ChallengeHistory from "@/components/ChallengeHistory";
 import GameNotation from "@/components/GameNotation";
 import MoveControls from "@/components/MoveControls";
@@ -18,6 +18,7 @@ import {
   jumpToNextPuzzleAtom,
   puzzleAdaptiveOffsetAtom,
   puzzlePlayerRatingAtom,
+  puzzleSideToMoveAtom,
 } from "@/state/atoms";
 import { positionFromFen } from "@/utils/chessops";
 import { getAdaptivePuzzleRange, getPuzzleDatabases } from "@/utils/puzzles";
@@ -65,10 +66,12 @@ function Puzzles({ id }: { id: string }) {
   const [inOrder, setInOrder] = useAtom(inOrderPuzzlesAtom);
   const [jumpToNext, setJumpToNext] = useAtom(jumpToNextPuzzleAtom);
   const [playerRating] = useAtom(puzzlePlayerRatingAtom);
+  const [puzzleSideToMove, setPuzzleSideToMove] = useAtom(puzzleSideToMoveAtom);
 
   const [showingSolution, setShowingSolution] = useState(false);
   const isShowingSolutionRef = useRef<boolean>(false);
   const [isGeneratingPuzzle, setIsGeneratingPuzzle] = useState(false);
+  const [isLoadingFilterOptions, setIsLoadingFilterOptions] = useState(false);
 
   // Filter states
   const [hasThemes, setHasThemes] = useState(false);
@@ -107,11 +110,19 @@ function Puzzles({ id }: { id: string }) {
         inOrder,
         themes.length > 0 ? themes : undefined,
         openingTags.length > 0 ? openingTags : undefined,
+        puzzleSideToMove,
       );
       addPuzzle(puzzle);
     } catch {
     } finally {
       setIsGeneratingPuzzle(false);
+    }
+  };
+
+  const handleSideToMoveChange = (value: "any" | "white" | "black") => {
+    setPuzzleSideToMove(value);
+    if (selectedDb) {
+      clearPuzzleCache(selectedDb);
     }
   };
 
@@ -133,6 +144,23 @@ function Puzzles({ id }: { id: string }) {
     setRatingRange([min, max]);
     return [min, max];
   };
+
+  const getCurrentAdaptiveRange = useCallback((): [number, number] => {
+    const completedResults = puzzles
+      .filter((puzzle) => puzzle.completion !== "incomplete")
+      .map((puzzle) => puzzle.completion)
+      .slice(-10);
+
+    const safePlayerRating = Number.isFinite(playerRating) ? playerRating : 1500;
+    const targetRating = safePlayerRating + adaptiveOffset;
+    const range = getAdaptivePuzzleRange(targetRating, completedResults);
+
+    // Clamp to current active bounds.
+    let [min, max] = range;
+    min = Math.max(minRating, Math.min(min, maxRating));
+    max = Math.max(minRating, Math.min(max, maxRating));
+    return [min, max];
+  }, [adaptiveOffset, maxRating, minRating, playerRating, puzzles]);
 
   const handleClearSession = () => {
     clearSession();
@@ -206,9 +234,10 @@ function Puzzles({ id }: { id: string }) {
     [selectedDb, setSelectedDb, setPuzzleDbs, t],
   );
 
-  // Load database column info and distinct values when database changes
+  // Load puzzle filter metadata (columns, options, rating range) when database changes.
   useEffect(() => {
     if (!selectedDb || !selectedDb.endsWith(".db3")) {
+      setIsLoadingFilterOptions(false);
       setHasThemes(false);
       setHasOpeningTags(false);
       setThemesOptions([]);
@@ -222,17 +251,15 @@ function Puzzles({ id }: { id: string }) {
     setHasOpeningTags(false);
     setThemesOptions([]);
     setOpeningTagsOptions([]);
+    setIsLoadingFilterOptions(true);
 
     // Use a flag to prevent multiple simultaneous loads
     let cancelled = false;
 
     const loadDatabaseInfo = async () => {
       try {
-        // First verify the file exists before attempting to load info
-        const { exists } = await import("@tauri-apps/plugin-fs");
+        // Normalize path for older persisted values that only stored file names.
         const { appDataDir, resolve } = await import("@tauri-apps/api/path");
-        // `selectedDb` is usually stored as an absolute path; but older state can still hold
-        // just the filename. Handle both.
         let dbPath = selectedDb;
         const looksLikePath = dbPath.includes("/") || dbPath.includes("\\") || dbPath.includes(":");
         if (!looksLikePath) {
@@ -240,82 +267,35 @@ function Puzzles({ id }: { id: string }) {
           dbPath = await resolve(appDataDirPath, "puzzles", dbPath);
         }
 
-        const fileExists = await exists(dbPath);
-        if (!fileExists) {
-          setHasThemes(false);
-          setHasOpeningTags(false);
-          setThemesOptions([]);
-          setOpeningTagsOptions([]);
-          return;
+        const metadataResult = await getPuzzleFiltersMetadata(dbPath);
+        if (metadataResult.status === "error") {
+          throw new Error(metadataResult.error);
         }
-
-        // Check schema first; only fetch distinct values when those columns exist.
-        const columnsResult = await commands.checkPuzzleDbColumns(dbPath).catch((err) => {
-          // Silently handle "file not found" or "file is empty" errors
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          if (errorMsg.includes("does not exist") || errorMsg.includes("is empty")) {
-            return { status: "error" as const, error: errorMsg };
-          }
-          throw err;
-        });
-
+        const metadata = metadataResult.data;
         if (cancelled) return;
 
-        if (columnsResult.status === "ok") {
-          const [hasThemesCol, hasOpeningTagsCol] = columnsResult.data;
-
-          const [themesResult, tagsResult] = await Promise.all([
-            hasThemesCol
-              ? commands.getPuzzleThemes(dbPath).catch(() => ({ status: "error" as const, error: "" }))
-              : Promise.resolve({ status: "ok" as const, data: [] }),
-            hasOpeningTagsCol
-              ? commands.getPuzzleOpeningTags(dbPath).catch(() => ({ status: "error" as const, error: "" }))
-              : Promise.resolve({ status: "ok" as const, data: [] }),
-          ]);
-
-          if (cancelled) return;
-
-          if (hasThemesCol && themesResult.status === "ok") {
-            // Backend returns ThemeGroup[] with group and items, convert to format for MultiSelect
-            const themesData = themesResult.data as unknown as Array<{
-              group: string;
-              items: Array<{ value: string; label: string }>;
-            }>;
-            const nextThemeOptions = themesData
-              .map((group) => ({
-                group: group.group,
-                items: group.items.map((opt) => ({
-                  value: opt.value,
-                  label: opt.label,
-                })),
-              }))
-              .filter((group) => group.items.length > 0);
-            setThemesOptions(nextThemeOptions);
-            setHasThemes(nextThemeOptions.length > 0);
-          } else {
-            setThemesOptions([]);
-            setHasThemes(false);
-          }
-
-          if (hasOpeningTagsCol && tagsResult.status === "ok") {
-            // Backend returns OpeningTagOption[] with value and label, convert to format for MultiSelect
-            const tagsData = tagsResult.data as unknown as Array<{ value: string; label: string }>;
-            const nextOpeningTagOptions = tagsData.map((opt) => ({
+        const nextThemeOptions = (metadata.themes ?? [])
+          .map((group) => ({
+            group: group.group,
+            items: (group.items ?? []).map((opt) => ({
               value: opt.value,
               label: opt.label,
-            }));
-            setOpeningTagsOptions(nextOpeningTagOptions);
-            setHasOpeningTags(nextOpeningTagOptions.length > 0);
-          } else {
-            setOpeningTagsOptions([]);
-            setHasOpeningTags(false);
-          }
-        } else {
-          // Database doesn't exist or is empty - silently handle this
-          setHasThemes(false);
-          setHasOpeningTags(false);
-          setThemesOptions([]);
-          setOpeningTagsOptions([]);
+            })),
+          }))
+          .filter((group) => group.items.length > 0);
+
+        const nextOpeningTagOptions = (metadata.openingTags ?? []).map((opt) => ({
+          value: opt.value,
+          label: opt.label,
+        }));
+
+        setThemesOptions(nextThemeOptions);
+        setOpeningTagsOptions(nextOpeningTagOptions);
+        setHasThemes(Boolean(metadata.hasThemes) && nextThemeOptions.length > 0);
+        setHasOpeningTags(Boolean(metadata.hasOpeningTags) && nextOpeningTagOptions.length > 0);
+
+        if (metadata.ratingRange) {
+          setRatingRange(metadata.ratingRange);
         }
       } catch (_error) {
         if (!cancelled) {
@@ -323,6 +303,10 @@ function Puzzles({ id }: { id: string }) {
           setHasOpeningTags(false);
           setThemesOptions([]);
           setOpeningTagsOptions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingFilterOptions(false);
         }
       }
     };
@@ -332,7 +316,98 @@ function Puzzles({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [selectedDb]);
+  }, [selectedDb, setRatingRange]);
+
+  // Dependent filters:
+  // - openingTags options depend on active themes + adaptive rating range
+  // - themes options depend on active openingTags + adaptive rating range
+  useEffect(() => {
+    if (!selectedDb || !selectedDb.endsWith(".db3")) return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const loadDependentFilters = async () => {
+        try {
+          setIsLoadingFilterOptions(true);
+
+          const { appDataDir, resolve } = await import("@tauri-apps/api/path");
+          let dbPath = selectedDb;
+          const looksLikePath = dbPath.includes("/") || dbPath.includes("\\") || dbPath.includes(":");
+          if (!looksLikePath) {
+            const appDataDirPath = await appDataDir();
+            dbPath = await resolve(appDataDirPath, "puzzles", dbPath);
+          }
+
+          const [adaptiveMin, adaptiveMax] = getCurrentAdaptiveRange();
+          const result = await getPuzzleDependentFiltersMetadata(
+            dbPath,
+            adaptiveMin,
+            adaptiveMax,
+            themes.length > 0 ? themes : null,
+            openingTags.length > 0 ? openingTags : null,
+            puzzleSideToMove === "any" ? null : puzzleSideToMove,
+          );
+          if (cancelled || result.status === "error") return;
+
+          const metadata = result.data;
+          const nextThemeOptions = (metadata.themes ?? [])
+            .map((group) => ({
+              group: group.group,
+              items: (group.items ?? []).map((opt) => ({
+                value: opt.value,
+                label: opt.label,
+              })),
+            }))
+            .filter((group) => group.items.length > 0);
+          const nextOpeningTagOptions = (metadata.openingTags ?? []).map((opt) => ({
+            value: opt.value,
+            label: opt.label,
+          }));
+
+          setThemesOptions(nextThemeOptions);
+          setOpeningTagsOptions(nextOpeningTagOptions);
+          setHasThemes(Boolean(metadata.hasThemes) && nextThemeOptions.length > 0);
+          setHasOpeningTags(Boolean(metadata.hasOpeningTags) && nextOpeningTagOptions.length > 0);
+
+          // Keep selected filters valid against dependent option lists.
+          const validThemes = new Set(nextThemeOptions.flatMap((group) => group.items.map((item) => item.value)));
+          const validOpeningTags = new Set(nextOpeningTagOptions.map((item) => item.value));
+          setThemes((prev) => {
+            const next = prev.filter((value) => validThemes.has(value));
+            if (next.length === prev.length && next.every((value, index) => value === prev[index])) {
+              return prev;
+            }
+            return next;
+          });
+          setOpeningTags((prev) => {
+            const next = prev.filter((value) => validOpeningTags.has(value));
+            if (next.length === prev.length && next.every((value, index) => value === prev[index])) {
+              return prev;
+            }
+            return next;
+          });
+        } catch {
+          if (!cancelled) {
+            setThemesOptions([]);
+            setOpeningTagsOptions([]);
+            setHasThemes(false);
+            setHasOpeningTags(false);
+          }
+        } finally {
+          if (!cancelled) {
+            setIsLoadingFilterOptions(false);
+          }
+        }
+      };
+
+      void loadDependentFilters();
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selectedDb, themes, openingTags, puzzleSideToMove, getCurrentAdaptiveRange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +451,7 @@ function Puzzles({ id }: { id: string }) {
                 onAddNew={handleAddNew}
                 onDelete={handleDeletePuzzle}
                 loadingDatabases={isLoadingPuzzleDbs}
+                loadingFilters={isLoadingFilterOptions}
                 adaptiveOffset={adaptiveOffset}
                 onAdaptiveOffsetChange={handleAdaptiveOffsetChange}
                 hideRating={hideRating}
@@ -390,6 +466,8 @@ function Puzzles({ id }: { id: string }) {
                 openingTags={openingTags}
                 openingTagsOptions={openingTagsOptions}
                 onOpeningTagsChange={setOpeningTags}
+                sideToMove={puzzleSideToMove}
+                onSideToMoveChange={handleSideToMoveChange}
               />
               <Divider my="sm" />
 
@@ -456,6 +534,7 @@ function Puzzles({ id }: { id: string }) {
                 onAddNew={handleAddNew}
                 onDelete={handleDeletePuzzle}
                 loadingDatabases={isLoadingPuzzleDbs}
+                loadingFilters={isLoadingFilterOptions}
                 adaptiveOffset={adaptiveOffset}
                 onAdaptiveOffsetChange={handleAdaptiveOffsetChange}
                 hideRating={hideRating}
@@ -470,6 +549,8 @@ function Puzzles({ id }: { id: string }) {
                 openingTags={openingTags}
                 openingTagsOptions={openingTagsOptions}
                 onOpeningTagsChange={setOpeningTags}
+                sideToMove={puzzleSideToMove}
+                onSideToMoveChange={handleSideToMoveChange}
               />
               <Divider my="sm" />
 

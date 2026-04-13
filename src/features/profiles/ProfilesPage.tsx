@@ -55,7 +55,7 @@ import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessi
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { getAccountSyncState } from "@/utils/accountSyncState";
-import { type Platform, validateCredentials, verifyAccount } from "@/utils/accountVerification";
+import { getAccountProtectionStatus, type Platform, validateCredentials } from "@/utils/accountVerification";
 import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
 import { parseDate } from "@/utils/format";
@@ -523,6 +523,8 @@ export default function ProfilesPage() {
       name,
       fideId: fideId || undefined,
       lichessToken: lichessTokenValue,
+      hasPremiumAccess: false,
+      premiumUsername: undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -987,9 +989,10 @@ export default function ProfilesPage() {
       // Verify account if not skipping verification
       if (!skipVerification) {
         const platform: Platform = payload.website === "lichess" ? "Lichess" : "Chesscom";
-        const isVerified = await verifyAccount(platform, payload.username);
+        const protectionStatus = await getAccountProtectionStatus(platform, payload.username);
+        const profileHasPremiumAccess = profile.hasPremiumAccess === true;
 
-        if (!isVerified) {
+        if (protectionStatus === "protected" && !profileHasPremiumAccess) {
           // Show verification modal
           setPendingAccountPayload({ payload, platform });
           verificationModal.open();
@@ -1070,10 +1073,38 @@ export default function ProfilesPage() {
       }
 
       // Credentials are valid, continue with account addition
+      const verifiedPremiumUsername = result.username?.trim();
+      if (!verifiedPremiumUsername) {
+        notifications.show({
+          title: t("common.error", { defaultValue: "Error" }),
+          message: t("accounts.verification.missingCredentials", {
+            defaultValue: "Username and password are required.",
+          }),
+          color: "red",
+        });
+        setPendingAccountPayload(null);
+        return;
+      }
+
+      const validatedAt = Date.now();
+      const validatedProfileId = pendingAccountPayload.payload.profileId;
+      setProfiles((prev) =>
+        prev.map((profile) =>
+          profile.id === validatedProfileId
+            ? {
+                ...profile,
+                hasPremiumAccess: true,
+                premiumUsername: verifiedPremiumUsername,
+                premiumValidatedAt: validatedAt,
+                updatedAt: validatedAt,
+              }
+            : profile,
+        ),
+      );
       setPendingAccountPayload(null);
       await addAccountToProfile(pendingAccountPayload.payload, true);
     },
-    [pendingAccountPayload, addAccountToProfile, t],
+    [pendingAccountPayload, addAccountToProfile, setProfiles, t],
   );
 
   useEffect(() => {

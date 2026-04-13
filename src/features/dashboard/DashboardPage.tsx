@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import type { Event, GameQuery, GamesHistoryRow } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
@@ -60,6 +61,8 @@ import {
   createLocalGameHeaders,
   createPGNFromMoves,
 } from "./utils/gameHelpers";
+
+const DEFAULT_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
@@ -1496,38 +1499,10 @@ export default function DashboardPage() {
                   return hasEnoughMovesLocal(g);
                 });
               } else if (type === "chesscom") {
-                return chessComGames.filter((g) => {
-                  if (!g.pgn) return false;
-                  try {
-                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                    const cleanMoves = movesSection
-                      .replace(/\[[^\]]*\]/g, "")
-                      .replace(/\{[^}]*\}/g, "")
-                      .replace(/\([^)]*\)/g, "");
-                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                    const matches = cleanMoves.match(movePattern) || [];
-                    return matches.length >= 5;
-                  } catch {
-                    return false;
-                  }
-                });
+                return chessComGames.filter((g) => hasEnoughMovesPgn(g.pgn));
               } else if (type === "lichess") {
                 // lichess
-                return lichessGames.filter((g) => {
-                  if (!g.pgn) return false;
-                  try {
-                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                    const cleanMoves = movesSection
-                      .replace(/\[[^\]]*\]/g, "")
-                      .replace(/\{[^}]*\}/g, "")
-                      .replace(/\([^)]*\)/g, "");
-                    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                    const matches = cleanMoves.match(movePattern) || [];
-                    return matches.length >= 5;
-                  } catch {
-                    return false;
-                  }
-                });
+                return lichessGames.filter((g) => hasEnoughMovesPgn(g.pgn));
               } else {
                 return chessbaseRows;
               }
@@ -1658,12 +1633,36 @@ export default function DashboardPage() {
             let successCount = 0;
             let failCount = 0;
             let completedCount = 0;
+            let cancellationNotified = false;
+            let stopRequested = false;
+
+            const notifyCancellation = () => {
+              if (cancellationNotified) return;
+              cancellationNotified = true;
+              notifications.show({
+                title: t("features.dashboard.analysisCancelled"),
+                message: `Analysis stopped. ${successCount} games analyzed successfully.`,
+                color: "yellow",
+              });
+            };
+
+            const stopAllEnginesOnce = async () => {
+              if (stopRequested) return;
+              stopRequested = true;
+              await stopAllEngines();
+            };
+
+            // Keep cancellation checks cheap: one watcher for the whole analyze-all run.
+            const cancellationWatcher = setInterval(() => {
+              if (!isCancelled()) return;
+              void stopAllEnginesOnce();
+            }, 120);
 
             // Process games in parallel batches
             const processGame = async (item: (typeof gamesToAnalyze)[0], index: number): Promise<void> => {
               const gameType = item.type;
               const game = item.game;
-              const analysisId = `analyze_all_${gameType}_${index}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              const analysisId = `analyze_all_${gameType}_${index}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
               activeAnalysisIds.add(analysisId);
 
               try {
@@ -1682,33 +1681,31 @@ export default function DashboardPage() {
                   tree = await parsePGN(pgn, gameRecord.initialFen);
                   const is960 = tree.headers?.variant === "Chess960";
                   moves = getMainLine(tree.root, is960);
-                  initialFen = gameRecord.initialFen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                  initialFen = gameRecord.initialFen || DEFAULT_START_FEN;
                   gameHeaders = createLocalGameHeaders(gameRecord);
                 } else if (gameType === "chesscom") {
                   // For Chess.com games, parse PGN
                   const chessComGame = game as ChessComGameWithEvent;
                   const pgn = chessComGame.pgn;
                   if (!pgn) {
-                    activeAnalysisIds.delete(analysisId);
                     return;
                   }
                   tree = await parsePGN(pgn);
                   // Extract UCI moves from the main line using getMainLine
                   const is960 = tree.headers?.variant === "Chess960";
                   moves = getMainLine(tree.root, is960);
-                  initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                  initialFen = tree.headers?.fen || DEFAULT_START_FEN;
                   gameHeaders = createChessComGameHeaders(chessComGame);
                 } else if (gameType === "chessbase") {
                   const row = game as GamesHistoryRow;
                   const pgn = row.pgn?.trim() ?? "";
                   if (!pgn) {
-                    activeAnalysisIds.delete(analysisId);
                     return;
                   }
                   tree = await parsePGN(pgn);
                   const is960 = tree.headers?.variant === "Chess960";
                   moves = getMainLine(tree.root, is960);
-                  initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                  initialFen = tree.headers?.fen || DEFAULT_START_FEN;
                   gameHeaders = {
                     id: 0,
                     event: tree.headers?.event || "ChessBase",
@@ -1724,20 +1721,18 @@ export default function DashboardPage() {
                   const lichessGame = game as (typeof lichessGames)[0];
                   const pgn = lichessGame.pgn;
                   if (!pgn) {
-                    activeAnalysisIds.delete(analysisId);
                     return;
                   }
                   tree = await parsePGN(pgn);
                   // Extract UCI moves from the main line using getMainLine
                   const is960 = tree.headers?.variant === "Chess960";
                   moves = getMainLine(tree.root, is960);
-                  initialFen = tree.headers?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                  initialFen = tree.headers?.fen || DEFAULT_START_FEN;
                   gameHeaders = createLichessGameHeaders(lichessGame);
                 }
 
                 // Check if cancelled before starting analysis
                 if (isCancelled()) {
-                  activeAnalysisIds.delete(analysisId);
                   return;
                 }
 
@@ -1756,49 +1751,23 @@ export default function DashboardPage() {
                   engineSettings,
                 );
 
-                // Check for cancellation while analysis is running
-                let analysisCancelled = false;
-                const cancellationCheckInterval = setInterval(() => {
-                  if (isCancelled()) {
-                    analysisCancelled = true;
-                    // Stop the engine immediately
-                    commands.stopEngine(selectedEngine.path, analysisId).catch(() => {
-                      // Ignore errors when stopping
-                    });
-                    clearInterval(cancellationCheckInterval);
-                  }
-                }, 50); // Check more frequently for faster cancellation
-
                 let analysisResult: Awaited<typeof analysisPromise>;
                 try {
                   analysisResult = await analysisPromise;
                 } catch (_error) {
-                  clearInterval(cancellationCheckInterval);
-                  // If cancelled, stop the engine and return
-                  if (analysisCancelled || isCancelled()) {
-                    try {
-                      await commands.stopEngine(selectedEngine.path, analysisId);
-                    } catch {
-                      // Ignore errors when stopping
-                    }
-                    activeAnalysisIds.delete(analysisId);
+                  // Analyze-all cancellation is handled by the shared watcher and stopAllEngines().
+                  if (isCancelled()) {
                     return;
                   }
                   throw _error;
                 }
 
-                clearInterval(cancellationCheckInterval);
-
                 // Check again if cancelled after analysis
-                if (isCancelled() || analysisCancelled) {
-                  activeAnalysisIds.delete(analysisId);
+                if (isCancelled()) {
                   return;
                 }
 
                 const analysis = unwrap(analysisResult);
-
-                // Use the same addAnalysis function from the store to ensure consistency
-                const { addAnalysis } = await import("@/state/store/tree");
 
                 // Apply analysis using the same function used in individual analysis
                 addAnalysis(tree, analysis);
@@ -1812,7 +1781,6 @@ export default function DashboardPage() {
 
                 // Check if cancelled before saving
                 if (isCancelled()) {
-                  activeAnalysisIds.delete(analysisId);
                   return;
                 }
 
@@ -1827,7 +1795,6 @@ export default function DashboardPage() {
 
                 // Validate and fix PGN before saving
                 if (!analyzedPgn || analyzedPgn.trim().length === 0) {
-                  activeAnalysisIds.delete(analysisId);
                   return;
                 }
 
@@ -1841,7 +1808,7 @@ export default function DashboardPage() {
                 }
 
                 // Only save if analysis was not cancelled
-                if (!isCancelled() && !analysisCancelled) {
+                if (!isCancelled()) {
                   // Save analyzed PGN to file
                   const fileName = `${gameHeaders.white}-${gameHeaders.black}-${index + 1}`.replace(
                     /[<>:"/\\|?*]/g,
@@ -2124,104 +2091,70 @@ export default function DashboardPage() {
               }
             };
 
-            // Process games in parallel batches
-            for (let i = 0; i < gamesToAnalyze.length; i += parallelAnalyses) {
-              // Check if analysis was cancelled
-              if (isCancelled()) {
-                // Stop all active engines
-                for (const analysisId of activeAnalysisIds) {
-                  try {
-                    await commands.stopEngine(selectedEngine.path, analysisId);
-                  } catch {
-                    // Ignore errors when stopping
-                  }
+            try {
+              // Process games in parallel batches
+              for (let i = 0; i < gamesToAnalyze.length; i += parallelAnalyses) {
+                if (isCancelled()) {
+                  await stopAllEnginesOnce();
+                  notifyCancellation();
+                  break;
                 }
-                notifications.show({
-                  title: t("features.dashboard.analysisCancelled"),
-                  message: `Analysis stopped. ${successCount} games analyzed successfully.`,
-                  color: "yellow",
-                });
-                break;
-              }
 
-              // Get batch of games to process in parallel
-              const batch = gamesToAnalyze.slice(i, i + parallelAnalyses);
+                const batch = gamesToAnalyze.slice(i, i + parallelAnalyses);
+                const batchPromises = batch.map((game, batchIndex) => processGame(game, i + batchIndex));
+                await Promise.allSettled(batchPromises);
 
-              // Process batch in parallel
-              const batchPromises = batch.map((game, batchIndex) => processGame(game, i + batchIndex));
-
-              // Wait for all games in batch to complete or be cancelled
-              // Use allSettled so we can check cancellation status after each completes
-              await Promise.allSettled(batchPromises);
-
-              // Check cancellation after batch completes - if cancelled, stop all engines immediately
-              if (isCancelled()) {
-                // Stop all remaining active engines immediately
-                const stopPromises = Array.from(activeAnalysisIds).map((analysisId) =>
-                  commands.stopEngine(selectedEngine.path, analysisId).catch(() => {
-                    // Ignore errors when stopping
-                  }),
-                );
-                await Promise.all(stopPromises);
-                activeAnalysisIds.clear();
-                notifications.show({
-                  title: t("features.dashboard.analysisCancelled"),
-                  message: `Analysis stopped. ${successCount} games analyzed successfully.`,
-                  color: "yellow",
-                });
-                break;
-              }
-            }
-
-            // Only show completion message if not cancelled
-            if (!isCancelled()) {
-              // Stop any remaining active engines
-              for (const analysisId of activeAnalysisIds) {
-                try {
-                  await commands.stopEngine(selectedEngine.path, analysisId);
-                } catch {
-                  // Ignore errors when stopping
+                if (isCancelled()) {
+                  await stopAllEnginesOnce();
+                  notifyCancellation();
+                  break;
                 }
               }
 
-              // Final progress update
-              onProgress(gamesToAnalyze.length, gamesToAnalyze.length);
+              if (!isCancelled()) {
+                await stopAllEnginesOnce();
 
-              // Refresh games to update stats
-              if (analyzeAllGameType === "local" || analyzeAllGameType === "all") {
-                const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
-                const filteredGames = updatedGames.filter((g) => {
-                  if (g.moves?.length >= 5) return true;
-                  if (g.pgn) {
-                    const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                    const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
-                    return moveCount >= 5;
-                  }
-                  return false;
+                // Final progress update
+                onProgress(gamesToAnalyze.length, gamesToAnalyze.length);
+
+                // Refresh games to update stats
+                if (analyzeAllGameType === "local" || analyzeAllGameType === "all") {
+                  const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
+                  const filteredGames = updatedGames.filter((g) => {
+                    if (g.moves?.length >= 5) return true;
+                    if (g.pgn) {
+                      const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
+                      const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
+                      return moveCount >= 5;
+                    }
+                    return false;
+                  });
+                  setRecentGames(filteredGames);
+                }
+                if (analyzeAllGameType === "chesscom" || analyzeAllGameType === "all") {
+                  // Trigger refresh for Chess.com games
+                  window.dispatchEvent(new Event("chesscom:games:updated"));
+                }
+                if (analyzeAllGameType === "lichess" || analyzeAllGameType === "all") {
+                  // Trigger refresh for Lichess games
+                  window.dispatchEvent(new Event("lichess:games:updated"));
+                }
+
+                notifications.show({
+                  title: t("features.dashboard.analysisComplete"),
+                  message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
+                  color: "green",
                 });
-                setRecentGames(filteredGames);
+              } else {
+                await stopAllEnginesOnce();
+                notifyCancellation();
               }
-              if (analyzeAllGameType === "chesscom" || analyzeAllGameType === "all") {
-                // Trigger refresh for Chess.com games
-                window.dispatchEvent(new Event("chesscom:games:updated"));
-              }
-              if (analyzeAllGameType === "lichess" || analyzeAllGameType === "all") {
-                // Trigger refresh for Lichess games
-                window.dispatchEvent(new Event("lichess:games:updated"));
-              }
-
-              notifications.show({
-                title: t("features.dashboard.analysisComplete"),
-                message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
-                color: "green",
-              });
-            } else {
-              // If cancelled, make sure all engines are stopped
-              await stopAllEngines();
+            } finally {
+              clearInterval(cancellationWatcher);
             }
 
             // Return stop function for immediate cancellation
-            return { stop: stopAllEngines };
+            return { stop: stopAllEnginesOnce };
           }}
           gameCount={
             analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType

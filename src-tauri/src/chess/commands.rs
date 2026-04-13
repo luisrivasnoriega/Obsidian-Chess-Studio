@@ -63,7 +63,8 @@ pub async fn kill_engine(
     Ok(())
 }
 
-/// Stop a specific engine process (without killing it) by engine name and tab.
+/// Stop a specific engine process by engine name and tab.
+/// This command performs a definitive shutdown (`stop` + `quit/kill`) and removes the process from the map.
 #[tauri::command]
 #[specta::specta]
 pub async fn stop_engine(
@@ -71,11 +72,30 @@ pub async fn stop_engine(
     tab: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    let key = (tab, engine);
-    if let Some(process) = state.engine_processes.get(&key) {
-        #[allow(unused_mut)]
-        let mut process = process.lock().await;
-        process.stop().await?;
+    let key = (tab.clone(), engine.clone());
+    let mut keys_to_stop = Vec::new();
+    if state.engine_processes.contains_key(&key) {
+        keys_to_stop.push(key);
+    } else {
+        // Fallback: handle tab variants that append suffixes (e.g. turn/channel suffixes).
+        keys_to_stop = state
+            .engine_processes
+            .iter()
+            .map(|x| x.key().clone())
+            .filter(|k| k.1 == engine && k.0.starts_with(&tab))
+            .collect();
+    }
+
+    for k in keys_to_stop {
+        if let Some(process) = state.engine_processes.get(&k) {
+            #[allow(unused_mut)]
+            let mut process = process.lock().await;
+            // Best effort graceful stop first, then definitive process termination.
+            let _ = process.stop().await;
+            let _ = process.kill().await;
+        }
+        // Always remove from map to avoid stale entries.
+        state.engine_processes.remove(&k);
     }
     Ok(())
 }

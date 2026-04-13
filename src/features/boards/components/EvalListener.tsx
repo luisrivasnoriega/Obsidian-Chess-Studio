@@ -19,7 +19,7 @@ import {
 import { getVariationLine } from "@/utils/chess";
 import { getBestMoves as chessdbGetBestMoves } from "@/utils/chessdb/api";
 import { positionFromFen, swapMove } from "@/utils/chessops";
-import { type Engine, type LocalEngine, getBestMoves as localGetBestMoves, stopEngine } from "@/utils/engines";
+import { type Engine, killEngine, type LocalEngine, getBestMoves as localGetBestMoves } from "@/utils/engines";
 import { getBestMoves as lichessGetBestMoves } from "@/utils/lichess/api";
 import { useThrottledEffect } from "@/utils/misc";
 
@@ -213,7 +213,7 @@ function EngineListener({
       // Skip if this is the variants-builder-backend tab (used during build variants)
       if (activeTab?.includes("variants-builder")) {
         if (engine.type === "local") {
-          stopEngine(engine, activeTab);
+          killEngine(engine, activeTab);
         }
         return;
       }
@@ -221,7 +221,7 @@ function EngineListener({
       if (settings.enabled) {
         if (isGameOver) {
           if (engine.type === "local") {
-            stopEngine(engine, activeTab!);
+            killEngine(engine, activeTab!);
           }
         } else {
           const options =
@@ -250,7 +250,7 @@ function EngineListener({
         }
       } else {
         if (engine.type === "local") {
-          stopEngine(engine, activeTab!);
+          killEngine(engine, activeTab!);
         }
       }
     },

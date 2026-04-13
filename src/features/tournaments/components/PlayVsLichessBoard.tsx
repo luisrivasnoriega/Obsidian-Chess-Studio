@@ -32,7 +32,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { parseUci } from "chessops";
 import { INITIAL_FEN } from "chessops/fen";
 import { useAtomValue, useSetAtom } from "jotai";
-import { useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import Clock from "@/components/Clock";
@@ -90,6 +90,123 @@ type LichessBoardGameSnapshot = {
   btime?: number | null;
   raw: string;
 };
+
+type GeneratedPuzzlesInlineAlertProps = {
+  visible: boolean;
+  review: PostGameReviewResult | null;
+  onOpen: () => void;
+  t: ReturnType<typeof useTranslation>["t"];
+};
+
+type LichessClocksMaterialProps = {
+  showClocks: boolean;
+  turn: "white" | "black" | null;
+  whiteTime: number | null;
+  blackTime: number | null;
+  materialAdvantageContent: ReactNode;
+  t: ReturnType<typeof useTranslation>["t"];
+};
+
+type LichessOpeningPgnProps = {
+  openingText: string;
+  pgn: string;
+  t: ReturnType<typeof useTranslation>["t"];
+};
+
+function GeneratedPuzzlesInlineAlert({ visible, review, onOpen, t }: GeneratedPuzzlesInlineAlertProps) {
+  if (!visible) return null;
+
+  return (
+    <Alert color="teal">
+      <Stack gap="xs">
+        <Text size="sm">
+          {t("features.postGameReview.completedMessage", {
+            puzzles: review?.puzzlesGenerated ?? 0,
+            mistakes: (review?.mistakeCount ?? 0) + (review?.blunderCount ?? 0) + (review?.dubiousCount ?? 0),
+          })}
+        </Text>
+        <Button size="xs" variant="light" onClick={onOpen}>
+          {t("features.postGameReview.openPuzzles")}
+        </Button>
+      </Stack>
+    </Alert>
+  );
+}
+
+function LichessClocksMaterial({
+  showClocks,
+  turn,
+  whiteTime,
+  blackTime,
+  materialAdvantageContent,
+  t,
+}: LichessClocksMaterialProps) {
+  const whiteClockTurn = turn ?? "white";
+  const blackClockTurn = turn ?? "black";
+  return (
+    <>
+      {showClocks && (
+        <>
+          <Text fw={600} size="sm">
+            {t("common.clocks")}
+          </Text>
+          <Stack gap="xs">
+            <Clock
+              color="white"
+              turn={whiteClockTurn}
+              whiteTime={whiteTime ?? undefined}
+              blackTime={blackTime ?? undefined}
+            />
+            <Clock
+              color="black"
+              turn={blackClockTurn}
+              whiteTime={whiteTime ?? undefined}
+              blackTime={blackTime ?? undefined}
+            />
+          </Stack>
+          <Divider />
+        </>
+      )}
+
+      <Text fw={600} size="sm">
+        {t("features.tournaments.play.materialTitle")}
+      </Text>
+      {materialAdvantageContent}
+    </>
+  );
+}
+
+function LichessOpeningPgn({ openingText, pgn, t }: LichessOpeningPgnProps) {
+  return (
+    <>
+      <Text fw={600} size="sm">
+        {t("common.opening")}
+      </Text>
+      <Text size="sm" c="dimmed">
+        {openingText}
+      </Text>
+
+      <Divider />
+
+      <Text fw={600} size="sm">
+        {t("common.pgn")}
+      </Text>
+      <Box
+        component="pre"
+        style={{
+          margin: 0,
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+          fontSize: "0.8rem",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {pgn}
+      </Box>
+    </>
+  );
+}
 
 function normalizeInitialFen(input: string | null | undefined): string {
   if (!input || input.trim() === "" || input.trim() === "startpos") return INITIAL_FEN;
@@ -1072,33 +1189,14 @@ function PlayVsLichessBoardContent() {
                 <Badge variant="light">{remoteStatus}</Badge>
               </Group>
 
-              {(gameState === "playing" || gameState === "gameOver") && (
-                <>
-                  <Text fw={600} size="sm">
-                    {t("common.clocks")}
-                  </Text>
-                  <Stack gap="xs">
-                    <Clock
-                      color="white"
-                      turn={pos?.turn ?? "white"}
-                      whiteTime={whiteTime ?? undefined}
-                      blackTime={blackTime ?? undefined}
-                    />
-                    <Clock
-                      color="black"
-                      turn={pos?.turn ?? "black"}
-                      whiteTime={whiteTime ?? undefined}
-                      blackTime={blackTime ?? undefined}
-                    />
-                  </Stack>
-                  <Divider />
-                </>
-              )}
-
-              <Text fw={600} size="sm">
-                {t("features.tournaments.play.materialTitle")}
-              </Text>
-              {materialAdvantageContent}
+              <LichessClocksMaterial
+                showClocks={gameState === "playing" || gameState === "gameOver"}
+                turn={pos?.turn ?? null}
+                whiteTime={whiteTime}
+                blackTime={blackTime}
+                materialAdvantageContent={materialAdvantageContent}
+                t={t}
+              />
               <Divider />
 
               {lastSyncError && (
@@ -1174,33 +1272,14 @@ function PlayVsLichessBoardContent() {
                 <Badge variant="light">{remoteStatus}</Badge>
               </Group>
 
-              {(gameState === "playing" || gameState === "gameOver") && (
-                <>
-                  <Text fw={600} size="sm">
-                    {t("common.clocks")}
-                  </Text>
-                  <Stack gap="xs">
-                    <Clock
-                      color="white"
-                      turn={pos?.turn ?? "white"}
-                      whiteTime={whiteTime ?? undefined}
-                      blackTime={blackTime ?? undefined}
-                    />
-                    <Clock
-                      color="black"
-                      turn={pos?.turn ?? "black"}
-                      whiteTime={whiteTime ?? undefined}
-                      blackTime={blackTime ?? undefined}
-                    />
-                  </Stack>
-                  <Divider />
-                </>
-              )}
-
-              <Text fw={600} size="sm">
-                {t("features.tournaments.play.materialTitle")}
-              </Text>
-              {materialAdvantageContent}
+              <LichessClocksMaterial
+                showClocks={gameState === "playing" || gameState === "gameOver"}
+                turn={pos?.turn ?? null}
+                whiteTime={whiteTime}
+                blackTime={blackTime}
+                materialAdvantageContent={materialAdvantageContent}
+                t={t}
+              />
 
               {lastSyncError && (
                 <Alert color="yellow" mb="xs">
@@ -1214,30 +1293,14 @@ function PlayVsLichessBoardContent() {
                 </Text>
               )}
 
-              {showInlinePuzzlesAlert && (
-                <Alert color="teal">
-                  <Stack gap="xs">
-                    <Text size="sm">
-                      {t("features.postGameReview.completedMessage", {
-                        puzzles: postGameReview?.puzzlesGenerated ?? 0,
-                        mistakes:
-                          (postGameReview?.mistakeCount ?? 0) +
-                          (postGameReview?.blunderCount ?? 0) +
-                          (postGameReview?.dubiousCount ?? 0),
-                      })}
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="light"
-                      onClick={() => {
-                        void openGeneratedPuzzles();
-                      }}
-                    >
-                      {t("features.postGameReview.openPuzzles")}
-                    </Button>
-                  </Stack>
-                </Alert>
-              )}
+              <GeneratedPuzzlesInlineAlert
+                visible={showInlinePuzzlesAlert}
+                review={postGameReview}
+                onOpen={() => {
+                  void openGeneratedPuzzles();
+                }}
+                t={t}
+              />
 
               {gameId && (
                 <Text size="sm" c="dimmed">
@@ -1255,32 +1318,7 @@ function PlayVsLichessBoardContent() {
                   <GameInfo headers={headers} />
 
                   <Divider />
-
-                  <Text fw={600} size="sm">
-                    {t("common.opening")}
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    {openingText}
-                  </Text>
-
-                  <Divider />
-
-                  <Text fw={600} size="sm">
-                    {t("common.pgn")}
-                  </Text>
-                  <Box
-                    component="pre"
-                    style={{
-                      margin: 0,
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-                      fontSize: "0.78rem",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {pgn}
-                  </Box>
+                  <LichessOpeningPgn openingText={openingText} pgn={pgn} t={t} />
                 </Stack>
               </Box>
             </Stack>
@@ -1337,30 +1375,14 @@ function PlayVsLichessBoardContent() {
                 </Text>
               )}
 
-              {showInlinePuzzlesAlert && (
-                <Alert color="teal">
-                  <Stack gap="xs">
-                    <Text size="sm">
-                      {t("features.postGameReview.completedMessage", {
-                        puzzles: postGameReview?.puzzlesGenerated ?? 0,
-                        mistakes:
-                          (postGameReview?.mistakeCount ?? 0) +
-                          (postGameReview?.blunderCount ?? 0) +
-                          (postGameReview?.dubiousCount ?? 0),
-                      })}
-                    </Text>
-                    <Button
-                      size="xs"
-                      variant="light"
-                      onClick={() => {
-                        void openGeneratedPuzzles();
-                      }}
-                    >
-                      {t("features.postGameReview.openPuzzles")}
-                    </Button>
-                  </Stack>
-                </Alert>
-              )}
+              <GeneratedPuzzlesInlineAlert
+                visible={showInlinePuzzlesAlert}
+                review={postGameReview}
+                onOpen={() => {
+                  void openGeneratedPuzzles();
+                }}
+                t={t}
+              />
 
               {gameId && (
                 <Text size="sm" c="dimmed">
@@ -1370,32 +1392,8 @@ function PlayVsLichessBoardContent() {
 
               <Divider />
 
-              <Text fw={600} size="sm">
-                {t("common.opening")}
-              </Text>
-              <Text size="sm" c="dimmed">
-                {openingText}
-              </Text>
-
-              <Divider />
-
-              <Text fw={600} size="sm">
-                {t("common.pgn")}
-              </Text>
               <Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-                <Box
-                  component="pre"
-                  style={{
-                    margin: 0,
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-                    fontSize: "0.8rem",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {pgn}
-                </Box>
+                <LichessOpeningPgn openingText={openingText} pgn={pgn} t={t} />
               </Box>
             </Stack>
           </Paper>

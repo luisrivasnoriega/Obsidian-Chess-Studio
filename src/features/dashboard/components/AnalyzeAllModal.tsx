@@ -41,6 +41,7 @@ export function AnalyzeAllModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
   const stopAnalysisRef = useRef<(() => Promise<void>) | null>(null);
+  const progressRef = useRef({ current: 0, total: 0 });
 
   const counts = useMemo(() => {
     const total = Math.max(0, Number.isFinite(gameCount) ? gameCount : 0);
@@ -70,6 +71,7 @@ export function AnalyzeAllModal({
     const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
     setIsAnalyzing(true);
     setProgress({ current: 0, total: countToAnalyze });
+    progressRef.current = { current: 0, total: countToAnalyze };
     cancelledRef.current = false;
 
     try {
@@ -81,6 +83,7 @@ export function AnalyzeAllModal({
         },
         (current, total) => {
           setProgress({ current, total });
+          progressRef.current = { current, total };
         },
         () => cancelledRef.current,
       );
@@ -101,15 +104,18 @@ export function AnalyzeAllModal({
       });
     } finally {
       setIsAnalyzing(false);
-      if (!cancelledRef.current && progress.current === progress.total && progress.total > 0) {
+      const latestProgress = progressRef.current;
+      if (!cancelledRef.current && latestProgress.current === latestProgress.total && latestProgress.total > 0) {
         // Analysis complete, close modal after a short delay
         setTimeout(() => {
           onClose();
           setProgress({ current: 0, total: 0 });
+          progressRef.current = { current: 0, total: 0 };
         }, 1000);
       } else if (cancelledRef.current) {
         // Analysis was cancelled, reset progress
         setProgress({ current: 0, total: 0 });
+        progressRef.current = { current: 0, total: 0 };
       }
     }
   };
@@ -131,6 +137,7 @@ export function AnalyzeAllModal({
   useEffect(() => {
     if (!opened) {
       setProgress({ current: 0, total: 0 });
+      progressRef.current = { current: 0, total: 0 };
       setIsAnalyzing(false);
       cancelledRef.current = false;
       stopAnalysisRef.current = null;
@@ -224,7 +231,7 @@ export function AnalyzeAllModal({
 
           {isAnalyzing && (
             <Stack gap="xs" mt="md">
-              <Progress value={(progress.current / progress.total) * 100} />
+              <Progress value={progress.total > 0 ? (progress.current / progress.total) * 100 : 0} />
               <Text size="sm" c="dimmed" ta="center">
                 {t("features.dashboard.analyzingGames", { current: progress.current, total: progress.total })}
               </Text>

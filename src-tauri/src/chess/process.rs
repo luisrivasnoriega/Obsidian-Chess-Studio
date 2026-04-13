@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use tokio::io::AsyncWriteExt;
+use tokio::process::Child;
+use tokio::time::{timeout, Duration};
 use vampirc_uci::UciInfoAttribute;
 
 use crate::error::Error;
@@ -20,6 +22,7 @@ pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Represents a running UCI engine process and its state.
 pub struct EngineProcess {
+    pub child: Child,
     pub stdin: tokio::process::ChildStdin,
     pub last_depth: u32,
     pub best_moves: Vec<BestMoves>,
@@ -70,6 +73,7 @@ impl EngineProcess {
 
         Ok((
             Self {
+                child: comm.child,
                 stdin: comm.stdin,
                 last_depth: 0,
                 best_moves: Vec::new(),
@@ -136,6 +140,7 @@ impl EngineProcess {
             self.logs.push(EngineLog::Gui("isready\n".to_string()));
         }
         self.last_depth = 0;
+        self.last_progress = 0.0;
         self.options = options.clone();
         self.best_moves.clear();
         self.last_best_moves.clear();
@@ -195,9 +200,21 @@ impl EngineProcess {
 
     /// Kill the engine process.
     pub async fn kill(&mut self) -> Result<(), Error> {
-        self.stdin.write_all(b"quit\n").await?;
+        let _ = self.stdin.write_all(b"quit\n").await;
         self.logs.push(EngineLog::Gui("quit\n".to_string()));
         self.running = false;
+
+        // Give the engine a brief chance to exit gracefully after "quit".
+        if timeout(Duration::from_millis(300), self.child.wait())
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+
+        // Force-kill as fallback to prevent orphan processes.
+        let _ = self.child.start_kill();
+        let _ = timeout(Duration::from_secs(1), self.child.wait()).await;
         Ok(())
     }
 }

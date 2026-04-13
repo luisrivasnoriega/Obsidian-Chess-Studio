@@ -1003,6 +1003,7 @@ async fn get_engine_best_move(
 
     // `get_best_moves` can return None when (re)starting analysis; poll until we have progress or timeout.
     let started_at = Instant::now();
+    let min_wait = Duration::from_millis(requested_ms_u32 as u64);
     let max_wait = Duration::from_millis(req.engine_ms.saturating_add(3000) as u64);
 
     let mut last_best_uci: Option<String> = None;
@@ -1029,7 +1030,7 @@ async fn get_engine_best_move(
                 last_best_uci = Some(best_uci);
             }
 
-            if progress >= 99.9 && last_best_uci.is_some() {
+            if progress >= 99.9 && last_best_uci.is_some() && started_at.elapsed() >= min_wait {
                 break;
             }
         }
@@ -1119,6 +1120,7 @@ async fn get_engine_top_moves(
     };
 
     let started_at = Instant::now();
+    let min_wait = Duration::from_millis(requested_ms_u32 as u64);
     let max_wait = Duration::from_millis(req.engine_ms.saturating_add(3000) as u64);
 
     let mut last_top_moves: Vec<String> = Vec::new();
@@ -1161,7 +1163,7 @@ async fn get_engine_top_moves(
                 }
             }
 
-            if progress >= 99.9 && !last_top_moves.is_empty() {
+            if progress >= 99.9 && !last_top_moves.is_empty() && started_at.elapsed() >= min_wait {
                 break;
             }
         }

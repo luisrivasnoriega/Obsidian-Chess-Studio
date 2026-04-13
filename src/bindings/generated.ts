@@ -83,7 +83,8 @@ async analyzeGame(id: string, engine: string, goMode: GoMode, options: AnalysisO
 }
 },
 /**
- * Stop a specific engine process (without killing it) by engine name and tab.
+ * Stop a specific engine process by engine name and tab.
+ * This command performs a definitive shutdown (`stop` + `quit/kill`) and removes the process from the map.
  */
 async stopEngine(engine: string, tab: string) : Promise<Result<null, string>> {
     try {
@@ -151,17 +152,17 @@ async memorySize() : Promise<bigint> {
  * * `Err(Error::NoPuzzles)` if no puzzles match the criteria
  * * Other errors if there was a problem accessing the database
  */
-async getPuzzle(file: string, minRating: number, maxRating: number, random: boolean, themes: string[] | null, openingTags: string[] | null) : Promise<Result<Puzzle, string>> {
+async getPuzzle(file: string, minRating: number, maxRating: number, random: boolean, themes: string[] | null, openingTags: string[] | null, sideToMove: string | null) : Promise<Result<Puzzle, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_puzzle", { file, minRating, maxRating, random, themes, openingTags }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_puzzle", { file, minRating, maxRating, random, themes, openingTags, sideToMove }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
-async getPuzzleBatch(file: string, minRating: number, maxRating: number, random: boolean, themes: string[] | null, openingTags: string[] | null, count: number) : Promise<Result<Puzzle[], string>> {
+async getPuzzleBatch(file: string, minRating: number, maxRating: number, random: boolean, themes: string[] | null, openingTags: string[] | null, sideToMove: string | null, count: number) : Promise<Result<Puzzle[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_puzzle_batch", { file, minRating, maxRating, random, themes, openingTags, count }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_puzzle_batch", { file, minRating, maxRating, random, themes, openingTags, sideToMove, count }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -873,6 +874,30 @@ async getPuzzleOpeningTags(file: string) : Promise<Result<OpeningTagOption[], st
 }
 },
 /**
+ * Returns all data required to render puzzle filters in one backend call.
+ */
+async getPuzzleFiltersMetadata(file: string) : Promise<Result<PuzzleFiltersMetadata, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_puzzle_filters_metadata", { file }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Returns dependent puzzle filter options for the active context.
+ * - `themes` options are filtered by `opening_tags` + rating range.
+ * - `opening_tags` options are filtered by `themes` + rating range.
+ */
+async getPuzzleDependentFiltersMetadata(file: string, minRating: number, maxRating: number, themes: string[] | null, openingTags: string[] | null, sideToMove: string | null) : Promise<Result<PuzzleFiltersMetadata, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_puzzle_dependent_filters_metadata", { file, minRating, maxRating, themes, openingTags, sideToMove }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Validates a downloaded puzzle database file
  */
 async validatePuzzleDatabase(file: string) : Promise<Result<boolean, string>> {
@@ -1352,6 +1377,22 @@ async createLichessTournament(input: LichessTournamentCreateRequest) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async consultOrionPlan(request: OrionPlanRequest) : Promise<Result<OrionPlanResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("consult_orion_plan", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async consultOrionPlanFromAnalysis(request: OrionPlanAnalysisRequest) : Promise<Result<OrionPlanResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("consult_orion_plan_from_analysis", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async lichessFindHumanGame(input: LichessFindHumanGameInput) : Promise<Result<LichessFindHumanGameResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("lichess_find_human_game", { input }) };
@@ -1681,6 +1722,9 @@ export type OpeningStats = { name: string; games: bigint; won: bigint; draw: big
  * Opening tag option with technical value and friendly label
  */
 export type OpeningTagOption = { value: string; label: string }
+export type OrionPlanAnalysisRequest = { apiKey: string; orientation: string; model: string | null; uiLanguage: string | null; premiumUser: string | null; rootFen: string; finalFen: string; fenTrail?: string[]; gameMovesUci?: string[]; engineName: string; engineGoJson: string; engineSettingsJson: string; engineLinesJson: string; dbType: string; lichessOptionsJson: string | null; masterOptionsJson: string | null; lichessToken: string | null }
+export type OrionPlanRequest = { apiKey: string; orientation: string; contextJson: string; model: string | null; uiLanguage: string | null }
+export type OrionPlanResponse = { plan: string; raw: string; systemPrompt: string; userPrompt: string; payloadJson: string }
 export type OutOpening = { name: string; fen: string }
 export type Outcome = "1-0" | "0-1" | "1/2-1/2" | "*"
 export type OutcomeAccuracyStats = { wonAvgAccuracy: number | null; drawnAvgAccuracy: number | null; lostAvgAccuracy: number | null; wonCount: number; drawnCount: number; lostCount: number }
@@ -1786,6 +1830,10 @@ storageSize: bigint;
  * Full path to the database file
  */
 path: string }
+/**
+ * Combined metadata required by the puzzles front-end filters panel.
+ */
+export type PuzzleFiltersMetadata = { ratingRange: [number, number] | null; hasThemes: boolean; hasOpeningTags: boolean; themes: ThemeGroup[]; openingTags: OpeningTagOption[] }
 export type PuzzleTreeNodeDto = { fen: string; san?: string | null; children?: PuzzleTreeNodeDto[] }
 export type QueryOptions<SortT> = { skipCount: boolean; page?: number | null; pageSize?: number | null; sort: SortT; direction: SortDirection }
 export type QueryResponse<T> = { data: T; count: number | null }

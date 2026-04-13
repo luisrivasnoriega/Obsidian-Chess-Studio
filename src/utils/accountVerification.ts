@@ -4,6 +4,7 @@ const VERIFICATION_BASE_URL =
   "https://ocsverification20260122235102-bjhggaeuffg9cwdz.eastus-01.azurewebsites.net/api/OCS_Verification";
 
 export type Platform = "Lichess" | "Chesscom";
+export type AccountProtectionStatus = "protected" | "open" | "unknown";
 
 async function readBool(response: Response): Promise<boolean> {
   // ASP.NET typically returns JSON boolean (true/false). But we handle text too.
@@ -27,17 +28,34 @@ async function readBool(response: Response): Promise<boolean> {
 }
 
 /**
- * Verifies if an account can be added without credentials
- * Backend semantics: returns true if (platform|user) DOES NOT exist, false if it exists.
+ * Checks whether an account is protected.
+ *
+ * Backend semantics:
+ * - true  => account is open (not protected)
+ * - false => account is protected
  */
-export async function verifyAccount(platform: Platform, user: string): Promise<boolean> {
+export async function getAccountProtectionStatus(platform: Platform, user: string): Promise<AccountProtectionStatus> {
   const url =
     `${VERIFICATION_BASE_URL}/verify?Platform=${encodeURIComponent(platform)}` + `&User=${encodeURIComponent(user)}`;
 
-  const response = await fetch(url, { method: "GET" });
-  if (!response.ok) return false;
+  try {
+    const response = await fetch(url, { method: "GET" });
+    if (!response.ok) return "unknown";
 
-  return await readBool(response);
+    const serverResult = await readBool(response);
+    return serverResult ? "open" : "protected";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Backward-compatible helper:
+ * returns true when the account is open (not protected).
+ */
+export async function verifyAccount(platform: Platform, user: string): Promise<boolean> {
+  const status = await getAccountProtectionStatus(platform, user);
+  return status === "open";
 }
 
 /**

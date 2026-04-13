@@ -17,13 +17,17 @@ type CachedPuzzle = {
   tokens: Token[];
   rating: number;
   index: number;
+  sideToMove: "w" | "b" | null;
 };
+
+type PuzzleSideToMove = "any" | "white" | "black";
 
 type PuzzleCacheEntry = {
   generated: {
     minRating: number;
     maxRating: number;
     random: boolean;
+    sideToMove: PuzzleSideToMove;
     counter: number;
     puzzle_indexes: number[];
   };
@@ -90,8 +94,27 @@ function normalizeRangeForPrefetch(range: [number, number], dbRange: [number, nu
   return [min, max];
 }
 
-function createDb3PrefetchKey(db: string, random: boolean, themes: string[], openingTags: string[]): string {
-  return [db, random ? "rand" : "ordered", themes.join("|"), openingTags.join("|")].join("::");
+function createDb3PrefetchKey(
+  db: string,
+  random: boolean,
+  themes: string[],
+  openingTags: string[],
+  sideToMove: PuzzleSideToMove,
+): string {
+  return [db, random ? "rand" : "ordered", themes.join("|"), openingTags.join("|"), sideToMove].join("::");
+}
+
+function normalizeSideToMoveForBackend(sideToMove: PuzzleSideToMove): "white" | "black" | null {
+  if (sideToMove === "white" || sideToMove === "black") {
+    return sideToMove;
+  }
+  return null;
+}
+
+function getFenSideToMove(fen: string | undefined): "w" | "b" | null {
+  if (!fen) return null;
+  const side = fen.trim().split(/\s+/)[1];
+  return side === "w" || side === "b" ? side : null;
 }
 
 function removeDb3PrefetchEntries(dbPath: string) {
@@ -227,7 +250,12 @@ export const usePuzzleDatabase = () => {
             const tokens = unwrap(await commands.lexPgn(game));
             const headers = getPgnHeaders(tokens);
             const rating = headers.white_elo || 1500;
-            return { rating, index: i, tokens };
+            return {
+              rating,
+              index: i,
+              tokens,
+              sideToMove: getFenSideToMove(headers.fen),
+            };
           }),
         );
 
@@ -237,6 +265,7 @@ export const usePuzzleDatabase = () => {
             minRating: 0,
             maxRating: 0,
             random: false,
+            sideToMove: "any",
             counter: 0,
             puzzle_indexes: [],
           },
@@ -337,6 +366,7 @@ export const usePuzzleDatabase = () => {
     minRating: number,
     maxRating: number,
     random: boolean,
+    sideToMove: PuzzleSideToMove,
   ): Promise<Puzzle | null> => {
     const localPuzzleDb = PuzzleDbFromPgnCache.get(db);
     if (!localPuzzleDb) {
@@ -377,10 +407,18 @@ export const usePuzzleDatabase = () => {
       localPuzzleDb.generated.minRating !== minRating ||
       localPuzzleDb.generated.maxRating !== maxRating ||
       localPuzzleDb.generated.random !== random ||
+      localPuzzleDb.generated.sideToMove !== sideToMove ||
       localPuzzleDb.generated.counter >= localPuzzleDb.generated.puzzle_indexes.length
     ) {
+      // UI filter is the player's side. Puzzle auto-plays first move, so player side
+      // must match the opposite side of the initial FEN.
+      const normalizedSide = sideToMove === "white" ? "b" : sideToMove === "black" ? "w" : null;
       let puzzle_indexes = localPuzzleDb.puzzles
-        .map((p, i) => (p.rating >= minRating && p.rating <= maxRating ? i : -1))
+        .map((p, i) => {
+          const inRange = p.rating >= minRating && p.rating <= maxRating;
+          const sideMatches = normalizedSide ? p.sideToMove === normalizedSide : true;
+          return inRange && sideMatches ? i : -1;
+        })
         .filter((i) => i !== -1);
 
       // If puzzle variants and random mode and not 100% complete, filter out solved puzzles
@@ -401,6 +439,7 @@ export const usePuzzleDatabase = () => {
         minRating,
         maxRating,
         random,
+        sideToMove,
         counter: 0,
         puzzle_indexes,
       };
@@ -527,6 +566,7 @@ export const usePuzzleDatabase = () => {
       random: boolean,
       themes: string[],
       openingTags: string[],
+      sideToMove: PuzzleSideToMove,
       targetSize: number,
     ) => {
       let entry = Db3PrefetchCache.get(key);
@@ -551,6 +591,7 @@ export const usePuzzleDatabase = () => {
           random,
           themes.length > 0 ? themes : null,
           openingTags.length > 0 ? openingTags : null,
+          normalizeSideToMoveForBackend(sideToMove),
           needed,
         );
 
@@ -582,6 +623,7 @@ export const usePuzzleDatabase = () => {
     inOrder: boolean,
     themes?: string[],
     openingTags?: string[],
+    sideToMove: PuzzleSideToMove = "any",
   ): Promise<Puzzle> => {
     const dbInfo = puzzleDbs.find((p) => p.path === db);
     if (!dbInfo) {
@@ -590,9 +632,16 @@ export const usePuzzleDatabase = () => {
     if (dbInfo.path.endsWith(".db3")) {
       const normalizedThemes = normalizeFilterListForKey(themes);
       const normalizedOpeningTags = normalizeFilterListForKey(openingTags);
+      const normalizedSideToMove = sideToMove;
       const random = !inOrder;
       const [prefetchMin, prefetchMax] = normalizeRangeForPrefetch(currentRange, dbRatingRange);
-      const prefetchKey = createDb3PrefetchKey(db, random, normalizedThemes, normalizedOpeningTags);
+      const prefetchKey = createDb3PrefetchKey(
+        db,
+        random,
+        normalizedThemes,
+        normalizedOpeningTags,
+        normalizedSideToMove,
+      );
 
       let entry = Db3PrefetchCache.get(prefetchKey);
       let puzzle = entry ? takePuzzleInRange(entry, currentRange[0], currentRange[1]) : null;
@@ -609,6 +658,7 @@ export const usePuzzleDatabase = () => {
             random,
             normalizedThemes,
             normalizedOpeningTags,
+            normalizedSideToMove,
             DB3_PREFETCH_TARGET_SIZE,
           );
         } else if (entry && queueAfterPop <= DB3_PREFETCH_MIN_BUFFER && !entry.refillPromise) {
@@ -620,6 +670,7 @@ export const usePuzzleDatabase = () => {
             random,
             normalizedThemes,
             normalizedOpeningTags,
+            normalizedSideToMove,
             DB3_PREFETCH_TARGET_SIZE,
           );
         }
@@ -635,6 +686,7 @@ export const usePuzzleDatabase = () => {
         random,
         normalizedThemes,
         normalizedOpeningTags,
+        normalizedSideToMove,
         DB3_PREFETCH_TARGET_SIZE,
       );
 
@@ -650,6 +702,7 @@ export const usePuzzleDatabase = () => {
           random,
           normalizedThemes,
           normalizedOpeningTags,
+          normalizedSideToMove,
           DB3_PREFETCH_TARGET_SIZE * 2,
         );
 
@@ -665,6 +718,7 @@ export const usePuzzleDatabase = () => {
           random,
           normalizedThemes.length > 0 ? normalizedThemes : null,
           normalizedOpeningTags.length > 0 ? normalizedOpeningTags : null,
+          normalizeSideToMoveForBackend(normalizedSideToMove),
         );
         if (exactResult.status === "error") {
           throw new Error(exactResult.error);
@@ -682,6 +736,7 @@ export const usePuzzleDatabase = () => {
           random,
           normalizedThemes,
           normalizedOpeningTags,
+          normalizedSideToMove,
           DB3_PREFETCH_TARGET_SIZE,
         );
       } else if (latestEntry && latestEntry.queue.length <= DB3_PREFETCH_MIN_BUFFER) {
@@ -693,12 +748,13 @@ export const usePuzzleDatabase = () => {
           random,
           normalizedThemes,
           normalizedOpeningTags,
+          normalizedSideToMove,
           DB3_PREFETCH_TARGET_SIZE,
         );
       }
       return puzzle;
     } else {
-      const dbPuzzle = await generatePuzzleFromPgn(db, currentRange[0], currentRange[1], !inOrder);
+      const dbPuzzle = await generatePuzzleFromPgn(db, currentRange[0], currentRange[1], !inOrder, sideToMove);
       if (!dbPuzzle) {
         throw new Error("Unable to generate a puzzle from local file within the requested range");
       }
@@ -714,6 +770,7 @@ export const usePuzzleDatabase = () => {
         minRating: 0,
         maxRating: 0,
         random: false,
+        sideToMove: "any",
         counter: 0,
         puzzle_indexes: [],
       };
@@ -725,8 +782,8 @@ export const usePuzzleDatabase = () => {
     }
   };
 
-  const minRating = dbRatingRange?.[0] ?? 600;
-  const maxRating = dbRatingRange?.[1] ?? 2800;
+  const minRating = dbRatingRange?.[0] ?? ratingRange?.[0] ?? 600;
+  const maxRating = dbRatingRange?.[1] ?? ratingRange?.[1] ?? 2800;
 
   return {
     puzzleDbs,
