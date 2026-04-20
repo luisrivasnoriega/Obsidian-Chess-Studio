@@ -9,13 +9,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use shakmaty::{
     fen::Fen, san::{San, SanPlus}, uci::UciMove, Board, CastlingMode, Chess, Color, EnPassantMode,
     Move, Position, Role, Square,
 };
 use specta::Type;
 
-use crate::{error::Error, AppState};
+use crate::{error::Error, opening::get_opening_info_from_fen, AppState};
 
 use super::{
     analysis::GameAnalysisService,
@@ -40,6 +41,9 @@ const MIN_STRATEGIC_SCORE_TO_COMMENT_AFTER_OPENING: f32 = 0.42;
 // Do not annotate normal opening/development moves. Move 11+ can be commented if
 // the move has concrete evidence or an evaluation issue.
 const OPENING_COMMENT_SUPPRESS_PLIES: usize = 20;
+// In named opening theory we keep comments sparse for longer. Only concrete
+// tactical/structural turning points should survive this filter.
+const KNOWN_OPENING_COMMENT_SUPPRESS_PLIES: usize = 24;
 
 /// Input payload for the human strategic game analyzer.
 #[derive(Debug, Deserialize, Type)]
@@ -404,7 +408,7 @@ fn build_annotated_pgn_and_narratives(
                 .map(|bm| (*bm).clone())
                 .collect::<Vec<BestMoves>>();
             let strategic_request = HumanStrategicRequest {
-                fen: before_fen,
+                fen: before_fen.clone(),
                 // The FEN already is the current pre-move position.
                 // Passing previous moves here would replay them twice.
                 moves: Vec::new(),
@@ -412,10 +416,17 @@ fn build_annotated_pgn_and_narratives(
                 config: None,
             };
 
-            match pick_human_strategic_move(strategic_request) {
-                Ok(sel) => Some(sel),
-                Err(err) => {
+            match catch_unwind(AssertUnwindSafe(|| pick_human_strategic_move(strategic_request))) {
+                Ok(Ok(sel)) => Some(sel),
+                Ok(Err(err)) => {
                     log::warn!("Falló el módulo estratégico humano en la ply {}: {:?}", ply + 1, err);
+                    None
+                }
+                Err(_) => {
+                    log::warn!(
+                        "Panic en human_strategy en la ply {}; se omite selección estratégica para esta jugada",
+                        ply + 1
+                    );
                     None
                 }
             }
@@ -543,6 +554,7 @@ fn build_annotated_pgn_and_narratives(
         }
 
         concrete_bundle.atoms.sort_by(|a, b| b.priority.cmp(&a.priority));
+        collapse_redundant_atoms(&mut concrete_bundle.atoms);
         concrete_bundle
             .atoms
             .dedup_by(|a, b| a.short == b.short || a.sentence == b.sentence);
@@ -602,9 +614,20 @@ fn build_annotated_pgn_and_narratives(
         );
 
         let opening_phase = is_opening_phase(&before, ply);
+        let in_known_opening_theory =
+            is_known_opening_theory_position(&before_fen, &before, ply);
+        let after_fen = Fen::from_position(after.clone(), EnPassantMode::Legal).to_string();
+        let remains_in_known_opening_theory =
+            is_known_opening_theory_position(&after_fen, &after, ply + 1);
+        let breaks_known_opening_theory =
+            in_known_opening_theory && !remains_in_known_opening_theory;
+        let opening_novelty = current_analysis.map(|a| a.novelty).unwrap_or(false);
         let should_comment = should_comment_move(
             ply,
             opening_phase,
+            in_known_opening_theory,
+            breaks_known_opening_theory,
+            opening_novelty,
             verdict,
             cp_loss,
             played_strategic_score,
@@ -615,6 +638,16 @@ fn build_annotated_pgn_and_narratives(
         );
 
         let emit_variation = should_comment && !suggested_variation_uci.is_empty();
+        let narrative_comment_short = if should_comment {
+            comment_short.clone()
+        } else {
+            String::new()
+        };
+        let narrative_comment_long = if should_comment {
+            comment_long.clone()
+        } else {
+            String::new()
+        };
 
         pgn_annotations.push(PgnMoveAnnotation {
             nag: nag_for_verdict(verdict, should_comment),
@@ -652,8 +685,8 @@ fn build_annotated_pgn_and_narratives(
             played_motifs,
             strategic_axes,
             strategic_plan,
-            comment_short,
-            comment_long,
+            comment_short: narrative_comment_short,
+            comment_long: narrative_comment_long,
             suggested_variation_uci,
             suggested_variation_san,
         });
@@ -674,6 +707,9 @@ fn build_annotated_pgn_and_narratives(
 fn should_comment_move(
     ply: usize,
     opening_phase: bool,
+    in_known_opening_theory: bool,
+    breaks_known_opening_theory: bool,
+    opening_novelty: bool,
     verdict: HumanMoveVerdict,
     cp_loss: Option<i32>,
     strategic_score: Option<f32>,
@@ -682,6 +718,73 @@ fn should_comment_move(
     is_sacrifice: bool,
     played_matches_strategic: bool,
 ) -> bool {
+    let quiet_or_positive = matches!(
+        verdict,
+        HumanMoveVerdict::Best
+            | HumanMoveVerdict::Great
+            | HumanMoveVerdict::Practical
+            | HumanMoveVerdict::Interesting
+    );
+    let cp_loss_value = cp_loss.unwrap_or(0);
+    let low_eval_swing = cp_loss_value < 90;
+    let opening_plan_signal =
+        ply >= 8 && has_opening_plan_signal(strategic_score, motifs, concrete_bundle, is_sacrifice);
+
+    // Never annotate the first pure development/book plies unless there is a real
+    // tactic or sacrifice. This keeps 1.e4/1...c5 quiet, while still allowing
+    // later opening turning points such as ...d4 or Bxf6 followed by Ne4/b4.
+    if ply < 8
+        && quiet_or_positive
+        && !is_sacrifice
+        && cp_loss_value < 140
+        && !has_opening_exception_atom(concrete_bundle)
+    {
+        return false;
+    }
+
+    // Hard opening suppression for known theory: do not annotate routine moves,
+    // even if classified as dubious by shallow eval noise. Keep only true turning
+    // points (clear tactical/structural signal or large eval swing).
+    if in_known_opening_theory
+        && ply < KNOWN_OPENING_COMMENT_SUPPRESS_PLIES
+        && !is_sacrifice
+        && !has_opening_exception_atom(concrete_bundle)
+        && cp_loss_value < 180
+        && !breaks_known_opening_theory
+        && !opening_novelty
+        && !opening_plan_signal
+    {
+        return false;
+    }
+
+    // Generic opening suppression (even when opening name is unknown): avoid
+    // clutter during development unless the move is a clear practical mistake.
+    if opening_phase
+        && ply < OPENING_COMMENT_SUPPRESS_PLIES
+        && !is_sacrifice
+        && !has_opening_exception_atom(concrete_bundle)
+        && cp_loss_value < 130
+        && !breaks_known_opening_theory
+        && !opening_novelty
+        && !opening_plan_signal
+    {
+        return false;
+    }
+
+    if matches!(
+        verdict,
+        HumanMoveVerdict::Best
+            | HumanMoveVerdict::Great
+            | HumanMoveVerdict::Practical
+            | HumanMoveVerdict::Interesting
+    ) && (breaks_known_opening_theory || opening_novelty || opening_plan_signal)
+        && (has_opening_exception_atom(concrete_bundle)
+            || !concrete_bundle.atoms.is_empty()
+            || strategic_score.unwrap_or(0.0) >= 0.56)
+    {
+        return true;
+    }
+
     if matches!(
         verdict,
         HumanMoveVerdict::Dubious | HumanMoveVerdict::Mistake | HumanMoveVerdict::Blunder
@@ -693,26 +796,38 @@ fn should_comment_move(
     // This is position-aware, not only ply-based: many games are still in the
     // opening after move 10 if most pieces are not developed and no real
     // strategic transformation happened.
-    if opening_phase
-        && matches!(
-            verdict,
-            HumanMoveVerdict::Best | HumanMoveVerdict::Great | HumanMoveVerdict::Practical | HumanMoveVerdict::Interesting
-        )
+    if in_known_opening_theory
+        && quiet_or_positive
         && !is_sacrifice
-        && cp_loss.unwrap_or(0) < 90
+        && low_eval_swing
         && !has_opening_exception_atom(concrete_bundle)
+        && !breaks_known_opening_theory
+        && !opening_novelty
+        && !opening_plan_signal
+    {
+        return false;
+    }
+
+    if opening_phase
+        && quiet_or_positive
+        && !is_sacrifice
+        && low_eval_swing
+        && !has_opening_exception_atom(concrete_bundle)
+        && !breaks_known_opening_theory
+        && !opening_novelty
+        && !opening_plan_signal
     {
         return false;
     }
 
     if ply < OPENING_COMMENT_SUPPRESS_PLIES
-        && matches!(
-            verdict,
-            HumanMoveVerdict::Best | HumanMoveVerdict::Great | HumanMoveVerdict::Practical | HumanMoveVerdict::Interesting
-        )
+        && quiet_or_positive
         && !is_sacrifice
-        && cp_loss.unwrap_or(0) < 90
+        && low_eval_swing
         && !has_opening_exception_atom(concrete_bundle)
+        && !breaks_known_opening_theory
+        && !opening_novelty
+        && !opening_plan_signal
     {
         return false;
     }
@@ -802,11 +917,78 @@ fn apply_eval_sanity_guardrail(
 
 fn has_opening_exception_atom(bundle: &ConcreteCommentBundle) -> bool {
     bundle.atoms.iter().any(|atom| {
-        atom.priority >= 100
-            || atom.short.contains("sacrificio estructural")
-            || atom.short.contains("problema táctico")
-            || atom.short.contains("recurso táctico")
+        let short = atom.short.to_lowercase();
+        let sentence = atom.sentence.to_lowercase();
+        let looks_tactical = short.contains("sacrificio")
+            || short.contains("tactico")
+            || short.contains("táctico")
+            || short.contains("jaque")
+            || short.contains("gana material")
+            || short.contains("abre una linea hacia el rey")
+            || short.contains("abre una línea hacia el rey")
+            || short.contains("abre una diagonal hacia el rey")
+            || short.contains("columna abierta");
+        let sentence_confirms_turning_point = sentence.contains("rey")
+            || sentence.contains("material")
+            || sentence.contains("forzada")
+            || sentence.contains("forzado")
+            || sentence.contains("tactica")
+            || sentence.contains("táctica")
+            || sentence.contains("sacrificio");
+        looks_tactical && sentence_confirms_turning_point
     })
+}
+
+fn has_opening_plan_signal(
+    strategic_score: Option<f32>,
+    motifs: &[StrategicMotif],
+    bundle: &ConcreteCommentBundle,
+    is_sacrifice: bool,
+) -> bool {
+    if is_sacrifice {
+        return true;
+    }
+
+    let strong_atoms = bundle.atoms.iter().take(3).filter(|a| a.priority >= 84).count();
+    let explicit_plan_atom = bundle.atoms.iter().any(|a| {
+        let short = a.short.to_ascii_lowercase();
+        short.contains("sacrificio estructural")
+            || short.contains("ocupa la columna")
+            || short.contains("avanza en el centro")
+            || short.contains("rompe el centro")
+            || short.contains("prepara el plan")
+            || short.contains("prepara h5-h4")
+            || short.contains("prepara h4-h5")
+            || short.contains("abre la columna")
+            || short.contains("fija la estructura")
+    });
+
+    // Important: do not require a high strategic score for concrete opening
+    // turning points. The previous version filtered out moves like ...d4 and
+    // Bxf6 because their abstract strategy score could be modest even when the
+    // engine PV showed a clear human plan.
+    if explicit_plan_atom && strong_atoms >= 1 {
+        return true;
+    }
+
+    let strategic_motif = motifs.iter().any(|m| {
+        matches!(
+            m,
+            StrategicMotif::DamagedPawnStructure
+                | StrategicMotif::WeakPawnPressure
+                | StrategicMotif::SpaceGain
+                | StrategicMotif::OpenFilePressure
+                | StrategicMotif::CentralKingPressure
+                | StrategicMotif::PieceRestriction
+                | StrategicMotif::WingClamp
+        )
+    });
+
+    if !strategic_motif {
+        return false;
+    }
+
+    strategic_score.unwrap_or(0.0) >= 0.48 && strong_atoms >= 1
 }
 
 fn classify_verdict_phase2(
@@ -919,9 +1101,9 @@ fn build_comments(
     _strategic_plan: &str,
     concrete_bundle: &ConcreteCommentBundle,
     engine_best_san: Option<&str>,
-    strategic_choice_san: Option<&str>,
+    _strategic_choice_san: Option<&str>,
     played_is_engine_best: bool,
-    played_matches_strategic: bool,
+    _played_matches_strategic: bool,
     played_san: &str,
     is_sacrifice: bool,
     punishment_text: Option<&str>,
@@ -930,25 +1112,22 @@ fn build_comments(
     let _axes_text = summarize_axes(strategic_axes);
     let concrete_text = summarize_concrete_themes(concrete_themes);
     let atom_limit = match verdict {
-        HumanMoveVerdict::Best => 1,
+        HumanMoveVerdict::Best | HumanMoveVerdict::Great => 2,
         _ => 2,
     };
     let concrete_short = summarize_atoms_as_short_phrase(&concrete_bundle.atoms, atom_limit);
+    let liability_short = summarize_liability_short(&concrete_bundle.atoms);
+    let gm_plan_hint = derive_gm_plan_hint(&concrete_bundle.atoms, motifs, is_sacrifice);
     let evidence = concrete_bundle
         .atoms
         .first()
-        .filter(|atom| atom.priority >= 100)
-        .map(|atom| sentence(&atom.sentence))
+        .filter(|atom| atom.priority >= 104)
+        .map(|atom| atom.sentence.clone())
         .unwrap_or_default();
 
     let engine_alt = engine_best_san
         .filter(|_| !played_is_engine_best)
-        .map(|best| format!("Más fuerte era {}.", best))
-        .unwrap_or_default();
-
-    let strategic_alt = strategic_choice_san
-        .filter(|_| !played_matches_strategic)
-        .map(|strat| format!("Plan humano alternativo: {}.", strat))
+        .map(|best| format!("La opcion mas fuerte era {}.", best))
         .unwrap_or_default();
 
     let score_ok = played_strategic_score.unwrap_or(0.0) >= MIN_STRATEGIC_SCORE_TO_EXPLAIN;
@@ -958,92 +1137,103 @@ fn build_comments(
     let base = match verdict {
         HumanMoveVerdict::Best => {
             if has_concrete {
-                format!("Mejor jugada: {}.", concrete_short)
+                format!("Jugada precisa: {}.", concrete_short)
             } else if has_theme {
-                format!("Mejor jugada: {}.", concrete_text)
+                format!("Jugada precisa con plan claro: {}.", concrete_text)
             } else {
-                "Mejor jugada.".to_string()
+                "Jugada precisa.".to_string()
             }
         }
         HumanMoveVerdict::Great => {
             if is_sacrifice && has_concrete {
-                format!("Sacrificio práctico fuerte: {}.", concrete_short)
+                format!("Excelente recurso practico: {}.", concrete_short)
             } else if has_concrete {
-                format!("Jugada fuerte: {}.", concrete_short)
+                format!("Jugada de alto nivel: {}.", concrete_short)
             } else if has_theme {
-                format!("Jugada fuerte: {}.", concrete_text)
+                format!("Jugada de alto nivel: {}.", concrete_text)
             } else {
-                "Jugada fuerte.".to_string()
+                "Jugada de alto nivel.".to_string()
             }
         }
         HumanMoveVerdict::Practical => {
             if has_concrete {
-                format!("Idea práctica: {}.", concrete_short)
+                format!("Buena decision practica: {}.", concrete_short)
             } else if has_theme {
-                format!("Idea práctica: {}.", concrete_text)
+                format!("Buena decision practica: {}.", concrete_text)
             } else {
-                "Idea práctica.".to_string()
+                "Buena decision practica.".to_string()
             }
         }
         HumanMoveVerdict::Interesting => {
             if has_concrete {
-                format!("Idea interesante: {}.", concrete_short)
+                format!("Idea interesante para desequilibrar: {}.", concrete_short)
             } else if has_theme {
-                format!("Idea jugable: {}.", motif_text)
+                format!("Idea interesante para desequilibrar: {}.", motif_text)
             } else {
-                "Idea jugable, pero no claramente estratégica.".to_string()
+                "Idea jugable, aunque requiere precision para sostenerse.".to_string()
             }
         }
         HumanMoveVerdict::Dubious => {
-            if has_concrete {
-                format!("Dudosa: {}.", concrete_short)
+            if let Some(short) = liability_short.as_deref() {
+                format!("Imprecision seria: {}.", short)
             } else {
-                "Dudosa.".to_string()
+                "Imprecision seria que cede la iniciativa.".to_string()
             }
         }
         HumanMoveVerdict::Mistake => {
-            if has_concrete {
-                format!("Error: {}.", concrete_short)
+            if let Some(short) = liability_short.as_deref() {
+                format!("Error importante: {}.", short)
             } else {
-                "Error.".to_string()
+                "Error importante que cambia la evaluacion de la posicion.".to_string()
             }
         }
         HumanMoveVerdict::Blunder => {
-            if has_concrete {
-                format!("Error grave: {}.", concrete_short)
+            if let Some(short) = liability_short.as_deref() {
+                format!("Error grave: {}.", short)
             } else {
-                "Error grave.".to_string()
+                "Error grave que deja la posicion en situacion critica.".to_string()
             }
         }
     };
 
-    let mut parts = vec![base.as_str()];
+    let mut parts: Vec<String> = vec![base.clone()];
 
-    // Keep normal comments to one sentence. Add a second sentence only for
-    // high-priority tactical guardrails, not for ordinary strategic atoms.
-    if !evidence.is_empty() {
-        parts.push(evidence.as_str());
+    if !evidence.is_empty()
+        && matches!(
+            verdict,
+            HumanMoveVerdict::Best
+                | HumanMoveVerdict::Great
+                | HumanMoveVerdict::Practical
+                | HumanMoveVerdict::Interesting
+        )
+        && !is_redundant_evidence_for_base(&base, &evidence)
+    {
+        parts.push(evidence);
+    }
+    if matches!(
+        verdict,
+        HumanMoveVerdict::Best
+            | HumanMoveVerdict::Great
+            | HumanMoveVerdict::Practical
+            | HumanMoveVerdict::Interesting
+    ) {
+        if let Some(plan) = gm_plan_hint {
+            parts.push(plan);
+        }
     }
 
     match verdict {
         HumanMoveVerdict::Dubious | HumanMoveVerdict::Mistake | HumanMoveVerdict::Blunder => {
             if let Some(punishment) = punishment_text.filter(|s| !s.trim().is_empty()) {
-                parts.push(punishment);
+                parts.push(punishment.to_string());
             } else if !engine_alt.is_empty() {
-                parts.push(engine_alt.as_str());
+                parts.push(engine_alt);
             }
         }
-        _ => {
-            // For playable/good moves, do not append "Más fuerte era ...".
-            // That phrase is reserved for real inaccuracies and avoids messages like:
-            // "Mejor jugada... Más fuerte era ...".
-            if !strategic_alt.is_empty() && !has_concrete && !played_is_engine_best {
-                parts.push(strategic_alt.as_str());
-            }
-        }
+        _ => {}
     }
 
-    let long = join_non_empty_sentences(&parts);
+    let long = join_unique_sentences(&parts);
     let long = if long.is_empty() {
         format!("{}.", played_san)
     } else {
@@ -1081,7 +1271,10 @@ fn build_engine_punishment_comment(
     // If the engine score is mate, this is the most important explanation for
     // a human player. Do not describe it merely as "a check".
     if matches!(line.score.value, ScoreValue::Mate(_)) {
-        return Some(format!("Permite mate forzado: {}. Línea crítica: {}.", first, pv));
+        return Some(format!(
+            "La jugada permite una secuencia de mate: {}. Linea critica: {}.",
+            first, pv
+        ));
     }
 
     let first_is_capture = first.contains('x');
@@ -1099,22 +1292,22 @@ fn build_engine_punishment_comment(
         .unwrap_or(0);
 
     let consequence = if captured_value >= 500 && first_is_check {
-        "Permite ganar material con jaque"
+        "El rival gana material con jaque"
     } else if captured_value >= 500 {
-        "Permite ganar material importante"
+        "El rival gana material importante"
     } else if captured_value >= 300 && first_is_check {
-        "Permite ganar una pieza con jaque"
+        "El rival gana una pieza con jaque"
     } else if captured_value >= 300 {
-        "Permite ganar una pieza"
+        "El rival gana una pieza"
     } else if first_is_check {
-        "Permite una iniciativa forzada con jaque"
+        "El rival obtiene una iniciativa forzada con jaque"
     } else if first_is_capture {
-        "Permite una captura favorable"
+        "El rival consigue una captura favorable"
     } else {
-        "Permite mejorar la posición rival"
+        "La posicion se inclina a favor del rival"
     };
 
-    Some(format!("{}: {}. Línea crítica: {}.", consequence, first, pv))
+    Some(format!("{}: {}. Linea critica: {}.", consequence, first, pv))
 }
 
 fn build_concrete_comment_bundle(
@@ -1155,6 +1348,8 @@ fn build_concrete_comment_bundle(
     add_pawn_structure_atoms(&mut atoms, board_before, board_after, mover);
     add_passed_pawn_atoms(&mut atoms, board_before, board_after, mv, mover);
     add_rook_activity_atoms(&mut atoms, board_before, board_after, mv, mover);
+    add_rook_file_plan_atoms(&mut atoms, board_before, board_after, mv, mover);
+    add_candidate_pv_plan_atoms(&mut atoms, before.clone(), mv, mover, candidate);
 
     if let Some(c) = candidate {
         if c.components.pawn_structure_damage >= 0.35 {
@@ -1200,9 +1395,101 @@ fn build_concrete_comment_bundle(
     }
 
     atoms.sort_by(|a, b| b.priority.cmp(&a.priority));
+    collapse_redundant_atoms(&mut atoms);
     atoms.dedup_by(|a, b| a.short == b.short || a.sentence == b.sentence);
 
     ConcreteCommentBundle { atoms }
+}
+
+fn collapse_redundant_atoms(atoms: &mut Vec<ConcreteCommentAtom>) {
+    if atoms.is_empty() {
+        return;
+    }
+
+    let has_material_capture_with_check = atoms.iter().any(|atom| {
+        let short = atom.short.to_ascii_lowercase();
+        short.contains("con jaque")
+            && (short.contains("gana material")
+                || short.contains("gana una pieza")
+                || short.contains("gana un peon")
+                || short.contains("gana un peón"))
+    });
+
+    if has_material_capture_with_check {
+        atoms.retain(|atom| {
+            !atom
+                .short
+                .to_ascii_lowercase()
+                .contains("gana un tiempo con jaque")
+        });
+    }
+
+    let check_capture_squares = atoms
+        .iter()
+        .filter_map(|atom| {
+            let short = atom.short.to_ascii_lowercase();
+            if short.contains("con jaque") {
+                return trailing_square(&short);
+            }
+            None
+        })
+        .collect::<HashSet<_>>();
+
+    if check_capture_squares.is_empty() {
+        return;
+    }
+
+    atoms.retain(|atom| {
+        let short = atom.short.to_ascii_lowercase();
+        if !short.starts_with("elimina ") {
+            return true;
+        }
+
+        if let Some(sq) = trailing_square(&short) {
+            return !check_capture_squares.contains(&sq);
+        }
+        true
+    });
+}
+
+fn trailing_square(text: &str) -> Option<String> {
+    let token = text
+        .split_whitespace()
+        .last()
+        .map(|t| t.trim_matches(|ch: char| !ch.is_ascii_alphanumeric()))?;
+    let bytes = token.as_bytes();
+    if bytes.len() != 2 {
+        return None;
+    }
+    let file = bytes[0].to_ascii_lowercase();
+    let rank = bytes[1];
+    if !(b'a'..=b'h').contains(&file) || !(b'1'..=b'8').contains(&rank) {
+        return None;
+    }
+    Some(format!("{}{}", file as char, rank as char))
+}
+
+fn is_redundant_evidence_for_base(base: &str, evidence: &str) -> bool {
+    let base_text = base.to_ascii_lowercase();
+    let evidence_text = evidence.to_ascii_lowercase();
+
+    let base_has_check = base_text.contains("jaque");
+    let evidence_has_check = evidence_text.contains("jaque");
+
+    let base_has_capture_gain = base_text.contains("captura")
+        || base_text.contains("elimina")
+        || base_text.contains("gana material")
+        || base_text.contains("gana una pieza")
+        || base_text.contains("gana un peon")
+        || base_text.contains("gana un peón");
+    let evidence_has_capture_gain = evidence_text.contains("captura")
+        || evidence_text.contains("elimina")
+        || evidence_text.contains("gana material")
+        || evidence_text.contains("gana una pieza")
+        || evidence_text.contains("gana un peon")
+        || evidence_text.contains("gana un peón");
+
+    base_has_check && evidence_has_check && base_has_capture_gain && evidence_has_capture_gain
 }
 
 fn add_two_weakness_strategy_atoms(
@@ -1517,7 +1804,7 @@ fn add_rook_activity_atoms(
     if mv.role() != Role::Rook {
         return;
     }
-    let Some((file, rank)) = square_to_coords(mv.to()) else {
+    let Some((_file, rank)) = square_to_coords(mv.to()) else {
         return;
     };
     let advanced = match mover {
@@ -1537,6 +1824,60 @@ fn add_rook_activity_atoms(
         short: format!("activa la torre en la {}ª fila", rank + 1),
         sentence: "La torre entra en una fila activa y empieza a presionar peones o cortes del rey rival."
             .to_string(),
+    });
+}
+
+fn add_rook_file_plan_atoms(
+    atoms: &mut Vec<ConcreteCommentAtom>,
+    _before: &Board,
+    after: &Board,
+    mv: &Move,
+    mover: Color,
+) {
+    if mv.role() != Role::Rook {
+        return;
+    }
+    let Some((file, _rank)) = square_to_coords(mv.to()) else {
+        return;
+    };
+    let own_files = pawn_file_counts(after, mover);
+    let opp_files = pawn_file_counts(after, mover.other());
+    let own = own_files[file];
+    let opp = opp_files[file];
+
+    let on_open_or_semi_open = own == 0 && opp <= 1;
+    if !on_open_or_semi_open {
+        return;
+    }
+
+    let file_label = file_name(file);
+    let has_central_king = king_square(after, mover.other())
+        .and_then(square_to_coords)
+        .map(|(kf, _)| matches!(kf, 2..=5))
+        .unwrap_or(false);
+
+    let (priority, sentence) = if has_central_king && matches!(file, 3 | 4) {
+        (
+            92,
+            format!(
+                "La torre en la columna {} centraliza la presion: el plan natural es doblar piezas pesadas y jugar contra el rey en el centro.",
+                file_label
+            ),
+        )
+    } else {
+        (
+            80,
+            format!(
+                "La torre ocupa una columna util ({}): la idea es acumular presion con piezas mayores y obligar concesiones estructurales.",
+                file_label
+            ),
+        )
+    };
+
+    atoms.push(ConcreteCommentAtom {
+        priority,
+        short: format!("ocupa la columna {} con plan activo", file_label),
+        sentence,
     });
 }
 
@@ -1610,6 +1951,70 @@ fn rook_activity_score(board: &Board, color: Color) -> f32 {
         }
     }
     score
+}
+
+fn add_candidate_pv_plan_atoms(
+    atoms: &mut Vec<ConcreteCommentAtom>,
+    start: Chess,
+    mv: &Move,
+    mover: Color,
+    candidate: Option<&HumanStrategicCandidate>,
+) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+    if candidate.pv_uci_line.is_empty() {
+        return;
+    }
+
+    let Some(capture_sq) = capture_square_for_move(start.board(), mv, mover) else {
+        return;
+    };
+    let Some(captured) = start.board().piece_at(capture_sq) else {
+        return;
+    };
+    if captured.color == mover || captured.role == Role::Pawn || mv.role() == Role::Pawn {
+        return;
+    }
+
+    let mut pv = candidate
+        .pv_uci_line
+        .iter()
+        .map(|m| normalize_move_key(m))
+        .collect::<Vec<_>>();
+    let played = normalize_move_key(&candidate.uci);
+    if pv.first().map(|m| m.as_str() != played).unwrap_or(true) {
+        pv.insert(0, played);
+    }
+
+    let san = uci_line_to_san(start, &pv, 7);
+    if san.len() < 3 {
+        return;
+    }
+
+    let followups = san
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx >= 2 && *idx % 2 == 0)
+        .map(|(_, s)| s.clone())
+        .take(2)
+        .collect::<Vec<_>>();
+
+    if followups.is_empty() {
+        return;
+    }
+
+    let full_line = san.iter().take(5).cloned().collect::<Vec<_>>().join(" ");
+    let plan = followups.join(" y ");
+
+    atoms.push(ConcreteCommentAtom {
+        priority: 90,
+        short: format!("prepara el plan {}", plan),
+        sentence: format!(
+            "La captura cobra sentido por la línea {}: elimina una pieza clave y gana tiempos para ejecutar {}.",
+            full_line, plan
+        ),
+    });
 }
 
 fn add_pv_tactical_resource_atom(
@@ -1690,9 +2095,9 @@ fn apply_tactical_reality_filter(
         priority: 120,
         short: format!("tiene un problema táctico: {} puede responderse con {}", mv.to(), reply_san),
         sentence: format!(
-            "No se debe confiar ciegamente en el plan aparente: la mejor respuesta es {}, capturando el {} en {}.",
+            "La idea falla tacticamente: la mejor respuesta es {}, y captura {} en {}.",
             reply_san,
-            role_name(moved_piece.role),
+            role_name_with_article(moved_piece.role),
             mv.to()
         ),
     });
@@ -1714,7 +2119,7 @@ fn add_capture_with_check_atom(
         return;
     }
 
-    let captured_name = role_name(captured.role);
+    let captured_name = role_name_with_article(captured.role);
     let capture_square = capture_sq.to_string();
     let material_word = if captured.role == Role::Pawn {
         "gana un peón"
@@ -1726,7 +2131,7 @@ fn add_capture_with_check_atom(
         priority: 130,
         short: format!("{} con jaque en {}", material_word, capture_square),
         sentence: format!(
-            "Captura el {} de {} y además da jaque, obligando al rival a responder antes de reorganizarse.",
+            "Captura {} en {} y ademas da jaque, obligando al rival a responder antes de reorganizarse.",
             captured_name, capture_square
         ),
     });
@@ -1749,7 +2154,7 @@ fn add_capture_atoms(
         return;
     }
 
-    let captured_name = role_name(captured.role);
+    let captured_name = role_name_with_article(captured.role);
     let capture_square = capture_sq.to_string();
 
     if captured.role == Role::Pawn {
@@ -1764,9 +2169,9 @@ fn add_capture_atoms(
     } else {
         atoms.push(ConcreteCommentAtom {
             priority: 66,
-            short: format!("elimina el {} de {}", captured_name, capture_square),
+            short: format!("elimina {} de {}", captured_name, capture_square),
             sentence: format!(
-                "Elimina el {} de {}, reduciendo los recursos defensivos del rival.",
+                "Elimina {} de {}, reduciendo los recursos defensivos del rival.",
                 captured_name, capture_square
             ),
         });
@@ -1872,7 +2277,7 @@ fn add_king_exposure_atoms(
     {
         atoms.push(ConcreteCommentAtom {
             priority: 88,
-            short: format!("mantiene al rey expuesto en {}", king_sq),
+            short: format!("mantiene al rey rival expuesto en {}", king_sq),
             sentence: format!(
                 "El rey rival sigue en {}, y el centro está lo bastante abierto para que los tiempos y las líneas importen.",
                 king_sq
@@ -2068,14 +2473,25 @@ fn add_central_space_push_atoms(
         .map(|sq| after.piece_at(sq).is_none())
         .unwrap_or(false);
 
-    if can_advance_again {
+    let direct_targets = pawn_push_direct_targets(after, mv.to(), mover);
+    if !direct_targets.is_empty() {
+        let targets = direct_targets.join("/");
+        atoms.push(ConcreteCommentAtom {
+            priority: 96,
+            short: format!("rompe el centro y ataca {}", targets),
+            sentence: format!(
+                "El avance central cambia la naturaleza de la posición: gana espacio y toca objetivos concretos en {}.",
+                targets
+            ),
+        });
+    } else if can_advance_again {
         let advance_square = coords_to_square_checked(file as i32, next_rank)
             .map(|sq| sq.to_string())
             .unwrap_or_else(|| mv.to().to_string());
         atoms.push(ConcreteCommentAtom {
             priority: 89,
-            short: format!("gana espacio central y prepara {}", advance_square),
-            sentence: "El avance central gana espacio y prepara otro paso si el rival no lo controla."
+            short: format!("avanza en el centro y amenaza {}", advance_square),
+            sentence: "El peon central gana espacio y deja la amenaza de otro avance si el rival no lo controla."
                 .to_string(),
         });
     } else if attacked_by_pawn {
@@ -2105,6 +2521,35 @@ fn add_central_space_push_atoms(
                 .to_string(),
         });
     }
+}
+
+fn pawn_push_direct_targets(board: &Board, pawn_sq: Square, mover: Color) -> Vec<String> {
+    let Some((file, rank)) = square_to_coords(pawn_sq) else {
+        return Vec::new();
+    };
+
+    let target_rank = match mover {
+        Color::White => rank as i32 + 1,
+        Color::Black => rank as i32 - 1,
+    };
+
+    let mut targets = Vec::new();
+    for df in [-1i32, 1] {
+        let Some(target_sq) = coords_to_square_checked(file as i32 + df, target_rank) else {
+            continue;
+        };
+        if board
+            .piece_at(target_sq)
+            .map(|p| p.color == mover.other())
+            .unwrap_or(false)
+        {
+            targets.push(target_sq.to_string());
+        }
+    }
+
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 fn add_bishop_pressure_atoms(
@@ -2437,7 +2882,7 @@ fn add_pawn_structure_atoms(
 
     atoms.push(ConcreteCommentAtom {
         priority: 82,
-        short: "daña el esqueleto de peones".to_string(),
+        short: "daña la estructura de peones".to_string(),
         sentence: format!(
             "La estructura de peones empeora: {}.",
             details.join(", ")
@@ -2566,7 +3011,7 @@ fn extract_top_concrete_themes(
         .iter()
         .filter(|(score, _)| *score >= floor)
         .take(2)
-        .map(|(score, text)| HumanStrategicConcreteTheme { text })
+        .map(|(_score, text)| HumanStrategicConcreteTheme { text })
         .collect::<Vec<_>>()
 }
 
@@ -2618,6 +3063,96 @@ fn summarize_atoms_as_short_phrase(atoms: &[ConcreteCommentAtom], max_items: usi
         .map(|a| a.short.as_str())
         .collect::<Vec<_>>()
         .join(" y ")
+}
+
+fn summarize_liability_short(atoms: &[ConcreteCommentAtom]) -> Option<String> {
+    atoms.iter().find_map(|atom| {
+        let s = atom.short.to_ascii_lowercase();
+        let looks_negative = s.contains("problema t")
+            || s.contains("rey rival expuesto")
+            || s.contains("afloja")
+            || s.contains("frena la ruptura");
+        if looks_negative {
+            Some(atom.short.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn derive_gm_plan_hint(
+    atoms: &[ConcreteCommentAtom],
+    motifs: &[StrategicMotif],
+    is_sacrifice: bool,
+) -> Option<String> {
+    let shorts = atoms
+        .iter()
+        .map(|a| a.short.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let has = |needle: &str| shorts.iter().any(|s| s.contains(needle));
+
+    if is_sacrifice || has("sacrificio estructural") {
+        return Some(
+            "Plan: invertir material de forma temporal para abrir lineas, fijar debilidades y jugar con iniciativa sostenida."
+                .to_string(),
+        );
+    }
+
+    if has("ocupa la columna d con plan activo")
+        || has("ocupa la columna e con plan activo")
+        || (motifs.contains(&StrategicMotif::OpenFilePressure)
+            && motifs.contains(&StrategicMotif::CentralKingPressure))
+    {
+        return Some(
+            "Plan: dominar la columna central y coordinar piezas pesadas contra el rey o los peones base de la estructura."
+                .to_string(),
+        );
+    }
+
+    if has("rompe el centro") {
+        return Some(
+            "Plan: cambiar la estructura central, ganar tiempos sobre piezas rivales y convertir el centro en una vía de entrada."
+                .to_string(),
+        );
+    }
+
+    if has("avanza en el centro")
+        && (has("rey rival expuesto") || motifs.contains(&StrategicMotif::CentralKingPressure))
+    {
+        return Some(
+            "Plan: fijar el centro para restringir las piezas rivales y abrir la via de entrada de torres y dama."
+                .to_string(),
+        );
+    }
+
+    if let Some(plan_atom) = atoms
+        .iter()
+        .find(|a| a.short.to_ascii_lowercase().contains("prepara el plan"))
+    {
+        return Some(format!(
+            "Plan: {}.",
+            plan_atom
+                .sentence
+                .trim()
+                .trim_end_matches('.')
+        ));
+    }
+
+    if has("prepara h5-h4 contra el caballo de g3") || has("prepara h4-h5 contra el caballo de g6") {
+        return Some(
+            "Plan: limitar el caballo defensor y crear un segundo frente de ataque en el flanco del rey."
+                .to_string(),
+        );
+    }
+
+    if has("fija la estructura de peones") && motifs.contains(&StrategicMotif::WeakPawnPressure) {
+        return Some(
+            "Plan: fijar peones en casillas vulnerables y aumentar la presion hasta forzar una concesion concreta."
+                .to_string(),
+        );
+    }
+
+    None
 }
 
 fn build_plan_sentence(
@@ -2733,7 +3268,7 @@ fn build_variation_comment(
 
     let mut text = format!("Candidato humano: {}", choice);
     if !idea.is_empty() {
-        text.push_str(&format!(" — {}", idea));
+        text.push_str(&format!(" - {}", idea));
     }
     if !score_text.is_empty() {
         text.push_str(&format!(" ({})", score_text));
@@ -2918,6 +3453,19 @@ fn is_opening_phase(position: &Chess, ply: usize) -> bool {
     undeveloped_white + undeveloped_black >= 5 && !central_files_are_open(board)
 }
 
+fn is_known_opening_theory_position(fen: &str, position: &Chess, ply: usize) -> bool {
+    if ply >= KNOWN_OPENING_COMMENT_SUPPRESS_PLIES || !is_opening_phase(position, ply) {
+        return false;
+    }
+
+    let Ok(info) = get_opening_info_from_fen(fen) else {
+        return false;
+    };
+
+    let opening = info.opening.trim();
+    !opening.is_empty() && !opening.eq_ignore_ascii_case("starting position")
+}
+
 fn undeveloped_minor_count(board: &Board, color: Color) -> usize {
     let mut count = 0;
     let back_rank = if color == Color::White { 0 } else { 7 };
@@ -3038,6 +3586,17 @@ fn role_name(role: Role) -> &'static str {
         Role::Rook => "torre",
         Role::Queen => "dama",
         Role::King => "rey",
+    }
+}
+
+fn role_name_with_article(role: Role) -> &'static str {
+    match role {
+        Role::Pawn => "el peon",
+        Role::Knight => "el caballo",
+        Role::Bishop => "el alfil",
+        Role::Rook => "la torre",
+        Role::Queen => "la dama",
+        Role::King => "el rey",
     }
 }
 
@@ -3614,14 +4173,34 @@ fn sentence(input: &str) -> String {
     }
 }
 
-fn join_non_empty_sentences(parts: &[&str]) -> String {
-    parts
-        .iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(sentence)
+fn sentence_key(input: &str) -> String {
+    input
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_alphanumeric() || ch.is_whitespace() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn join_unique_sentences(parts: &[String]) -> String {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for part in parts {
+        let sent = sentence(part);
+        if sent.is_empty() {
+            continue;
+        }
+        let key = sentence_key(&sent);
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        out.push(sent);
+    }
+
+    out.join(" ")
 }
 
 fn clean_spaces(input: &str) -> String {

@@ -57,13 +57,13 @@ function makeNarrative(overrides: Partial<HumanMoveNarrative>): HumanMoveNarrati
 }
 
 describe("ReportModal human strategic comment injection", () => {
-  it("injects strategicPlan when commentLong/commentShort are empty", () => {
+  it("injects commentLong when available", () => {
     const root = makeMainlineTree(49);
     const narratives: HumanMoveNarrative[] = [
       makeNarrative({
         ply: 49,
         verdict: "Mistake",
-        strategicPlan: "Wrong tension release. Black activates the king and rook.",
+        commentLong: "Wrong tension release. Black activates the king and rook.",
       }),
     ];
 
@@ -80,6 +80,23 @@ describe("ReportModal human strategic comment injection", () => {
     }
     expect(node.comment).toContain("Wrong tension release");
     expect(node.annotations).toContain("?" as Annotation);
+  });
+
+  it("does not inject strategicPlan-only narratives", () => {
+    const root = makeMainlineTree(20);
+    const narratives: HumanMoveNarrative[] = [
+      makeNarrative({
+        ply: 7,
+        verdict: "Interesting",
+        strategicPlan: "Should not be injected as a comment.",
+      }),
+    ];
+
+    const injected = injectHumanNarrativesIntoMainline(root, narratives);
+    const comments = countTreeComments(root);
+
+    expect(injected).toBe(0);
+    expect(comments).toBe(0);
   });
 
   it("does not inject when ply is out of range", () => {

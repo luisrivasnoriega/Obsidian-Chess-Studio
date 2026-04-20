@@ -47,7 +47,7 @@ function getMainlineNodes(root: TreeNode): TreeNode[] {
   return out;
 }
 
-function countMainlineComments(root: TreeNode): number {
+function _countMainlineComments(root: TreeNode): number {
   let count = 0;
   for (const node of getMainlineNodes(root)) {
     if (node.comment && node.comment.trim().length > 0) {
@@ -91,8 +91,7 @@ export function injectHumanNarrativesIntoMainline(root: TreeNode, narratives: Hu
 
     const longComment = (narrative.commentLong ?? "").trim();
     const shortComment = (narrative.commentShort ?? "").trim();
-    const strategicPlan = (narrative.strategicPlan ?? "").trim();
-    const text = longComment || shortComment || strategicPlan;
+    const text = longComment || shortComment;
 
     if (text.length > 0) {
       if (!node.comment || node.comment.trim().length === 0) {
@@ -253,7 +252,6 @@ function ReportModal({
       let resolvedAnalysis: MoveAnalysis[];
       let strategicPgn: string | null = null;
       let strategicSummary: string | null = null;
-      let strategicNarratives: HumanMoveNarrative[] = [];
 
       if (form.values.humanStrategic) {
         const humanResult = unwrap(
@@ -275,12 +273,11 @@ function ReportModal({
         resolvedAnalysis = humanResult.analysis;
         strategicPgn = humanResult.annotatedPgn;
         strategicSummary = JSON.stringify(humanResult.summary);
-        strategicNarratives = humanResult.narratives ?? [];
         if (import.meta.env.DEV) {
           console.debug("[human-report] backend result", {
             tab,
             annotatedPgnLength: strategicPgn.length,
-            narratives: strategicNarratives.length,
+            narratives: humanResult.narratives?.length ?? 0,
             analysisItems: resolvedAnalysis.length,
           });
         }
@@ -313,21 +310,10 @@ function ReportModal({
         if (form.values.humanStrategic && strategicPgn) {
           try {
             const parsed = await parsePGN(strategicPgn);
-            const beforeAll = countTreeComments(parsed.root);
-            const beforeMain = countMainlineComments(parsed.root);
-            const injected = injectHumanNarrativesIntoMainline(parsed.root, strategicNarratives);
-            const afterAll = countTreeComments(parsed.root);
-            const afterMain = countMainlineComments(parsed.root);
             if (import.meta.env.DEV) {
               console.debug("[human-report] parsed strategic PGN", {
                 tab,
                 strategicPgnLength: strategicPgn.length,
-                narratives: strategicNarratives.length,
-                injected,
-                commentsAllBefore: beforeAll,
-                commentsAllAfter: afterAll,
-                commentsMainBefore: beforeMain,
-                commentsMainAfter: afterMain,
               });
             }
             parsed.report = store.getState().report;
@@ -335,21 +321,10 @@ function ReportModal({
           } catch {
             try {
               const fallback = await parsePGN(originalPgn);
-              const beforeAll = countTreeComments(fallback.root);
-              const beforeMain = countMainlineComments(fallback.root);
-              const injected = injectHumanNarrativesIntoMainline(fallback.root, strategicNarratives);
-              const afterAll = countTreeComments(fallback.root);
-              const afterMain = countMainlineComments(fallback.root);
               if (import.meta.env.DEV) {
                 console.debug("[human-report] fallback to original PGN", {
                   tab,
                   originalPgnLength: originalPgn.length,
-                  narratives: strategicNarratives.length,
-                  injected,
-                  commentsAllBefore: beforeAll,
-                  commentsAllAfter: afterAll,
-                  commentsMainBefore: beforeMain,
-                  commentsMainAfter: afterMain,
                 });
               }
               fallback.report = store.getState().report;

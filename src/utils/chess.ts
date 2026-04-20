@@ -28,6 +28,21 @@ export interface MoveAnalysis {
   is_sacrifice: boolean;
 }
 
+const MOJIBAKE_HINT = /[ÃÂâ]/;
+
+function repairMojibake(text: string): string {
+  if (!text || !MOJIBAKE_HINT.test(text)) return text;
+  try {
+    const bytes = Uint8Array.from(Array.from(text, (ch) => ch.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder("utf-8").decode(bytes);
+    // If decoding clearly failed, keep original.
+    if (!decoded || decoded.includes("�")) return text;
+    return decoded;
+  } catch {
+    return text;
+  }
+}
+
 // copied from chessops
 export const makeClk = (seconds: number): string => {
   let s = Math.max(0, seconds);
@@ -828,7 +843,7 @@ function innerParsePGN(tokens: Token[], fen: string = INITIAL_FEN, halfMoves = 0
         root.clock = comment.clock;
       }
 
-      root.comment = comment.text;
+      root.comment = repairMojibake(comment.text);
       i++;
     } else if (token.type === "ParenOpen") {
       const variation = [];
@@ -952,7 +967,7 @@ export function getPgnHeaders(tokens: Token[]): GameHeaders {
   for (const token of tokens) {
     if (token.type === "Header") {
       const { tag, value } = token.value;
-      headersN.set(tag, value);
+      headersN.set(tag, repairMojibake(value));
     } else if (token.type === "Outcome") {
       headersN.set("Result", token.value);
     }
