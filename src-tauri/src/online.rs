@@ -8,10 +8,12 @@ use std::{
 
 use chrono::{DateTime, Datelike, FixedOffset, Utc};
 use futures_util::StreamExt;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use specta::Type;
-use tauri::{path::BaseDirectory, Manager};
+use tauri::{path::BaseDirectory, Emitter, Manager};
+use tokio::sync::Mutex;
 
 use crate::error::{Error, Result};
 use crate::opening::{get_opening_from_fen, get_opening_info_from_fen};
@@ -21,12 +23,24 @@ const ORION_RESPONSES_ENDPOINT: &str =
 const ORION_MODELS_ENDPOINT: &str =
     "https://luis-4944-resource.services.ai.azure.com/api/projects/luis-4944/openai/v1/models";
 
-async fn reqwest_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+static ONLINE_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(5_000))
         .timeout(Duration::from_secs(60))
+        .pool_max_idle_per_host(8)
+        .tcp_nodelay(true)
         .user_agent("Obsidian Chess Studio")
-        .build()?)
+        .build()
+        .expect("Failed to build online HTTP client")
+});
+
+static LICHESS_BOARD_STREAM_TASKS: Lazy<Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const LICHESS_BOARD_STREAM_EVENT: &str = "lichess-board-stream-snapshot";
+
+async fn reqwest_client() -> Result<reqwest::Client> {
+    Ok(ONLINE_HTTP_CLIENT.clone())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -1420,6 +1434,13 @@ pub struct LichessBoardGameSnapshot {
     pub raw: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LichessBoardStreamSnapshotEvent {
+    pub game_id: String,
+    pub snapshot: LichessBoardGameSnapshot,
+}
+
 fn normalize_color(color: &str) -> &'static str {
     match color.trim().to_ascii_lowercase().as_str() {
         "white" => "white",
@@ -1498,6 +1519,231 @@ async fn read_first_ndjson_line(res: reqwest::Response) -> Result<String> {
     }
 
     Ok(trailing)
+}
+
+fn parse_lichess_board_stream_snapshot(
+    game_id: &str,
+    raw: &str,
+) -> Result<Option<LichessBoardGameSnapshot>> {
+    let parsed: Value = serde_json::from_str(raw).map_err(|e| {
+        Error::PackageManager(format!(
+            "Lichess board stream line is not valid JSON: {e}"
+        ))
+    })?;
+
+    let type_name = parsed
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let (initial_fen, white_name, black_name, state_value) = match type_name {
+        "gameFull" => (
+            parsed
+                .get("initialFen")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            parsed
+                .get("white")
+                .and_then(|v| v.get("name"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            parsed
+                .get("black")
+                .and_then(|v| v.get("name"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            parsed.get("state"),
+        ),
+        "gameState" => (None, None, None, Some(&parsed)),
+        _ => return Ok(None),
+    };
+
+    let moves = parse_moves(state_value);
+    let status = state_value
+        .and_then(|v| v.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let winner = state_value
+        .and_then(|v| v.get("winner"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let wtime = state_value.and_then(|v| v.get("wtime")).and_then(Value::as_i64);
+    let btime = state_value.and_then(|v| v.get("btime")).and_then(Value::as_i64);
+
+    let turn = if status == "started" {
+        Some(infer_turn(initial_fen.as_deref(), moves.len()))
+    } else {
+        None
+    };
+
+    Ok(Some(LichessBoardGameSnapshot {
+        game_id: game_id.to_string(),
+        initial_fen,
+        white_name,
+        black_name,
+        moves,
+        status,
+        winner,
+        turn,
+        wtime,
+        btime,
+        raw: raw.to_string(),
+    }))
+}
+
+async fn run_lichess_board_stream(
+    app: tauri::AppHandle,
+    token: String,
+    game_id: String,
+) -> Result<()> {
+    let client = reqwest_client().await?;
+    let url = format!("https://lichess.org/api/board/game/stream/{game_id}");
+    let mut reconnect_backoff_ms = 250u64;
+
+    loop {
+        let res = match client
+            .get(&url)
+            .bearer_auth(token.trim())
+            .header(reqwest::header::ACCEPT, "application/x-ndjson")
+            .send()
+            .await
+        {
+            Ok(res) => res,
+            Err(e) => {
+                log::warn!("Lichess board stream request failed: {e}");
+                tokio::time::sleep(Duration::from_millis(reconnect_backoff_ms)).await;
+                reconnect_backoff_ms = (reconnect_backoff_ms * 2).min(5_000);
+                continue;
+            }
+        };
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+                || status == reqwest::StatusCode::NOT_FOUND
+            {
+                return Err(Error::PackageManager(format!(
+                    "Lichess board game stream failed ({status}): {body}"
+                )));
+            }
+
+            tokio::time::sleep(Duration::from_millis(reconnect_backoff_ms)).await;
+            reconnect_backoff_ms = (reconnect_backoff_ms * 2).min(5_000);
+            continue;
+        }
+
+        reconnect_backoff_ms = 250;
+        let mut stream = res.bytes_stream();
+        let mut buffer: Vec<u8> = Vec::with_capacity(4096);
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = match chunk_result {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    log::warn!("Lichess board stream chunk failed: {e}");
+                    break;
+                }
+            };
+            buffer.extend_from_slice(&chunk);
+
+            loop {
+                let Some(pos) = buffer.iter().position(|b| *b == b'\n') else {
+                    break;
+                };
+
+                let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
+                let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
+                if line.is_empty() {
+                    continue;
+                }
+
+                let snapshot = match parse_lichess_board_stream_snapshot(&game_id, &line) {
+                    Ok(Some(snapshot)) => snapshot,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        log::warn!("Lichess board stream line parse failed: {e}");
+                        continue;
+                    }
+                };
+
+                let payload = LichessBoardStreamSnapshotEvent {
+                    game_id: game_id.clone(),
+                    snapshot: snapshot.clone(),
+                };
+                if let Err(e) = app.emit(LICHESS_BOARD_STREAM_EVENT, payload) {
+                    return Err(e.into());
+                }
+
+                if snapshot.status != "started" && snapshot.status != "created" {
+                    return Ok(());
+                }
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn lichess_start_board_game_stream(
+    app: tauri::AppHandle,
+    token: String,
+    game_id: String,
+) -> Result<()> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(Error::InvalidInput("Token cannot be empty".to_string()));
+    }
+    let game_id = game_id.trim();
+    if game_id.is_empty() {
+        return Err(Error::InvalidInput("Game id cannot be empty".to_string()));
+    }
+
+    let mut tasks = LICHESS_BOARD_STREAM_TASKS.lock().await;
+    for (_, handle) in tasks.drain() {
+        handle.abort();
+    }
+
+    let app_clone = app.clone();
+    let token_owned = token.to_string();
+    let game_id_owned = game_id.to_string();
+    let task_game_id = game_id.to_string();
+    let handle = tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_lichess_board_stream(app_clone, token_owned, game_id_owned).await {
+            log::warn!("Lichess board stream stopped: {e}");
+        }
+    });
+
+    tasks.insert(task_game_id, handle);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn lichess_stop_board_game_stream(game_id: Option<String>) -> Result<()> {
+    let mut tasks = LICHESS_BOARD_STREAM_TASKS.lock().await;
+
+    if let Some(game_id) = game_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        if let Some(handle) = tasks.remove(game_id) {
+            handle.abort();
+        }
+        return Ok(());
+    }
+
+    for (_, handle) in tasks.drain() {
+        handle.abort();
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1867,11 +2113,7 @@ pub async fn lichess_challenge_ai(input: LichessAiChallengeInput) -> Result<Lich
 #[tauri::command]
 #[specta::specta]
 pub async fn lichess_get_board_game_state(token: String, game_id: String) -> Result<LichessBoardGameSnapshot> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_millis(5_000))
-        .timeout(Duration::from_secs(20))
-        .user_agent("Obsidian Chess Studio")
-        .build()?;
+    let client = reqwest_client().await?;
 
     let url = format!("https://lichess.org/api/board/game/stream/{game_id}");
     let res = client
@@ -1890,69 +2132,9 @@ pub async fn lichess_get_board_game_state(token: String, game_id: String) -> Res
     }
 
     let raw = read_first_ndjson_line(res).await?;
-    let parsed: Value = serde_json::from_str(&raw).map_err(|e| {
-        Error::PackageManager(format!(
-            "Lichess board stream first line is not valid JSON: {e}"
-        ))
-    })?;
-
-    let type_name = parsed.get("type").and_then(Value::as_str).unwrap_or_default();
-
-    let (initial_fen, white_name, black_name, state_value) = if type_name == "gameFull" {
-        (
-            parsed.get("initialFen").and_then(Value::as_str).map(ToString::to_string),
-            parsed
-                .get("white")
-                .and_then(|v| v.get("name"))
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            parsed
-                .get("black")
-                .and_then(|v| v.get("name"))
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            parsed.get("state"),
-        )
-    } else if type_name == "gameState" {
-        (None, None, None, Some(&parsed))
-    } else {
-        return Err(Error::PackageManager(format!(
-            "Unexpected Lichess board stream event type: {type_name}"
-        )));
-    };
-
-    let moves = parse_moves(state_value);
-    let status = state_value
-        .and_then(|v| v.get("status"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    let winner = state_value
-        .and_then(|v| v.get("winner"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
-    let wtime = state_value.and_then(|v| v.get("wtime")).and_then(Value::as_i64);
-    let btime = state_value.and_then(|v| v.get("btime")).and_then(Value::as_i64);
-
-    let turn = if status == "started" {
-        Some(infer_turn(initial_fen.as_deref(), moves.len()))
-    } else {
-        None
-    };
-
-    Ok(LichessBoardGameSnapshot {
-        game_id,
-        initial_fen,
-        white_name,
-        black_name,
-        moves,
-        status,
-        winner,
-        turn,
-        wtime,
-        btime,
-        raw,
-    })
+    let snapshot = parse_lichess_board_stream_snapshot(&game_id, &raw)?
+        .ok_or_else(|| Error::PackageManager("Unexpected Lichess board stream event type".to_string()))?;
+    Ok(snapshot)
 }
 
 #[tauri::command]

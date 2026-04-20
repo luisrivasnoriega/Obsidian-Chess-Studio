@@ -28,6 +28,7 @@ import {
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { parseUci } from "chessops";
 import { INITIAL_FEN } from "chessops/fen";
@@ -89,6 +90,11 @@ type LichessBoardGameSnapshot = {
   wtime?: number | null;
   btime?: number | null;
   raw: string;
+};
+
+type LichessBoardStreamSnapshotEvent = {
+  gameId: string;
+  snapshot: LichessBoardGameSnapshot;
 };
 
 type GeneratedPuzzlesInlineAlertProps = {
@@ -294,7 +300,6 @@ function PlayVsLichessBoardContent() {
   const gameModeRef = useRef<HTMLDivElement | null>(null);
   const remoteMoveCountRef = useRef<number>(0);
   const pendingMoveRef = useRef<string | null>(null);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const postGameReviewedIdRef = useRef<string | null>(null);
 
   const token = tokenInput.trim();
@@ -465,11 +470,6 @@ function PlayVsLichessBoardContent() {
     remoteMoveCountRef.current = 0;
     pendingMoveRef.current = null;
 
-    if (pollTimerRef.current) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-
     setWhiteTime(null);
     setBlackTime(null);
     setFen(INITIAL_FEN);
@@ -484,13 +484,8 @@ function PlayVsLichessBoardContent() {
     });
   }, [exitGameMode, setBlackTime, setFen, setHeaders, setWhiteTime, t]);
 
-  const syncSnapshot = useCallback(
-    async (targetGameId: string) => {
-      const snapshot = await invoke<LichessBoardGameSnapshot>("lichess_get_board_game_state", {
-        token,
-        gameId: targetGameId,
-      });
-
+  const applySnapshot = useCallback(
+    (snapshot: LichessBoardGameSnapshot) => {
       setRemoteStatus(snapshot.status);
       setLastSyncError(null);
 
@@ -545,7 +540,18 @@ function PlayVsLichessBoardContent() {
         setGameState("gameOver");
       }
     },
-    [appendMove, setBlackTime, setFen, setHeaders, setWhiteTime, t, token],
+    [appendMove, setBlackTime, setFen, setHeaders, setWhiteTime, t],
+  );
+
+  const syncSnapshot = useCallback(
+    async (targetGameId: string) => {
+      const snapshot = await invoke<LichessBoardGameSnapshot>("lichess_get_board_game_state", {
+        token,
+        gameId: targetGameId,
+      });
+      applySnapshot(snapshot);
+    },
+    [applySnapshot, token],
   );
 
   const startOnlineGame = useCallback(async () => {
@@ -733,32 +739,35 @@ function PlayVsLichessBoardContent() {
     if (gameState !== "playing" || !gameId || !token) return;
 
     let cancelled = false;
-    const run = async () => {
-      if (cancelled) return;
+    let unlisten: (() => void) | null = null;
 
+    const startRealtimeSync = async () => {
       try {
-        await syncSnapshot(gameId);
+        unlisten = await listen<LichessBoardStreamSnapshotEvent>(`lichess-board-stream-snapshot`, (event) => {
+          if (cancelled) return;
+          const payload = event.payload;
+          if (!payload || payload.gameId !== gameId) return;
+          applySnapshot(payload.snapshot);
+        });
+
+        await invoke("lichess_start_board_game_stream", { token, gameId });
       } catch {
         if (!cancelled) {
           setLastSyncError(t("features.tournaments.play.syncError"));
         }
-      } finally {
-        if (!cancelled) {
-          pollTimerRef.current = setTimeout(run, 1500);
-        }
       }
     };
 
-    void run();
+    void startRealtimeSync();
 
     return () => {
       cancelled = true;
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-        pollTimerRef.current = null;
+      if (unlisten) {
+        unlisten();
       }
+      void invoke("lichess_stop_board_game_stream", { gameId }).catch(() => {});
     };
-  }, [gameId, gameState, syncSnapshot, t, token]);
+  }, [applySnapshot, gameId, gameState, t, token]);
 
   useEffect(() => {
     if (gameState !== "playing" || !gameId || !token || !resolvedHumanColor || !pos) return;

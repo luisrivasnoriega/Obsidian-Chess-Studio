@@ -165,6 +165,7 @@ export type OpponentSettings =
       timeControl?: TimeControlField;
       engine: LocalEngine | null;
       go: GoMode;
+      engineProfile?: "default" | "strategicHuman";
       /** When engine is Lc0, path to selected neural network (.pb.gz) for UCI WeightsFile. */
       lc0NetworkPath?: string;
       /** When engine is Lc0, search limit in nodes (default 1). */
@@ -271,6 +272,7 @@ function OpponentForm({
           ...prev,
           type: "engine",
           engine: null,
+          engineProfile: "default",
           go: { t: "Depth", c: 1 },
         }));
       }
@@ -406,6 +408,7 @@ function OpponentForm({
                   ...prev,
                   ...(engine?.go ? { go: engine.go } : {}),
                   engine,
+                  engineProfile: prev.engineProfile ?? "default",
                   lc0NetworkPath: engine && isLc0Engine(engine) ? prev.lc0NetworkPath : undefined,
                   lc0Nodes: engine && isLc0Engine(engine) ? (prev.lc0Nodes ?? 1) : undefined,
                 };
@@ -413,6 +416,22 @@ function OpponentForm({
             }
             engines={engines}
             enginesState={enginesState}
+          />
+          <Select
+            label={t("game.enginePlayProfile")}
+            value={opponent.engineProfile ?? "default"}
+            onChange={(v) =>
+              setOpponent((prev) =>
+                prev.type === "engine"
+                  ? { ...prev, engineProfile: (v as "default" | "strategicHuman" | null) ?? "default" }
+                  : prev,
+              )
+            }
+            allowDeselect={false}
+            data={[
+              { value: "default", label: t("game.enginePlayProfileDefault") },
+              { value: "strategicHuman", label: t("game.enginePlayProfileStrategicHuman") },
+            ]}
           />
           {opponent.engine && isLc0Engine(opponent.engine) && (
             <Lc0NetworkSelect opponent={opponent} setOpponent={setOpponent} />
@@ -662,7 +681,20 @@ function BoardGame() {
               timeControl: tc,
             };
           }
-          return o as OpponentSettings;
+          const tc: TimeControlField | undefined =
+            o.timeControl && typeof o.timeControl === "object" && "seconds" in o.timeControl
+              ? (o.timeControl as TimeControlField)
+              : undefined;
+          return {
+            type: "engine",
+            timeControl: tc,
+            engine: (o.engine as LocalEngine | null) ?? null,
+            go: (o.go as GoMode) ?? { t: "Depth", c: 1 },
+            engineProfile:
+              o.engineProfile === "strategicHuman" || o.engineProfile === "default" ? o.engineProfile : "default",
+            lc0NetworkPath: typeof o.lc0NetworkPath === "string" ? o.lc0NetworkPath : undefined,
+            lc0Nodes: typeof o.lc0Nodes === "number" ? o.lc0Nodes : undefined,
+          };
         };
         return {
           inputColor: settings.inputColor || "white",

@@ -53,8 +53,8 @@ use crate::dashboard_games_history::{
 };
 use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::chess::{
-    analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
-    stop_engine,
+    analyze_game, analyze_game_human_report, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
+    pick_human_strategic_move, stop_engine,
 };
 use crate::db::{
     calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
@@ -94,7 +94,7 @@ use crate::oauth::authenticate;
 use crate::online::{
     consult_orion_plan, consult_orion_plan_from_analysis, create_lichess_tournament, get_chesscom_account, get_lichess_account,
     lichess_challenge_ai, lichess_find_human_game, lichess_get_board_game_state, lichess_make_board_move,
-    lichess_resign_board_game,
+    lichess_resign_board_game, lichess_start_board_game_stream, lichess_stop_board_game_stream,
 };
 use crate::package_manager::{
     check_package_installed, check_package_manager_available, find_executable_path, install_package,
@@ -185,7 +185,9 @@ pub async fn run() {
             fetch_fide_profile_html,
             save_fide_photo,
             get_best_moves,
+            pick_human_strategic_move,
             analyze_game,
+            analyze_game_human_report,
             stop_engine,
             kill_engine,
             kill_engines,
@@ -333,6 +335,8 @@ pub async fn run() {
             lichess_get_board_game_state,
             lichess_make_board_move,
             lichess_resign_board_game,
+            lichess_start_board_game_stream,
+            lichess_stop_board_game_stream,
             upsert_managed_event,
             list_managed_events,
             delete_managed_event,

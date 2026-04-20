@@ -7,10 +7,16 @@ pub mod analysis;
 pub mod commands;
 pub mod engine_path;
 pub mod evaluation;
+pub mod human_game_analyzer;
+pub mod human_strategy;
 pub mod manager;
+pub mod pgn_annotator;
 pub mod process;
 pub mod types;
 pub mod uci;
 
 #[allow(unused_imports)]
-pub use {analysis::*, commands::*, engine_path::*, evaluation::*, manager::*, process::*, types::*, uci::*};
+pub use {
+    analysis::*, commands::*, engine_path::*, evaluation::*, manager::*, process::*, types::*,
+    uci::*,
+};

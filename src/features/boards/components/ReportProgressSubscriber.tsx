@@ -22,6 +22,8 @@ function ReportProgressSubscriber({ id }: Props) {
         setCompleted(true);
         setProgress(0);
       } else {
+        setInProgress(true);
+        setCompleted(false);
         // Throttle progress updates to reduce render churn during analysis
         const now = Date.now();
         const last = lastRef.current;

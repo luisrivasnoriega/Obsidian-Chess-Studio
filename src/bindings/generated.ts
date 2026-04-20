@@ -72,11 +72,33 @@ async getBestMoves(id: string, engine: string, tab: string, goMode: GoMode, opti
 }
 },
 /**
+ * Pick a practical strategic move from engine MultiPV candidates under safety guardrails.
+ */
+async pickHumanStrategicMove(request: HumanStrategicRequest) : Promise<Result<HumanStrategicSelection, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pick_human_strategic_move", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Analyze a game using the engine, returning move-by-move analysis.
  */
 async analyzeGame(id: string, engine: string, goMode: GoMode, options: AnalysisOptions, uciOptions: EngineOption[]) : Promise<Result<MoveAnalysis[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("analyze_game", { id, engine, goMode, options, uciOptions }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Analyze a game with human strategic narratives and return an annotated PGN.
+ */
+async analyzeGameHumanReport(request: HumanGameAnalysisRequest) : Promise<Result<HumanAnnotatedGameReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("analyze_game_human_report", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1433,6 +1455,22 @@ async lichessResignBoardGame(token: string, gameId: string) : Promise<Result<nul
     else return { status: "error", error: e  as any };
 }
 },
+async lichessStartBoardGameStream(token: string, gameId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_start_board_game_stream", { token, gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async lichessStopBoardGameStream(gameId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("lichess_stop_board_game_stream", { gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async upsertManagedEvent(file: string, payload: CreateManagedEventPayload) : Promise<Result<Event, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("upsert_managed_event", { file, payload }) };
@@ -1629,6 +1667,90 @@ export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
  * Engine search mode (depth, time, nodes, etc).
  */
 export type GoMode = { t: "PlayersTime"; c: PlayersTime } | { t: "Depth"; c: number } | { t: "Time"; c: number } | { t: "Nodes"; c: number } | { t: "Infinite" }
+/**
+ * Full report returned by the human strategic analyzer.
+ */
+export type HumanAnnotatedGameReport = { annotatedPgn: string; narratives: HumanMoveNarrative[]; summary: HumanStrategicGameSummary; analysis: MoveAnalysis[] }
+/**
+ * Input payload for the human strategic game analyzer.
+ */
+export type HumanGameAnalysisRequest = { id: string; engine: string; goMode: GoMode; options: AnalysisOptions; uciOptions: EngineOption[]; 
+/**
+ * Original PGN text to preserve headers in the enriched output.
+ */
+originalPgn: string | null; 
+/**
+ * Maximum plies included in suggested strategic side-line variations.
+ */
+strategicVariationMaxPlies: number | null }
+/**
+ * Per-move narrative produced by the human strategic analyzer.
+ */
+export type HumanMoveNarrative = { ply: number; sideToMove: string; playedUci: string; playedSan: string; engineBestUci: string | null; engineBestSan: string | null; strategicChoiceUci: string | null; strategicChoiceSan: string | null; verdict: HumanMoveVerdict; evalBeforeCp: number | null; evalAfterCp: number | null; cpLoss: number | null; playedStrategicScore: number | null; playedMotifs: StrategicMotif[]; strategicAxes: HumanStrategicAxisNarrative[]; strategicPlan: string; commentShort: string; commentLong: string; suggestedVariationUci: string[]; suggestedVariationSan: string[] }
+/**
+ * Human verdict for a played move.
+ */
+export type HumanMoveVerdict = "best" | "great" | "practical" | "interesting" | "dubious" | "mistake" | "blunder"
+/**
+ * Dominant strategic axis and explanation for a move.
+ */
+export type HumanStrategicAxisNarrative = { axis: string; score: number; explanation: string }
+/**
+ * Ranked candidate move with engine and strategic metadata.
+ */
+export type HumanStrategicCandidate = { uci: string; san: string; pvUciLine: string[]; engineRank: bigint; engineCp: number; engineDropCp: number; strategicScore: number; macroStrategicScore: number; finalScore: number; passesGuardrail: boolean; isLastResort: boolean; motifs: StrategicMotif[]; components: HumanStrategicComponents; macroComponents: HumanStrategicMacroComponents }
+/**
+ * Component scores used to build the final strategic score.
+ */
+export type HumanStrategicComponents = { pawnStructureDamage: number; weakPawnPressure: number; spaceGain: number; openFilePressure: number; centralKingPressure: number; pieceRestriction: number; wingClamp: number }
+/**
+ * Runtime knobs for the strategic selector.
+ */
+export type HumanStrategicConfig = { 
+/**
+ * Maximum centipawn drop allowed vs engine top move in the normal path.
+ */
+maxEngineDropCp: number; 
+/**
+ * Maximum disadvantage (from side to move perspective) allowed in the normal path.
+ */
+maxAbsoluteDisadvantageCp: number; 
+/**
+ * Maximum disadvantage allowed in "last resort" high-conviction strategic picks.
+ */
+lastResortDisadvantageCp: number; 
+/**
+ * Minimum strategic score needed for non-top-engine moves.
+ */
+minStrategicScore: number; 
+/**
+ * Higher threshold required to allow "last resort" concessions.
+ */
+highConvictionThreshold: number }
+/**
+ * Global summary of the human strategic report.
+ */
+export type HumanStrategicGameSummary = { bestCount: number; greatCount: number; practicalCount: number; interestingCount: number; dubiousCount: number; mistakeCount: number; blunderCount: number; topThemes: string[] }
+/**
+ * Phase-3 macro strategic axes used for richer style explanation and ranking.
+ */
+export type HumanStrategicMacroComponents = { pawnStructure: number; space: number; pieceQuality: number; kingSafety: number; initiative: number; attack: number; counterplay: number; prophylaxis: number; conversion: number; endgameTransition: number; practicalPressure: number; planCoherence: number }
+/**
+ * Input payload for strategic move selection.
+ */
+export type HumanStrategicRequest = { fen: string; moves: string[]; 
+/**
+ * Candidate lines from engine MultiPV for the current position.
+ */
+candidates: BestMoves[]; 
+/**
+ * Optional override for guardrail and style thresholds.
+ */
+config: HumanStrategicConfig | null }
+/**
+ * Final selection plus full ranked candidate list.
+ */
+export type HumanStrategicSelection = { selectedUci: string; selectedSan: string; selectedEngineCp: number; selectedEngineDropCp: number; selectedStrategicScore: number; selectedIsLastResort: boolean; bestEngineUci: string; bestEngineCp: number; candidates: HumanStrategicCandidate[] }
 export type IntensityAccuracyBucket = { intensity: string; avgAccuracy: number | null; count: number }
 export type IntensityBreakdown = { calmCount: number; balancedCount: number; edgeCount: number; intenseCount: number; suddenCount: number; wildCount: number; giftedCount: number }
 export type IntensityGameRow = { gameId: number; date: string | null; site: string; white: string; black: string; result: string | null; intensity: string }
@@ -1856,6 +1978,10 @@ export type SiteStatsData = { site: string; player: string; data: StatsData[] }
 export type SortDirection = "asc" | "desc"
 export type StatsData = { date: string; time: string | null; is_player_white: boolean; player_elo: number; opponent_elo: number | null; result: GameOutcome; time_control: string; opening: string }
 export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bigint | null }
+/**
+ * Recognized practical motifs for a candidate move.
+ */
+export type StrategicMotif = "damagedPawnStructure" | "weakPawnPressure" | "spaceGain" | "openFilePressure" | "centralKingPressure" | "pieceRestriction" | "wingClamp"
 /**
  * Theme group containing a category name and its themes
  */

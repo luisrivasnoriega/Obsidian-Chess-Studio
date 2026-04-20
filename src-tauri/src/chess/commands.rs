@@ -14,6 +14,11 @@ use crate::error::Error;
 use crate::AppState;
 
 use super::analysis::GameAnalysisService;
+use super::human_game_analyzer::{
+    analyze_game_human_report as analyze_game_human_report_inner, HumanAnnotatedGameReport,
+    HumanGameAnalysisRequest,
+};
+use super::human_strategy::{pick_human_strategic_move as pick_human_strategic_move_inner, HumanStrategicRequest, HumanStrategicSelection};
 use super::manager::EngineManager;
 use super::types::*;
 
@@ -134,6 +139,15 @@ pub async fn get_best_moves(
         .await
 }
 
+/// Pick a practical strategic move from engine MultiPV candidates under safety guardrails.
+#[tauri::command]
+#[specta::specta]
+pub fn pick_human_strategic_move(
+    request: HumanStrategicRequest,
+) -> Result<HumanStrategicSelection, Error> {
+    pick_human_strategic_move_inner(request)
+}
+
 /// Analyze a game using the engine, returning move-by-move analysis.
 #[tauri::command]
 #[specta::specta]
@@ -147,6 +161,17 @@ pub async fn analyze_game(
     app: tauri::AppHandle,
 ) -> Result<Vec<MoveAnalysis>, Error> {
     GameAnalysisService::analyze_game(id, engine, go_mode, options, uci_options, state, app).await
+}
+
+/// Analyze a game with human strategic narratives and return an annotated PGN.
+#[tauri::command]
+#[specta::specta]
+pub async fn analyze_game_human_report(
+    request: HumanGameAnalysisRequest,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<HumanAnnotatedGameReport, Error> {
+    analyze_game_human_report_inner(request, state, app).await
 }
 
 /// Query a UCI engine for its configuration (name and options).

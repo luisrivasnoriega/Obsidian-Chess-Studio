@@ -43,6 +43,17 @@ function ReportPanel() {
   }, []); // Empty deps - this callback never changes
 
   const [stats, setStats] = useState(() => getGameStats(root));
+  const originalPgnForReport = useMemo(
+    () =>
+      getPGNFromReportView(root, {
+        headers,
+        comments: true,
+        extraMarkups: true,
+        glyphs: true,
+        variations: true,
+      }),
+    [root, headers],
+  );
 
   const profileIdFromTab =
     typeof window !== "undefined" && activeTab ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
@@ -163,15 +174,23 @@ function ReportPanel() {
             finalHeaders = retryHeaders;
           }
 
+          // Prefer enriched PGN produced by the human strategic analyzer when available.
+          const strategicPgnStorageKey = `${activeTab}_humanStrategicAnnotatedPgn`;
+          const strategicAnnotatedPgn =
+            typeof window !== "undefined" ? sessionStorage.getItem(strategicPgnStorageKey) : null;
+
           // Generate PGN from the report view structure (matches what's displayed in the report view)
           // This follows the same logic as buildMainlineItems to ensure consistency
-          let pgnWithEvals = getPGNFromReportView(finalRoot, {
-            headers: finalHeaders,
-            comments: true,
-            extraMarkups: true, // This includes [%eval ...] annotations
-            glyphs: true,
-            variations: true,
-          });
+          let pgnWithEvals =
+            strategicAnnotatedPgn && strategicAnnotatedPgn.trim().length > 0
+              ? strategicAnnotatedPgn
+              : getPGNFromReportView(finalRoot, {
+                  headers: finalHeaders,
+                  comments: true,
+                  extraMarkups: true, // This includes [%eval ...] annotations
+                  glyphs: true,
+                  variations: true,
+                });
 
           // Validate PGN: ensure it's not empty
           if (!pgnWithEvals || pgnWithEvals.trim().length === 0) {
@@ -398,6 +417,10 @@ function ReportPanel() {
               }
             }
           }
+
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem(strategicPgnStorageKey);
+          }
         } catch {
           hasSavedPgnRef.current = false; // Reset flag on error
         }
@@ -420,6 +443,7 @@ function ReportPanel() {
         <ReportModal
           tab={activeTab!}
           initialFen={root.fen}
+          originalPgn={originalPgnForReport}
           moves={getMainLine(root, headers.variant === "Chess960")}
           is960={headers.variant === "Chess960"}
           profileId={profileIdFromTab}

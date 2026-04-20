@@ -5,17 +5,119 @@ import { useAtom, useAtomValue } from "jotai";
 import { memo, useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { commands } from "@/bindings";
+import { analyzeGameHumanStrategicReport, commands, type HumanMoveNarrative, type MoveAnalysis } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
+import type { Annotation } from "@/utils/annotation";
+import { parsePGN } from "@/utils/chess";
 import type { LocalEngine } from "@/utils/engines";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
+import type { TreeNode } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
+
+const BASIC_ANNOTATIONS = new Set(["??", "?", "?!", "!?", "!", "!!", "Best"]);
+
+export function countTreeComments(node: TreeNode): number {
+  let count = 0;
+  const stack: TreeNode[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.comment && current.comment.trim().length > 0) {
+      count += 1;
+    }
+    if (current.children?.length) {
+      for (const child of current.children) {
+        stack.push(child);
+      }
+    }
+  }
+  return count;
+}
+
+function getMainlineNodes(root: TreeNode): TreeNode[] {
+  const out: TreeNode[] = [];
+  let current = root;
+  while (current.children.length > 0) {
+    const next = current.children[0];
+    if (!next) break;
+    out.push(next);
+    current = next;
+  }
+  return out;
+}
+
+function countMainlineComments(root: TreeNode): number {
+  let count = 0;
+  for (const node of getMainlineNodes(root)) {
+    if (node.comment && node.comment.trim().length > 0) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function verdictToAnnotation(verdict: HumanMoveNarrative["verdict"]): Annotation | null {
+  switch (verdict) {
+    case "Best":
+      return "Best";
+    case "Great":
+      return "!";
+    case "Practical":
+      return "!?";
+    case "Interesting":
+      return "!?";
+    case "Dubious":
+      return "?!";
+    case "Mistake":
+      return "?";
+    case "Blunder":
+      return "??";
+    default:
+      return null;
+  }
+}
+
+export function injectHumanNarrativesIntoMainline(root: TreeNode, narratives: HumanMoveNarrative[]): number {
+  if (!narratives.length) return 0;
+
+  const mainline = getMainlineNodes(root);
+  let injected = 0;
+
+  for (const narrative of narratives) {
+    const plyIndex = Math.max(0, narrative.ply - 1);
+    const node = mainline[plyIndex];
+    if (!node) continue;
+
+    const longComment = (narrative.commentLong ?? "").trim();
+    const shortComment = (narrative.commentShort ?? "").trim();
+    const strategicPlan = (narrative.strategicPlan ?? "").trim();
+    const text = longComment || shortComment || strategicPlan;
+
+    if (text.length > 0) {
+      if (!node.comment || node.comment.trim().length === 0) {
+        node.comment = text;
+        injected += 1;
+      } else if (!node.comment.includes(text)) {
+        node.comment = `${node.comment.trim()} ${text}`.trim();
+        injected += 1;
+      }
+    }
+
+    const annotation = verdictToAnnotation(narrative.verdict);
+    if (annotation) {
+      const nonBasic = node.annotations.filter((item) => !BASIC_ANNOTATIONS.has(item));
+      node.annotations = [...nonBasic, annotation];
+    }
+  }
+
+  return injected;
+}
 
 function ReportModal({
   tab,
   initialFen,
+  originalPgn,
   moves,
   is960,
   profileId,
@@ -27,6 +129,7 @@ function ReportModal({
 }: {
   tab: string;
   initialFen: string;
+  originalPgn: string;
   moves: string[];
   is960: boolean;
   profileId: string | null;
@@ -43,12 +146,22 @@ function ReportModal({
   const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
   const store = useContext(TreeStateContext)!;
   const addAnalysis = useStore(store, (s) => s.addAnalysis);
+  const setTreeState = useStore(store, (s) => s.setState);
+  const setReportProgress = useStore(store, (s) => s.setReportProgress);
+  const setReportCompleted = useStore(store, (s) => s.setReportCompleted);
 
   const [reportSettings, setReportSettings] = useAtom(reportSettingsAtom);
   const analysisEngineRef = useRef<{ engine: string; tab: string } | null>(null);
+  const runGuardRef = useRef(false);
 
   const form = useForm({
-    initialValues: reportSettings,
+    initialValues: {
+      ...reportSettings,
+      novelty: reportSettings.novelty ?? true,
+      reversed: reportSettings.reversed ?? true,
+      humanStrategic: reportSettings.humanStrategic ?? false,
+      goMode: reportSettings.goMode ?? { t: "Time", c: 500 },
+    },
     validate: {
       engine: (value) => {
         if (!value) return t("features.board.analysis.engineRequired");
@@ -84,7 +197,13 @@ function ReportModal({
 
     // Only update form if engine actually changed
     if (engine !== form.values.engine) {
-      form.setValues({ ...reportSettings, engine });
+      form.setValues({
+        novelty: reportSettings.novelty ?? true,
+        reversed: reportSettings.reversed ?? true,
+        humanStrategic: reportSettings.humanStrategic ?? false,
+        goMode: reportSettings.goMode ?? { t: "Time", c: 500 },
+        engine,
+      });
     }
   }, [localEngines, reportSettings, form]);
 
@@ -98,8 +217,14 @@ function ReportModal({
     }
   };
 
-  function analyze() {
+  async function analyze() {
+    if (runGuardRef.current || inProgress || analysisEngineRef.current) {
+      return;
+    }
+    runGuardRef.current = true;
     setReportSettings(form.values);
+    setReportCompleted(false);
+    setReportProgress(0);
     setInProgress(true);
     toggleReportingMode();
     const engine = localEngines.find((e) => e.path === form.values.engine);
@@ -112,47 +237,156 @@ function ReportModal({
       engineSettings.push({ name: "UCI_Chess960", value: "true" });
     }
 
+    const reversedForRun = form.values.humanStrategic ? false : form.values.reversed;
+
     const analysisId = `report_${tab}`;
     analysisEngineRef.current = { engine: form.values.engine, tab: analysisId };
+    const strategicPgnStorageKey = `${tab}_humanStrategicAnnotatedPgn`;
+    const strategicSummaryStorageKey = `${tab}_humanStrategicReportSummary`;
 
-    commands
-      .analyzeGame(
-        analysisId,
-        form.values.engine,
-        form.values.goMode,
-        {
-          annotateNovelties: form.values.novelty,
-          fen: initialFen,
-          referenceDb,
-          reversed: form.values.reversed,
-          moves,
-        },
-        engineSettings,
-      )
-      .then((analysis) => {
-        if (analysisEngineRef.current) {
-          const analysisData = unwrap(analysis);
-          addAnalysis(analysisData);
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(strategicPgnStorageKey);
+      sessionStorage.removeItem(strategicSummaryStorageKey);
+    }
 
-          // Persist derived analysis stats into the profile DB (only when this tab is bound to a profile DB game).
-          if (profileId && profileDbGameId != null) {
-            saveProfileGameAnalysisStats({
-              profileId,
-              gameId: profileDbGameId,
-              initialFen,
+    try {
+      let resolvedAnalysis: MoveAnalysis[];
+      let strategicPgn: string | null = null;
+      let strategicSummary: string | null = null;
+      let strategicNarratives: HumanMoveNarrative[] = [];
+
+      if (form.values.humanStrategic) {
+        const humanResult = unwrap(
+          await analyzeGameHumanStrategicReport({
+            id: analysisId,
+            engine: form.values.engine,
+            goMode: form.values.goMode,
+            options: {
+              annotateNovelties: form.values.novelty,
+              fen: initialFen,
+              referenceDb,
+              reversed: reversedForRun,
               moves,
-              analysis: analysisData,
-            }).catch(() => {
-              // best-effort
-            });
+            },
+            uciOptions: engineSettings,
+            originalPgn,
+          }),
+        );
+        resolvedAnalysis = humanResult.analysis;
+        strategicPgn = humanResult.annotatedPgn;
+        strategicSummary = JSON.stringify(humanResult.summary);
+        strategicNarratives = humanResult.narratives ?? [];
+        if (import.meta.env.DEV) {
+          console.debug("[human-report] backend result", {
+            tab,
+            annotatedPgnLength: strategicPgn.length,
+            narratives: strategicNarratives.length,
+            analysisItems: resolvedAnalysis.length,
+          });
+        }
+      } else {
+        resolvedAnalysis = unwrap(
+          await commands.analyzeGame(
+            analysisId,
+            form.values.engine,
+            form.values.goMode,
+            {
+              annotateNovelties: form.values.novelty,
+              fen: initialFen,
+              referenceDb,
+              reversed: reversedForRun,
+              moves,
+            },
+            engineSettings,
+          ),
+        );
+      }
+
+      if (analysisEngineRef.current) {
+        if (typeof window !== "undefined" && strategicPgn) {
+          sessionStorage.setItem(strategicPgnStorageKey, strategicPgn);
+          if (strategicSummary) {
+            sessionStorage.setItem(strategicSummaryStorageKey, strategicSummary);
           }
         }
-      })
-      .catch(() => {})
-      .finally(() => {
-        analysisEngineRef.current = null;
-        setInProgress(false);
-      });
+
+        if (form.values.humanStrategic && strategicPgn) {
+          try {
+            const parsed = await parsePGN(strategicPgn);
+            const beforeAll = countTreeComments(parsed.root);
+            const beforeMain = countMainlineComments(parsed.root);
+            const injected = injectHumanNarrativesIntoMainline(parsed.root, strategicNarratives);
+            const afterAll = countTreeComments(parsed.root);
+            const afterMain = countMainlineComments(parsed.root);
+            if (import.meta.env.DEV) {
+              console.debug("[human-report] parsed strategic PGN", {
+                tab,
+                strategicPgnLength: strategicPgn.length,
+                narratives: strategicNarratives.length,
+                injected,
+                commentsAllBefore: beforeAll,
+                commentsAllAfter: afterAll,
+                commentsMainBefore: beforeMain,
+                commentsMainAfter: afterMain,
+              });
+            }
+            parsed.report = store.getState().report;
+            setTreeState(parsed);
+          } catch {
+            try {
+              const fallback = await parsePGN(originalPgn);
+              const beforeAll = countTreeComments(fallback.root);
+              const beforeMain = countMainlineComments(fallback.root);
+              const injected = injectHumanNarrativesIntoMainline(fallback.root, strategicNarratives);
+              const afterAll = countTreeComments(fallback.root);
+              const afterMain = countMainlineComments(fallback.root);
+              if (import.meta.env.DEV) {
+                console.debug("[human-report] fallback to original PGN", {
+                  tab,
+                  originalPgnLength: originalPgn.length,
+                  narratives: strategicNarratives.length,
+                  injected,
+                  commentsAllBefore: beforeAll,
+                  commentsAllAfter: afterAll,
+                  commentsMainBefore: beforeMain,
+                  commentsMainAfter: afterMain,
+                });
+              }
+              fallback.report = store.getState().report;
+              setTreeState(fallback);
+            } catch {
+              if (import.meta.env.DEV) {
+                console.debug("[human-report] parse fallback failed, using addAnalysis", {
+                  tab,
+                  analysisItems: resolvedAnalysis.length,
+                });
+              }
+              addAnalysis(resolvedAnalysis);
+            }
+          }
+        } else {
+          addAnalysis(resolvedAnalysis);
+        }
+
+        // Persist derived analysis stats into the profile DB (only when this tab is bound to a profile DB game).
+        if (profileId && profileDbGameId != null) {
+          saveProfileGameAnalysisStats({
+            profileId,
+            gameId: profileDbGameId,
+            initialFen,
+            moves,
+            analysis: resolvedAnalysis,
+          }).catch(() => {
+            // best-effort
+          });
+        }
+      }
+    } catch {
+    } finally {
+      analysisEngineRef.current = null;
+      setInProgress(false);
+      runGuardRef.current = false;
+    }
   }
 
   return (
@@ -212,6 +446,7 @@ function ReportModal({
           <Checkbox
             label={t("features.board.analysis.reversed")}
             description={t("features.board.analysis.reversedDesc")}
+            disabled={form.values.humanStrategic}
             {...form.getInputProps("reversed", { type: "checkbox" })}
           />
 
@@ -219,6 +454,12 @@ function ReportModal({
             label={t("features.board.analysis.annotateNovelties")}
             description={t("features.board.analysis.annotateNoveltiesDesc")}
             {...form.getInputProps("novelty", { type: "checkbox" })}
+          />
+
+          <Checkbox
+            label={t("features.board.analysis.humanStrategicReport")}
+            description={t("features.board.analysis.humanStrategicReportDesc")}
+            {...form.getInputProps("humanStrategic", { type: "checkbox" })}
           />
 
           <Group justify="right">

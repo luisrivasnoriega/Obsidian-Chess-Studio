@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AnalysisOptions,
   BestMoves as BestMovesT,
   DatabaseInfo as DatabaseInfoT,
+  EngineOption,
   GameQueryJs,
+  GoMode,
+  MoveAnalysis,
   Puzzle,
   Result,
   Score as ScoreT,
@@ -14,6 +18,89 @@ export type ScoreValue = ScoreValueT | { type: "dtz"; value: number };
 export type Score = Omit<ScoreT, "value"> & { value: ScoreValue };
 export type BestMoves = Omit<BestMovesT, "score"> & {
   score: Score;
+};
+
+export type HumanStrategicConfig = {
+  maxEngineDropCp: number;
+  maxAbsoluteDisadvantageCp: number;
+  lastResortDisadvantageCp: number;
+  minStrategicScore: number;
+  highConvictionThreshold: number;
+};
+
+export type HumanStrategicRequest = {
+  fen: string;
+  moves: string[];
+  candidates: BestMoves[];
+  config?: HumanStrategicConfig;
+};
+
+export type HumanStrategicSelection = {
+  selectedUci: string;
+  selectedSan: string;
+  selectedEngineCp: number;
+  selectedEngineDropCp: number;
+  selectedStrategicScore: number;
+  selectedIsLastResort: boolean;
+  bestEngineUci: string;
+  bestEngineCp: number;
+};
+
+export type HumanStrategicAxisNarrative = {
+  axis: string;
+  score: number;
+  explanation: string;
+};
+
+export type HumanMoveNarrative = {
+  ply: number;
+  sideToMove: string;
+  playedUci: string;
+  playedSan: string;
+  engineBestUci: string | null;
+  engineBestSan: string | null;
+  strategicChoiceUci: string | null;
+  strategicChoiceSan: string | null;
+  verdict: string;
+  evalBeforeCp: number | null;
+  evalAfterCp: number | null;
+  cpLoss: number | null;
+  playedStrategicScore: number | null;
+  playedMotifs: string[];
+  strategicAxes: HumanStrategicAxisNarrative[];
+  strategicPlan: string;
+  commentShort: string;
+  commentLong: string;
+  suggestedVariationUci: string[];
+  suggestedVariationSan: string[];
+};
+
+export type HumanStrategicGameSummary = {
+  bestCount: number;
+  greatCount: number;
+  practicalCount: number;
+  interestingCount: number;
+  dubiousCount: number;
+  mistakeCount: number;
+  blunderCount: number;
+  topThemes: string[];
+};
+
+export type HumanAnnotatedGameReport = {
+  annotatedPgn: string;
+  narratives: HumanMoveNarrative[];
+  summary: HumanStrategicGameSummary;
+  analysis: MoveAnalysis[];
+};
+
+export type HumanGameAnalysisRequest = {
+  id: string;
+  engine: string;
+  goMode: GoMode;
+  options: AnalysisOptions;
+  uciOptions: EngineOption[];
+  originalPgn?: string | null;
+  strategicVariationMaxPlies?: number | null;
 };
 
 export type DatabaseInfo =
@@ -32,6 +119,34 @@ export type DatabaseInfo =
     };
 
 export type GameQuery = GameQueryJs;
+
+export async function pickHumanStrategicMove(
+  request: HumanStrategicRequest,
+): Promise<Result<HumanStrategicSelection, string>> {
+  try {
+    return {
+      status: "ok",
+      data: await invoke("pick_human_strategic_move", { request }),
+    };
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    return { status: "error", error: e as any };
+  }
+}
+
+export async function analyzeGameHumanStrategicReport(
+  request: HumanGameAnalysisRequest,
+): Promise<Result<HumanAnnotatedGameReport, string>> {
+  try {
+    return {
+      status: "ok",
+      data: await invoke("analyze_game_human_report", { request }),
+    };
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    return { status: "error", error: e as any };
+  }
+}
 
 export type PuzzleFiltersMetadata = {
   ratingRange: [number, number] | null;

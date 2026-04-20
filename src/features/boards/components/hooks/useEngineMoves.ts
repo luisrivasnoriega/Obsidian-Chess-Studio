@@ -1,16 +1,24 @@
 import { notifications } from "@mantine/notifications";
 import { parseUci } from "chessops";
 import { useAtomValue } from "jotai";
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { commands, events } from "@/bindings";
+import { type BestMoves, commands, events, pickHumanStrategicMove } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { activeTabAtom, currentGameStateAtom, currentPlayersAtom } from "@/state/atoms";
 import { getMainLine } from "@/utils/chess";
 import type { positionFromFen } from "@/utils/chessops";
 import type { TreeNode } from "@/utils/treeReducer";
-import { treeIteratorMainLine } from "@/utils/treeReducer";
+
+function movesEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export function useEngineMoves(
   root: TreeNode,
   headers: { variant?: string; result?: string },
@@ -33,8 +41,10 @@ export function useEngineMoves(
     moves: string[];
   } | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Skip duplicate payloads: once we've applied a move for (tab, fen, moves.length), ignore further events for same key
+  // Skip duplicate payloads: once we've applied a move for (tab, fen, moves), ignore further events for same key
   const lastAppliedPayloadKeyRef = useRef<string | null>(null);
+  // Ensure each request can apply at most one move.
+  const appliedRequestKeyRef = useRef<string | null>(null);
   // Force re-request after error by incrementing this counter
   const [_retryCounter, setRetryCounter] = useState(0);
 
@@ -46,9 +56,121 @@ export function useEngineMoves(
     blackTimeRef.current = blackTime;
   }, [whiteTime, blackTime]);
 
+  const rootRef = useRef(root);
+  const posRef = useRef(pos);
+  const headersRef = useRef(headers);
+  const gameStateRef = useRef(gameState);
+  useEffect(() => {
+    rootRef.current = root;
+    posRef.current = pos;
+    headersRef.current = headers;
+    gameStateRef.current = gameState;
+  }, [root, pos, headers, gameState]);
+
   const moves = useMemo(() => getMainLine(root, headers.variant === "Chess960"), [root, headers.variant]);
-  const mainLine = useMemo(() => Array.from(treeIteratorMainLine(root)), [root]);
-  const _lastNode = useMemo(() => mainLine[mainLine.length - 1].node, [mainLine]);
+  const buildPayloadKey = useCallback(
+    (tab: string, fen: string, moves: string[]) => `${tab}|${fen}|${moves.join(",")}`,
+    [],
+  );
+
+  const chooseEngineMoveUci = useCallback(
+    async (params: {
+      fen: string;
+      moves: string[];
+      bestLines: BestMoves[];
+      engineProfile: "default" | "strategicHuman";
+    }): Promise<string | null> => {
+      const fallback = params.bestLines?.[0]?.uciMoves?.[0] ?? null;
+      if (params.engineProfile !== "strategicHuman" || !fallback) {
+        return fallback;
+      }
+
+      try {
+        const selection = await pickHumanStrategicMove({
+          fen: params.fen,
+          moves: params.moves,
+          candidates: params.bestLines,
+          config: {
+            // Strategic-human profile: allow slightly wider practical concessions,
+            // but stay inside engine safety rails.
+            maxEngineDropCp: 65,
+            maxAbsoluteDisadvantageCp: 65,
+            lastResortDisadvantageCp: 80,
+            minStrategicScore: 0.4,
+            highConvictionThreshold: 0.78,
+          },
+        });
+
+        if (selection.status === "ok" && selection.data?.selectedUci) {
+          return selection.data.selectedUci;
+        }
+      } catch (_e) {
+        // Fallback to engine top move if strategic selector fails.
+      }
+
+      return fallback;
+    },
+    [],
+  );
+
+  const tryApplyEngineMove = useCallback(
+    async (params: {
+      requestKey: string;
+      tab: string;
+      fen: string;
+      moves: string[];
+      bestLines: BestMoves[];
+      engineProfile: "default" | "strategicHuman";
+      payloadKey?: string;
+    }): Promise<boolean> => {
+      if (engineRequestRef.current !== params.requestKey) return false;
+      if (appliedRequestKeyRef.current === params.requestKey) return false;
+      if (gameStateRef.current !== "playing" || headersRef.current.result !== "*") return false;
+
+      const requestDetails = engineRequestDetailsRef.current;
+      if (!requestDetails) return false;
+      if (requestDetails.tab !== params.tab || requestDetails.fen !== params.fen) return false;
+      if (!movesEqual(requestDetails.moves, params.moves)) return false;
+
+      const currentMoves = getMainLine(rootRef.current, headersRef.current.variant === "Chess960");
+      if (!movesEqual(currentMoves, params.moves)) return false;
+
+      const currentPos = posRef.current;
+      if (!currentPos || currentPos.isEnd()) return false;
+
+      const bestUci = await chooseEngineMoveUci({
+        fen: params.fen,
+        moves: params.moves,
+        bestLines: params.bestLines ?? [],
+        engineProfile: params.engineProfile,
+      });
+      if (!bestUci) return false;
+
+      const parsed = parseUci(bestUci);
+      if (!parsed) return false;
+      if (!currentPos.isLegal(parsed)) return false;
+
+      appliedRequestKeyRef.current = params.requestKey;
+      engineRequestRef.current = null;
+      engineRequestDetailsRef.current = null;
+
+      try {
+        appendMove({
+          payload: parsed,
+          clock: (currentPos.turn === "white" ? whiteTimeRef.current : blackTimeRef.current) ?? undefined,
+        });
+        lastAppliedPayloadKeyRef.current = params.payloadKey ?? buildPayloadKey(params.tab, params.fen, params.moves);
+        return true;
+      } catch {
+        appliedRequestKeyRef.current = null;
+        engineRequestRef.current = null;
+        engineRequestDetailsRef.current = null;
+        setRetryCounter((prev) => prev + 1);
+        return false;
+      }
+    },
+    [appendMove, buildPayloadKey, chooseEngineMoveUci],
+  );
 
   // Request engine moves when it's the engine's turn
   // Use separate effect for position/turn changes vs time updates
@@ -80,6 +202,7 @@ export function useEngineMoves(
 
       if (player.type === "engine" && player.engine) {
         const engine = player.engine;
+        const engineProfile = player.engineProfile ?? "default";
         const tabKey = activeTab + currentTurn;
 
         // Create a unique key for this request to prevent duplicate calls
@@ -112,7 +235,7 @@ export function useEngineMoves(
           fen: root.fen,
           moves: moves,
         };
-        lastAppliedPayloadKeyRef.current = null;
+        appliedRequestKeyRef.current = null;
 
         // Calculate time for engine - use actual remaining time or fallback to timeControl seconds
         // Use refs to get current time values without triggering effect on time updates
@@ -148,6 +271,9 @@ export function useEngineMoves(
 
         const runRequest = async () => {
           let extraOptions = [...baseOptions];
+          if (engineProfile === "strategicHuman") {
+            extraOptions = [...extraOptions, { name: "MultiPV", value: "4" }];
+          }
           if (engine.name.startsWith("Leela Chess Zero")) {
             let weightsPath =
               player.type === "engine" && "lc0NetworkPath" in player ? player.lc0NetworkPath : undefined;
@@ -180,7 +306,7 @@ export function useEngineMoves(
         }, timeoutMs);
 
         requestPromise
-          .then((res: any) => {
+          .then(async (res: any) => {
             // Clear timeout if promise resolves
             if (timeoutRef.current) {
               clearTimeout(timeoutRef.current);
@@ -210,18 +336,21 @@ export function useEngineMoves(
               return;
             }
 
-            // Fallback: if backend returns a final result immediately (e.g. cached) apply it without waiting for the event.
-            if (res.data && res.data[0] === 100 && !pos.isEnd() && gameState === "playing") {
+            // Fallback: if backend returns a final result immediately (e.g. cached),
+            // apply only when request and position still match exactly.
+            if (res.data && res.data[0] === 100) {
               const [, bestLines] = res.data;
-              const bestUci = bestLines?.[0]?.uciMoves?.[0];
-              if (bestUci) {
-                engineRequestRef.current = null;
-                engineRequestDetailsRef.current = null;
-                appendMove({
-                  payload: parseUci(bestUci)!,
-                  clock: (pos.turn === "white" ? whiteTimeRef.current : blackTimeRef.current) ?? undefined,
-                });
-              }
+              const payloadKey = buildPayloadKey(tabKey, root.fen, moves);
+              if (lastAppliedPayloadKeyRef.current === payloadKey) return;
+              await tryApplyEngineMove({
+                requestKey,
+                tab: tabKey,
+                fen: root.fen,
+                moves,
+                bestLines: bestLines ?? [],
+                engineProfile,
+                payloadKey,
+              });
             }
           })
           .catch((e) => {
@@ -242,19 +371,6 @@ export function useEngineMoves(
               });
             }
           });
-
-        // Return cleanup function to cancel timeout if effect re-runs or component unmounts
-        return () => {
-          if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
-          }
-          // Only clear refs if this specific request is still active
-          if (engineRequestRef.current === requestKey) {
-            engineRequestRef.current = null;
-            engineRequestDetailsRef.current = null;
-          }
-        };
       } else {
         // Clear ref if it's not an engine turn
         engineRequestRef.current = null;
@@ -280,11 +396,12 @@ export function useEngineMoves(
     activeTab,
     root.fen,
     moves,
-    appendMove,
     t,
     players.black,
     players.white?.timeControl?.seconds,
     players.white,
+    buildPayloadKey,
+    tryApplyEngineMove,
   ]);
 
   // Listen for engine move responses
@@ -303,14 +420,15 @@ export function useEngineMoves(
     let pending: (typeof events.bestMovesPayload extends any ? any : any) | null = null;
     let timer: number | null = null;
     let unlistenFn: (() => void) | null = null;
+    let flushing = false;
 
-    const flush = () => {
+    const flushOnce = async () => {
       if (!pending) return;
       const payload = pending;
       pending = null;
 
       // Skip duplicate payloads: backend can emit 99.99/100 many times; process each (tab,fen,moves) once
-      const payloadKey = `${payload.tab}|${payload.fen}|${payload.moves.length}`;
+      const payloadKey = buildPayloadKey(payload.tab, payload.fen, payload.moves ?? []);
       if (lastAppliedPayloadKeyRef.current === payloadKey) {
         return;
       }
@@ -323,6 +441,8 @@ export function useEngineMoves(
       const expectedTab = activeTab + pos.turn;
       const currentPlayer = players[pos.turn];
       const isEngineTurn = currentPlayer?.type === "engine";
+      const currentEngineProfile =
+        currentPlayer?.type === "engine" ? (currentPlayer.engineProfile ?? "default") : "default";
 
       // More flexible tab matching: check if payload.tab ends with current turn
       // This handles cases where the tab ID might have changed but the game is still active
@@ -343,71 +463,36 @@ export function useEngineMoves(
         (payload.bestLines?.length ?? 0) > 0;
 
       if (shouldApplyMove) {
-        // Only apply when payload is for the current position (same main-line length).
-        // Prevents applying twice when we get repeated 100/99.99 events.
-        const currentMoves = getMainLine(root, headers.variant === "Chess960");
-        if (payload.moves.length !== currentMoves.length) {
-          return;
-        }
+        const requestKey = engineRequestRef.current;
+        if (!requestKey) return;
+        await tryApplyEngineMove({
+          requestKey,
+          tab: payload.tab,
+          fen: payload.fen,
+          moves: payload.moves ?? [],
+          bestLines: payload.bestLines ?? [],
+          engineProfile: currentEngineProfile,
+          payloadKey,
+        });
+      }
+    };
 
-        const hasActiveRequest = !!engineRequestRef.current;
-        const payloadMatchesFen = payload.fen === root.fen;
-        if (!hasActiveRequest && !payloadMatchesFen) {
-          return;
-        }
-        if (engineRequestDetailsRef.current) {
-          const requestDetails = engineRequestDetailsRef.current;
-          if (requestDetails.fen !== root.fen || requestDetails.tab !== payload.tab) {
-            return;
+    const requestFlush = () => {
+      if (flushing) return;
+      flushing = true;
+      void (async () => {
+        try {
+          while (isMounted && pending) {
+            await flushOnce();
+          }
+        } finally {
+          flushing = false;
+          // If a new payload arrived after we left the loop, process it.
+          if (isMounted && pending) {
+            requestFlush();
           }
         }
-
-        const bestUci = payload.bestLines?.[0]?.uciMoves?.[0];
-        if (!bestUci) {
-          return;
-        }
-        const parsed = parseUci(bestUci);
-        if (!parsed) {
-          return;
-        }
-
-        // Verify move is legal (handles normal moves, castling, en passant, drops)
-        if (!pos.isLegal(parsed)) {
-          engineRequestRef.current = null;
-          engineRequestDetailsRef.current = null;
-          setRetryCounter((prev) => prev + 1);
-          return;
-        }
-
-        // Clear refs BEFORE applying move to prevent race conditions and duplicate moves
-        const _currentRequestKey = engineRequestRef.current;
-        engineRequestRef.current = null;
-        engineRequestDetailsRef.current = null;
-
-        try {
-          appendMove({
-            payload: parsed,
-            clock: (pos.turn === "white" ? whiteTimeRef.current : blackTimeRef.current) ?? undefined,
-          });
-          // Only mark as applied after success so duplicate events are skipped; if appendMove throws we can retry
-          lastAppliedPayloadKeyRef.current = payloadKey;
-        } catch (_error) {
-          // Clear refs on error to allow retry; do NOT set lastAppliedPayloadKeyRef so we can process this payload again
-          engineRequestRef.current = null;
-          engineRequestDetailsRef.current = null;
-          setRetryCounter((prev) => prev + 1);
-        }
-      } else if (payload.progress >= 99.99 && tabEndsWithTurn) {
-        // Only clear the engine request ref if it matches this payload
-        // This prevents clearing requests for different positions/turns
-        if (
-          engineRequestDetailsRef.current?.tab === payload.tab &&
-          engineRequestDetailsRef.current?.fen === payload.fen
-        ) {
-          engineRequestRef.current = null;
-          engineRequestDetailsRef.current = null;
-        }
-      }
+      })();
     };
 
     let isMounted = true;
@@ -423,7 +508,7 @@ export function useEngineMoves(
             timer = null;
           }
           pending = payload;
-          flush();
+          requestFlush();
           return;
         }
         pending = payload;
@@ -431,7 +516,7 @@ export function useEngineMoves(
           timer = window.setTimeout(() => {
             timer = null;
             if (isMounted) {
-              flush();
+              requestFlush();
             }
           }, throttleMs);
         }
@@ -473,5 +558,5 @@ export function useEngineMoves(
         unlistenFn = null;
       }
     };
-  }, [gameState, headers.result, activeTab, appendMove, pos, players, root.fen, t, headers.variant, root]);
+  }, [gameState, headers.result, activeTab, pos, players, t, buildPayloadKey, tryApplyEngineMove]);
 }

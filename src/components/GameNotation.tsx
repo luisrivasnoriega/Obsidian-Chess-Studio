@@ -31,7 +31,7 @@ import {
 import { INITIAL_FEN } from "chessops/fen";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { Comment } from "@/components/Comment";
@@ -169,6 +169,21 @@ function buildReportRows(items: MoveItem[]): ReportRow[] {
   return rows;
 }
 
+function treeHasComments(node: TreeNode): boolean {
+  if (node.comment && node.comment.trim().length > 0) {
+    return true;
+  }
+  if (!node.children?.length) {
+    return false;
+  }
+  for (const child of node.children) {
+    if (treeHasComments(child)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function GameNotation({
   topBar,
   initialVariationState = "report",
@@ -192,7 +207,11 @@ function GameNotation({
     initialVariationState,
     ...["variations", "repertoire", "report"].filter((v) => v !== initialVariationState),
   ]) as [VariationState, () => void];
-  const [showComments, toggleComments] = useToggle([false, true]);
+  const [showComments, setShowComments] = useState(initialVariationState === "report");
+  const toggleComments = useCallback(() => {
+    setShowComments((prev) => !prev);
+  }, []);
+  const hasCommentsInTree = useMemo(() => treeHasComments(root), [root]);
 
   const invisible = topBar && invisibleValue;
   const { colorScheme } = useMantineColorScheme();
@@ -217,6 +236,12 @@ function GameNotation({
       }
     }
   }, [currentFen, variationState]);
+
+  useEffect(() => {
+    if (variationState === "report" && hasCommentsInTree) {
+      setShowComments(true);
+    }
+  }, [variationState, hasCommentsInTree]);
 
   return (
     <Paper withBorder p="md" flex={1} style={{ position: "relative", overflow: "hidden" }}>
@@ -1128,14 +1153,6 @@ function ReportRowLine({
           }}
         />
       </Box>
-
-      {/* Comments: align under moves (skip moveNo col) */}
-      {showComments && (white?.node.comment || black?.node.comment) && (
-        <Box style={{ marginLeft: "4ch", paddingLeft: "0.9rem", marginTop: "0.15rem" }}>
-          {white?.node.comment && <Comment comment={white.node.comment} />}
-          {black?.node.comment && <Comment comment={black.node.comment} />}
-        </Box>
-      )}
 
       {/* Variations branching from WHITE */}
       {whiteHasVars && whiteExpanded && white && (

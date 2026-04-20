@@ -91,18 +91,13 @@ impl GameAnalysisService {
                 }
                 .emit(&app)?;
 
-                // Ensure MultiPV=2 for principal variation analysis.
+                // Ensure MultiPV is present for principal variation analysis.
+                // If caller already provided MultiPV, respect that value.
                 let mut extra_options = uci_options.clone();
                 if !extra_options.iter().any(|x| x.name == "MultiPV") {
                     extra_options.push(EngineOption {
                         name: "MultiPV".to_string(),
                         value: "2".to_string(),
-                    });
-                } else {
-                    extra_options.iter_mut().for_each(|x| {
-                        if x.name == "MultiPV" {
-                            x.value = "2".to_string();
-                        }
                     });
                 }
 
