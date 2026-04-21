@@ -22,6 +22,33 @@ type StoredGameStatsRowBulk = { gameId: string; accuracy: number; acpl: number; 
 
 let migrationAttempted = false;
 
+const DB_LOCKED_RE = /database is locked/i;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function invokeWithRetry<T>(
+  command: string,
+  payload: Record<string, unknown>,
+  maxRetries = 5,
+  baseDelayMs = 80,
+): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await invoke<T>(command, payload);
+    } catch (error) {
+      lastError = error;
+      const message = String(error);
+      const shouldRetry = DB_LOCKED_RE.test(message) && attempt < maxRetries;
+      if (!shouldRetry) break;
+      await sleep(baseDelayMs * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 function getActiveProfileIdFromStorage(): string | null {
   try {
     if (typeof window === "undefined") return null;
@@ -111,7 +138,7 @@ async function migrateLegacyJsonToSqlite(): Promise<void> {
 export async function saveAnalyzedGame(gameId: string, analyzedPgn: string, profileId?: string | null): Promise<void> {
   await migrateLegacyJsonToSqlite();
   const pid = resolveProfileId(profileId);
-  await invoke("analysis_db_set_analyzed_game", { gameId, analyzedPgn, profileId: pid ?? null });
+  await invokeWithRetry("analysis_db_set_analyzed_game", { gameId, analyzedPgn, profileId: pid ?? null });
 }
 
 // Profile-aware helpers (analysis.db3 is shared across profiles)
@@ -160,7 +187,7 @@ export async function getAllAnalyzedGames(profileId?: string | null): Promise<An
 export async function removeAnalyzedGame(gameId: string, profileId?: string | null): Promise<void> {
   await migrateLegacyJsonToSqlite();
   const pid = resolveProfileId(profileId);
-  await invoke("analysis_db_delete_entries", { gameIds: [gameId], profileId: pid ?? null });
+  await invokeWithRetry("analysis_db_delete_entries", { gameIds: [gameId], profileId: pid ?? null });
 }
 
 /**
@@ -210,7 +237,7 @@ export async function removeAnalyzedGamesForAccount(
 
   if (idsToDelete.length > 0) {
     const pid = resolveProfileId(profileId);
-    await invoke("analysis_db_delete_entries", { gameIds: idsToDelete, profileId: pid ?? null });
+    await invokeWithRetry("analysis_db_delete_entries", { gameIds: idsToDelete, profileId: pid ?? null });
   }
 }
 
@@ -219,7 +246,7 @@ export async function removeAnalyzedGamesForAccount(
  */
 export async function clearAllAnalyzedGames(): Promise<void> {
   await migrateLegacyJsonToSqlite();
-  await invoke("analysis_db_clear_analyzed_pgns");
+  await invokeWithRetry("analysis_db_clear_analyzed_pgns", {});
 }
 
 /**
@@ -235,7 +262,7 @@ export async function clearAllAnalyzedGames(): Promise<void> {
 export async function saveGameStats(gameId: string, stats: GameStats, profileId?: string | null): Promise<void> {
   await migrateLegacyJsonToSqlite();
   const pid = resolveProfileId(profileId);
-  await invoke("analysis_db_set_game_stats", {
+  await invokeWithRetry("analysis_db_set_game_stats", {
     gameId,
     stats: {
       accuracy: stats.accuracy,

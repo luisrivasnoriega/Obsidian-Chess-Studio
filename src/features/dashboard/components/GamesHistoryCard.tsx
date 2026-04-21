@@ -22,7 +22,11 @@ interface GamesHistoryCardProps {
   onAnalyzeLocalGame: (game: GameRecord) => void;
   onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
   onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
-  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "chessbase" | "all") => void;
+  onAnalyzeAll?: (payload: {
+    type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
+    opponentContains: string | null;
+    resultFilter: string | null;
+  }) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;

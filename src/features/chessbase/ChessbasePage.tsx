@@ -463,7 +463,7 @@ export default function ChessbasePage() {
                 )}
               </Group>
 
-              <Collapse in={showCredentials}>
+              <Collapse expanded={showCredentials}>
                 <Stack mt="sm" gap="sm">
                   <TextInput
                     label={t("chessbase.usernameLabel")}

@@ -4,8 +4,12 @@
 //! sending commands, updating options, and parsing engine output for best-move analysis.
 
 use std::path::PathBuf;
+use std::num::NonZeroUsize;
+use std::sync::Mutex as StdMutex;
 use std::time::Instant;
 
+use lru::LruCache;
+use once_cell::sync::Lazy;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Child;
 use tokio::time::{timeout, Duration};
@@ -19,6 +23,17 @@ use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color,
 
 #[cfg(target_os = "windows")]
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+const UCI_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const UCI_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+const ENGINE_QUIT_TIMEOUT: Duration = Duration::from_millis(300);
+const ENGINE_FORCE_KILL_TIMEOUT: Duration = Duration::from_secs(1);
+const PARSED_POSITION_CACHE_SIZE: usize = 256;
+
+static PARSED_POSITION_CACHE: Lazy<StdMutex<LruCache<String, Chess>>> = Lazy::new(|| {
+    let capacity = NonZeroUsize::new(PARSED_POSITION_CACHE_SIZE)
+        .expect("PARSED_POSITION_CACHE_SIZE must be non-zero");
+    StdMutex::new(LruCache::new(capacity))
+});
 
 /// Represents a running UCI engine process and its state.
 pub struct EngineProcess {
@@ -38,6 +53,48 @@ pub struct EngineProcess {
 }
 
 impl EngineProcess {
+    async fn wait_for_token(
+        comm: &mut UciCommunicator,
+        logs: &mut Vec<EngineLog>,
+        token: &str,
+    ) -> Result<(), Error> {
+        let wait_result = timeout(UCI_HANDSHAKE_TIMEOUT, async {
+            loop {
+                match comm.stdout_lines.next_line().await? {
+                    Some(line) => {
+                        logs.push(EngineLog::Engine(line.clone()));
+                        if line == token {
+                            return Ok(());
+                        }
+                    }
+                    None => return Err(Error::EngineTimeout),
+                }
+            }
+        })
+        .await;
+
+        match wait_result {
+            Ok(inner_result) => inner_result,
+            Err(_) => Err(Error::EngineTimeout),
+        }
+    }
+
+    async fn write_with_timeout(
+        &mut self,
+        msg: &str,
+        timeout_error: Error,
+    ) -> Result<(), Error> {
+        let write_result = timeout(UCI_COMMAND_TIMEOUT, self.stdin.write_all(msg.as_bytes())).await;
+        match write_result {
+            Ok(Ok(())) => {
+                self.logs.push(EngineLog::Gui(msg.to_string()));
+                Ok(())
+            }
+            Ok(Err(err)) => Err(Error::Io(err)),
+            Err(_) => Err(timeout_error),
+        }
+    }
+
     /// Spawn a new UCI engine process and initialize it.
     ///
     /// Returns the process and a line reader for its stdout.
@@ -56,20 +113,11 @@ impl EngineProcess {
 
         comm.write_line("uci\n").await?;
         logs.push(EngineLog::Gui("uci\n".to_string()));
-        while let Some(line) = comm.stdout_lines.next_line().await? {
-            logs.push(EngineLog::Engine(line.clone()));
-            if line == "uciok" {
-                comm.write_line("isready\n").await?;
-                logs.push(EngineLog::Gui("isready\n".to_string()));
-                while let Some(line_is_ready) = comm.stdout_lines.next_line().await? {
-                    logs.push(EngineLog::Engine(line_is_ready.clone()));
-                    if line_is_ready == "readyok" {
-                        break;
-                    }
-                }
-                break;
-            }
-        }
+        Self::wait_for_token(&mut comm, &mut logs, "uciok").await?;
+
+        comm.write_line("isready\n").await?;
+        logs.push(EngineLog::Gui("isready\n".to_string()));
+        Self::wait_for_token(&mut comm, &mut logs, "readyok").await?;
 
         Ok((
             Self {
@@ -97,9 +145,7 @@ impl EngineProcess {
         T: std::fmt::Display,
     {
         let msg = format!("setoption name {} value {}\n", name, value);
-        self.stdin.write_all(msg.as_bytes()).await?;
-        self.logs.push(EngineLog::Gui(msg));
-        Ok(())
+        self.write_with_timeout(&msg, Error::EngineTimeout).await
     }
 
     /// Set all engine options, including FEN, moves, and extra UCI options.
@@ -136,8 +182,8 @@ impl EngineProcess {
         // Send isready after setting options to ensure engine is ready
         let has_uci_showwdl = options.extra_options.iter().any(|o| o.name == "UCI_ShowWDL");
         if has_uci_showwdl {
-            self.stdin.write_all(b"isready\n").await?;
-            self.logs.push(EngineLog::Gui("isready\n".to_string()));
+            self.write_with_timeout("isready\n", Error::EngineTimeout)
+                .await?;
         }
         self.last_depth = 0;
         self.last_progress = 0.0;
@@ -154,10 +200,9 @@ impl EngineProcess {
         } else {
             format!("position fen {} moves {}\n", fen, moves.join(" "))
         };
-        self.stdin.write_all(msg.as_bytes()).await?;
+        self.write_with_timeout(&msg, Error::EngineTimeout).await?;
         self.options.fen = fen.to_string();
         self.options.moves = moves.clone();
-        self.logs.push(EngineLog::Gui(msg));
         Ok(())
     }
 
@@ -183,8 +228,7 @@ impl EngineProcess {
             }
             GoMode::Infinite => "go infinite\n".to_string(),
         };
-        self.stdin.write_all(msg.as_bytes()).await?;
-        self.logs.push(EngineLog::Gui(msg));
+        self.write_with_timeout(&msg, Error::EngineTimeout).await?;
         self.running = true;
         self.start = Instant::now();
         Ok(())
@@ -192,30 +236,32 @@ impl EngineProcess {
 
     /// Stop the engine's current search.
     pub async fn stop(&mut self) -> Result<(), Error> {
-        self.stdin.write_all(b"stop\n").await?;
-        self.logs.push(EngineLog::Gui("stop\n".to_string()));
+        self.write_with_timeout("stop\n", Error::EngineStopTimeout)
+            .await?;
         self.running = false;
         Ok(())
     }
 
     /// Kill the engine process.
     pub async fn kill(&mut self) -> Result<(), Error> {
-        let _ = self.stdin.write_all(b"quit\n").await;
+        let _ = timeout(UCI_COMMAND_TIMEOUT, self.stdin.write_all(b"quit\n")).await;
         self.logs.push(EngineLog::Gui("quit\n".to_string()));
         self.running = false;
 
         // Give the engine a brief chance to exit gracefully after "quit".
-        if timeout(Duration::from_millis(300), self.child.wait())
-            .await
-            .is_ok()
-        {
-            return Ok(());
+        match timeout(ENGINE_QUIT_TIMEOUT, self.child.wait()).await {
+            Ok(Ok(_)) => return Ok(()),
+            Ok(Err(err)) => return Err(Error::Io(err)),
+            Err(_) => {}
         }
 
         // Force-kill as fallback to prevent orphan processes.
         let _ = self.child.start_kill();
-        let _ = timeout(Duration::from_secs(1), self.child.wait()).await;
-        Ok(())
+        match timeout(ENGINE_FORCE_KILL_TIMEOUT, self.child.wait()).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(err)) => Err(Error::Io(err)),
+            Err(_) => Err(Error::EngineStopTimeout),
+        }
     }
 }
 
@@ -230,6 +276,50 @@ fn invert_score(score: Score) -> Score {
         value: new_value,
         wdl: new_wdl,
     }
+}
+
+fn build_position_cache_key(fen: &Fen, moves: &[String]) -> String {
+    if moves.is_empty() {
+        return fen.to_string();
+    }
+
+    let mut key = fen.to_string();
+    key.push('\u{1f}');
+    key.push_str(&moves.join("\u{1f}"));
+    key
+}
+
+fn build_position_from_fen_moves(fen: &Fen, moves: &[String]) -> Result<Chess, Error> {
+    let mut pos: Chess = match fen.clone().into_position(CastlingMode::Chess960) {
+        Ok(p) => p,
+        Err(e) => e.ignore_too_much_material()?,
+    };
+
+    for m in moves {
+        let uci = UciMove::from_ascii(m.as_bytes())?;
+        let mv = uci.to_move(&pos)?;
+        pos.play_unchecked(&mv);
+    }
+
+    Ok(pos)
+}
+
+fn get_cached_position(fen: &Fen, moves: &[String]) -> Result<Chess, Error> {
+    let cache_key = build_position_cache_key(fen, moves);
+
+    if let Ok(mut cache) = PARSED_POSITION_CACHE.lock() {
+        if let Some(position) = cache.get(&cache_key) {
+            return Ok(position.clone());
+        }
+    }
+
+    let position = build_position_from_fen_moves(fen, moves)?;
+
+    if let Ok(mut cache) = PARSED_POSITION_CACHE.lock() {
+        cache.put(cache_key, position.clone());
+    }
+
+    Ok(position)
 }
 
 /// Parse UCI info attributes into a `BestMoves` struct for the current position.
@@ -263,15 +353,9 @@ pub fn parse_uci_attrs_with_line(
 ) -> Result<BestMoves, Error> {
     let mut best_moves = BestMoves::default();
 
-    let mut pos: Chess = match fen.clone().into_position(CastlingMode::Chess960) {
-        Ok(p) => p,
-        Err(e) => e.ignore_too_much_material()?,
-    };
-    for m in moves {
-        let uci = UciMove::from_ascii(m.as_bytes())?;
-        let mv = uci.to_move(&pos)?;
-        pos.play_unchecked(&mv);
-    }
+    // Hot path optimization: avoid re-parsing FEN + replaying moves for each UCI info line.
+    // The base position is stable across many engine lines and is cached with a small LRU.
+    let mut pos = get_cached_position(fen, moves)?;
     let turn = pos.turn();
 
     fn parse_wdl_value(value: &str) -> Option<(u32, u32, u32)> {
@@ -350,15 +434,7 @@ pub fn parse_uci_attrs_with_line(
             if let Some(pv_start) = line.find(" pv ") {
                 let pv_part = &line[pv_start + 4..];
                 let pv_moves: Vec<&str> = pv_part.split_whitespace().collect();
-                let mut pos_for_pv = match fen.clone().into_position(CastlingMode::Chess960) {
-                    Ok(p) => p,
-                    Err(e) => e.ignore_too_much_material()?,
-                };
-                for m in moves {
-                    let uci = UciMove::from_ascii(m.as_bytes())?;
-                    let mv = uci.to_move(&pos_for_pv)?;
-                    pos_for_pv.play_unchecked(&mv);
-                }
+                let mut pos_for_pv = get_cached_position(fen, moves)?;
                 for pv_move_str in pv_moves {
                     let uci = UciMove::from_ascii(pv_move_str.as_bytes())?;
                     let mv = uci.to_move(&pos_for_pv)?;

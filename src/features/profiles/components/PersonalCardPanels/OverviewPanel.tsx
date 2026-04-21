@@ -256,7 +256,7 @@ const DateChartTooltip = ({
   label?: string;
   isYearsView?: boolean;
 }) => {
-  if (active && payload && payload.length) {
+  if (active && payload?.length) {
     return (
       <div
         style={{

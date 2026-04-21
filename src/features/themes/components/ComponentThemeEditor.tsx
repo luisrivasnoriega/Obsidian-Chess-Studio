@@ -182,7 +182,7 @@ function ComponentEditor({ componentName, componentTheme, onChange, onDelete, av
         </Group>
       </Group>
 
-      <Collapse in={opened}>
+      <Collapse expanded={opened}>
         <Stack gap="md" pt="md">
           {/* Default Props */}
           <div>
@@ -196,7 +196,7 @@ function ComponentEditor({ componentName, componentTheme, onChange, onDelete, av
               </ActionIcon>
             </Group>
 
-            <Collapse in={propsOpened}>
+            <Collapse expanded={propsOpened}>
               <Stack gap="sm" mt="sm">
                 {/* Available props for this component */}
                 {Object.entries(componentProps).map(([propName, propConfig]) => (
@@ -293,7 +293,7 @@ function ComponentEditor({ componentName, componentTheme, onChange, onDelete, av
               </ActionIcon>
             </Group>
 
-            <Collapse in={stylesOpened}>
+            <Collapse expanded={stylesOpened}>
               <JsonInput
                 mt="sm"
                 placeholder="Custom CSS-in-JS styles"

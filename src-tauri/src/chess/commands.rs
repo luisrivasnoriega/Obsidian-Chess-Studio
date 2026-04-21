@@ -16,7 +16,8 @@ use crate::AppState;
 use super::analysis::GameAnalysisService;
 use super::human_game_analyzer::{
     analyze_game_human_report as analyze_game_human_report_inner, HumanAnnotatedGameReport,
-    HumanGameAnalysisRequest,
+    HumanGameAnalysisRequest, HumanStrategicLiveRequest, HumanStrategicLiveResponse,
+    build_human_strategic_live_report as build_human_strategic_live_report_inner,
 };
 use super::human_strategy::{pick_human_strategic_move as pick_human_strategic_move_inner, HumanStrategicRequest, HumanStrategicSelection};
 use super::manager::EngineManager;
@@ -172,6 +173,15 @@ pub async fn analyze_game_human_report(
     app: tauri::AppHandle,
 ) -> Result<HumanAnnotatedGameReport, Error> {
     analyze_game_human_report_inner(request, state, app).await
+}
+
+/// Build live strategic explanations for the current engine MultiPV lines.
+#[tauri::command]
+#[specta::specta]
+pub fn build_human_strategic_live_report(
+    request: HumanStrategicLiveRequest,
+) -> Result<HumanStrategicLiveResponse, Error> {
+    build_human_strategic_live_report_inner(request)
 }
 
 /// Query a UCI engine for its configuration (name and options).

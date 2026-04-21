@@ -522,7 +522,7 @@ export default function StatsPanel({
       });
     }
     return map;
-  }, [buckets]);
+  }, [buckets, phaseOrder]);
 
   const totals = useMemo(() => {
     let won = 0;

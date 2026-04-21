@@ -236,7 +236,7 @@ function Puzzles({ id }: { id: string }) {
 
   // Load puzzle filter metadata (columns, options, rating range) when database changes.
   useEffect(() => {
-    if (!selectedDb || !selectedDb.endsWith(".db3")) {
+    if (!selectedDb?.endsWith(".db3")) {
       setIsLoadingFilterOptions(false);
       setHasThemes(false);
       setHasOpeningTags(false);
@@ -322,7 +322,7 @@ function Puzzles({ id }: { id: string }) {
   // - openingTags options depend on active themes + adaptive rating range
   // - themes options depend on active openingTags + adaptive rating range
   useEffect(() => {
-    if (!selectedDb || !selectedDb.endsWith(".db3")) return;
+    if (!selectedDb?.endsWith(".db3")) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
@@ -523,7 +523,7 @@ function Puzzles({ id }: { id: string }) {
 
   return (
     <>
-      <Grid h="100%" gutter="md" style={{ flex: 1, minHeight: 0 }}>
+      <Grid h="100%" gap="md" style={{ flex: 1, minHeight: 0 }}>
         <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
           <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
             <ScrollArea h="100%" offsetScrollbars>

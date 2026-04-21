@@ -1,6 +1,10 @@
 import { ActionIcon, Paper, Tooltip } from "@mantine/core";
 import { IconFocus } from "@tabler/icons-react";
-import * as d3 from "d3";
+import { type HierarchyNode, type HierarchyPointLink, type HierarchyPointNode, hierarchy, tree } from "d3-hierarchy";
+import { select } from "d3-selection";
+import { linkHorizontal } from "d3-shape";
+import "d3-transition";
+import { type ZoomBehavior, zoom, zoomIdentity } from "d3-zoom";
 import { t } from "i18next";
 import { useContext, useEffect, useRef } from "react";
 import { useStore } from "zustand";
@@ -26,12 +30,12 @@ const DIMS = {
   transitionDuration: 750,
 };
 
-type NodeWithPath = d3.HierarchyNode<TreeNode> & { movePath?: number[] };
+type NodeWithPath = HierarchyPointNode<TreeNode> & { movePath?: number[] };
 
-const getNodeColor = (d: d3.HierarchyNode<TreeNode>) =>
+const getNodeColor = (d: HierarchyNode<TreeNode>) =>
   d.depth === 0 ? COLORS.root : d.data.halfMoves % 2 === 1 ? COLORS.white : COLORS.black;
 
-const getTextColor = (d: d3.HierarchyNode<TreeNode>) =>
+const getTextColor = (d: HierarchyNode<TreeNode>) =>
   d.depth === 0 ? COLORS.text : d.data.halfMoves % 2 === 1 ? COLORS.text : COLORS.white;
 
 function GraphPanel() {
@@ -41,10 +45,10 @@ function GraphPanel() {
   const goToMove = useStore(store, (s) => s.goToMove);
 
   const svgRef = useRef<SVGSVGElement>(null);
-  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const hierarchyRef = useRef<d3.HierarchyNode<TreeNode> | null>(null);
+  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const hierarchyRef = useRef<HierarchyPointNode<TreeNode> | null>(null);
 
-  const addMovePaths = (root: d3.HierarchyNode<TreeNode>) => {
+  const addMovePaths = (root: HierarchyPointNode<TreeNode>) => {
     root.each((d: NodeWithPath) => {
       const path: number[] = [];
       let current = d;
@@ -59,12 +63,10 @@ function GraphPanel() {
     });
   };
 
-  const createCenterTransform = (node: d3.HierarchyNode<TreeNode>, width: number, height: number) =>
-    d3.zoomIdentity
-      .translate(width / 2 - (node.y || 0) * DIMS.scale, height / 2 - (node.x || 0) * DIMS.scale)
-      .scale(DIMS.scale);
+  const createCenterTransform = (node: HierarchyPointNode<TreeNode>, width: number, height: number) =>
+    zoomIdentity.translate(width / 2 - node.y * DIMS.scale, height / 2 - node.x * DIMS.scale).scale(DIMS.scale);
 
-  const findCurrentNode = (root: d3.HierarchyNode<TreeNode>) => {
+  const findCurrentNode = (root: HierarchyPointNode<TreeNode>) => {
     if (!currentPosition.length) return root;
     return (
       root.descendants().find((d) => {
@@ -74,22 +76,32 @@ function GraphPanel() {
     );
   };
 
-  const updateSelection = (root: d3.HierarchyNode<TreeNode>) => {
+  const updateSelection = (root: HierarchyPointNode<TreeNode>) => {
+    if (!svgRef.current) return;
+    const svg = select(svgRef.current);
     const ancestors = findCurrentNode(root).ancestors();
 
     // Reset all styles
-    d3.selectAll("path.link, g[data-node] > rect")
+    svg
+      .selectAll<SVGPathElement, HierarchyPointLink<TreeNode>>("path.link")
       .attr("stroke", COLORS.link)
-      .attr("stroke-width", (d: any) => (d.tagName === "path" ? DIMS.strokeWidth.link : DIMS.strokeWidth.node));
+      .attr("stroke-width", DIMS.strokeWidth.link);
+
+    svg
+      .selectAll<SVGRectElement, HierarchyNode<TreeNode>>("g[data-node] > rect")
+      .attr("stroke", COLORS.link)
+      .attr("stroke-width", DIMS.strokeWidth.node);
 
     // Highlight active path
-    d3.selectAll("path.link")
-      .filter((l: any) => ancestors.includes(l.target))
+    svg
+      .selectAll<SVGPathElement, HierarchyPointLink<TreeNode>>("path.link")
+      .filter((l) => ancestors.includes(l.target))
       .attr("stroke", COLORS.highlight)
       .attr("stroke-width", DIMS.strokeWidth.node);
 
-    d3.selectAll("g[data-node]")
-      .filter((n: any) => ancestors.includes(n))
+    svg
+      .selectAll<SVGGElement, HierarchyPointNode<TreeNode>>("g[data-node]")
+      .filter((n) => ancestors.includes(n))
       .select("rect")
       .attr("stroke", COLORS.highlight)
       .attr("stroke-width", DIMS.strokeWidth.node);
@@ -98,7 +110,7 @@ function GraphPanel() {
   const centerOnCurrentMove = () => {
     if (!svgRef.current || !hierarchyRef.current || !zoomRef.current) return;
 
-    const svg = d3.select(svgRef.current);
+    const svg = select(svgRef.current);
     const node = svg.node();
     if (!node) return;
     const { width, height } = node.getBoundingClientRect();
@@ -112,45 +124,45 @@ function GraphPanel() {
   useEffect(() => {
     if (!svgRef.current || !rootData) return;
 
-    const svg = d3.select(svgRef.current);
+    const svg = select(svgRef.current);
     svg.selectAll("*").remove();
 
     const node = svg.node();
     if (!node) return;
     const { width, height } = node.getBoundingClientRect();
     const g = svg.append("g");
-    const root = d3.hierarchy(rootData, (d) => d.children);
+    const root = hierarchy(rootData, (d) => d.children);
+    const treeRoot = tree<TreeNode>().nodeSize(DIMS.nodeSpacing)(root);
 
-    hierarchyRef.current = root;
-    addMovePaths(root);
-
-    // Layout tree
-    d3.tree<TreeNode>().nodeSize(DIMS.nodeSpacing)(root);
+    hierarchyRef.current = treeRoot;
+    addMovePaths(treeRoot);
 
     // Setup zoom
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .filter((event) => event.type === "wheel" || !event.target.closest("g[data-node]"))
+    const zoomBehavior = zoom<SVGSVGElement, unknown>()
+      .filter((event) => {
+        if (event.type === "wheel") return true;
+        const target = event.target as Element | null;
+        return !target?.closest("g[data-node]");
+      })
       .on("zoom", (event) => g.attr("transform", event.transform));
 
-    zoomRef.current = zoom;
-    svg.call(zoom);
+    zoomRef.current = zoomBehavior;
+    svg.call(zoomBehavior);
 
     // Center on current move
     svg
       .transition()
       .duration(DIMS.transitionDuration)
-      .call(zoom.transform, createCenterTransform(findCurrentNode(root), width, height));
+      .call(zoomBehavior.transform, createCenterTransform(findCurrentNode(treeRoot), width, height));
 
     // Draw links
-    const linkGenerator = d3
-      .linkHorizontal<d3.HierarchyPointLink<TreeNode>, d3.HierarchyPointNode<TreeNode>>()
+    const linkGenerator = linkHorizontal<HierarchyPointLink<TreeNode>, HierarchyPointNode<TreeNode>>()
       .x((d) => d.y)
       .y((d) => d.x);
 
     g.append("g")
       .selectAll("path")
-      .data(root.links())
+      .data(treeRoot.links())
       .join("path")
       .attr("class", "link")
       .attr("fill", "none")
@@ -162,7 +174,7 @@ function GraphPanel() {
     const nodes = g
       .append("g")
       .selectAll("g")
-      .data(root.descendants())
+      .data(treeRoot.descendants())
       .join("g")
       .attr("transform", (d) => `translate(${d.y},${d.x})`)
       .attr("data-node", "true")
@@ -193,7 +205,7 @@ function GraphPanel() {
       .attr("fill", getTextColor)
       .style("pointer-events", "none");
 
-    updateSelection(root);
+    updateSelection(treeRoot);
   }, [rootData, goToMove, addMovePaths, createCenterTransform, findCurrentNode, updateSelection]);
 
   return (

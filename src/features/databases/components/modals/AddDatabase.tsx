@@ -481,7 +481,7 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled, close
   );
 }
 
-function _PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: PuzzleDbCardProps) {
+const _PuzzleDbCard = function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: PuzzleDbCardProps) {
   const { t } = useTranslation();
   const [inProgress, setInProgress] = useState<boolean>(false);
   const [isImporting, setIsImporting] = useState<boolean>(false);
@@ -657,6 +657,6 @@ function _PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Pu
       />
     </Paper>
   );
-}
+};
 
 export default AddDatabase;

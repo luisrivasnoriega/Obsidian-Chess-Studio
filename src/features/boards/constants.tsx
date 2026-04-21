@@ -33,15 +33,21 @@ export const STORAGE_KEYS = {
 } as const;
 
 export const DEFAULT_MOSAIC_LAYOUT: MosaicNode<ViewId> = {
+  type: "split",
   direction: "row",
-  first: MOSAIC_PORTAL_IDS.LEFT as ViewId,
-  second: {
-    direction: "column",
-    first: MOSAIC_PORTAL_IDS.TOP_RIGHT as ViewId,
-    second: MOSAIC_PORTAL_IDS.BOTTOM_RIGHT as ViewId,
-    splitPercentage: MOSAIC_RIGHT_COLUMN_SPLIT,
-  },
-  splitPercentage: MOSAIC_PANE_CONSTRAINTS.DEFAULT_SPLIT_PERCENTAGE,
+  children: [
+    MOSAIC_PORTAL_IDS.LEFT as ViewId,
+    {
+      type: "split",
+      direction: "column",
+      children: [MOSAIC_PORTAL_IDS.TOP_RIGHT as ViewId, MOSAIC_PORTAL_IDS.BOTTOM_RIGHT as ViewId],
+      splitPercentages: [MOSAIC_RIGHT_COLUMN_SPLIT, 100 - MOSAIC_RIGHT_COLUMN_SPLIT],
+    },
+  ],
+  splitPercentages: [
+    MOSAIC_PANE_CONSTRAINTS.DEFAULT_SPLIT_PERCENTAGE,
+    100 - MOSAIC_PANE_CONSTRAINTS.DEFAULT_SPLIT_PERCENTAGE,
+  ],
 };
 
 export const CUSTOM_EVENTS = {

@@ -542,6 +542,7 @@
     "filterByOpponent": "Filtrar por oponente",
     "filterByResult": "Filtrar por resultado",
     "filterByTimeControl": "Filtrar por control de tiempo",
+    "tableFooterAverageVisible": "Promedio (visible)",
     "noGamesMatchFilters": "No hay partidas que coincidan con los filtros"
   },
   "databaseOptions": {
@@ -1232,7 +1233,10 @@
         "consultPlanSectionTriggers": "Disparadores del plan",
         "consultPlanSectionMoves": "Jugadas candidatas",
         "consultPlanSectionRisks": "Riesgos críticos",
-        "consultPlanSectionAdvice": "Consejos prácticos"
+        "consultPlanSectionAdvice": "Consejos prácticos",
+        "gmGuardrailTitle": "Guard-rail GM",
+        "gmGuardrailRecommended": "Recomendado {{selected}}. Mejor del motor: {{best}}. Coste estratégico: {{drop}} cp.",
+        "gmGuardrailLineScore": "Estratégico {{score}}"
       },
       "database": {
         "local": "Local",

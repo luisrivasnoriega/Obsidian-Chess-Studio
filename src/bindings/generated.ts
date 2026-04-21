@@ -105,6 +105,17 @@ async analyzeGameHumanReport(request: HumanGameAnalysisRequest) : Promise<Result
 }
 },
 /**
+ * Build live strategic explanations for the current engine MultiPV lines.
+ */
+async buildHumanStrategicLiveReport(request: HumanStrategicLiveRequest) : Promise<Result<HumanStrategicLiveResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("build_human_strategic_live_report", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stop a specific engine process by engine name and tab.
  * This command performs a definitive shutdown (`stop` + `quit/kill`) and removes the process from the map.
  */
@@ -1731,6 +1742,18 @@ highConvictionThreshold: number }
  * Global summary of the human strategic report.
  */
 export type HumanStrategicGameSummary = { bestCount: number; greatCount: number; practicalCount: number; interestingCount: number; dubiousCount: number; mistakeCount: number; blunderCount: number; topThemes: string[] }
+/**
+ * Human strategic explanation for a single candidate move.
+ */
+export type HumanStrategicLiveLine = { uci: string; san: string; engineRank: number; engineCp: number; engineDropCp: number; strategicScore: number; finalScore: number; isSelected: boolean; isEngineBest: boolean; motifs: StrategicMotif[]; strategicAxes: HumanStrategicAxisNarrative[]; strategicPlan: string; commentShort: string; commentLong: string; suggestedVariationUci: string[]; suggestedVariationSan: string[] }
+/**
+ * Input payload for live strategic explanations from engine MultiPV lines.
+ */
+export type HumanStrategicLiveRequest = { fen: string; moves: string[]; candidates: BestMoves[]; config: HumanStrategicConfig | null; maxVariationPlies: number | null; maxLines: number | null }
+/**
+ * Live strategic explanation bundle for the current position.
+ */
+export type HumanStrategicLiveResponse = { selectedUci: string; selectedSan: string; bestEngineUci: string; bestEngineSan: string; lines: HumanStrategicLiveLine[] }
 /**
  * Phase-3 macro strategic axes used for richer style explanation and ranking.
  */

@@ -24,6 +24,9 @@ export function Chessground({
   const ref = useRef<HTMLDivElement>(null);
   const moveMethod = useAtomValue(moveMethodAtom);
   const boardImage = useAtomValue(boardImageAtom);
+  const [isDocumentHidden, setIsDocumentHidden] = useState(() =>
+    typeof document !== "undefined" ? document.hidden : false,
+  );
 
   const setBoardFenRef = useRef(setBoardFen);
   const setSelectedPieceRef = useRef(setSelectedPiece);
@@ -56,6 +59,18 @@ export function Chessground({
     setSelectedPieceRef.current = setSelectedPiece;
   }
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      setIsDocumentHidden(document.hidden);
+    };
+    onVisibilityChange();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
   // Memoize chessgroundConfig to avoid recreating it on every render
   // Don't include chessgroundConfigProps itself in dependencies since it's a new object every render
   // We track all individual properties instead
@@ -81,6 +96,31 @@ export function Chessground({
       chessgroundConfigProps.events,
       chessgroundConfigProps,
     ],
+  );
+
+  const effectiveAnimation = useMemo<Config["animation"]>(() => {
+    if (!isDocumentHidden) {
+      return chessgroundConfig.animation;
+    }
+    const baseAnimation = chessgroundConfig.animation ?? {};
+    return {
+      ...baseAnimation,
+      enabled: false,
+    };
+  }, [chessgroundConfig.animation, isDocumentHidden]);
+
+  const withOptionalAnimation = useCallback(
+    (config: Config): Config => {
+      if (effectiveAnimation === undefined) {
+        const { animation: _animation, ...configWithoutAnimation } = config;
+        return configWithoutAnimation;
+      }
+      return {
+        ...config,
+        animation: effectiveAnimation,
+      };
+    },
+    [effectiveAnimation],
   );
 
   // Store handleChange in a ref so it doesn't need to be in dependencies
@@ -118,7 +158,7 @@ export function Chessground({
     if (!el) return;
     // Initialize Chessground once; subsequent updates go through `api.set(...)`.
 
-    const config: Config = {
+    const config: Config = withOptionalAnimation({
       ...chessgroundConfig,
       addDimensionsCssVarsTo: el,
       events: {
@@ -134,7 +174,7 @@ export function Chessground({
         ...chessgroundConfig.selectable,
         enabled: moveMethod !== "drag",
       },
-    };
+    });
 
     const chessgroundApi = NativeChessground(el, config);
     setApi(chessgroundApi);
@@ -190,7 +230,7 @@ export function Chessground({
       lastMove: chessgroundConfig.lastMove,
       coordinates: chessgroundConfig.coordinates,
       coordinatesOnSquares: chessgroundConfig.coordinatesOnSquares,
-      animation: chessgroundConfig.animation,
+      animation: effectiveAnimation,
     } as const;
 
     const prev = prevConfigRef.current;
@@ -220,7 +260,7 @@ export function Chessground({
     // Set flag BEFORE creating config to prevent any synchronous events from triggering state updates
     isSettingRef.current = true;
 
-    const config: Config = {
+    const config: Config = withOptionalAnimation({
       ...chessgroundConfig,
       events: {
         ...chessgroundConfig.events,
@@ -236,7 +276,7 @@ export function Chessground({
         ...chessgroundConfig.selectable,
         enabled: moveMethod !== "drag",
       },
-    };
+    });
 
     // Call api.set() synchronously - the isSettingRef flag will prevent handleChange from updating state
     api.set(config);
@@ -248,7 +288,7 @@ export function Chessground({
     });
     // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfig is memoized and contains all necessary dependencies
     // Note: We don't include handleChange and handleSelect in dependencies since we use refs
-  }, [api, moveMethod, chessgroundConfig]);
+  }, [api, moveMethod, chessgroundConfig, effectiveAnimation, withOptionalAnimation]);
 
   // Clear selected piece when not in free move mode
   useEffect(() => {

@@ -433,7 +433,7 @@ function PlayVsLichessBoardContent() {
 
       if (typeof document === "undefined") return;
       const el = gameModeRef.current;
-      if (!el || !el.requestFullscreen) return;
+      if (!el?.requestFullscreen) return;
 
       if (document.fullscreenElement !== el) {
         try {

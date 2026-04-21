@@ -244,14 +244,11 @@ fn parse_timestamp_ms(date: Option<&str>, time: Option<&str>) -> i64 {
 }
 
 fn has_analysis_markers(pgn: &str) -> bool {
-    // Mirrors the lightweight checks used in the UI.
+    // Treat as "analyzed" only when PGN contains explicit engine evaluations.
+    // Clock tags (`[%clk ...]`) and annotation glyphs can appear in non-analyzed imports
+    // (e.g. raw Lichess/Chess.com PGNs) and must not mark a game as analyzed.
     let lower = pgn.to_lowercase();
     lower.contains("[%eval")
-        || lower.contains("[%clk")
-        || lower.contains("!!")
-        || lower.contains("?!")
-        || lower.contains("!?")
-        || lower.contains("$")
 }
 
 fn time_control_category(site: GamesHistoryKind, time_control: &str) -> Option<String> {
@@ -489,6 +486,62 @@ fn ensure_profile_player_id(conn: &Connection) -> Option<i32> {
     Some(pid)
 }
 
+fn find_profile_player_id_by_usernames(conn: &Connection, usernames_lower: &HashSet<String>) -> Option<i32> {
+    if usernames_lower.is_empty() {
+        return None;
+    }
+
+    let mut stmt = conn.prepare("SELECT Id, Name FROM Players").ok()?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .ok()?;
+
+    let mut candidates: Vec<i32> = Vec::new();
+    for row in rows {
+        let Ok((pid, name_opt)) = row else {
+            continue;
+        };
+        let Some(name_raw) = name_opt else {
+            continue;
+        };
+        let name = name_raw.trim();
+        if name.is_empty() {
+            continue;
+        }
+
+        let lower = name.to_lowercase();
+        let stripped = strip_account_key(name).trim().to_lowercase();
+        if usernames_lower.contains(&lower) || usernames_lower.contains(&stripped) {
+            candidates.push(pid);
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return candidates.into_iter().next();
+    }
+
+    let mut best: Option<(i32, i64)> = None;
+    for pid in candidates {
+        let games_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM Games WHERE WhiteId = ?1 OR BlackId = ?1",
+                [pid],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        match best {
+            Some((_, current_best)) if games_count <= current_best => {}
+            _ => best = Some((pid, games_count)),
+        }
+    }
+    best.map(|(pid, _)| pid)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn dashboard_get_games_history_rows(
@@ -514,7 +567,14 @@ pub async fn dashboard_get_games_history_rows(
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let profile_player_id: Option<i32> = (|| {
         let conn = Connection::open(&db_path).ok()?;
-        ensure_profile_player_id(&conn)
+        let from_usernames = find_profile_player_id_by_usernames(&conn, &usernames_lower);
+        if !usernames_lower.is_empty() {
+            // If profile usernames are known, never fallback to inferred ProfilePlayerId.
+            // A stale/inaccurate inferred id can include games from a different player and inflate counts.
+            from_usernames
+        } else {
+            from_usernames.or_else(|| ensure_profile_player_id(&conn))
+        }
     })();
 
     let mut q = GameQueryJs::default();
@@ -528,8 +588,14 @@ pub async fn dashboard_get_games_history_rows(
     q.tournament_id = req.event_filter_id;
     q.time_control_category = req.time_control_category.clone();
 
-    if let Some(pid) = req.selected_opponent_id {
-        q.player1 = Some(pid);
+    if let Some(profile_pid) = profile_player_id {
+        q.player1 = Some(profile_pid);
+        q.sides = Some(Sides::Any);
+        if let Some(opponent_pid) = req.selected_opponent_id {
+            q.player2 = Some(opponent_pid);
+        }
+    } else if let Some(opponent_pid) = req.selected_opponent_id {
+        q.player1 = Some(opponent_pid);
         q.sides = Some(Sides::Any);
     }
 
@@ -661,25 +727,40 @@ pub async fn dashboard_get_games_history_rows(
         let black_raw = g.black.clone();
         let white_name = strip_account_key(&white_raw).to_string();
         let black_name = strip_account_key(&black_raw).to_string();
-        let user_is_white = if let Some(pid) = profile_player_id {
+        let (user_is_white, is_profile_game) = if let Some(pid) = profile_player_id {
             if g.white_id == pid {
-                true
+                (true, true)
             } else if g.black_id == pid {
-                false
+                (false, true)
             } else {
                 let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
                     || usernames_lower.contains(&white_name.to_lowercase());
                 let is_user_black = usernames_lower.contains(&black_raw.to_lowercase())
                     || usernames_lower.contains(&black_name.to_lowercase());
-                is_user_white || (!is_user_black)
+                if is_user_white {
+                    (true, true)
+                } else if is_user_black {
+                    (false, true)
+                } else {
+                    (false, false)
+                }
             }
         } else {
             let is_user_white =
                 usernames_lower.contains(&white_raw.to_lowercase()) || usernames_lower.contains(&white_name.to_lowercase());
             let is_user_black =
                 usernames_lower.contains(&black_raw.to_lowercase()) || usernames_lower.contains(&black_name.to_lowercase());
-            is_user_white || (!is_user_black)
+            if is_user_white {
+                (true, true)
+            } else if is_user_black {
+                (false, true)
+            } else {
+                (false, false)
+            }
         };
+        if !is_profile_game {
+            continue;
+        }
         let user_color = if user_is_white { "white" } else { "black" };
         let opponent = if user_is_white { black_name.clone() } else { white_name.clone() };
         let needs_minimal_pgn = matches!(kind, GamesHistoryKind::Chessbase | GamesHistoryKind::Local);
@@ -759,11 +840,22 @@ pub async fn dashboard_get_games_history_rows(
     }
 
     // 5) Enrich with analysis.db3 (bulk).
-    // LEFT JOIN to analysis.db3 uses (profile_id, analysis_game_id).
-    let ids: Vec<String> = rows.iter().map(|r| r.analysis_game_id.clone()).collect();
-    if !ids.is_empty() {
-        let analyzed = analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.clone()))?;
-        let stats = analysis_db_get_game_stats_bulk(app.clone(), ids.clone(), Some(profile_id.clone()))?;
+    // Primary key is (profile_id, analysis_game_id), but some older/client paths may
+    // still persist with external game keys (URL / lichess id). Query both keys and
+    // prefer internal `analysis_game_id` when both exist.
+    let mut lookup_keys: Vec<String> = Vec::new();
+    let mut seen_lookup_keys: HashSet<String> = HashSet::new();
+    for r in rows.iter() {
+        if seen_lookup_keys.insert(r.analysis_game_id.clone()) {
+            lookup_keys.push(r.analysis_game_id.clone());
+        }
+        if r.game_key != r.analysis_game_id && seen_lookup_keys.insert(r.game_key.clone()) {
+            lookup_keys.push(r.game_key.clone());
+        }
+    }
+    if !lookup_keys.is_empty() {
+        let analyzed = analysis_db_get_analyzed_games_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?;
+        let stats = analysis_db_get_game_stats_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?;
 
         let analyzed_map: HashMap<String, String> = analyzed
             .into_iter()
@@ -775,14 +867,21 @@ pub async fn dashboard_get_games_history_rows(
             .collect();
 
         for r in rows.iter_mut() {
-            if let Some(pgn) = analyzed_map.get(&r.analysis_game_id) {
+            if let Some(pgn) = analyzed_map
+                .get(&r.analysis_game_id)
+                .or_else(|| analyzed_map.get(&r.game_key))
+            {
                 r.pgn = Some(pgn.clone());
                 r.is_analyzed = true;
             }
-            if let Some((acc, acpl, elo)) = stats_map.get(&r.analysis_game_id) {
+            if let Some((acc, acpl, elo)) = stats_map
+                .get(&r.analysis_game_id)
+                .or_else(|| stats_map.get(&r.game_key))
+            {
                 r.accuracy = Some(*acc);
                 r.acpl = Some(*acpl);
                 r.estimated_elo = *elo;
+                r.is_analyzed = true;
             }
             if !r.is_analyzed {
                 if let Some(ref pgn) = r.pgn {
@@ -843,210 +942,36 @@ pub async fn dashboard_get_analyze_all_counts(
             unanalyzed: 0,
         });
     }
-
-    let usernames_lower = usernames_lower_set(&req.profile_usernames);
-
-    // 1) Load local games if needed.
-    let mut rows: Vec<GamesHistoryRow> = Vec::new();
-    let local_limit = req.game_history_limit.max(0) as usize;
-    let include_local = matches!(req.target, AnalyzeAllTarget::Local | AnalyzeAllTarget::All);
-    if include_local {
-        let local_games = load_local_games(&app, &profile_id, local_limit)?;
-        for g in local_games {
-            let is_user_white = g.white.side_type == "human";
-            let user_color = if is_user_white { "white" } else { "black" };
-            let opponent_side = if is_user_white { &g.black } else { &g.white };
-            let opponent = opponent_side
-                .name
-                .clone()
-                .or_else(|| opponent_side.engine.clone().map(|e| format!("Engine ({})", e)))
-                .unwrap_or_else(|| "?".to_string());
-
-            let outcome = outcome_from_result(user_color, &g.result);
-            let tc = g.time_control.clone().unwrap_or_default();
-            let tc_cat = if tc.trim().is_empty() {
-                None
-            } else {
-                time_control_category(GamesHistoryKind::Local, &tc)
-            };
-
-            rows.push(GamesHistoryRow {
-                kind: GamesHistoryKind::Local,
-                analysis_game_id: g.id.clone(),
-                game_key: g.id,
-                external_url: None,
-                opponent,
-                color: user_color.to_string(),
-                outcome,
-                pgn: None,
-                accuracy: None,
-                acpl: None,
-                estimated_elo: None,
-                moves: g.moves.len().saturating_div(2).max(1) as i32,
-                time_control: if tc.trim().is_empty() { None } else { Some(tc) },
-                time_control_category: tc_cat,
-                timestamp_ms: g.timestamp,
-                event_id: None,
-                event_name: None,
-                is_analyzed: false,
-            });
-        }
-    }
-
-    // 2) Load online games if needed (single query; later split by platform).
-    let include_online = matches!(
-        req.target,
-        AnalyzeAllTarget::Local
-            | AnalyzeAllTarget::Chesscom
-            | AnalyzeAllTarget::Lichess
-            | AnalyzeAllTarget::Chessbase
-            | AnalyzeAllTarget::All
-    );
-    if include_online {
-        let db_path = parse_profile_db_path(&app, &profile_id)?;
-        let mut q = GameQueryJs::default();
-        q.options = Some(QueryOptions {
-            skip_count: true,
-            page: Some(1),
-            page_size: Some(req.game_history_limit.max(0) as i32),
-            sort: GameSort::Date,
-            direction: SortDirection::Desc,
+    if req.game_history_limit <= 0 {
+        return Ok(AnalyzeAllCountsResponse {
+            total: 0,
+            analyzed: 0,
+            unanalyzed: 0,
         });
-        q.tournament_id = req.event_filter_id;
-        q.time_control_category = req.time_control_category.clone();
-        if let Some(pid) = req.selected_opponent_id {
-            q.player1 = Some(pid);
-            q.sides = Some(Sides::Any);
-        }
-
-        let online = get_games(db_path, q, state).await?.data;
-        for g in online {
-            // Identify platform and extract external key (same as dashboard_get_games_history_rows).
-            let site_tag = parse_site_tag(&g.moves);
-            let mut kind: Option<GamesHistoryKind> = None;
-            let mut external_key = g.id.to_string();
-            let mut external_url: Option<String> = None;
-
-            if let Some(site) = site_tag.as_deref() {
-                let site_lower = site.to_lowercase();
-                if site_lower.trim() == "local" {
-                    kind = Some(GamesHistoryKind::Local);
-                    external_key = g.id.to_string();
-                    external_url = None;
-                } else if site_lower.contains("lichess.org/broadcast/") {
-                    kind = Some(GamesHistoryKind::Lichess);
-                    external_key = g.id.to_string();
-                    external_url = normalize_https_url(site);
-                } else if let Some(id) = extract_lichess_id_from_site(site) {
-                    kind = Some(GamesHistoryKind::Lichess);
-                    external_key = id.clone();
-                    external_url = Some(format!("https://lichess.org/{}", id));
-                } else if let Some(url) = extract_chesscom_url(site) {
-                    kind = Some(GamesHistoryKind::Chesscom);
-                    external_key = url.clone();
-                    external_url = Some(url);
-                } else if site_lower.contains("chessbase.com") {
-                    kind = Some(GamesHistoryKind::Chessbase);
-                    external_key = g.id.to_string();
-                    external_url = None;
-                }
-            }
-
-            if kind.is_none() {
-                let site_lower = g.site.to_lowercase();
-                if site_lower.trim() == "local" {
-                    kind = Some(GamesHistoryKind::Local);
-                    external_key = g.id.to_string();
-                    external_url = None;
-                } else if site_lower.contains("lichess.org") {
-                    kind = Some(GamesHistoryKind::Lichess);
-                    if let Some(id) = extract_lichess_id_from_site(&g.site) {
-                        external_key = id.clone();
-                        external_url = Some(format!("https://lichess.org/{}", id));
-                    } else {
-                        external_url = Some(format!("https://lichess.org/{}", external_key));
-                    }
-                } else if site_lower.contains("chess.com") {
-                    kind = Some(GamesHistoryKind::Chesscom);
-                    if let Some(url) = extract_chesscom_url(&g.site) {
-                        external_key = url.clone();
-                        external_url = Some(url);
-                    } else {
-                        external_key = format!("https://www.chess.com/game/live/{}", g.id);
-                        external_url = Some(external_key.clone());
-                    }
-                } else if site_lower.contains("chessbase.com") {
-                    kind = Some(GamesHistoryKind::Chessbase);
-                    external_key = g.id.to_string();
-                    external_url = None;
-                }
-            }
-
-            let Some(kind) = kind else {
-                continue;
-            };
-
-            let white_raw = g.white.clone();
-            let black_raw = g.black.clone();
-            let white_name = strip_account_key(&white_raw).to_string();
-            let black_name = strip_account_key(&black_raw).to_string();
-            let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
-                || usernames_lower.contains(&white_name.to_lowercase());
-            let is_user_black = usernames_lower.contains(&black_raw.to_lowercase())
-                || usernames_lower.contains(&black_name.to_lowercase());
-            let user_is_white = is_user_white || (!is_user_black);
-            let user_color = if user_is_white { "white" } else { "black" };
-            let opponent = if user_is_white { black_name } else { white_name };
-
-            let result_str = g.result.to_string();
-            let outcome = outcome_from_result(user_color, &result_str);
-            let timestamp_ms = parse_timestamp_ms(g.date.as_deref(), g.time.as_deref());
-            let ply = g.ply_count.unwrap_or(0);
-            let full_moves = ((ply as f64) / 2.0).ceil().max(1.0) as i32;
-            let tc = g.time_control.clone().unwrap_or_default();
-            let tc_cat = if tc.trim().is_empty() {
-                None
-            } else {
-                time_control_category(kind.clone(), &tc)
-            };
-
-            rows.push(GamesHistoryRow {
-                kind,
-                analysis_game_id: g.id.to_string(),
-                game_key: external_key,
-                external_url,
-            opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
-                color: user_color.to_string(),
-                outcome,
-                pgn: None,
-                accuracy: None,
-                acpl: None,
-                estimated_elo: None,
-                moves: full_moves,
-                time_control: if tc.trim().is_empty() { None } else { Some(tc) },
-                time_control_category: tc_cat,
-                timestamp_ms,
-                event_id: Some(g.event_id),
-                event_name: Some(g.event),
-                is_analyzed: false,
-            });
-        }
     }
 
-    // 3) Apply filters + target selection + minimum move threshold.
-    if let Some(event_id) = req.event_filter_id {
-        rows.retain(|r| r.event_id == Some(event_id));
-    }
-    if let Some(ref want_tc) = req.time_control_category {
-        let want_tc = want_tc.trim().to_lowercase();
-        if !want_tc.is_empty() {
-            rows.retain(|r| r.time_control_category.as_deref().unwrap_or("") == want_tc);
-        }
-    }
+    // Keep counts aligned with the same source used by the dashboard table.
+    let rows_req = GamesHistoryRequest {
+        profile_id: profile_id.clone(),
+        game_history_limit: req.game_history_limit,
+        page: 1,
+        page_size: req.game_history_limit,
+        event_filter_id: req.event_filter_id,
+        selected_opponent_id: req.selected_opponent_id,
+        opponent_contains: None,
+        time_control_category: req.time_control_category.clone(),
+        result_filter: None,
+        sort_by: Some("date".to_string()),
+        sort_direction: Some("desc".to_string()),
+        profile_usernames: req.profile_usernames.clone(),
+    };
+    let mut rows = dashboard_get_games_history_rows(app.clone(), state, rows_req).await?.rows;
 
+    // Analyze-all only processes games with enough move content.
     rows.retain(|r| r.moves >= 5);
 
-    rows.retain(|r| match req.target {
+    let target = req.target.clone();
+    rows.retain(|r| match &target {
         AnalyzeAllTarget::All => true,
         AnalyzeAllTarget::Local => matches!(r.kind, GamesHistoryKind::Local),
         AnalyzeAllTarget::Chesscom => matches!(r.kind, GamesHistoryKind::Chesscom),
@@ -1063,10 +988,10 @@ pub async fn dashboard_get_analyze_all_counts(
         });
     }
 
-    // 4) Count analyzed strictly from analysis.db3 (profile-aware).
-    let ids: Vec<String> = rows.iter().map(|r| r.analysis_game_id.clone()).collect();
-    let analyzed_rows = analysis_db_get_analyzed_games_bulk(app.clone(), ids, Some(profile_id.clone()))?;
-    let analyzed = analyzed_rows.len() as i32;
+    // 4) Count analyzed using the same criterion shown in the dashboard table.
+    // `dashboard_get_games_history_rows` already enriches and computes `is_analyzed`
+    // from analysis.db3 plus PGN analysis markers.
+    let analyzed = rows.iter().filter(|row| row.is_analyzed).count() as i32;
     let unanalyzed = (total - analyzed).max(0);
 
     Ok(AnalyzeAllCountsResponse {

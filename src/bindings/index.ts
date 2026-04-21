@@ -93,6 +93,42 @@ export type HumanAnnotatedGameReport = {
   analysis: MoveAnalysis[];
 };
 
+export type HumanStrategicLiveRequest = {
+  fen: string;
+  moves: string[];
+  candidates: BestMoves[];
+  config?: HumanStrategicConfig | null;
+  maxVariationPlies?: number | null;
+  maxLines?: number | null;
+};
+
+export type HumanStrategicLiveLine = {
+  uci: string;
+  san: string;
+  engineRank: number;
+  engineCp: number;
+  engineDropCp: number;
+  strategicScore: number;
+  finalScore: number;
+  isSelected: boolean;
+  isEngineBest: boolean;
+  motifs: string[];
+  strategicAxes: HumanStrategicAxisNarrative[];
+  strategicPlan: string;
+  commentShort: string;
+  commentLong: string;
+  suggestedVariationUci: string[];
+  suggestedVariationSan: string[];
+};
+
+export type HumanStrategicLiveResponse = {
+  selectedUci: string;
+  selectedSan: string;
+  bestEngineUci: string;
+  bestEngineSan: string;
+  lines: HumanStrategicLiveLine[];
+};
+
 export type HumanGameAnalysisRequest = {
   id: string;
   engine: string;
@@ -141,6 +177,20 @@ export async function analyzeGameHumanStrategicReport(
     return {
       status: "ok",
       data: await invoke("analyze_game_human_report", { request }),
+    };
+  } catch (e) {
+    if (e instanceof Error) throw e;
+    return { status: "error", error: e as any };
+  }
+}
+
+export async function buildHumanStrategicLiveReport(
+  request: HumanStrategicLiveRequest,
+): Promise<Result<HumanStrategicLiveResponse, string>> {
+  try {
+    return {
+      status: "ok",
+      data: await invoke("build_human_strategic_live_report", { request }),
     };
   } catch (e) {
     if (e instanceof Error) throw e;

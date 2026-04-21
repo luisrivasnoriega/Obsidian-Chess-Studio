@@ -53,8 +53,8 @@ use crate::dashboard_games_history::{
 };
 use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::chess::{
-    analyze_game, analyze_game_human_report, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
-    pick_human_strategic_move, stop_engine,
+    analyze_game, analyze_game_human_report, build_human_strategic_live_report, get_best_moves, get_engine_config,
+    get_engine_logs, kill_engine, kill_engines, pick_human_strategic_move, stop_engine,
 };
 use crate::db::{
     calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
@@ -188,6 +188,7 @@ pub async fn run() {
             pick_human_strategic_move,
             analyze_game,
             analyze_game_human_report,
+            build_human_strategic_live_report,
             stop_engine,
             kill_engine,
             kill_engines,

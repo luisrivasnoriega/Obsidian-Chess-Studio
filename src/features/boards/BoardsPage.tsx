@@ -3,7 +3,7 @@ import { Box, Tabs } from "@mantine/core";
 import { useAtom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
-import { Mosaic, type MosaicNode } from "react-mosaic-component";
+import { isSplitNode, isTabsNode, Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
 import { debugNavLog } from "@/utils/debugNav";
 import type { Tab } from "@/utils/tabs";
@@ -131,8 +131,17 @@ function collectLeafIds(node: MosaicNode<ViewId>, acc: Set<string>): void {
     acc.add(node);
     return;
   }
-  collectLeafIds(node.first, acc);
-  collectLeafIds(node.second, acc);
+  if (isSplitNode(node)) {
+    node.children.forEach((child) => {
+      collectLeafIds(child, acc);
+    });
+    return;
+  }
+  if (isTabsNode(node)) {
+    node.tabs.forEach((tab) => {
+      acc.add(tab);
+    });
+  }
 }
 
 function isValidMosaicLayout(node: MosaicNode<ViewId> | null): node is MosaicNode<ViewId> {
@@ -163,16 +172,20 @@ const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
 
   const handleMosaicChange = useCallback(
     (currentNode: MosaicNode<ViewId> | null) => {
-      if (currentNode && typeof currentNode === "object" && "direction" in currentNode) {
-        if (currentNode.direction === "row") {
-          const constrainedPercentage = constrainSplitPercentage(currentNode.splitPercentage);
+      if (
+        currentNode &&
+        isSplitNode(currentNode) &&
+        currentNode.direction === "row" &&
+        currentNode.children.length === 2
+      ) {
+        const currentPercentage = currentNode.splitPercentages?.[0];
+        const constrainedPercentage = constrainSplitPercentage(currentPercentage);
 
-          if (currentNode.splitPercentage !== constrainedPercentage) {
-            currentNode = {
-              ...currentNode,
-              splitPercentage: constrainedPercentage,
-            };
-          }
+        if (currentPercentage !== constrainedPercentage) {
+          currentNode = {
+            ...currentNode,
+            splitPercentages: [constrainedPercentage, 100 - constrainedPercentage],
+          };
         }
       }
 

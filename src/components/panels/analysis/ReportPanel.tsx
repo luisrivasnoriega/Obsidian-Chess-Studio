@@ -228,13 +228,8 @@ function ReportPanel() {
             return;
           }
 
-          // Additional validation: ensure PGN has a reasonable number of moves
-          // Count moves in the PGN text (approximate)
-          const moveMatches = moveText.match(/\d+\.\s+\S+/g) || [];
-          if (moveMatches.length < 3 && moveCount > 3) {
-            hasSavedPgnRef.current = false;
-            return;
-          }
+          // Do not reject by regex-based move counting here: some valid PGN render paths
+          // can serialize moves differently and still be fully analyzable/savable.
 
           // Calculate stats from the analyzed game using the stats already calculated in the report
           // We can use the stats from the root node which are already calculated
@@ -289,6 +284,7 @@ function ReportPanel() {
             // Trigger refresh of games list in dashboard
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent("games:updated"));
+              window.dispatchEvent(new CustomEvent("dashboard:games-history:refresh"));
             }
           } else {
             // Check if this tab is associated with a Chess.com or Lichess game
@@ -373,6 +369,7 @@ function ReportPanel() {
               // Trigger refresh of Chess.com games list in dashboard
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("chesscom:games:updated"));
+                window.dispatchEvent(new CustomEvent("dashboard:games-history:refresh"));
               }
             } else if (lichessGameId) {
               // Save analyzed PGN for Lichess game
@@ -414,6 +411,7 @@ function ReportPanel() {
               // Trigger refresh of Lichess games list in dashboard
               if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("lichess:games:updated"));
+                window.dispatchEvent(new CustomEvent("dashboard:games-history:refresh"));
               }
             }
           }
@@ -421,7 +419,8 @@ function ReportPanel() {
           if (typeof window !== "undefined") {
             sessionStorage.removeItem(strategicPgnStorageKey);
           }
-        } catch {
+        } catch (error) {
+          console.error("ReportPanel: failed to persist analyzed PGN/stats", error);
           hasSavedPgnRef.current = false; // Reset flag on error
         }
       }, 500); // Increased delay to 500ms to ensure tree is fully updated after addAnalysis completes

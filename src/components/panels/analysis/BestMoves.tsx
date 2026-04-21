@@ -19,7 +19,6 @@ import {
   Text,
   TextInput,
   Tooltip,
-  TypographyStylesProvider,
   useMantineTheme,
 } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
@@ -36,12 +35,12 @@ import { parseUci } from "chessops";
 import { INITIAL_FEN, makeFen } from "chessops/fen";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { match } from "ts-pattern";
-import type { BestMoves } from "@/bindings";
+import { type BestMoves, buildHumanStrategicLiveReport, type HumanStrategicLiveResponse } from "@/bindings";
 import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import {
   activeProfileHasPremiumAccessAtom,
@@ -222,6 +221,77 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
   const engineVariations = useDeferredValue(
     useMemo(() => ev.get(`${searchingFen}:${searchingMoves.join(",")}`), [ev, searchingFen, searchingMoves]),
   );
+  const [humanStrategicReport, setHumanStrategicReport] = useState<HumanStrategicLiveResponse | null>(null);
+  const [humanStrategicLoading, setHumanStrategicLoading] = useState(false);
+  const humanStrategicCacheRef = useRef<Map<string, HumanStrategicLiveResponse>>(new Map());
+  const strategicReportRequestRef = useRef(0);
+
+  const humanStrategicKey = useMemo(() => {
+    if (!settings.enabled || isGameOver || !engineVariations || engineVariations.length === 0) {
+      return null;
+    }
+
+    const compactLines = engineVariations
+      .slice(0, 6)
+      .map((line) => `${line.multipv}:${line.depth}:${JSON.stringify(line.score.value)}:${line.uciMoves.join(" ")}`)
+      .join("|");
+    return `${searchingFen}|${searchingMoves.join(",")}|${compactLines}`;
+  }, [settings.enabled, isGameOver, engineVariations, searchingFen, searchingMoves]);
+
+  useEffect(() => {
+    const requestId = strategicReportRequestRef.current + 1;
+    strategicReportRequestRef.current = requestId;
+
+    if (!humanStrategicKey || !engineVariations || engineVariations.length === 0) {
+      setHumanStrategicReport(null);
+      setHumanStrategicLoading(false);
+      return;
+    }
+
+    const cached = humanStrategicCacheRef.current.get(humanStrategicKey);
+    if (cached) {
+      setHumanStrategicReport(cached);
+      setHumanStrategicLoading(false);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setHumanStrategicLoading(true);
+      try {
+        const result = await buildHumanStrategicLiveReport({
+          fen: searchingFen,
+          moves: searchingMoves,
+          candidates: engineVariations.slice(0, 6),
+          maxVariationPlies: 8,
+          maxLines: 4,
+        });
+
+        if (strategicReportRequestRef.current !== requestId) {
+          return;
+        }
+
+        if (result.status === "ok") {
+          humanStrategicCacheRef.current.set(humanStrategicKey, result.data);
+          setHumanStrategicReport(result.data);
+        } else {
+          setHumanStrategicReport(null);
+        }
+      } catch {
+        if (strategicReportRequestRef.current !== requestId) {
+          return;
+        }
+        setHumanStrategicReport(null);
+      } finally {
+        if (strategicReportRequestRef.current === requestId) {
+          setHumanStrategicLoading(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [humanStrategicKey, engineVariations, searchingFen, searchingMoves]);
 
   const buildFenTrail = useCallback((): string[] => {
     if (!finalFen) {
@@ -600,7 +670,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
           </ActionIcon>
         </ActionIcon.Group>
       </Box>
-      <Collapse in={settingsOn} px={30} pb={15}>
+      <Collapse expanded={settingsOn} px={30} pb={15}>
         <EngineSettingsForm
           engine={engine}
           settings={settings}
@@ -685,8 +755,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
             {!isGameOver &&
               !error &&
               finalFen &&
-              engineVariations &&
-              engineVariations.map((engineVariation, index) => {
+              engineVariations?.map((engineVariation, index) => {
                 return (
                   <AnalysisRow
                     key={index}
@@ -702,6 +771,62 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
               })}
           </Table.Tbody>
         </Table>
+        {!isGameOver && !error && settings.enabled && (humanStrategicLoading || humanStrategicReport) && (
+          <Box px="sm" pb="sm" pt="xs">
+            <Divider mb="xs" />
+            <Stack gap="xs">
+              <Group justify="space-between" align="center">
+                <Text size="sm" fw={700}>
+                  {t("features.board.analysis.gmGuardrailTitle")}
+                </Text>
+                {humanStrategicLoading && (
+                  <Text size="xs" c="dimmed">
+                    {t("common.loading")}
+                  </Text>
+                )}
+              </Group>
+
+              {humanStrategicReport && (
+                <>
+                  <Text size="xs" c="dimmed">
+                    {t("features.board.analysis.gmGuardrailRecommended", {
+                      selected: humanStrategicReport.selectedSan,
+                      best: humanStrategicReport.bestEngineSan,
+                      drop: humanStrategicReport.lines.find((line) => line.isSelected)?.engineDropCp ?? 0,
+                    })}
+                  </Text>
+                  <Stack gap="xs">
+                    {humanStrategicReport.lines.map((line) => (
+                      <Paper key={line.uci} withBorder p="xs" radius="sm">
+                        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+                          <Text size="sm" fw={600}>
+                            {line.engineRank}. {line.san}
+                          </Text>
+                          <Badge
+                            variant={line.isSelected ? "filled" : "light"}
+                            color={line.isSelected ? "teal" : "gray"}
+                          >
+                            {t("features.board.analysis.gmGuardrailLineScore", {
+                              score: line.strategicScore.toFixed(2),
+                            })}
+                          </Badge>
+                        </Group>
+                        <Text size="xs" mt={4}>
+                          {line.commentShort}
+                        </Text>
+                        {line.commentLong && line.commentLong !== line.commentShort && (
+                          <Text size="xs" c="dimmed" mt={2}>
+                            {line.commentLong}
+                          </Text>
+                        )}
+                      </Paper>
+                    ))}
+                  </Stack>
+                </>
+              )}
+            </Stack>
+          </Box>
+        )}
       </Accordion.Panel>
       <Modal
         opened={apiKeyModalOpened}
@@ -767,37 +892,33 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
                               <Text fw={700} mb={6}>
                                 {sectionTitleByKey[key]}
                               </Text>
-                              <TypographyStylesProvider>
-                                <div className={classes.planMarkdownRoot}>
-                                  <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    components={{
-                                      p: ({ children }) => <p>{children}</p>,
-                                      li: ({ children }) => <li>{children}</li>,
-                                    }}
-                                  >
-                                    {content}
-                                  </ReactMarkdown>
-                                </div>
-                              </TypographyStylesProvider>
+                              <div className={classes.planMarkdownRoot}>
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm]}
+                                  components={{
+                                    p: ({ children }) => <p>{children}</p>,
+                                    li: ({ children }) => <li>{children}</li>,
+                                  }}
+                                >
+                                  {content}
+                                </ReactMarkdown>
+                              </div>
                             </Paper>
                           );
                         })}
                       </Stack>
                     ) : (
-                      <TypographyStylesProvider>
-                        <div className={classes.planMarkdownRoot}>
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              p: ({ children }) => <p>{children}</p>,
-                              li: ({ children }) => <li>{children}</li>,
-                            }}
-                          >
-                            {planDisplayText}
-                          </ReactMarkdown>
-                        </div>
-                      </TypographyStylesProvider>
+                      <div className={classes.planMarkdownRoot}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            p: ({ children }) => <p>{children}</p>,
+                            li: ({ children }) => <li>{children}</li>,
+                          }}
+                        >
+                          {planDisplayText}
+                        </ReactMarkdown>
+                      </div>
                     )}
                   </ScrollArea>
                 </Paper>

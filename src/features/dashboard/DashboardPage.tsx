@@ -63,6 +63,16 @@ import {
 } from "./utils/gameHelpers";
 
 const DEFAULT_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+type AnalyzeAllType = "local" | "chesscom" | "lichess" | "chessbase" | "all";
+type AnalyzeAllOpenPayload = {
+  type: AnalyzeAllType;
+  opponentContains: string | null;
+  resultFilter: string | null;
+};
+type AnalyzeAllScopeFilters = {
+  opponentContains: string | null;
+  resultFilter: string | null;
+};
 
 export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
@@ -210,8 +220,16 @@ export default function DashboardPage() {
   const profileUsernames = useMemo(() => {
     const lichessKeys = profileLichessUsernames.map((username) => getAccountKey("lichess", username));
     const chessComKeys = profileChessComUsernames.map((username) => getAccountKey("chesscom", username));
-    return [...new Set([...profileLichessUsernames, ...profileChessComUsernames, ...lichessKeys, ...chessComKeys])];
-  }, [profileLichessUsernames, profileChessComUsernames]);
+    const displayName = (activeProfile?.displayName ?? "").trim();
+    const names = [
+      ...profileLichessUsernames,
+      ...profileChessComUsernames,
+      ...lichessKeys,
+      ...chessComKeys,
+      ...(displayName ? [displayName] : []),
+    ];
+    return [...new Set(names)];
+  }, [profileLichessUsernames, profileChessComUsernames, activeProfile?.displayName]);
   const engines = useAtomValue(enginesAtom);
   const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
   const defaultEngine = localEngines.find((e) => e.enabled) ?? (localEngines.length > 0 ? localEngines[0] : null);
@@ -222,12 +240,14 @@ export default function DashboardPage() {
 
   const [activeGamesTab, setActiveGamesTab] = useState<string | null>("games");
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
-  const [analyzeAllGameType, setAnalyzeAllGameType] = useState<
-    "local" | "chesscom" | "lichess" | "chessbase" | "all" | null
-  >(null);
-  const [unanalyzedGameCount, setUnanalyzedGameCount] = useState<number | null>(null);
+  const [analyzeAllGameType, setAnalyzeAllGameType] = useState<AnalyzeAllType | null>(null);
+  const [analyzeAllScopeFilters, setAnalyzeAllScopeFilters] = useState<AnalyzeAllScopeFilters>({
+    opponentContains: null,
+    resultFilter: null,
+  });
+  const [analyzeAllScopedRows, setAnalyzeAllScopedRows] = useState<GamesHistoryRow[]>([]);
   const [analyzeAllCounts, setAnalyzeAllCounts] = useState<{
-    type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
+    type: AnalyzeAllType;
     total: number;
     unanalyzed: number;
   } | null>(null);
@@ -782,34 +802,50 @@ export default function DashboardPage() {
   }, []);
 
   const handleAnalyzeAll = useCallback(
-    async (type: "local" | "chesscom" | "lichess" | "chessbase" | "all") => {
+    async ({ type, opponentContains, resultFilter }: AnalyzeAllOpenPayload) => {
+      const normalizedOpponentContains = opponentContains?.trim() || null;
+      const scopeFilters: AnalyzeAllScopeFilters = {
+        opponentContains: normalizedOpponentContains,
+        resultFilter: resultFilter ?? null,
+      };
+
       setAnalyzeAllGameType(type);
-      setUnanalyzedGameCount(null);
+      setAnalyzeAllScopeFilters(scopeFilters);
+      setAnalyzeAllScopedRows([]);
       setAnalyzeAllCounts(null);
       setAnalyzeAllModalOpened(true);
 
-      // Fast counts computed on backend (profile-aware, uses analysis.db3).
-      if (activeProfileId) {
-        try {
-          const res =
-            (await invoke<{ total: number; analyzed: number; unanalyzed: number }>("dashboard_get_analyze_all_counts", {
-              req: {
-                profileId: activeProfileId,
-                profileUsernames,
-                gameHistoryLimit,
-                eventFilterId,
-                selectedOpponentId,
-                timeControlCategory,
-                target: type,
-              },
-            })) ?? null;
-          if (res) {
-            setAnalyzeAllCounts({ type, total: res.total, unanalyzed: res.unanalyzed });
-            setUnanalyzedGameCount(res.unanalyzed);
-          }
-        } catch {
-          // best-effort: fallback to UI-only counts if backend fails
-        }
+      if (!activeProfileId) {
+        return;
+      }
+
+      try {
+        const res = (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
+          req: {
+            profileId: activeProfileId,
+            profileUsernames,
+            gameHistoryLimit,
+            page: 1,
+            pageSize: gameHistoryLimit,
+            eventFilterId,
+            selectedOpponentId,
+            opponentContains: normalizedOpponentContains,
+            timeControlCategory,
+            resultFilter: resultFilter ?? null,
+            sortBy: "date",
+            sortDirection: "desc",
+          },
+        })) ?? { rows: [] };
+
+        const scopedRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= 5);
+        setAnalyzeAllScopedRows(scopedRows);
+        const rowsForType = scopedRows.filter((row) => (type === "all" ? true : row.kind === type));
+        const total = rowsForType.length;
+        const unanalyzed = rowsForType.filter((row) => !row.isAnalyzed).length;
+
+        setAnalyzeAllCounts({ type, total, unanalyzed });
+      } catch {
+        setAnalyzeAllScopedRows([]);
       }
     },
     [activeProfileId, profileUsernames, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory],
@@ -1110,6 +1146,7 @@ export default function DashboardPage() {
                   return false;
                 });
                 setRecentGames(filteredGames);
+                window.dispatchEvent(new Event("dashboard:games-history:refresh"));
               }}
               chessComGames={chessComGames}
               lichessGames={lichessGames}
@@ -1333,21 +1370,13 @@ export default function DashboardPage() {
           onClose={() => {
             setAnalyzeAllModalOpened(false);
             setAnalyzeAllGameType(null);
-            setUnanalyzedGameCount(null);
+            setAnalyzeAllScopeFilters({ opponentContains: null, resultFilter: null });
+            setAnalyzeAllScopedRows([]);
             setAnalyzeAllCounts(null);
           }}
           engineOptions={localEngines.map((e) => ({ value: e.path, label: e.name }))}
           initialEnginePath={defaultEngine?.path ?? null}
           onAnalyze={async (config, onProgress, isCancelled) => {
-            notifications.show({
-              title: t("features.dashboard.analysisStarted"),
-              message: t("features.dashboard.analysisSelectedEngine", {
-                defaultValue: "Selected engine: {{engine}}.",
-                engine: localEngines.find((e) => e.path === config.enginePath)?.name ?? "(unknown)",
-              }),
-              color: "blue",
-            });
-
             const selectedEngine = localEngines.find((e) => e.path === config.enginePath) ?? defaultEngine ?? null;
             if (!selectedEngine) {
               notifications.show({
@@ -1391,36 +1420,61 @@ export default function DashboardPage() {
               return;
             }
 
-            // If we're on an active profile, build a map from external key -> internal profile DB game id (Games.ID).
-            // This is required so analysis.db3 is saved under (profileId, Games.ID) and the dashboard LEFT JOIN can match.
+            const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= 5);
+            const rowsForSelectedType = scopedRowsForRun.filter((row) =>
+              analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
+            );
+            const analyzedByScopedRow = new Map<string, boolean>(
+              rowsForSelectedType.map((row) => [`${row.kind}:${row.gameKey}`, !!row.isAnalyzed]),
+            );
+            const allowedLocalKeys = new Set(
+              rowsForSelectedType.filter((row) => row.kind === "local").map((row) => row.gameKey),
+            );
+            const allowedChessComKeys = new Set(
+              rowsForSelectedType.filter((row) => row.kind === "chesscom").map((row) => row.gameKey),
+            );
+            const allowedLichessKeys = new Set(
+              rowsForSelectedType.filter((row) => row.kind === "lichess").map((row) => row.gameKey),
+            );
+            const enforceScopedFilter =
+              !!activeProfileId && (analyzeAllCounts !== null || analyzeAllScopedRows.length > 0);
+            const isAllowedByScope = (allowed: Set<string>, key: string) =>
+              enforceScopedFilter ? allowed.has(key) : allowed.size === 0 || allowed.has(key);
+
+            // Build map external key -> internal profile DB game id (Games.ID), scoped to the same
+            // filters used by the modal count whenever possible.
             const internalIdByExternalKey = new Map<string, string>();
             if (activeProfileId) {
-              try {
-                const idLookupLimit = Math.max(5000, gameHistoryLimit);
-                const res = (await invoke<{
-                  rows?: Array<{ kind: "Chesscom" | "Lichess"; gameKey: string; analysisGameId: string }>;
-                }>("dashboard_get_games_history_rows", {
-                  req: {
-                    profileId: activeProfileId,
-                    profileUsernames,
-                    gameHistoryLimit: idLookupLimit,
-                    page: 1,
-                    pageSize: idLookupLimit,
-                    eventFilterId,
-                    selectedOpponentId,
-                    opponentContains: null,
-                    timeControlCategory,
-                    resultFilter: null,
-                    sortBy: "date",
-                    sortDirection: "desc",
-                  },
-                })) ?? { rows: [] };
-                for (const r of res.rows ?? []) {
-                  // Backend serializes enum as camelCase ("lichess" / "chesscom"), so normalize here.
-                  internalIdByExternalKey.set(`${String(r.kind).toLowerCase()}:${r.gameKey}`, r.analysisGameId);
+              let idRows: GamesHistoryRow[] = scopedRowsForRun;
+              if (idRows.length === 0) {
+                try {
+                  const idLookupLimit = Math.max(5000, gameHistoryLimit);
+                  const res = (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
+                    req: {
+                      profileId: activeProfileId,
+                      profileUsernames,
+                      gameHistoryLimit: idLookupLimit,
+                      page: 1,
+                      pageSize: idLookupLimit,
+                      eventFilterId,
+                      selectedOpponentId,
+                      opponentContains: analyzeAllScopeFilters.opponentContains,
+                      timeControlCategory,
+                      resultFilter: analyzeAllScopeFilters.resultFilter,
+                      sortBy: "date",
+                      sortDirection: "desc",
+                    },
+                  })) ?? { rows: [] };
+                  idRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= 5);
+                } catch {
+                  idRows = [];
                 }
-              } catch {
-                // best-effort: if this fails we'll fall back to external ids
+              }
+
+              for (const row of idRows) {
+                if (row.kind === "chesscom" || row.kind === "lichess") {
+                  internalIdByExternalKey.set(`${row.kind}:${row.gameKey}`, row.analysisGameId);
+                }
               }
             }
 
@@ -1462,47 +1516,28 @@ export default function DashboardPage() {
               return hasEnoughMovesPgn(g.pgn);
             };
 
-            let chessbaseRows: GamesHistoryRow[] = [];
-            if (activeProfileId && (analyzeAllGameType === "chessbase" || analyzeAllGameType === "all")) {
-              try {
-                const res = (await invoke<{ rows?: GamesHistoryRow[] }>("dashboard_get_games_history_rows", {
-                  req: {
-                    profileId: activeProfileId,
-                    profileUsernames,
-                    gameHistoryLimit,
-                    page: 1,
-                    pageSize: gameHistoryLimit,
-                    eventFilterId,
-                    selectedOpponentId,
-                    opponentContains: null,
-                    timeControlCategory,
-                    resultFilter: null,
-                    sortBy: "date",
-                    sortDirection: "desc",
-                  },
-                })) ?? { rows: [] };
-                const PLAY_VS_PC_EVENT_LOWER = "play vs pc";
-                chessbaseRows = (res.rows ?? []).filter(
-                  (r) =>
-                    String(r.kind).toLowerCase() === "chessbase" &&
-                    hasEnoughMovesPgn(r.pgn) &&
-                    (r.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER,
-                );
-              } catch {
-                chessbaseRows = [];
-              }
-            }
+            const PLAY_VS_PC_EVENT_LOWER = "play vs pc";
+            const chessbaseRows: GamesHistoryRow[] = rowsForSelectedType.filter(
+              (row) =>
+                row.kind === "chessbase" &&
+                hasEnoughMovesPgn(row.pgn) &&
+                (row.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER,
+            );
 
             const getFilteredGames = (type: "local" | "chesscom" | "lichess" | "chessbase") => {
               if (type === "local") {
                 return recentGames.filter((g) => {
-                  return hasEnoughMovesLocal(g);
+                  return hasEnoughMovesLocal(g) && isAllowedByScope(allowedLocalKeys, g.id);
                 });
               } else if (type === "chesscom") {
-                return chessComGames.filter((g) => hasEnoughMovesPgn(g.pgn));
+                return chessComGames.filter(
+                  (g) => hasEnoughMovesPgn(g.pgn) && isAllowedByScope(allowedChessComKeys, g.url),
+                );
               } else if (type === "lichess") {
                 // lichess
-                return lichessGames.filter((g) => hasEnoughMovesPgn(g.pgn));
+                return lichessGames.filter(
+                  (g) => hasEnoughMovesPgn(g.pgn) && isAllowedByScope(allowedLichessKeys, g.id),
+                );
               } else {
                 return chessbaseRows;
               }
@@ -1532,12 +1567,16 @@ export default function DashboardPage() {
                 ? allGames.filter((item) => {
                     if (item.type === "local") {
                       const gameRecord = item.game as GameRecord;
+                      const scoped = analyzedByScopedRow.get(`local:${gameRecord.id}`);
+                      if (scoped !== undefined) return !scoped;
                       // For "only unanalyzed", use analysis.db3 only (profile-aware).
                       const existsInDb = !!analyzedGames[gameRecord.id];
                       if (existsInDb) return false; // Already analyzed
                       return true;
                     } else if (item.type === "chesscom") {
                       const chessComGame = item.game as ChessComGameWithEvent;
+                      const scoped = analyzedByScopedRow.get(`chesscom:${chessComGame.url}`);
+                      if (scoped !== undefined) return !scoped;
                       // Check if this game has been analyzed
                       const internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`);
                       const existsInDb = internalId ? !!analyzedGames[internalId] : false;
@@ -1545,12 +1584,16 @@ export default function DashboardPage() {
                       return true;
                     } else if (item.type === "chessbase") {
                       const row = item.game as GamesHistoryRow;
+                      const scoped = analyzedByScopedRow.get(`chessbase:${row.gameKey}`);
+                      if (scoped !== undefined) return !scoped;
                       const existsInDb = !!analyzedGames[String(row.analysisGameId)];
                       if (existsInDb) return false;
                       return true;
                     } else {
                       // lichess
                       const lichessGame = item.game as (typeof lichessGames)[0];
+                      const scoped = analyzedByScopedRow.get(`lichess:${lichessGame.id}`);
+                      if (scoped !== undefined) return !scoped;
                       // Check if this game has been analyzed
                       const internalId = internalIdByExternalKey.get(`lichess:${lichessGame.id}`);
                       const existsInDb = internalId ? !!analyzedGames[internalId] : false;
@@ -1571,17 +1614,6 @@ export default function DashboardPage() {
               });
               return;
             }
-
-            notifications.show({
-              title: t("features.dashboard.analysisStarted"),
-              message: t("features.dashboard.analysisUsingEngine", {
-                defaultValue: "Analyzing {{count}} games using {{engine}} ({{timeMs}} ms).",
-                count: gamesToAnalyze.length,
-                engine: selectedEngine.name,
-                timeMs: config.timeMs,
-              }),
-              color: "blue",
-            });
 
             const goMode: GoMode = { t: "Time", c: config.timeMs };
             const engineSettings = (selectedEngine.settings ?? []).map((s) => ({
@@ -1626,7 +1658,12 @@ export default function DashboardPage() {
 
             notifications.show({
               title: t("features.dashboard.analysisStarted"),
-              message: `Analyzing ${gamesToAnalyze.length} games...`,
+              message: t("features.dashboard.analysisUsingEngine", {
+                defaultValue: "Analyzing {{count}} games using {{engine}} ({{timeMs}} ms).",
+                count: gamesToAnalyze.length,
+                engine: selectedEngine.name,
+                timeMs: config.timeMs,
+              }),
               color: "blue",
             });
 
@@ -2139,6 +2176,7 @@ export default function DashboardPage() {
                   // Trigger refresh for Lichess games
                   window.dispatchEvent(new Event("lichess:games:updated"));
                 }
+                window.dispatchEvent(new Event("dashboard:games-history:refresh"));
 
                 notifications.show({
                   title: t("features.dashboard.analysisComplete"),
@@ -2159,22 +2197,12 @@ export default function DashboardPage() {
           gameCount={
             analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
               ? analyzeAllCounts.total
-              : analyzeAllGameType === "all"
-                ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length +
-                  chessComGames.length +
-                  lichessGames.length
-                : analyzeAllGameType === "local"
-                  ? recentGames.filter((g) => (g.moves?.length ?? 0) >= 5).length
-                  : analyzeAllGameType === "chesscom"
-                    ? chessComGames.length
-                    : analyzeAllGameType === "lichess"
-                      ? lichessGames.length
-                      : 0
+              : 0
           }
           unanalyzedGameCount={
             analyzeAllCounts && analyzeAllGameType && analyzeAllCounts.type === analyzeAllGameType
               ? analyzeAllCounts.unanalyzed
-              : (unanalyzedGameCount ?? undefined)
+              : 0
           }
         />
       </Stack>

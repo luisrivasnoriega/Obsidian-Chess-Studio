@@ -1,0 +1,7 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/index.tsx", "src/App.tsx", "vite.config.ts", "vitest.setup.ts"],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,cjs,mjs,ts}", ".github/workflows/**/*.yml"],
+  "ignore": ["src/routeTree.gen.ts", "src/bindings/generated.ts", "dist/**", "src-tauri/**"],
+  "ignoreDependencies": ["@types/dom-to-image"]
+}

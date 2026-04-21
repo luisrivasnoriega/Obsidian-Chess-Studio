@@ -28,6 +28,8 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.1
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
@@ -98,11 +100,14 @@ jobs:
         if: matrix.platform == 'macos-latest'
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.91.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Rust toolchain (non-macOS)
         if: matrix.platform != 'macos-latest'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.1
 
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
@@ -208,6 +213,7 @@ jobs:
       - name: Setup Rust toolchain (Android)
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.91.1
           targets: aarch64-linux-android
 
       - name: Cache Rust build

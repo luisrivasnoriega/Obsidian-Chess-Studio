@@ -737,6 +737,7 @@
     "filterByOpponent": "Filter by opponent",
     "filterByResult": "Filter by result",
     "filterByTimeControl": "Filter by time control",
+    "tableFooterAverageVisible": "Average (visible)",
     "openGameFailedTitle": "Could not open game",
     "openGameFailedMessage": "Failed to open the game link. Please try again.",
     "noGamesMatchFilters": "No games match the filters"
@@ -1597,7 +1598,10 @@
         "consultPlanSectionTriggers": "Plan Triggers",
         "consultPlanSectionMoves": "Candidate Moves",
         "consultPlanSectionRisks": "Critical Risks",
-        "consultPlanSectionAdvice": "Practical Advice"
+        "consultPlanSectionAdvice": "Practical Advice",
+        "gmGuardrailTitle": "GM guard-rail",
+        "gmGuardrailRecommended": "Recommended {{selected}}. Engine best: {{best}}. Strategic trade-off: {{drop}} cp.",
+        "gmGuardrailLineScore": "Strategic {{score}}"
       },
       "database": {
         "local": "Local",

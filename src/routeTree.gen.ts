@@ -130,7 +130,7 @@ export interface FileRoutesByFullPath {
   '/variants': typeof VariantsRoute
   '/databases/$databaseId': typeof DatabasesDatabaseIdRoute
   '/settings/keyboard-shortcuts': typeof SettingsKeyboardShortcutsRoute
-  '/databases': typeof DatabasesIndexRoute
+  '/databases/': typeof DatabasesIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -189,7 +189,7 @@ export interface FileRouteTypes {
     | '/variants'
     | '/databases/$databaseId'
     | '/settings/keyboard-shortcuts'
-    | '/databases'
+    | '/databases/'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -351,7 +351,7 @@ declare module '@tanstack/react-router' {
     '/databases/': {
       id: '/databases/'
       path: '/databases'
-      fullPath: '/databases'
+      fullPath: '/databases/'
       preLoaderRoute: typeof DatabasesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }

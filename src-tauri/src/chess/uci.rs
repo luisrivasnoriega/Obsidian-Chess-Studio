@@ -5,12 +5,16 @@
 
 use log::{error, info};
 use std::path::PathBuf;
+use std::time::Duration;
 use std::process::Stdio;
 use std::io::ErrorKind;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::time::timeout;
 
 use crate::error::Error;
+
+const UCI_WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[cfg(unix)]
 pub(crate) fn ensure_executable(path: &std::path::Path) -> Result<(), Error> {
@@ -192,7 +196,11 @@ impl UciCommunicator {
     /// Returns `Error` if writing fails.
     pub async fn write_line(&mut self, line: &str) -> Result<(), Error> {
         // REMOVED: Excessive logging - called hundreds of times per second
-        self.stdin.write_all(line.as_bytes()).await?;
-        Ok(())
+        let write_result = timeout(UCI_WRITE_TIMEOUT, self.stdin.write_all(line.as_bytes())).await;
+        match write_result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(Error::Io(err)),
+            Err(_) => Err(Error::EngineTimeout),
+        }
     }
 }

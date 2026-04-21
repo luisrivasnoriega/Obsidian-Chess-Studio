@@ -110,6 +110,20 @@ function RootLayout() {
   const [keyMap] = useAtom(keyMapAtom);
 
   useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    const syncAppVisibility = () => {
+      root.dataset.appVisibility = document.hidden ? "hidden" : "visible";
+    };
+    syncAppVisibility();
+    document.addEventListener("visibilitychange", syncAppVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", syncAppVisibility);
+      delete root.dataset.appVisibility;
+    };
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const tearoffId = params.get("tearoff");

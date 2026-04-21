@@ -336,7 +336,7 @@ function ResponsiveAnalysisPanels({
             {isCollapsed ? <IconChevronDown size="1rem" /> : <IconChevronUp size="1rem" />}
           </ActionIcon>
         </Group>
-        <Collapse in={!isCollapsed}>{!isCollapsed ? analysisContent : null}</Collapse>
+        <Collapse expanded={!isCollapsed}>{!isCollapsed ? analysisContent : null}</Collapse>
       </Stack>
     );
   }

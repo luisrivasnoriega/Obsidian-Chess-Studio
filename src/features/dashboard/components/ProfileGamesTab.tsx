@@ -214,7 +214,11 @@ export function ProfileGamesTab({
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
-  onAnalyzeAll?: (type: "local" | "chesscom" | "lichess" | "chessbase" | "all") => void;
+  onAnalyzeAll?: (payload: {
+    type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
+    opponentContains: string | null;
+    resultFilter: string | null;
+  }) => void;
   favoriteGames?: FavoriteGame[];
   eventFilterId: number | null;
   onEventFilterChange: (eventId: number | null) => void;
@@ -243,7 +247,8 @@ export function ProfileGamesTab({
   const [rows, setRows] = useState<GamesHistoryRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
-  const itemsPerPage = 25;
+  const itemsPerPage = Math.max(1, gameHistoryLimit);
+  const [_refreshTick, setRefreshTick] = useState(0);
   const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [opponentFilter, setOpponentFilter] = useState("");
@@ -291,6 +296,29 @@ export function ProfileGamesTab({
       cancelled = true;
     };
   }, [debouncedOpponentFilter, profileId, profileUsernames]);
+
+  useEffect(() => {
+    const onRefresh = () => setRefreshTick((v) => v + 1);
+    const events = [
+      "dashboard:games-history:refresh",
+      "games:updated",
+      "chesscom:games:updated",
+      "lichess:games:updated",
+    ] as const;
+    for (const eventName of events) {
+      window.addEventListener(eventName, onRefresh);
+    }
+    return () => {
+      for (const eventName of events) {
+        window.removeEventListener(eventName, onRefresh);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    // If the visible limit changes, restart from page 1 so the table reflects the new amount immediately.
+    setPage(1);
+  }, []);
 
   useEffect(() => {
     if (!profileId) {
@@ -342,6 +370,7 @@ export function ProfileGamesTab({
     sortBy,
     sortDirection,
     selectedOpponentId,
+    itemsPerPage,
   ]);
 
   useEffect(() => {
@@ -400,8 +429,47 @@ export function ProfileGamesTab({
     setPage(1);
   };
 
-  const totalPages = Math.ceil(totalCount / itemsPerPage);
+  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
   const now = useMemo(() => Date.now(), []);
+  const stickyFooterCellStyle = useMemo(
+    () => ({
+      position: "sticky" as const,
+      bottom: 0,
+      zIndex: 3,
+      background: "var(--mantine-color-body)",
+      borderTop: "1px solid var(--mantine-color-default-border)",
+    }),
+    [],
+  );
+  const stickyFooterLabelCellStyle = useMemo(
+    () => ({
+      ...stickyFooterCellStyle,
+      zIndex: 4,
+    }),
+    [stickyFooterCellStyle],
+  );
+  const averageStats = useMemo(() => {
+    const accuracyValues = rows
+      .map((row) => row.accuracy)
+      .filter((value): value is number => typeof value === "number" && value > 0);
+    const acplValues = rows
+      .map((row) => row.acpl)
+      .filter((value): value is number => typeof value === "number" && value > 0);
+    const estimatedEloValues = rows
+      .map((row) => row.estimatedElo)
+      .filter((value): value is number => typeof value === "number" && value > 0);
+
+    const average = (values: number[]) => {
+      if (values.length === 0) return null;
+      return values.reduce((sum, value) => sum + value, 0) / values.length;
+    };
+
+    return {
+      accuracy: average(accuracyValues),
+      acpl: average(acplValues),
+      estimatedElo: average(estimatedEloValues),
+    };
+  }, [rows]);
   const analyzeAllOptions = useMemo(() => {
     const total = analyzeAllTypeCounts?.all ?? localGames.length + chessComGames.length + lichessGames.length;
     const localCount = analyzeAllTypeCounts?.local ?? localGames.length;
@@ -737,7 +805,7 @@ export function ProfileGamesTab({
         }}
         type="auto"
       >
-        <Table striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+        <Table stickyHeader striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>
               <Table.Th style={{ width: 105 }}>Source</Table.Th>
@@ -776,7 +844,13 @@ export function ProfileGamesTab({
                         <Menu.Item
                           key={option.type}
                           disabled={option.count === 0}
-                          onClick={() => onAnalyzeAll(option.type)}
+                          onClick={() =>
+                            onAnalyzeAll({
+                              type: option.type,
+                              opponentContains: opponentFilter.trim() || null,
+                              resultFilter,
+                            })
+                          }
                         >
                           {option.label} ({option.count})
                         </Menu.Item>
@@ -874,9 +948,9 @@ export function ProfileGamesTab({
                         );
                       })()}
                     </Table.Td>
-                    <Table.Td>{row.accuracy ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
-                    <Table.Td>{row.acpl ? Math.round(row.acpl) : "-"}</Table.Td>
-                    <Table.Td>{row.estimatedElo ? Math.round(row.estimatedElo) : "-"}</Table.Td>
+                    <Table.Td>{row.accuracy != null ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
+                    <Table.Td>{row.acpl != null ? Math.round(row.acpl) : "-"}</Table.Td>
+                    <Table.Td>{row.estimatedElo != null ? Math.round(row.estimatedElo) : "-"}</Table.Td>
                     <Table.Td>{row.moves || "-"}</Table.Td>
                     <Table.Td>
                       {row.timeControl?.trim()
@@ -953,6 +1027,25 @@ export function ProfileGamesTab({
               })
             )}
           </Table.Tbody>
+          <Table.Tfoot>
+            <Table.Tr>
+              <Table.Td colSpan={4} style={stickyFooterLabelCellStyle}>
+                <Text fw={600} size="sm">
+                  {t("dashboard.tableFooterAverageVisible", "Average (visible)")}
+                </Text>
+              </Table.Td>
+              <Table.Td style={stickyFooterCellStyle}>
+                {averageStats.accuracy != null ? `${averageStats.accuracy.toFixed(1)}%` : "-"}
+              </Table.Td>
+              <Table.Td style={stickyFooterCellStyle}>
+                {averageStats.acpl != null ? Math.round(averageStats.acpl) : "-"}
+              </Table.Td>
+              <Table.Td style={stickyFooterCellStyle}>
+                {averageStats.estimatedElo != null ? Math.round(averageStats.estimatedElo) : "-"}
+              </Table.Td>
+              <Table.Td colSpan={5} style={stickyFooterCellStyle} />
+            </Table.Tr>
+          </Table.Tfoot>
         </Table>
       </ScrollArea>
 

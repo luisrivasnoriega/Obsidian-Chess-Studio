@@ -1,6 +1,9 @@
 import type React from "react";
 import { useEffect, useRef } from "react";
-import ReactContentEditable, { type ContentEditableEvent } from "react-contenteditable";
+import ReactContentEditableModule, {
+  type ContentEditableEvent,
+  type Props as ReactContentEditableProps,
+} from "react-contenteditable";
 
 interface ContentEditableProps {
   onChange?: (event: ContentEditableEvent) => void;
@@ -13,6 +16,15 @@ interface ContentEditableProps {
   innerRef?: React.RefObject<HTMLDivElement>;
   disabled?: boolean;
 }
+
+type ReactContentEditableComponent = React.ComponentType<ReactContentEditableProps>;
+
+const ReactContentEditable =
+  (
+    ReactContentEditableModule as unknown as {
+      default?: ReactContentEditableComponent;
+    }
+  ).default ?? (ReactContentEditableModule as unknown as ReactContentEditableComponent);
 
 function htmlDecode(input: string) {
   const doc = new DOMParser().parseFromString(input, "text/html");
@@ -57,7 +69,7 @@ export const ContentEditable: React.FC<ContentEditableProps> = ({
       className={props.className}
       onChange={
         onChange
-          ? (...args) => {
+          ? (...args: [ContentEditableEvent]) => {
               if (onChangeRef.current) {
                 const input = args[0].target;
                 input.value = htmlDecode(input.value) || "";

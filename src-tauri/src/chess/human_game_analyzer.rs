@@ -22,7 +22,7 @@ use super::{
     analysis::GameAnalysisService,
     human_strategy::{
         pick_human_strategic_move, HumanStrategicCandidate, HumanStrategicComponents,
-        HumanStrategicMacroComponents, HumanStrategicRequest, StrategicMotif,
+        HumanStrategicConfig, HumanStrategicMacroComponents, HumanStrategicRequest, StrategicMotif,
     },
     pgn_annotator::{build_annotated_pgn, BuildAnnotatedPgnRequest, PgnMoveAnnotation},
     types::{AnalysisOptions, BestMoves, EngineOption, GoMode, MoveAnalysis, ScoreValue},
@@ -100,7 +100,7 @@ pub struct HumanMoveNarrative {
 }
 
 /// Dominant strategic axis and explanation for a move.
-#[derive(Debug, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HumanStrategicAxisNarrative {
     pub axis: String,
@@ -167,6 +167,51 @@ pub struct HumanAnnotatedGameReport {
     pub narratives: Vec<HumanMoveNarrative>,
     pub summary: HumanStrategicGameSummary,
     pub analysis: Vec<MoveAnalysis>,
+}
+
+/// Input payload for live strategic explanations from engine MultiPV lines.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HumanStrategicLiveRequest {
+    pub fen: String,
+    pub moves: Vec<String>,
+    pub candidates: Vec<BestMoves>,
+    pub config: Option<HumanStrategicConfig>,
+    pub max_variation_plies: Option<u32>,
+    pub max_lines: Option<u32>,
+}
+
+/// Human strategic explanation for a single candidate move.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HumanStrategicLiveLine {
+    pub uci: String,
+    pub san: String,
+    pub engine_rank: u32,
+    pub engine_cp: i32,
+    pub engine_drop_cp: i32,
+    pub strategic_score: f32,
+    pub final_score: f32,
+    pub is_selected: bool,
+    pub is_engine_best: bool,
+    pub motifs: Vec<StrategicMotif>,
+    pub strategic_axes: Vec<HumanStrategicAxisNarrative>,
+    pub strategic_plan: String,
+    pub comment_short: String,
+    pub comment_long: String,
+    pub suggested_variation_uci: Vec<String>,
+    pub suggested_variation_san: Vec<String>,
+}
+
+/// Live strategic explanation bundle for the current position.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HumanStrategicLiveResponse {
+    pub selected_uci: String,
+    pub selected_san: String,
+    pub best_engine_uci: String,
+    pub best_engine_san: String,
+    pub lines: Vec<HumanStrategicLiveLine>,
 }
 
 /// Analyze a game and produce an enriched PGN with human strategic commentary.
@@ -244,6 +289,197 @@ pub async fn analyze_game_human_report(
         narratives,
         summary,
         analysis,
+    })
+}
+
+/// Build live, GM-style strategic explanations for current MultiPV lines.
+pub fn build_human_strategic_live_report(
+    request: HumanStrategicLiveRequest,
+) -> Result<HumanStrategicLiveResponse, Error> {
+    let HumanStrategicLiveRequest {
+        fen,
+        moves,
+        candidates,
+        config,
+        max_variation_plies,
+        max_lines,
+    } = request;
+
+    if candidates.is_empty() {
+        return Err(Error::InvalidInput(
+            "No engine candidates were provided".to_string(),
+        ));
+    }
+
+    let mut root = parse_position(&fen)?;
+    for raw in &moves {
+        let played = normalize_move_key(raw);
+        let uci = UciMove::from_ascii(played.as_bytes())?;
+        let mv = uci.to_move(&root)?;
+        SanPlus::from_move_and_play_unchecked(&mut root, &mv);
+    }
+
+    let root_fen = Fen::from_position(root.clone(), EnPassantMode::Legal).to_string();
+    let selection = pick_human_strategic_move(HumanStrategicRequest {
+        fen: root_fen,
+        moves: Vec::new(),
+        candidates,
+        config,
+    })?;
+
+    let max_plies = max_variation_plies.unwrap_or(6).clamp(1, 12) as usize;
+    let max_lines = max_lines.unwrap_or(4).clamp(1, 8) as usize;
+    let mover = root.turn();
+
+    let selected_san = uci_line_to_san(root.clone(), &[selection.selected_uci.clone()], 1)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| selection.selected_uci.clone());
+    let best_engine_san = uci_line_to_san(root.clone(), &[selection.best_engine_uci.clone()], 1)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| selection.best_engine_uci.clone());
+
+    // Live report ordering is intentionally human/strategic-first:
+    // keep guardrail-safe lines first, then prioritize strategic value over pure engine blend.
+    let selected_uci_key = normalize_move_key(&selection.selected_uci);
+    let mut prioritized_candidates = selection.candidates.clone();
+    prioritized_candidates.sort_by(|a, b| {
+        b.passes_guardrail
+            .cmp(&a.passes_guardrail)
+            .then_with(|| b.strategic_score.total_cmp(&a.strategic_score))
+            .then_with(|| b.macro_strategic_score.total_cmp(&a.macro_strategic_score))
+            .then_with(|| b.final_score.total_cmp(&a.final_score))
+            .then_with(|| a.engine_drop_cp.cmp(&b.engine_drop_cp))
+            .then_with(|| a.engine_rank.cmp(&b.engine_rank))
+    });
+
+    let mut shown_candidates: Vec<_> = prioritized_candidates.into_iter().take(max_lines).collect();
+    if max_lines > 0
+        && !shown_candidates
+            .iter()
+            .any(|candidate| normalize_move_key(&candidate.uci) == selected_uci_key.as_str())
+    {
+        if let Some(selected_candidate) = selection
+            .candidates
+            .iter()
+            .find(|candidate| normalize_move_key(&candidate.uci) == selected_uci_key.as_str())
+        {
+            if shown_candidates.len() >= max_lines {
+                shown_candidates.pop();
+            }
+            shown_candidates.push(selected_candidate.clone());
+        }
+    }
+
+    let mut lines = Vec::new();
+
+    for candidate in &shown_candidates {
+        let played_uci = normalize_move_key(&candidate.uci);
+        let uci = match UciMove::from_ascii(played_uci.as_bytes()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let mv = match uci.to_move(&root) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let mut after = root.clone();
+        let played_san = SanPlus::from_move_and_play_unchecked(&mut after, &mv).to_string();
+
+        let mut concrete_bundle = build_concrete_comment_bundle(
+            &root,
+            &after,
+            &mv,
+            mover,
+            Some(candidate),
+            &played_san,
+            None,
+        );
+        concrete_bundle
+            .atoms
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
+        collapse_redundant_atoms(&mut concrete_bundle.atoms);
+        concrete_bundle
+            .atoms
+            .dedup_by(|a, b| a.short == b.short || a.sentence == b.sentence);
+
+        let strategic_axes = extract_top_macro_axes(&candidate.macro_components);
+        let concrete_themes = extract_top_concrete_themes(&candidate.components);
+        let strategic_plan = build_plan_sentence(&strategic_axes, &concrete_themes, &concrete_bundle);
+
+        let mut suggested_variation_uci = candidate
+            .pv_uci_line
+            .iter()
+            .map(|m| normalize_move_key(m))
+            .collect::<Vec<_>>();
+        if suggested_variation_uci
+            .first()
+            .map(|m| m != &played_uci)
+            .unwrap_or(true)
+        {
+            suggested_variation_uci.insert(0, played_uci.clone());
+        }
+        suggested_variation_uci.truncate(max_plies);
+        let suggested_variation_san = uci_line_to_san(root.clone(), &suggested_variation_uci, max_plies);
+
+        let comment_short = if !concrete_bundle.atoms.is_empty() {
+            sentence(&summarize_atoms_as_short_phrase(&concrete_bundle.atoms, 2))
+        } else if !strategic_plan.is_empty() {
+            strategic_plan.clone()
+        } else {
+            sentence(&motifs_to_text(&candidate.motifs))
+        };
+
+        let mut long_parts = Vec::new();
+        if !strategic_plan.is_empty() {
+            long_parts.push(strategic_plan.clone());
+        }
+        if let Some(atom) = concrete_bundle.atoms.first() {
+            long_parts.push(atom.sentence.clone());
+        }
+        if let Some(hint) = derive_gm_plan_hint(&concrete_bundle.atoms, &candidate.motifs, false) {
+            long_parts.push(hint);
+        }
+        let comment_long = if long_parts.is_empty() {
+            comment_short.clone()
+        } else {
+            join_unique_sentences(&long_parts)
+        };
+
+        lines.push(HumanStrategicLiveLine {
+            uci: played_uci.clone(),
+            san: played_san,
+            engine_rank: (candidate.engine_rank as u32).saturating_add(1),
+            engine_cp: candidate.engine_cp,
+            engine_drop_cp: candidate.engine_drop_cp,
+            strategic_score: candidate.strategic_score,
+            final_score: candidate.final_score,
+            is_selected: played_uci == normalize_move_key(&selection.selected_uci),
+            is_engine_best: played_uci == normalize_move_key(&selection.best_engine_uci),
+            motifs: candidate.motifs.clone(),
+            strategic_axes,
+            strategic_plan,
+            comment_short: clean_spaces(&comment_short),
+            comment_long: clean_spaces(&comment_long),
+            suggested_variation_uci,
+            suggested_variation_san,
+        });
+    }
+
+    if lines.is_empty() {
+        return Err(Error::InvalidInput(
+            "No strategic lines could be explained for this position".to_string(),
+        ));
+    }
+
+    Ok(HumanStrategicLiveResponse {
+        selected_uci: normalize_move_key(&selection.selected_uci),
+        selected_san,
+        best_engine_uci: normalize_move_key(&selection.best_engine_uci),
+        best_engine_san,
+        lines,
     })
 }
 

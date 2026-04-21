@@ -419,7 +419,7 @@ function CustomTooltip({
   payload: any;
   type: "cp" | "wdl";
 }) {
-  if (active && payload && payload.length && payload[0].payload) {
+  if (active && payload?.length && payload[0].payload) {
     const dataPoint: DataPoint = payload[0].payload;
     return (
       <Paper px="md" py="sm" withBorder shadow="md" radius="md">

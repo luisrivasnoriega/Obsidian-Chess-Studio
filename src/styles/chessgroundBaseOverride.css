@@ -189,3 +189,14 @@ piece.fading {
   padding: var(--cg-coord-padding);
   transform: none;
 }
+
+:root[data-app-visibility="hidden"] cg-board square.last-move,
+:root[data-app-visibility="hidden"] .cg-wrap piece {
+  will-change: auto !important;
+}
+
+:root[data-app-visibility="hidden"] .cg-wrap piece.anim,
+:root[data-app-visibility="hidden"] .cg-wrap piece.fading {
+  animation: none !important;
+  transition: none !important;
+}

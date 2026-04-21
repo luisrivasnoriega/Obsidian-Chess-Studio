@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Obsidian Chess Studio",
-  "version": "2.6.15",
+  "version": "2.6.16",
   "mainBinaryName": "obsidian-chess-studio",
   "identifier": "com.ocs",
   "bundle": {
@@ -80,7 +80,7 @@
         "scope": ["$APPDATA/**", "$APPCACHE/**", "$APPLOCALDATA/**", "$APPCONFIG/**", "$RESOURCE/**"],
         "enable": true
       },
-      "csp": "default-src \u0027self\u0027; img-src \u0027self\u0027 asset: data: blob: https: http:; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; connect-src \u0027self\u0027 https://github.com https://api.github.com https://api.chess.com https://www.chess.com https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://www.chessdb.cn"
+      "csp": "default-src \u0027self\u0027; img-src \u0027self\u0027 asset: data: blob: https: http: https://asset.localhost http://asset.localhost; style-src \u0027self\u0027 \u0027unsafe-inline\u0027; script-src \u0027self\u0027; connect-src \u0027self\u0027 https://github.com https://api.github.com https://api.chess.com https://www.chess.com https://lichess.org https://explorer.lichess.ovh https://tablebase.lichess.ovh https://www.chessdb.cn https://asset.localhost http://asset.localhost"
     }
   }
 }

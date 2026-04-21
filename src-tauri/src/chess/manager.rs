@@ -75,16 +75,24 @@ impl<'a> EngineManager<'a> {
                 // Mark as reconfiguring to prevent concurrent reconfigurations
                 process.reconfiguring = true;
                 // Otherwise, stop and reconfigure the engine.
-                process.stop().await?;
+                if let Err(err) = process.stop().await {
+                    process.reconfiguring = false;
+                    return Err(err);
+                }
             }
             // Wait for engine to process stop command and settle
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             {
                 let process = self.state.engine_processes.get_mut(&key).unwrap();
                 let mut process = process.lock().await;
-                process.set_options(options.clone()).await?;
-                process.go(&go_mode).await?;
+                let reconfigure_result = async {
+                    process.set_options(options.clone()).await?;
+                    process.go(&go_mode).await?;
+                    Ok::<(), Error>(())
+                }
+                .await;
                 process.reconfiguring = false;
+                reconfigure_result?;
             }
             return Ok(None);
         }
