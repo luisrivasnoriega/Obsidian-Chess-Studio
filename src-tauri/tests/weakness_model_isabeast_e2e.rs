@@ -290,6 +290,7 @@ fn load_profile_rows(conn: &RusqliteConnection, profile_player_id: i32) -> Vec<P
 }
 
 #[test]
+#[ignore = "requires local real profile data in AppData (Isabeast + analysis.db3)"]
 fn isabeast_real_profile_generates_weakness_signals_e2e() {
     let app_data = app_data_dir();
     let profiles_dir = app_data.join("db");
