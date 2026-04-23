@@ -908,12 +908,25 @@
       "noDebugPgns": "No hay PGN de depuración disponibles",
       "count": "Cantidad",
       "maxGames": "Máx. partidas",
+      "favorites": "Favoritas",
+      "source": "Fuente",
+      "favorite": "Favorito",
       "filterByEvent": "Filtrar por evento",
       "noEventsMatch": "Ningún evento coincide",
       "unnamedEvent": "Evento sin nombre",
       "defaultLocalEvent": "Partida local",
       "defaultChessComEvent": "Partida de Chess.com",
       "defaultLichessEvent": "Partida de Lichess",
+      "sourceLocal": "Local",
+      "sourceChessCom": "Chess.com",
+      "sourceLichess": "Lichess",
+      "sourceChessBase": "ChessBase",
+      "analyzeAll": "Analizar todo",
+      "dragToResize": "Arrastra para redimensionar",
+      "resizeCard": "Redimensionar tarjeta",
+      "minutesAgo": "hace {{count}} min",
+      "hoursAgo": "hace {{count}} h",
+      "daysAgo": "hace {{count}} d",
       "mostCommonSchemes": "Esquemas más comunes",
       "errorAnalyzingPawns": "Error al analizar las estructuras de peones",
       "analyzingPawnStructures": "Analizando estructuras de peones...",
@@ -2348,7 +2361,8 @@
         "outcomeAccuracy": "Precision media por resultado",
         "outcomeReason": "Victoria/derrota por tipo de finalizacion",
         "forks": "Forks / ataques dobles",
-        "intensity": "Por intensidad"
+        "intensity": "Por intensidad",
+        "weakness": "Modelo de debilidades"
       },
       "tactical": {
         "label": "Filtro tactico",
@@ -2430,6 +2444,355 @@
           "sudden": "Subita",
           "wild": "Salvaje",
           "gifted": "Regalada"
+        }
+      },
+      "weakness": {
+        "title": "Modelo de debilidades",
+        "subtitle": "Prioriza debilidades estrategicas con base en partidas analizadas para crear planes practicos.",
+        "scopeNote": "Este modelo usa los filtros actuales de plataforma, ritmo, Elo rival y rango de fecha.",
+        "briefingTitle": "Resumen de explotacion",
+        "summary": "{{signals}} senales desde {{scored}} partidas puntuadas ({{total}} total, {{backfilled}} recalculadas).",
+        "generatedAt": "Generado en {{date}}",
+        "missingProfileId": "No se puede cargar el modelo de debilidades: falta el id de perfil para este contexto.",
+        "queryError": "Fallo al consultar el modelo de debilidades: {{message}}",
+        "noData": "Aun no hay senales de debilidad con soporte minimo.",
+        "groups": {
+          "whiteTitle": "Senales con blancas (top 7)",
+          "blackTitle": "Senales con negras (top 7)",
+          "noSignals": "No hay senales para este color con los filtros actuales."
+        },
+        "score": "Puntaje {{score}}",
+        "support": "Soporte: {{count}}",
+        "confidence": "Confianza: {{value}}%",
+        "severity": "Severidad: {{value}}%",
+        "controllability": "Controlabilidad: {{value}}%",
+        "recency": "Recencia: {{value}}%",
+        "confidenceBand": "Banda de confianza: {{value}}",
+        "supportTier": "Nivel de soporte: {{value}}",
+        "baseline": "Base de comparacion: {{value}}",
+        "trend": "Tendencia: {{value}}",
+        "trendDetail": "Reciente {{recent}} vs previo {{previous}}",
+        "trendDeltaDetail": "dDerrota {{dloss}} pp, dACPL {{dacpl}}",
+        "bands": {
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta"
+        },
+        "supportTiers": {
+          "low": "Bajo",
+          "medium": "Medio",
+          "high": "Alto"
+        },
+        "baselineModes": {
+          "contextMatched": "Contextual",
+          "global": "Global"
+        },
+        "trendValues": {
+          "worsening": "Empeorando",
+          "stable": "Estable",
+          "improving": "Mejorando",
+          "insufficientData": "Datos insuficientes"
+        },
+        "contextTypes": {
+          "timeControl": "Ritmo: {{value}}",
+          "openingFamily": "Familia de apertura: {{value}}",
+          "color": "Color: {{value}}"
+        },
+        "colors": {
+          "white": "Blancas",
+          "black": "Negras"
+        },
+        "deltaAcpl": "Delta ACPL: {{value}}",
+        "deltaLossRate": "Delta tasa de derrota: {{value}} pp",
+        "deltaLossRateCi": "IC 95% delta derrota: {{value}} pp",
+        "deltaAccuracy": "Delta precision: {{value}}%",
+        "deltaBlunderRate": "Delta tasa de blunder: {{value}} pp",
+        "deltaMistakeRate": "Delta tasa de error grave: {{value}} pp",
+        "deltaInaccuracyRate": "Delta tasa de imprecision: {{value}} pp",
+        "contexts": "Mejores contextos: {{contexts}}",
+        "opponents": "Rivales que explotan este patron: {{opponents}}",
+        "attackPlan": "Plan de ataque: ",
+        "evidence": "Evidencia",
+        "unknownOpponent": "oponente desconocido",
+        "outcomes": {
+          "win": "ganada",
+          "loss": "perdida",
+          "draw": "tablas",
+          "unknown": "desconocido"
+        },
+        "genericEvidence": "Partida {{gameId}} (vs {{opponent}}): {{outcome}}, ACPL {{acpl}}, precision {{accuracy}}%.",
+        "signals": {
+          "WM_UNCASTLED_EARLY": {
+            "title": "Seguridad del rey: sin enroque temprano",
+            "trigger": "Sin enroque al ply 12: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp tasa de derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision, {{deltaAccuracy}}% cambio de precision.",
+            "attackPlan": "Acelera el desarrollo y fuerza rupturas centrales antes de la jugada 12 para castigar el retraso del rey."
+          },
+          "WM_LATE_ROOK_CONNECTION": {
+            "title": "Actividad de torres: activacion tardia al ply 20",
+            "trigger": "Torres no coordinadas/activadas al ply 20: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Manten tension central, abre una columna entre jugadas 15-20 y disputa casillas de entrada de torres antes de cambios."
+          },
+          "WM_NO_ROOK_ACTIVATION_20": {
+            "title": "Actividad de torres: sin activacion al ply 40",
+            "trigger": "Sin activacion util de torre al ply 40 (o blunder con linea correcta de activacion de torre): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Si la activacion de torres se retrasa mas alla del ply 40, mantenles las columnas cerradas y forza defensa pasiva de torres."
+          },
+          "WM_OPEN_FILE_CONTROL_LOSS": {
+            "title": "Columnas abiertas: deficit de control",
+            "trigger": "Control negativo de columnas abiertas tras ply 15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Cambia peones centrales para crear columnas abiertas, dobla torres primero y luego invade la septima."
+          },
+          "WM_SEMIOPEN_FILE_CONTROL_LOSS": {
+            "title": "Columnas semiabiertas: deficit de control",
+            "trigger": "Deficit en columnas semiabiertas tras ply 15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Fija un peon objetivo para crear columnas semiabiertas y ocupalas con piezas pesadas antes de transiciones."
+          },
+          "WM_H7_H2_PRESSURE_DAMAGE": {
+            "title": "Objetivo del enroque: dano por presion en h",
+            "trigger": "Presion temprana sobre objetivo h (<= ply 25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Construye bateria alfil-dama hacia el objetivo h y manten piezas de ataque para sostener amenazas tacticas."
+          },
+          "WM_F3_F6_PRESSURE_DAMAGE": {
+            "title": "Objetivo centro-enroque: dano por presion en f",
+            "trigger": "Presion temprana sobre objetivo f (<= ply 25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Coordina presion de caballo y alfil sobre casillas f y fuerza concesiones defensivas de peones."
+          },
+          "WM_OPPOSITE_CASTLING_COLLAPSE": {
+            "title": "Enroques opuestos: colapso en la carrera",
+            "trigger": "Carreras con enroques opuestos: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "attackPlan": "Lanza tormentas de peones sobre el enroque rival y conserva tension central para exponer ambos reyes."
+          },
+          "WM_LONG_ENDGAME_CONVERSION": {
+            "title": "Finales: caida en conversion larga",
+            "trigger": "Partidas largas (>= 40 plies): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision vs base.",
+            "attackPlan": "Conduce a finales tecnicos largos, conserva mas piezas y estira el juego mas alla de 40 plies."
+          },
+          "WM_MAROCZY_10_15": {
+            "title": "Estructura: estres en ventana Maroczy (ply 10-15)",
+            "titleByColor": {
+              "white": "Estructura: estres en ventana Maroczy con blancas (ply 10-15)",
+              "black": "Estructura: estres en ventana Maroczy con negras (ply 10-15)",
+              "mixed": "Estructura: estres en ventana Maroczy (ply 10-15)"
+            },
+            "trigger": "Vs Maroczy en ply 10-15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas vs Maroczy en ply 10-15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras vs Maroczy en ply 10-15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "Vs Maroczy en ply 10-15: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "Entra en estructuras Maroczy, retrasa rupturas prematuras y presiona casillas oscuras antes de empujar peones.",
+            "attackPlanByColor": {
+              "white": "Con blancas frente a estructuras Maroczy: presiona d5/c5, limita el contrajuego con profilaxis y solo rompe centro/flanco cuando desarrollo y seguridad del rey esten completos.",
+              "black": "Con negras frente a Maroczy: prepara ...b5 y ...d5 con soporte completo (...a6, ...Rc8, ...Re8, ideas de ...Nxd4), evita rupturas prematuras y simplifica hacia posiciones con menor ventaja espacial blanca.",
+              "mixed": "Contra estructuras Maroczy: aplica plan anti-bind por color (negras: preparacion ...b5/...d5; blancas: presion d5/c5 y profilaxis)."
+            }
+          },
+          "WM_VS_DRAGON_10_18": {
+            "title": "Estructura: estres vs Dragon (ply 10-18)",
+            "titleByColor": {
+              "white": "Estructura: estres vs Dragon con blancas (ply 10-18)",
+              "black": "Estructura: estres vs Dragon con negras (ply 10-18)",
+              "mixed": "Estructura: estres vs Dragon (ply 10-18)"
+            },
+            "trigger": "Vs Dragon en ply 10-18: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas vs Dragon en ply 10-18: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras vs Dragon en ply 10-18: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "Vs Dragon en ply 10-18: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "Contra esquemas Dragon: prioriza control de casillas oscuras, presion en columnas c/d y evita carreras prematuras de peones en flancos opuestos.",
+            "attackPlanByColor": {
+              "white": "Con blancas frente a Dragon: presiona casillas oscuras y d5, prioriza seguridad del rey y abre c/d solo con piezas pesadas coordinadas.",
+              "black": "Con negras frente a Dragon: reduce ganchos de peones del enroque, cambia un atacante y disputa la columna c antes de carreras de peones.",
+              "mixed": "Contra esquemas Dragon: prioriza control de casillas oscuras, presion en columnas c/d y evita carreras prematuras de peones en flancos opuestos."
+            }
+          },
+          "WM_IQP_12_30": {
+            "title": "Estructura: estres de IQP (ply 12-30)",
+            "titleByColor": {
+              "white": "Estructura: estres de IQP con blancas (ply 12-30)",
+              "black": "Estructura: estres de IQP con negras (ply 12-30)",
+              "mixed": "Estructura: estres de IQP (ply 12-30)"
+            },
+            "trigger": "En ventanas IQP (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en ventanas IQP (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en ventanas IQP (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En ventanas IQP (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En estructuras con IQP: decide de forma consciente entre dinamismo y bloqueo estatico; evita derivar a planes incompatibles con tu lado.",
+            "attackPlanByColor": {
+              "white": "Con blancas en IQP: mantiene actividad dinamica, evita simplificar en masa demasiado pronto y temporiza rupturas centrales antes de que el IQP quede estatico.",
+              "black": "Con negras en IQP: bloquea la casilla del peon aislado, cambia una pareja de piezas menores y evita ubicar piezas pesadas de forma pasiva.",
+              "mixed": "En estructuras con IQP: decide de forma consciente entre dinamismo y bloqueo estatico; evita derivar a planes incompatibles con tu lado."
+            }
+          },
+          "WM_CARLSBAD_12_32": {
+            "title": "Estructura: estres de Carlsbad (ply 12-32)",
+            "titleByColor": {
+              "white": "Estructura: estres de Carlsbad con blancas (ply 12-32)",
+              "black": "Estructura: estres de Carlsbad con negras (ply 12-32)",
+              "mixed": "Estructura: estres de Carlsbad (ply 12-32)"
+            },
+            "trigger": "En ventanas Carlsbad (ply 12-32): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en ventanas Carlsbad (ply 12-32): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en ventanas Carlsbad (ply 12-32): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En ventanas Carlsbad (ply 12-32): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En estructuras Carlsbad: alinea el plan con las tareas del lado (ataque de minoria vs defensa), priorizando el control de la columna c y el timing de rupturas centrales.",
+            "attackPlanByColor": {
+              "white": "Con blancas en Carlsbad: ejecuta ataque de minoria con soporte de piezas, controla casillas de entrada en columna c y evita maniobrar lento sin crear amenazas.",
+              "black": "Con negras en Carlsbad: neutraliza el ataque de minoria, conserva control de la columna c y contragolpea con rupturas centrales a tiempo.",
+              "mixed": "En estructuras Carlsbad: alinea el plan con las tareas del lado (ataque de minoria vs defensa), priorizando el control de la columna c y el timing de rupturas centrales."
+            }
+          },
+          "WM_HANGING_PAWNS_12_30": {
+            "title": "Estructura: estres de peones colgantes (ply 12-30)",
+            "titleByColor": {
+              "white": "Estructura: estres de peones colgantes con blancas (ply 12-30)",
+              "black": "Estructura: estres de peones colgantes con negras (ply 12-30)",
+              "mixed": "Estructura: estres de peones colgantes (ply 12-30)"
+            },
+            "trigger": "En ventanas de peones colgantes (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en ventanas de peones colgantes (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en ventanas de peones colgantes (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En ventanas de peones colgantes (ply 12-30): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En estructuras de peones colgantes: decide pronto entre ruptura dinamica o bloqueo estatico, evitando transiciones al peor plan para tu lado.",
+            "attackPlanByColor": {
+              "white": "Con blancas con peones colgantes: manten actividad dinamica, prepara rupturas c/d con soporte completo y evita quedar en debilidades estaticas.",
+              "black": "Con negras en peones colgantes: bloquea avances c/d, presiona las bases y simplifica solo cuando tus bloqueadores esten bien coordinados.",
+              "mixed": "En estructuras de peones colgantes: decide pronto entre ruptura dinamica o bloqueo estatico, evitando transiciones al peor plan para tu lado."
+            }
+          },
+          "WM_STONEWALL_10_25": {
+            "title": "Estructura: estres Stonewall (ply 10-25)",
+            "titleByColor": {
+              "white": "Estructura: estres Stonewall con blancas (ply 10-25)",
+              "black": "Estructura: estres Stonewall con negras (ply 10-25)",
+              "mixed": "Estructura: estres Stonewall (ply 10-25)"
+            },
+            "trigger": "En ventanas Stonewall (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en ventanas Stonewall (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en ventanas Stonewall (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En ventanas Stonewall (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En estructuras Stonewall: organiza el plan alrededor del control de casillas oscuras y evita piezas pasivas detrás de peones bloqueados.",
+            "attackPlanByColor": {
+              "white": "Con blancas vs Stonewall: desafía el control de casillas oscuras, cambia al atacante principal del flanco de rey y golpea peones base antes de consolidación.",
+              "black": "Con negras en Stonewall: asegura casillas oscuras, coordina piezas pesadas detrás de la cadena y temporiza rupturas centrales/flanco de dama antes de quedar pasivo.",
+              "mixed": "En estructuras Stonewall: organiza el plan alrededor del control de casillas oscuras y evita piezas pasivas detrás de peones bloqueados."
+            }
+          },
+          "WM_VS_BENONI_10_25": {
+            "title": "Estructura: estres vs Benoni (ply 10-25)",
+            "titleByColor": {
+              "white": "Estructura: estres vs Benoni con blancas (ply 10-25)",
+              "black": "Estructura: estres vs Benoni con negras (ply 10-25)",
+              "mixed": "Estructura: estres vs Benoni (ply 10-25)"
+            },
+            "trigger": "Vs Benoni en ply 10-25: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas vs Benoni en ply 10-25: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras vs Benoni en ply 10-25: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "Vs Benoni en ply 10-25: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "Contra estructuras Benoni: prioriza el equilibrio centro-vs-flanco de dama y fuerza decisiones de rupturas en vez de maniobrar lento.",
+            "attackPlanByColor": {
+              "white": "Con blancas vs Benoni: manten ventaja de espacio, presiona d6 y casillas oscuras del flanco de dama, y frena ...b5 antes de operaciones tacticas.",
+              "black": "Con negras vs Benoni: disputa espacio central de inmediato, reduce presión en flanco de dama con cambios oportunos y niega casillas fuertes al rival.",
+              "mixed": "Contra estructuras Benoni: prioriza el equilibrio centro-vs-flanco de dama y fuerza decisiones de rupturas en vez de maniobrar lento."
+            }
+          },
+          "WM_VS_ACCELERATED_DRAGON_8_16": {
+            "title": "Estructura: estres vs Dragon acelerado (ply 8-16)",
+            "titleByColor": {
+              "white": "Estructura: estres vs Dragon acelerado con blancas (ply 8-16)",
+              "black": "Estructura: estres vs Dragon acelerado con negras (ply 8-16)",
+              "mixed": "Estructura: estres vs Dragon acelerado (ply 8-16)"
+            },
+            "trigger": "Vs Dragon acelerado en ply 8-16: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas vs Dragon acelerado en ply 8-16: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras vs Dragon acelerado en ply 8-16: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "Vs Dragon acelerado en ply 8-16: {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "Contra esquemas de Dragon acelerado: prioriza control anti-...d5, presion en casillas oscuras y juego coordinado por columnas.",
+            "attackPlanByColor": {
+              "white": "Con blancas frente a Dragon acelerado: conserva agarre central, restringe ...d5 y aumenta presion de flanco de dama/columnas antes de carreras tacticas.",
+              "black": "Con negras frente a Dragon acelerado: temporiza rupturas ...d5 con precision, evita esquemas pasivos y neutraliza presion en casillas oscuras antes de simplificar.",
+              "mixed": "Contra esquemas de Dragon acelerado: prioriza control anti-...d5, presion en casillas oscuras y juego coordinado por columnas."
+            }
+          },
+          "WM_FRENCH_CHAIN_8_22": {
+            "title": "Estructura: estres de cadena Francesa (ply 8-22)",
+            "titleByColor": {
+              "white": "Estructura: estres de cadena Francesa con blancas (ply 8-22)",
+              "black": "Estructura: estres de cadena Francesa con negras (ply 8-22)",
+              "mixed": "Estructura: estres de cadena Francesa (ply 8-22)"
+            },
+            "trigger": "En ventanas de cadena Francesa (ply 8-22): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en ventanas de cadena Francesa (ply 8-22): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en ventanas de cadena Francesa (ply 8-22): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En ventanas de cadena Francesa (ply 8-22): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En cadenas Francesas: define temprano la presion sobre la base de cadena y conserva actividad de piezas en torno al centro bloqueado.",
+            "attackPlanByColor": {
+              "white": "Con blancas en cadena Francesa: protege base de cadena, coordina expansion de flanco de rey y convierte espacio sin sobreextenderte.",
+              "black": "Con negras en cadena Francesa: presiona la base de cadena, resuelve actividad del alfil de casillas claras y evita liberar tension central prematuramente.",
+              "mixed": "En cadenas Francesas: define temprano la presion sobre la base de cadena y conserva actividad de piezas en torno al centro bloqueado."
+            }
+          },
+          "WM_KID_LOCKED_CENTER_10_25": {
+            "title": "Estructura: estres de centro bloqueado KID (ply 10-25)",
+            "titleByColor": {
+              "white": "Estructura: estres de centro bloqueado KID con blancas (ply 10-25)",
+              "black": "Estructura: estres de centro bloqueado KID con negras (ply 10-25)",
+              "mixed": "Estructura: estres de centro bloqueado KID (ply 10-25)"
+            },
+            "trigger": "En ventanas de centro bloqueado KID (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en centro bloqueado KID (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en centro bloqueado KID (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En centro bloqueado KID (ply 10-25): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En centros bloqueados KID: compromete plan de flanco correcto por color y evita maniobras lentas antes de rupturas de peones.",
+            "attackPlanByColor": {
+              "white": "Con blancas vs centro bloqueado KID: expande flanco de dama con timing, limita rupturas de flanco de rey y conserva seguridad del rey mientras dure el bloqueo central.",
+              "black": "Con negras en centro bloqueado KID: activa iniciativa de flanco de rey con soporte de piezas, conserva el candado central y evita desvio lento al flanco de dama.",
+              "mixed": "En centros bloqueados KID: compromete plan de flanco correcto por color y evita maniobras lentas antes de rupturas de peones."
+            }
+          },
+          "WM_GRUNFELD_BROAD_CENTER_8_18": {
+            "title": "Estructura: estres de centro amplio Grunfeld (ply 8-18)",
+            "titleByColor": {
+              "white": "Estructura: estres de centro amplio Grunfeld con blancas (ply 8-18)",
+              "black": "Estructura: estres de centro amplio Grunfeld con negras (ply 8-18)",
+              "mixed": "Estructura: estres de centro amplio Grunfeld (ply 8-18)"
+            },
+            "trigger": "En ventanas de centro amplio Grunfeld (ply 8-18): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+            "triggerByColor": {
+              "white": "Con blancas en centro amplio Grunfeld (ply 8-18): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "black": "Con negras en centro amplio Grunfeld (ply 8-18): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision.",
+              "mixed": "En centro amplio Grunfeld (ply 8-18): {{deltaAcpl}} ACPL, {{deltaLossRate}} pp derrota, {{deltaBlunderRate}} pp blunder, {{deltaMistakeRate}} pp error grave, {{deltaInaccuracyRate}} pp imprecision."
+            },
+            "attackPlan": "En estructuras Grunfeld de centro amplio: alinea el plan alrededor de la diana central y presion de piezas en timing.",
+            "attackPlanByColor": {
+              "white": "Con blancas de centro amplio: manten cohesion central, evita sobreextension y convierte ventaja espacial antes de liquidaciones tacticas.",
+              "black": "Con negras vs centro amplio Grunfeld: intensifica presion sobre objetivos centrales y coordina piezas antes de simplificar la estructura.",
+              "mixed": "En estructuras Grunfeld de centro amplio: alinea el plan alrededor de la diana central y presion de piezas en timing."
+            }
+          },
+          "WM_FALLBACK_LOSS_CLUSTER": {
+            "title": "Cluster de derrotas: {{groupKey}}",
+            "trigger": "En {{groupKey}} la tasa de derrota es {{deltaLossRate}} pp sobre la base.",
+            "attackPlan": "Prioriza planes mas seguros y preparacion dirigida en este cluster; reduce concesiones tacticas antes del ply 20.",
+            "evidence": "Partida {{gameId}} ({{groupKey}}): coincide con cluster fallback ({{outcome}})."
+          }
         }
       },
       "details": {

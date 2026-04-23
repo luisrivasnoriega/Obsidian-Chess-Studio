@@ -39,14 +39,8 @@ import { getChesscomGame } from "@/utils/chess.com/api";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
 import { getLichessGame } from "@/utils/lichess/api";
-import { getTimeControl } from "@/utils/timeControl";
 import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
-
-type OnlineGameStats = {
-  accuracy: number;
-  acpl: number;
-  estimatedElo?: number;
-};
+import { formatRelativeTimeAgo } from "../utils/relativeTime";
 
 type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase";
 
@@ -76,49 +70,12 @@ type GamesHistoryResponse = {
   totalCount: number;
 };
 
-function _getTimeControlCategory(website: "Lichess" | "Chess.com", timeControl: string): TimeControlCategory {
-  const trimmed = (timeControl ?? "").trim();
-  const lower = trimmed.toLowerCase();
-
-  // Handle common textual categories (some PGNs store "blitz"/"rapid" instead of seconds).
-  if (lower.includes("ultra")) return "ultra_bullet";
-  if (lower.includes("bullet")) return "bullet";
-  if (lower.includes("blitz")) return "blitz";
-  if (lower.includes("rapid")) return "rapid";
-  if (lower.includes("classical")) return "classical";
-  if (lower.includes("correspondence")) return "correspondence";
-
-  // Special cases used by our existing categorizer.
-  if (website === "Chess.com" && lower.startsWith("1/")) return "daily";
-  if (website === "Lichess" && trimmed === "-") return "correspondence";
-
-  return getTimeControl(website, trimmed);
-}
-
 function isFavorite(favorites: FavoriteGame[], source: FavoriteGame["source"], id: string) {
   return favorites.some((f) => f.source === source && f.gameId === id);
 }
 
-function _resultOutcome(color: "white" | "black", result: string): "win" | "loss" | "draw" | "unknown" {
-  const r = (result ?? "").trim().toLowerCase();
-  if (!r) return "unknown";
-  if (r === "draw") return "draw";
-  if (r === "win") return "win";
-  if (r === "loss" || r === "lose") return "loss";
-  if (r === "1/2-1/2" || r === "½-½" || r === "0.5-0.5") return "draw";
-  if (r === "1-0") return color === "white" ? "win" : "loss";
-  if (r === "0-1") return color === "black" ? "win" : "loss";
-  return "unknown";
-}
-const EVENT_TAG_REGEX = /\[Event\s+"([^"]+)"\]/i;
-const _getEventNameFromPgn = (pgn: string | null | undefined, fallback: string) => {
-  if (!pgn) return fallback;
-  const match = pgn.match(EVENT_TAG_REGEX);
-  if (match?.[1]) return match[1];
-  return fallback;
-};
-
 const TIME_CONTROL_TAG_REGEX = /\[TimeControl\s+"([^"]+)"\]/i;
+const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const _getTimeControlFromPgn = (pgn?: string | null): string | null => {
   if (!pgn) return null;
   const match = pgn.match(TIME_CONTROL_TAG_REGEX);
@@ -129,6 +86,11 @@ const _getTagFromPgn = (pgn: string, tag: string): string | null => {
   const re = new RegExp(`\\[${tag}\\s+\\"([^\\"]+)\\"\\]`, "i");
   const m = pgn.match(re);
   return m?.[1] ? m[1] : null;
+};
+
+const _hasPgnHeaders = (pgn?: string | null): boolean => {
+  if (!pgn) return false;
+  return /\[[A-Za-z0-9_]+\s+"[^"]*"\]/.test(pgn);
 };
 
 const _getResultFromPgn = (pgn: string): string | null => _getTagFromPgn(pgn, "Result");
@@ -233,16 +195,6 @@ export function ProfileGamesTab({
 }) {
   const { t } = useTranslation();
   const isMobile = useMediaQuery("(max-width: 48em)");
-  const _usernamesLower = useMemo(() => {
-    const set = new Set<string>();
-    for (const username of profileUsernames) {
-      const raw = (username ?? "").toLowerCase();
-      if (raw) set.add(raw);
-      const stripped = stripAccountKey(username).toLowerCase();
-      if (stripped) set.add(stripped);
-    }
-    return set;
-  }, [profileUsernames]);
 
   const [rows, setRows] = useState<GamesHistoryRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -321,6 +273,11 @@ export function ProfileGamesTab({
   }, []);
 
   useEffect(() => {
+    // Filters can shrink the result set; keep pagination on a valid page.
+    setPage(1);
+  }, []);
+
+  useEffect(() => {
     if (!profileId) {
       setRows([]);
       setTotalCount(0);
@@ -337,7 +294,7 @@ export function ProfileGamesTab({
           pageSize: itemsPerPage,
           eventFilterId,
           selectedOpponentId,
-          opponentContains: opponentFilter.trim() || null,
+          opponentContains: debouncedOpponentFilter.trim() || null,
           timeControlCategory,
           resultFilter,
           sortBy: sortBy ?? "date",
@@ -364,7 +321,7 @@ export function ProfileGamesTab({
     gameHistoryLimit,
     page,
     eventFilterId,
-    opponentFilter,
+    debouncedOpponentFilter,
     timeControlCategory,
     resultFilter,
     sortBy,
@@ -430,6 +387,12 @@ export function ProfileGamesTab({
   };
 
   const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage));
+  const hasActiveFilters =
+    eventFilterId != null ||
+    selectedOpponentId != null ||
+    opponentFilter.trim().length > 0 ||
+    resultFilter != null ||
+    timeControlCategory != null;
   const now = useMemo(() => Date.now(), []);
   const stickyFooterCellStyle = useMemo(
     () => ({
@@ -529,15 +492,22 @@ export function ProfileGamesTab({
 
     if (row.kind === "chesscom") {
       const existing = chessComGames.find((x) => x.url === row.gameKey);
-      if (existing?.pgn) {
+      if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
         if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
         else onAnalyzeChessComGame(existing);
         return;
       }
 
       const url = row.externalUrl || row.gameKey;
-      const fetched = pgn?.trim() ? pgn : ((await getChesscomGame(url)) ?? "").trim();
-      if (!fetched) return;
+      const fetched =
+        ((await getChesscomGame(url)) ?? "").trim() || (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
+      if (!fetched) {
+        if (existing) {
+          if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+          else onAnalyzeChessComGame(existing);
+        }
+        return;
+      }
 
       const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
       const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
@@ -545,6 +515,7 @@ export function ProfileGamesTab({
       const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
       const tc = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? "";
       const results = _chessComResultsFromPgn(fetched);
+      const initialFen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
 
       const stub: ChessComGameWithEvent = {
         url,
@@ -552,8 +523,8 @@ export function ProfileGamesTab({
         time_control: tc,
         end_time: Math.floor(row.timestampMs / 1000),
         rated: true,
-        initial_setup: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        initial_setup: initialFen,
+        fen: initialFen,
         rules: "chess",
         white: { rating: 0, result: results.white, username: stripAccountKey(white) },
         black: { rating: 0, result: results.black, username: stripAccountKey(black) },
@@ -576,7 +547,7 @@ export function ProfileGamesTab({
       const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
       const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
       const winner = _winnerFromResult(_getResultFromPgn(fetched));
-      const fen = _getTagFromPgn(fetched, "FEN") ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+      const fen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
 
       const stub: DashboardLichessGame = {
         id: `chessbase:${row.analysisGameId}`,
@@ -604,15 +575,22 @@ export function ProfileGamesTab({
 
     // Lichess
     const existing = lichessGames.find((x) => x.id === row.gameKey);
-    if (existing?.pgn) {
+    if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
       if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
       else onAnalyzeLichessGame(existing);
       return;
     }
 
     const gameId = row.gameKey;
-    const fetched = pgn?.trim() ? pgn : ((await getLichessGame(gameId)) ?? "").trim();
-    if (!fetched) return;
+    const fetched =
+      ((await getLichessGame(gameId)) ?? "").trim() || (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
+    if (!fetched) {
+      if (existing) {
+        if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+        else onAnalyzeLichessGame(existing);
+      }
+      return;
+    }
 
     const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
     const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
@@ -620,7 +598,7 @@ export function ProfileGamesTab({
     const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
     const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
     const winner = _winnerFromResult(_getResultFromPgn(fetched));
-    const fen = _getTagFromPgn(fetched, "FEN") ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const fen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
 
     const stub: DashboardLichessGame = {
       id: gameId,
@@ -652,7 +630,7 @@ export function ProfileGamesTab({
       <Stack gap="xs" align="center" justify="center" style={{ minHeight: "200px" }}>
         <Loader size="md" />
         <Text size="sm" c="dimmed">
-          Loading...
+          {t("common.loading", { defaultValue: "Loading..." })}
         </Text>
       </Stack>
     );
@@ -665,14 +643,6 @@ export function ProfileGamesTab({
       </Stack>
     );
   }
-  if (totalCount === 0) {
-    return (
-      <Stack align="center" justify="center" style={{ flex: 1, minHeight: 200 }}>
-        <Text c="dimmed">{t("features.dashboard.noGames") || "No games yet"}</Text>
-      </Stack>
-    );
-  }
-
   return (
     <Stack
       gap="xs"
@@ -746,11 +716,20 @@ export function ProfileGamesTab({
           }}
           onBlur={() => {
             const trimmed = opponentFilter.trim();
+            if (!trimmed) {
+              selectedOpponentRef.current = null;
+              onOpponentSelected(null);
+              return;
+            }
             if (trimmed.length < 3) return;
-            if (selectedOpponentRef.current === trimmed) return;
+            if ((selectedOpponentRef.current ?? "").toLowerCase() === trimmed.toLowerCase()) return;
 
             const exact = opponentOptions.find((o) => o.toLowerCase() === trimmed.toLowerCase());
-            if (!exact) return;
+            if (!exact) {
+              selectedOpponentRef.current = trimmed;
+              onOpponentSelected(trimmed);
+              return;
+            }
 
             selectedOpponentRef.current = exact;
             setOpponentFilter(exact);
@@ -808,11 +787,17 @@ export function ProfileGamesTab({
         <Table stickyHeader striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th style={{ width: 105 }}>Source</Table.Th>
-              <Table.Th style={{ width: 180 }}>Opponent</Table.Th>
-              <Table.Th style={{ width: 70 }}>Color</Table.Th>
-              <Table.Th style={{ width: 85 }}>Result</Table.Th>
-              <Table.Th style={{ width: 90 }}>Accuracy</Table.Th>
+              <Table.Th style={{ width: 105 }}>{t("features.dashboard.source", { defaultValue: "Source" })}</Table.Th>
+              <Table.Th style={{ width: 180 }}>
+                {t("dashboard.tableHeaders.opponent", { defaultValue: "Opponent" })}
+              </Table.Th>
+              <Table.Th style={{ width: 70 }}>{t("dashboard.tableHeaders.color", { defaultValue: "Color" })}</Table.Th>
+              <Table.Th style={{ width: 85 }}>
+                {t("dashboard.tableHeaders.result", { defaultValue: "Result" })}
+              </Table.Th>
+              <Table.Th style={{ width: 90 }}>
+                {t("dashboard.tableHeaders.accuracy", { defaultValue: "Accuracy" })}
+              </Table.Th>
               <Table.Th style={{ width: 80 }}>ACPL</Table.Th>
               <Table.Th style={{ width: 110, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("elo")}>
                 <Group gap="xs" wrap="nowrap">
@@ -821,22 +806,24 @@ export function ProfileGamesTab({
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
               </Table.Th>
-              <Table.Th style={{ width: 75 }}>Moves</Table.Th>
+              <Table.Th style={{ width: 75 }}>{t("dashboard.tableHeaders.moves", { defaultValue: "Moves" })}</Table.Th>
               <Table.Th style={{ width: 95 }}>{t("dashboard.tableHeaders.timeControl")}</Table.Th>
               <Table.Th style={{ width: 95, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
                 <Group gap="xs" wrap="nowrap">
-                  Date
+                  {t("dashboard.tableHeaders.date", { defaultValue: "Date" })}
                   {sortBy === "date" &&
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
               </Table.Th>
-              <Table.Th style={{ width: 85 }}>Favorite</Table.Th>
+              <Table.Th style={{ width: 85 }}>
+                {t("features.dashboard.favorite", { defaultValue: "Favorite" })}
+              </Table.Th>
               <Table.Th style={{ width: 200, textAlign: "left" }}>
                 {onAnalyzeAll && (
                   <Menu position="bottom-start" withinPortal>
                     <Menu.Target>
                       <Button size="xs" variant="light" rightSection={<IconChevronDown size={14} />}>
-                        Analyze All
+                        {t("features.dashboard.analyzeAll", { defaultValue: "Analyze All" })}
                       </Button>
                     </Menu.Target>
                     <Menu.Dropdown>
@@ -865,23 +852,27 @@ export function ProfileGamesTab({
             {rows.length === 0 ? (
               <Table.Tr>
                 <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
-                  <Text c="dimmed">{t("features.dashboard.noGamesMatchFilters", "No games match the filters")}</Text>
+                  <Text c="dimmed">
+                    {hasActiveFilters
+                      ? t("features.dashboard.noGamesMatchFilters", "No games match the filters")
+                      : (t("features.dashboard.noGames") ?? "No games yet")}
+                  </Text>
                 </Table.Td>
               </Table.Tr>
             ) : (
               rows.map((row) => {
                 const pgn = row.pgn ?? null;
-                const diffMs = now - row.timestampMs;
-                const dateStr =
-                  diffMs < 60 * 60 * 1000
-                    ? `${Math.floor(diffMs / (60 * 1000))}m ago`
-                    : diffMs < 24 * 60 * 60 * 1000
-                      ? `${Math.floor(diffMs / (60 * 60 * 1000))}h ago`
-                      : `${Math.floor(diffMs / (24 * 60 * 60 * 1000))}d ago`;
+                const dateStr = formatRelativeTimeAgo(row.timestampMs, now, t);
 
                 const favoriteSource =
-                  row.kind === "local" ? "local" : row.kind === "chesscom" ? "chesscom" : "lichess";
-                const fav = isFavorite(favoriteGames, favoriteSource, row.gameKey);
+                  row.kind === "local"
+                    ? "local"
+                    : row.kind === "chesscom"
+                      ? "chesscom"
+                      : row.kind === "lichess"
+                        ? "lichess"
+                        : null;
+                const fav = favoriteSource ? isFavorite(favoriteGames, favoriteSource, row.gameKey) : false;
 
                 return (
                   <Table.Tr key={`${row.kind}:${row.gameKey}`}>
@@ -899,12 +890,12 @@ export function ProfileGamesTab({
                         }
                       >
                         {row.kind === "local"
-                          ? "Local"
+                          ? t("features.dashboard.sourceLocal", { defaultValue: "Local" })
                           : row.kind === "chesscom"
-                            ? "Chess.com"
+                            ? t("features.dashboard.sourceChessCom", { defaultValue: "Chess.com" })
                             : row.kind === "chessbase"
-                              ? "ChessBase"
-                              : "Lichess"}
+                              ? t("features.dashboard.sourceChessBase", { defaultValue: "ChessBase" })
+                              : t("features.dashboard.sourceLichess", { defaultValue: "Lichess" })}
                       </Badge>
                     </Table.Td>
                     <Table.Td style={{ width: 180 }}>
@@ -934,11 +925,11 @@ export function ProfileGamesTab({
                       {(() => {
                         const label =
                           row.outcome === "win"
-                            ? "Win"
+                            ? t("features.dashboard.win", { defaultValue: "Win" })
                             : row.outcome === "loss"
-                              ? "Loss"
+                              ? t("features.dashboard.loss", { defaultValue: "Loss" })
                               : row.outcome === "draw"
-                                ? "Draw"
+                                ? t("chess.draw", { defaultValue: "Draw" })
                                 : "-";
                         const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
                         return (
@@ -973,6 +964,7 @@ export function ProfileGamesTab({
                             return await onToggleFavoriteLichess(row.gameKey);
                         }}
                         disabled={
+                          row.kind === "chessbase" ||
                           (row.kind === "local" && !onToggleFavoriteLocal) ||
                           (row.kind === "chesscom" && !onToggleFavoriteChessCom) ||
                           (row.kind === "lichess" && !onToggleFavoriteLichess)

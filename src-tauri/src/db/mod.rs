@@ -12,6 +12,7 @@ mod schema;
 mod search;
 mod sync_state;
 mod online_sync;
+mod weakness_model;
 pub use sync_state::*;
 pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress};
 
@@ -21,6 +22,7 @@ use crate::{
     opening::get_opening_from_setup,
     AppState,
 };
+use chrono::{NaiveDate, SecondsFormat, TimeZone, Utc};
 use dashmap::DashMap;
 use diesel::{
     connection::{DefaultLoadingMode, SimpleConnection},
@@ -64,6 +66,15 @@ pub use self::player_stats::{
 };
 pub use self::position_cache::{
     clear_position_cache, get_cached_position, is_position_cached, save_position_cache,
+};
+#[allow(unused_imports)]
+pub use self::weakness_model::{
+    build_weakness_snapshot_v1, compose_profile_weakness_model, ensure_profile_weakness_tables,
+    get_weakness_evidence, get_weakness_signals, replace_weakness_snapshot,
+    upsert_weakness_game_features, ProfileWeaknessModel, ProfileWeaknessSignal,
+    ProfileWeaknessSignalEvidence, ProfileWeaknessSignalsByColor, WeaknessAggregationInputRow,
+    WeaknessEvidenceRow, WeaknessEvidenceUpsert, WeaknessGameFeaturesUpsert,
+    WeaknessSignalSnapshotRow, WeaknessSignalSnapshotUpsert, WeaknessSnapshotBuildResult,
 };
 pub use self::schema::puzzles;
 pub use self::search::{
@@ -384,6 +395,7 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
     // Profile databases store additional computed/derived stats for analyzed games.
     // This is safe to run on any DB file (CREATE TABLE IF NOT EXISTS), but primarily targets profiles.
     analysis_stats::ensure_profile_analysis_tables(db)?;
+    weakness_model::ensure_profile_weakness_tables(db)?;
 
     Ok(())
 }
@@ -779,6 +791,7 @@ pub async fn init_profile_db(
 
     // Ensure profile analysis tables exist (for older profiles and fresh ones).
     analysis_stats::ensure_profile_analysis_tables(db)?;
+    weakness_model::ensure_profile_weakness_tables(db)?;
 
     // Store the profile's active player name (used for opponent detection after imports).
     // Do not override if already present (profiles should be stable).
@@ -831,13 +844,21 @@ pub async fn save_profile_game_analysis_stats(
         white_id: i32,
         #[diesel(sql_type = diesel::sql_types::Integer, column_name = "BlackID")]
         black_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "TimeControl")]
+        time_control: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "ECO")]
+        eco: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>, column_name = "PlyCount")]
+        ply_count: Option<i32>,
     }
 
-    let row: Option<GameRow> = sql_query("SELECT Result, WhiteID, BlackID FROM Games WHERE ID = ?1 LIMIT 1")
-        .bind::<diesel::sql_types::Integer, _>(game_id)
-        .load::<GameRow>(db)?
-        .into_iter()
-        .next();
+    let row: Option<GameRow> = sql_query(
+        "SELECT Result, WhiteID, BlackID, TimeControl, ECO, PlyCount FROM Games WHERE ID = ?1 LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(game_id)
+    .load::<GameRow>(db)?
+    .into_iter()
+    .next();
 
     let Some(row) = row else {
         return Err(Error::PackageManager(format!(
@@ -882,12 +903,1032 @@ pub async fn save_profile_game_analysis_stats(
                     obj.insert("forks".to_string(), forks);
                 }
             }
+
+            if let Ok(computed) = weakness_model::compute_weakness_features_v1(
+                &initial_fen,
+                &moves,
+                profile_color,
+                row.time_control.as_deref(),
+                row.eco.as_deref(),
+                row.ply_count,
+            ) {
+                let upsert_row = weakness_model::WeaknessGameFeaturesUpsert {
+                    game_id,
+                    model_version: weakness_model::WEAKNESS_MODEL_VERSION_V1,
+                    computed_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+                    opening_family: computed.opening_family,
+                    time_control_bucket: computed.time_control_bucket,
+                    color_played: Some(computed.color_played),
+                    ply_bucket_features_json: computed.ply_bucket_features_json,
+                    features_json: computed.features_json,
+                };
+                if let Err(e) = weakness_model::upsert_weakness_game_features(db, &upsert_row) {
+                    eprintln!("weakness model upsert failed for game {game_id}: {e}");
+                }
+            } else {
+                eprintln!("weakness model feature extraction failed for game {game_id}");
+            }
         }
     }
 
     analysis_stats::upsert_game_analysis_stats(db, game_id, &stats)?;
 
     Ok(())
+}
+
+fn parse_profile_game_date_to_timestamp_ms(date: Option<&str>) -> Option<i64> {
+    let s = date?.trim();
+    if s.len() < 10 {
+        return None;
+    }
+
+    let b = s.as_bytes();
+    if b.len() < 10
+        || !b[0].is_ascii_digit()
+        || !b[1].is_ascii_digit()
+        || !b[2].is_ascii_digit()
+        || !b[3].is_ascii_digit()
+    {
+        return None;
+    }
+
+    let year: i32 = ((b[0] - b'0') as i32) * 1000
+        + ((b[1] - b'0') as i32) * 100
+        + ((b[2] - b'0') as i32) * 10
+        + ((b[3] - b'0') as i32);
+
+    let mut i = 4usize;
+    while i < b.len() && !b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i + 1 >= b.len() {
+        return None;
+    }
+
+    let mut month: u32 = 0;
+    let mut md = 0usize;
+    while i < b.len() && b[i].is_ascii_digit() && md < 2 {
+        month = month * 10 + (b[i] - b'0') as u32;
+        i += 1;
+        md += 1;
+    }
+    if month == 0 || month > 12 {
+        return None;
+    }
+
+    while i < b.len() && !b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i + 1 >= b.len() {
+        return None;
+    }
+
+    let mut day: u32 = 0;
+    let mut dd = 0usize;
+    while i < b.len() && b[i].is_ascii_digit() && dd < 2 {
+        day = day * 10 + (b[i] - b'0') as u32;
+        i += 1;
+        dd += 1;
+    }
+    if day == 0 || day > 31 {
+        return None;
+    }
+
+    let nd = NaiveDate::from_ymd_opt(year, month, day)?;
+    Some(chrono::Utc.from_utc_datetime(&nd.and_hms_opt(0, 0, 0)?).timestamp_millis())
+}
+
+const WEAKNESS_MATE_AS_CP: i32 = 100_000;
+const WEAKNESS_BLUNDER_SWING_CP: i32 = 150;
+const WEAKNESS_MISTAKE_SWING_CP: i32 = 90;
+const WEAKNESS_INACCURACY_SWING_CP: i32 = 40;
+
+#[derive(Debug, Clone, Copy)]
+struct WeaknessErrorRates {
+    blunder_rate: f64,
+    mistake_rate: f64,
+    inaccuracy_rate: f64,
+}
+
+fn weakness_extract_eval_scores_from_analyzed_pgn(pgn: &str) -> Vec<i32> {
+    let re = Regex::new(r#"\[%eval\s+([^\]]+)\]"#).ok();
+    let Some(re) = re else {
+        return vec![];
+    };
+
+    let mut out: Vec<i32> = Vec::new();
+    for cap in re.captures_iter(pgn) {
+        let raw = cap.get(1).map(|m| m.as_str()).unwrap_or("").trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let token = raw.split_whitespace().next().unwrap_or(raw);
+        let token = token.split('/').next().unwrap_or(token);
+        let token = token.split(',').next().unwrap_or(token).trim();
+
+        if let Some(rest) = token.strip_prefix('#') {
+            let m = rest.trim().parse::<i32>().ok().unwrap_or(0);
+            if m == 0 {
+                out.push(0);
+            } else {
+                out.push(m.signum() * WEAKNESS_MATE_AS_CP);
+            }
+            continue;
+        }
+
+        if let Ok(v) = token.parse::<f32>() {
+            out.push((v * 100.0).round() as i32);
+        }
+    }
+
+    out
+}
+
+fn weakness_profile_error_rates_from_analyzed_pgn(
+    analyzed_pgn: &str,
+    profile_is_white: bool,
+) -> Option<WeaknessErrorRates> {
+    let scores = weakness_extract_eval_scores_from_analyzed_pgn(analyzed_pgn);
+    if scores.len() < 2 {
+        return None;
+    }
+
+    let mut considered = 0usize;
+    let mut blunders = 0usize;
+    let mut mistakes = 0usize;
+    let mut inaccuracies = 0usize;
+    for idx in 1..scores.len() {
+        let ply = (idx as i32) + 1;
+        let is_profile_move = if profile_is_white { ply % 2 == 1 } else { ply % 2 == 0 };
+        if !is_profile_move {
+            continue;
+        }
+
+        let delta_white_cp = scores[idx] - scores[idx - 1];
+        let delta_profile_cp = if profile_is_white { delta_white_cp } else { -delta_white_cp };
+        considered += 1;
+        if delta_profile_cp <= -WEAKNESS_BLUNDER_SWING_CP {
+            blunders += 1;
+        } else if delta_profile_cp <= -WEAKNESS_MISTAKE_SWING_CP {
+            mistakes += 1;
+        } else if delta_profile_cp <= -WEAKNESS_INACCURACY_SWING_CP {
+            inaccuracies += 1;
+        }
+    }
+
+    if considered == 0 {
+        None
+    } else {
+        Some(WeaknessErrorRates {
+            blunder_rate: (blunders as f64) / (considered as f64),
+            mistake_rate: (mistakes as f64) / (considered as f64),
+            inaccuracy_rate: (inaccuracies as f64) / (considered as f64),
+        })
+    }
+}
+
+fn weakness_variation_starts_with_rook_move(variation: &GameTree) -> bool {
+    for node in variation.nodes() {
+        if let pgn::GameTreeNode::Move(san_plus) = node {
+            let san = san_plus.san.to_string();
+            return san.starts_with('R');
+        }
+    }
+    false
+}
+
+/// Returns the ply where the profile made a blunder (`??` / `$4`) and
+/// the first move in the engine variation is a rook move (activation opportunity).
+fn weakness_profile_blunder_rook_activation_ply_from_analyzed_pgn(
+    analyzed_pgn: &str,
+    profile_is_white: bool,
+) -> Option<i32> {
+    if !analyzed_pgn.contains("??") && !analyzed_pgn.contains("$4") {
+        return None;
+    }
+
+    let mut reader = BufferedReader::new_cursor(analyzed_pgn.as_bytes());
+    let mut importer = Importer::new(None);
+    let game = reader.read_game(&mut importer).ok().flatten().flatten()?;
+
+    let mut ply = 0i32;
+    let mut white_to_move = game.position.turn().is_white();
+    let mut last_move_ply: Option<i32> = None;
+    let mut last_move_profile = false;
+    let mut last_move_blunder = false;
+
+    for node in game.tree.nodes() {
+        match node {
+            pgn::GameTreeNode::Move(san_plus) => {
+                ply += 1;
+                let mover_is_white = white_to_move;
+                white_to_move = !white_to_move;
+                last_move_ply = Some(ply);
+                last_move_profile = mover_is_white == profile_is_white;
+                // Some PGNs keep "??" as SAN suffix instead of NAG.
+                last_move_blunder = last_move_profile && san_plus.to_string().contains("??");
+            }
+            pgn::GameTreeNode::Nag(nag) => {
+                // NAG 4 is "blunder".
+                if last_move_profile && nag.0 == 4 {
+                    last_move_blunder = true;
+                }
+            }
+            pgn::GameTreeNode::Variation(variation) => {
+                if last_move_profile && last_move_blunder && weakness_variation_starts_with_rook_move(variation) {
+                    return last_move_ply;
+                }
+            }
+            pgn::GameTreeNode::Comment(_) => {}
+        }
+    }
+
+    None
+}
+
+fn weakness_normalize_platform(site: &str) -> PlatformFilter {
+    let lower = site.to_lowercase();
+    if lower.contains("lichess") {
+        PlatformFilter::Lichess
+    } else if lower.contains("chess.com") || lower.contains("chesscom") {
+        PlatformFilter::ChessCom
+    } else {
+        PlatformFilter::All
+    }
+}
+
+fn weakness_get_time_control(_site: &str, time_control: &str) -> TimeControlFilter {
+    let tc = time_control.trim();
+    if tc.is_empty() {
+        return TimeControlFilter::Any;
+    }
+
+    let lower = tc.to_lowercase();
+    if lower.contains("correspondence") || lower.contains("daily") || lower.contains("classical") {
+        return TimeControlFilter::Classical;
+    }
+
+    let base_seconds: Option<f64> = if let Some((base, _inc)) = tc.split_once('+') {
+        base.trim().parse::<f64>().ok()
+    } else {
+        tc.parse::<f64>().ok()
+    };
+
+    let Some(base) = base_seconds else {
+        return TimeControlFilter::Any;
+    };
+
+    if base < 180.0 {
+        return TimeControlFilter::Bullet;
+    }
+    if base < 480.0 {
+        return TimeControlFilter::Blitz;
+    }
+    if base < 1500.0 {
+        return TimeControlFilter::Rapid;
+    }
+    TimeControlFilter::Classical
+}
+
+fn weakness_normalize_color_played(color_played: &Option<String>) -> Option<&'static str> {
+    let raw = color_played.as_ref()?;
+    let normalized = raw.trim().to_lowercase();
+    if normalized == "white" {
+        Some("white")
+    } else if normalized == "black" {
+        Some("black")
+    } else {
+        None
+    }
+}
+
+fn weakness_filter_signature(filters: &Option<PlayerStatsFilters>) -> String {
+    let Some(f) = filters else {
+        return "all".to_string();
+    };
+    let platform = match f.platform {
+        PlatformFilter::All => "all",
+        PlatformFilter::Lichess => "lichess",
+        PlatformFilter::ChessCom => "chesscom",
+    };
+    let tc = match f.time_control {
+        TimeControlFilter::Any => "any",
+        TimeControlFilter::Bullet => "bullet",
+        TimeControlFilter::Blitz => "blitz",
+        TimeControlFilter::Rapid => "rapid",
+        TimeControlFilter::Classical => "classical",
+    };
+    let dr = match f.date_range {
+        Some(DateRange::SevenDays) => "7d",
+        Some(DateRange::ThirtyDays) => "30d",
+        Some(DateRange::NinetyDays) => "90d",
+        Some(DateRange::OneYear) => "1y",
+        Some(DateRange::All) => "all",
+        None => "none",
+    };
+    let elo = f
+        .opponent_elo_bucket
+        .as_deref()
+        .unwrap_or("all")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>();
+    format!("p-{platform}_tc-{tc}_elo-{elo}_dr-{dr}")
+}
+
+fn weakness_date_range_earliest_ms(date_range: &DateRange, last_date: i64) -> i64 {
+    const MS_DAY: i64 = 86_400_000;
+    match date_range {
+        DateRange::All => i64::MIN,
+        DateRange::SevenDays => last_date - 7 * MS_DAY,
+        DateRange::ThirtyDays => last_date - 30 * MS_DAY,
+        DateRange::NinetyDays => last_date - 90 * MS_DAY,
+        DateRange::OneYear => last_date - 365 * MS_DAY,
+    }
+}
+
+fn load_or_infer_profile_player_id_for_weakness(db: &mut SqliteConnection) -> Result<Option<i32>> {
+    #[derive(QueryableByName)]
+    struct InfoRow {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Value")]
+        value: Option<String>,
+    }
+    #[derive(QueryableByName)]
+    struct CountRow {
+        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "c")]
+        c: i64,
+    }
+    #[derive(QueryableByName)]
+    struct CandidateRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "player_id")]
+        player_id: i32,
+        #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "c")]
+        c: i64,
+    }
+
+    let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
+        .load::<InfoRow>(db)?
+        .into_iter()
+        .next()
+        .and_then(|r| r.value)
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|v| *v > 0);
+
+    let existing_total_count = if let Some(existing_id) = existing {
+        sql_query("SELECT COUNT(*) AS c FROM Games WHERE WhiteID = ?1 OR BlackID = ?1")
+            .bind::<diesel::sql_types::Integer, _>(existing_id)
+            .load::<CountRow>(db)?
+            .into_iter()
+            .next()
+            .map(|r| r.c)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let existing_analyzed_count = if let Some(existing_id) = existing {
+        sql_query(
+            r#"
+            SELECT COUNT(*) AS c
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+            WHERE g.WhiteID = ?1 OR g.BlackID = ?1
+            "#,
+        )
+        .bind::<diesel::sql_types::Integer, _>(existing_id)
+        .load::<CountRow>(db)?
+        .into_iter()
+        .next()
+        .map(|r| r.c)
+        .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let dominant_analyzed = sql_query(
+        r#"
+        SELECT player_id, COUNT(*) AS c
+        FROM (
+            SELECT g.WhiteID AS player_id
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+            UNION ALL
+            SELECT g.BlackID AS player_id
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+        )
+        GROUP BY player_id
+        ORDER BY c DESC
+        LIMIT 1
+        "#,
+    )
+    .load::<CandidateRow>(db)?
+    .into_iter()
+    .next()
+    .filter(|r| r.player_id > 0);
+
+    let dominant_all_games = sql_query(
+        r#"
+        SELECT player_id, COUNT(*) AS c
+        FROM (
+            SELECT WhiteID AS player_id FROM Games
+            UNION ALL
+            SELECT BlackID AS player_id FROM Games
+        )
+        GROUP BY player_id
+        ORDER BY c DESC
+        LIMIT 1
+        "#,
+    )
+    .load::<CandidateRow>(db)?
+    .into_iter()
+    .next()
+    .filter(|r| r.player_id > 0);
+
+    // Keep explicit profile id only when it has meaningful analyzed coverage;
+    // otherwise prefer the dominant player in analyzed games.
+    let chosen = if let Some(existing_id) = existing {
+        let dominant_analyzed_same = dominant_analyzed
+            .as_ref()
+            .map(|r| r.player_id == existing_id)
+            .unwrap_or(false);
+        if existing_analyzed_count >= 8 || dominant_analyzed_same {
+            Some(existing_id)
+        } else if let Some(candidate) = dominant_analyzed.as_ref() {
+            Some(candidate.player_id)
+        } else if existing_total_count > 0 {
+            Some(existing_id)
+        } else {
+            dominant_all_games.as_ref().map(|r| r.player_id)
+        }
+    } else if let Some(candidate) = dominant_analyzed.as_ref() {
+        Some(candidate.player_id)
+    } else {
+        dominant_all_games.as_ref().map(|r| r.player_id)
+    }
+    .filter(|pid| *pid > 0);
+
+    let Some(pid) = chosen else {
+        return Ok(None);
+    };
+
+    if existing != Some(pid) {
+        let _ = sql_query(
+            "INSERT INTO Info (Name, Value) VALUES ('ProfilePlayerId', ?1)
+             ON CONFLICT(Name) DO UPDATE SET Value = excluded.Value",
+        )
+        .bind::<diesel::sql_types::Text, _>(pid.to_string())
+        .execute(db);
+    }
+
+    Ok(Some(pid))
+}
+
+fn profile_outcome_from_result(result: Option<&str>, profile_is_white: bool) -> Option<String> {
+    let r = result.unwrap_or("*").trim();
+    if r.is_empty() {
+        return Some("unknown".to_string());
+    }
+    let outcome = match r {
+        "1-0" => {
+            if profile_is_white {
+                "win"
+            } else {
+                "loss"
+            }
+        }
+        "0-1" => {
+            if profile_is_white {
+                "loss"
+            } else {
+                "win"
+            }
+        }
+        "1/2-1/2" => "draw",
+        _ => "unknown",
+    };
+    Some(outcome.to_string())
+}
+
+fn backfill_profile_weakness_features(
+    db: &mut SqliteConnection,
+    profile_player_id: i32,
+) -> Result<i32> {
+    const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const MAX_BACKFILL_GAMES: i32 = 20000;
+
+    #[derive(QueryableByName)]
+    struct MissingFeatureRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "game_id")]
+        game_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "WhiteID")]
+        white_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "BlackID")]
+        black_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "TimeControl")]
+        time_control: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "ECO")]
+        eco: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>, column_name = "PlyCount")]
+        ply_count: Option<i32>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "FEN")]
+        fen: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Binary, column_name = "Moves")]
+        moves: Vec<u8>,
+    }
+
+    let rows: Vec<MissingFeatureRow> = sql_query(
+        r#"
+        SELECT
+            g.ID AS game_id,
+            g.WhiteID,
+            g.BlackID,
+            g.TimeControl,
+            g.ECO,
+            g.PlyCount,
+            g.FEN,
+            g.Moves
+        FROM Games g
+        INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+        LEFT JOIN WeaknessGameFeatures wgf ON wgf.GameID = g.ID
+        WHERE (g.WhiteID = ?1 OR g.BlackID = ?1)
+          AND (wgf.GameID IS NULL OR wgf.ModelVersion < ?2)
+        ORDER BY g.ID DESC
+        LIMIT ?3
+        "#,
+    )
+    .bind::<diesel::sql_types::Integer, _>(profile_player_id)
+    .bind::<diesel::sql_types::Integer, _>(weakness_model::WEAKNESS_MODEL_VERSION_V1)
+    .bind::<diesel::sql_types::Integer, _>(MAX_BACKFILL_GAMES)
+    .load::<MissingFeatureRow>(db)?;
+
+    let mut filled = 0i32;
+    for row in rows {
+        let profile_color = if row.white_id == profile_player_id {
+            Some(shakmaty::Color::White)
+        } else if row.black_id == profile_player_id {
+            Some(shakmaty::Color::Black)
+        } else {
+            None
+        };
+        let Some(profile_color) = profile_color else {
+            continue;
+        };
+
+        let start_pos = row
+            .fen
+            .as_deref()
+            .and_then(|f| Fen::from_ascii(f.as_bytes()).ok())
+            .and_then(|f| f.into_position(CastlingMode::Chess960).ok());
+        let decoded_moves = match extract_main_line_moves(&row.moves, start_pos) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!(
+                    "weakness model backfill decode failed for game {}: {}",
+                    row.game_id, e
+                );
+                continue;
+            }
+        };
+        let moves_uci: Vec<String> = decoded_moves
+            .into_iter()
+            .map(|m| m.to_uci(CastlingMode::Standard).to_string())
+            .collect();
+
+        let initial_fen = row
+            .fen
+            .clone()
+            .unwrap_or_else(|| STARTPOS_FEN.to_string());
+        let computed = match weakness_model::compute_weakness_features_v1(
+            &initial_fen,
+            &moves_uci,
+            profile_color,
+            row.time_control.as_deref(),
+            row.eco.as_deref(),
+            row.ply_count,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "weakness model backfill extraction failed for game {}: {}",
+                    row.game_id, e
+                );
+                continue;
+            }
+        };
+
+        let upsert_row = weakness_model::WeaknessGameFeaturesUpsert {
+            game_id: row.game_id,
+            model_version: weakness_model::WEAKNESS_MODEL_VERSION_V1,
+            computed_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            opening_family: computed.opening_family,
+            time_control_bucket: computed.time_control_bucket,
+            color_played: Some(computed.color_played),
+            ply_bucket_features_json: computed.ply_bucket_features_json,
+            features_json: computed.features_json,
+        };
+        if weakness_model::upsert_weakness_game_features(db, &upsert_row).is_ok() {
+            filled += 1;
+        }
+    }
+
+    Ok(filled)
+}
+
+pub fn backfill_profile_weakness_features_for_player(
+    db: &mut SqliteConnection,
+    profile_player_id: i32,
+) -> Result<i32> {
+    backfill_profile_weakness_features(db, profile_player_id)
+}
+
+/// Build and return a ranked strategic weakness model for the profile.
+///
+/// The command incrementally backfills missing per-game weakness features, recomputes a snapshot,
+/// persists it, and returns top-ranked signals with evidence rows.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_weakness_model(
+    profile_id: String,
+    limit: Option<u32>,
+    filters: Option<PlayerStatsFilters>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<weakness_model::ProfileWeaknessModel> {
+    let db_path = app
+        .path()
+        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_string_lossy().as_ref(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+    // Keep weakness model compatible with legacy profiles where analyzed games exist in analysis.db3
+    // but GameAnalysisStats has not been backfilled yet.
+    let _ = analysis_stats::backfill_profile_phase_stats_from_analysis_db(
+        app.clone(),
+        db,
+        &profile_id,
+        5000,
+    );
+    let filter_sig = weakness_filter_signature(&filters);
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(weakness_model::ProfileWeaknessModel {
+            snapshot_key: format!(
+                "wm:v{}:{profile_id}:{filter_sig}",
+                weakness_model::WEAKNESS_MODEL_VERSION_V1
+            ),
+            model_version: weakness_model::WEAKNESS_MODEL_VERSION_V1,
+            generated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            total_games: 0,
+            scored_games: 0,
+            backfilled_games: 0,
+            signals: vec![],
+            signals_by_color: weakness_model::ProfileWeaknessSignalsByColor::default(),
+        });
+    };
+
+    let backfilled = backfill_profile_weakness_features(db, profile_player_id)?;
+
+    #[derive(QueryableByName)]
+    struct ModelRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "game_id")]
+        game_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "site")]
+        site: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Date")]
+        date: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "Result")]
+        result: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "time_control")]
+        time_control: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "WhiteID")]
+        white_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "BlackID")]
+        black_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "white_name")]
+        white_name: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "black_name")]
+        black_name: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>, column_name = "white_elo")]
+        white_elo: Option<i32>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>, column_name = "black_elo")]
+        black_elo: Option<i32>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>, column_name = "PlyCount")]
+        ply_count: Option<i32>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "OpeningFamily")]
+        opening_family: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "TimeControlBucket")]
+        time_control_bucket: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "ColorPlayed")]
+        color_played: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Text, column_name = "PlyBucketFeaturesJson")]
+        ply_bucket_features_json: String,
+        #[diesel(sql_type = diesel::sql_types::Text, column_name = "FeaturesJson")]
+        features_json: String,
+    }
+
+    let model_rows: Vec<ModelRow> = sql_query(
+        r#"
+        SELECT
+            g.ID AS game_id,
+            s.Name AS site,
+            g.Date,
+            g.Result,
+            g.TimeControl AS time_control,
+            g.WhiteID,
+            g.BlackID,
+            pw.Name AS white_name,
+            pb.Name AS black_name,
+            g.WhiteElo AS white_elo,
+            g.BlackElo AS black_elo,
+            g.PlyCount,
+            wgf.OpeningFamily,
+            wgf.TimeControlBucket,
+            wgf.ColorPlayed,
+            wgf.PlyBucketFeaturesJson,
+            wgf.FeaturesJson
+        FROM Games g
+        INNER JOIN Sites s ON s.ID = g.SiteID
+        LEFT JOIN Players pw ON pw.ID = g.WhiteID
+        LEFT JOIN Players pb ON pb.ID = g.BlackID
+        INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+        INNER JOIN WeaknessGameFeatures wgf ON wgf.GameID = g.ID
+        WHERE g.WhiteID = ?1 OR g.BlackID = ?1
+          AND wgf.ModelVersion >= ?2
+        "#,
+    )
+    .bind::<diesel::sql_types::Integer, _>(profile_player_id)
+    .bind::<diesel::sql_types::Integer, _>(weakness_model::WEAKNESS_MODEL_VERSION_V1)
+    .load::<ModelRow>(db)?;
+
+    let mut filtered_rows: Vec<(ModelRow, Option<i64>)> = Vec::with_capacity(model_rows.len());
+    for row in model_rows {
+        if let Some(active_filters) = &filters {
+            let site = row.site.clone().unwrap_or_default();
+            if !site.trim().is_empty() {
+                match active_filters.platform {
+                    PlatformFilter::All => {}
+                    PlatformFilter::Lichess => {
+                        if weakness_normalize_platform(&site) != PlatformFilter::Lichess {
+                            continue;
+                        }
+                    }
+                    PlatformFilter::ChessCom => {
+                        if weakness_normalize_platform(&site) != PlatformFilter::ChessCom {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if !matches!(active_filters.time_control, TimeControlFilter::Any) {
+                let tc = row.time_control.clone().unwrap_or_default();
+                if weakness_get_time_control(&site, &tc) != active_filters.time_control {
+                    continue;
+                }
+            }
+
+            if let Some(bucket) = &active_filters.opponent_elo_bucket {
+                if let Ok(start) = bucket.parse::<i32>() {
+                    let end = start + 199;
+                    let profile_is_white = row.white_id == profile_player_id;
+                    let opponent_elo = if profile_is_white { row.black_elo } else { row.white_elo };
+                    let Some(opponent_elo) = opponent_elo else {
+                        continue;
+                    };
+                    if opponent_elo < start || opponent_elo > end {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        let ts = parse_profile_game_date_to_timestamp_ms(row.date.as_deref());
+        filtered_rows.push((row, ts));
+    }
+
+    if let Some(active_filters) = &filters {
+        if let Some(date_range) = &active_filters.date_range {
+            if !filtered_rows.is_empty() {
+                let mut max_date: Option<i64> = None;
+                for (_row, ts) in &filtered_rows {
+                    if let Some(t) = *ts {
+                        max_date = Some(max_date.map_or(t, |m| m.max(t)));
+                    }
+                }
+
+                if let Some(last_date) = max_date {
+                    let earliest = weakness_date_range_earliest_ms(date_range, last_date);
+                    filtered_rows.retain(|(_row, ts)| ts.map(|t| t >= earliest).unwrap_or(false));
+                }
+            }
+        }
+    }
+
+    let model_rows: Vec<ModelRow> = filtered_rows.into_iter().map(|(row, _ts)| row).collect();
+
+    let game_ids: Vec<String> = model_rows.iter().map(|r| r.game_id.to_string()).collect();
+    let mut stats_rows =
+        crate::analysis_storage::analysis_db_get_game_stats_bulk(app.clone(), game_ids.clone(), Some(profile_id.clone()))?;
+    if stats_rows.is_empty() && !profile_id.trim().is_empty() {
+        stats_rows = crate::analysis_storage::analysis_db_get_game_stats_bulk(app.clone(), game_ids.clone(), None)?;
+    }
+    let stats_map: std::collections::HashMap<String, (f64, f64, Option<i64>)> = stats_rows
+        .into_iter()
+        .map(|s| (s.game_id, (s.accuracy, s.acpl, s.estimated_elo)))
+        .collect();
+
+    let mut analyzed_rows = crate::analysis_storage::analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        game_ids.clone(),
+        Some(profile_id.clone()),
+    )?;
+    if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
+        analyzed_rows =
+            crate::analysis_storage::analysis_db_get_analyzed_games_bulk(app.clone(), game_ids.clone(), None)?;
+    }
+    let analyzed_map: std::collections::HashMap<String, String> = analyzed_rows
+        .into_iter()
+        .map(|r| (r.game_id, r.analyzed_pgn))
+        .collect();
+
+    let mut input_rows: Vec<weakness_model::WeaknessAggregationInputRow> = Vec::new();
+    for row in model_rows {
+        let game_id_key = row.game_id.to_string();
+        let stats = stats_map.get(&game_id_key).copied();
+        let profile_is_white = row.white_id == profile_player_id;
+        let analyzed_pgn = analyzed_map.get(&game_id_key);
+        let error_rates = analyzed_pgn
+            .and_then(|pgn| weakness_profile_error_rates_from_analyzed_pgn(pgn, profile_is_white));
+        let opponent_name = if profile_is_white {
+            row.black_name.clone()
+        } else {
+            row.white_name.clone()
+        };
+        let outcome = profile_outcome_from_result(row.result.as_deref(), profile_is_white);
+        let mut features_json =
+            serde_json::from_str::<serde_json::Value>(&row.features_json)
+                .unwrap_or_else(|_| serde_json::json!({}));
+        let first_rook_activation_ply = features_json
+            .get("rookActivity")
+            .and_then(|v| v.get("firstRookActivationPly"))
+            .and_then(|v| v.as_i64());
+        let should_probe_blunder_rook_activation = first_rook_activation_ply
+            .map(|ply| ply <= 40)
+            .unwrap_or(false);
+        let blunder_rook_activation_ply = if should_probe_blunder_rook_activation {
+            analyzed_pgn.and_then(|pgn| {
+                weakness_profile_blunder_rook_activation_ply_from_analyzed_pgn(pgn, profile_is_white)
+            })
+        } else {
+            None
+        };
+        if let Some(ply) = blunder_rook_activation_ply {
+            if !features_json.is_object() {
+                features_json = serde_json::json!({});
+            }
+            if let Some(root) = features_json.as_object_mut() {
+                let rook_activity = root
+                    .entry("rookActivity".to_string())
+                    .or_insert_with(|| serde_json::json!({}));
+                if !rook_activity.is_object() {
+                    *rook_activity = serde_json::json!({});
+                }
+                if let Some(rook_obj) = rook_activity.as_object_mut() {
+                    rook_obj.insert("missedActivationBlunder".to_string(), serde_json::json!(true));
+                    rook_obj.insert(
+                        "missedActivationBlunderPly".to_string(),
+                        serde_json::json!(ply),
+                    );
+                }
+            }
+        }
+        let ply_bucket_features_json =
+            serde_json::from_str::<serde_json::Value>(&row.ply_bucket_features_json)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+        input_rows.push(weakness_model::WeaknessAggregationInputRow {
+            game_id: row.game_id,
+            timestamp_ms: parse_profile_game_date_to_timestamp_ms(row.date.as_deref()),
+            profile_outcome: outcome,
+            opponent_name,
+            accuracy: stats.map(|s| s.0),
+            acpl: stats.map(|s| s.1),
+            blunder_rate: error_rates.map(|r| r.blunder_rate),
+            mistake_rate: error_rates.map(|r| r.mistake_rate),
+            inaccuracy_rate: error_rates.map(|r| r.inaccuracy_rate),
+            estimated_elo: stats.and_then(|s| s.2),
+            opening_family: row.opening_family,
+            time_control_bucket: row.time_control_bucket,
+            color_played: row.color_played,
+            game_length_ply: row.ply_count,
+            ply_bucket_features_json,
+            features_json,
+        });
+    }
+
+    let build = weakness_model::build_weakness_snapshot_v1(
+        &input_rows,
+        limit.map(|v| v.clamp(1, 24) as usize),
+        Some(4),
+    );
+    let per_color_limit = 7usize;
+    let white_rows = input_rows
+        .iter()
+        .filter(|row| weakness_normalize_color_played(&row.color_played) == Some("white"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let black_rows = input_rows
+        .iter()
+        .filter(|row| weakness_normalize_color_played(&row.color_played) == Some("black"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let white_build =
+        weakness_model::build_weakness_snapshot_v1(&white_rows, Some(per_color_limit), Some(4));
+    let black_build =
+        weakness_model::build_weakness_snapshot_v1(&black_rows, Some(per_color_limit), Some(4));
+    let signals_by_color = weakness_model::ProfileWeaknessSignalsByColor {
+        white: weakness_model::compose_profile_signals_from_upserts(
+            &white_build.signals,
+            &white_build.evidence,
+        ),
+        black: weakness_model::compose_profile_signals_from_upserts(
+            &black_build.signals,
+            &black_build.evidence,
+        ),
+    };
+
+    let snapshot_key = format!(
+        "wm:v{}:{profile_id}:{filter_sig}",
+        weakness_model::WEAKNESS_MODEL_VERSION_V1
+    );
+    let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let scope_metadata = if let Some(active_filters) = &filters {
+        let platform = match active_filters.platform {
+            PlatformFilter::All => "all",
+            PlatformFilter::Lichess => "lichess",
+            PlatformFilter::ChessCom => "chesscom",
+        };
+        let time_control = match active_filters.time_control {
+            TimeControlFilter::Any => "any",
+            TimeControlFilter::Bullet => "bullet",
+            TimeControlFilter::Blitz => "blitz",
+            TimeControlFilter::Rapid => "rapid",
+            TimeControlFilter::Classical => "classical",
+        };
+        let date_range = match active_filters.date_range {
+            Some(DateRange::SevenDays) => "7d",
+            Some(DateRange::ThirtyDays) => "30d",
+            Some(DateRange::NinetyDays) => "90d",
+            Some(DateRange::OneYear) => "1y",
+            Some(DateRange::All) => "all",
+            None => "none",
+        };
+        serde_json::json!({
+            "scope": filter_sig,
+            "platform": platform,
+            "timeControl": time_control,
+            "opponentEloBucket": active_filters.opponent_elo_bucket.clone(),
+            "dateRange": date_range,
+        })
+    } else {
+        serde_json::json!({
+            "scope": "all",
+        })
+    };
+    weakness_model::replace_weakness_snapshot(
+        db,
+        &snapshot_key,
+        weakness_model::WEAKNESS_MODEL_VERSION_V1,
+        &generated_at,
+        &scope_metadata,
+        &build.signals,
+        &build.evidence,
+    )?;
+
+    let signal_limit = limit.unwrap_or(12).clamp(1, 24);
+    let signal_rows = weakness_model::get_weakness_signals(db, &snapshot_key, signal_limit, 0)?;
+    let mut evidence_by_signal: std::collections::HashMap<String, Vec<weakness_model::WeaknessEvidenceRow>> =
+        std::collections::HashMap::new();
+    for signal in &signal_rows {
+        let evidence = weakness_model::get_weakness_evidence(db, &snapshot_key, &signal.signal_key, 4, 0)?;
+        evidence_by_signal.insert(signal.signal_key.clone(), evidence);
+    }
+
+    Ok(weakness_model::compose_profile_weakness_model(
+        snapshot_key,
+        generated_at,
+        build.total_games,
+        build.scored_games,
+        backfilled,
+        signal_rows,
+        evidence_by_signal,
+        Some(signals_by_color),
+    ))
 }
 
 /// Aggregate analyzed-game outcomes by the phase in which the game became decisively won/lost.
@@ -2393,6 +3434,24 @@ pub async fn add_event_games_from_pgn(
     })?;
 
     Ok(inserted_total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weakness_filter_signature_all_any_all_all_time() {
+        let filters = Some(PlayerStatsFilters {
+            platform: PlatformFilter::All,
+            time_control: TimeControlFilter::Any,
+            opponent_elo_bucket: None,
+            date_range: Some(DateRange::All),
+        });
+
+        let signature = weakness_filter_signature(&filters);
+        assert_eq!(signature, "p-all_tc-any_elo-all_dr-all");
+    }
 }
 
 #[tauri::command]

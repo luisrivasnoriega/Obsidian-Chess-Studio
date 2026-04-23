@@ -18,7 +18,7 @@ import {
 import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame, PlayerGameInfo } from "@/bindings";
@@ -26,7 +26,7 @@ import { commands } from "@/bindings";
 import type { EloBucket } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
-import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
 import { getDocumentDir } from "@/utils/documentDir";
 import { createFile } from "@/utils/files";
@@ -50,14 +50,23 @@ import { getProfileOutcomeReasonBreakdown, type OutcomeReasonBreakdown } from "@
 import { getProfilePhaseAccuracy, type PhaseAccuracyBucket } from "@/utils/profilePhaseAccuracy";
 import { getProfilePhaseGames, type PhaseGameRow } from "@/utils/profilePhaseGames";
 import { getProfilePhaseOutcomes, type PhaseOutcomeBucket } from "@/utils/profilePhaseOutcomes";
+import {
+  getProfileWeaknessModel,
+  type ProfileWeaknessModel,
+  type ProfileWeaknessSignal,
+} from "@/utils/profileWeaknessModel";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 import { DateRange } from "./DateRangeTabs";
 import { PanelLoadGate } from "./PanelLoadGate";
 import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "./PlayerSidebarCard";
 
-type StatGroupBy = "phase" | "outcomeAccuracy" | "outcomeReason" | "intensity";
+type StatGroupBy = "phase" | "outcomeAccuracy" | "outcomeReason" | "intensity" | "weakness";
 type TacticalFilter = "none" | "forks";
+type WeaknessSignalsByColorPayload = {
+  white?: ProfileWeaknessSignal[];
+  black?: ProfileWeaknessSignal[];
+};
 
 type PhaseKey = "opening" | "middlegame" | "endgame";
 const FORK_PIECES: ForkPiece[] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
@@ -138,6 +147,212 @@ function formatAccuracy(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
+function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw || typeof raw !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return null;
+}
+
+function formatSignedMetric(value: number | null, digits = 1): string {
+  if (value == null || Number.isNaN(value)) {
+    return "--";
+  }
+  return `${value > 0 ? "+" : ""}${value.toFixed(digits)}`;
+}
+
+function normalizeWeaknessSignalKey(signalKey: string): string {
+  return signalKey === "WM_MAROCCZY_10_15" ? "WM_MAROCZY_10_15" : signalKey;
+}
+
+function isColorAwareStructureSignal(signalKey: string): boolean {
+  return (
+    signalKey === "WM_MAROCZY_10_15" ||
+    signalKey === "WM_VS_DRAGON_10_18" ||
+    signalKey === "WM_IQP_12_30" ||
+    signalKey === "WM_CARLSBAD_12_32" ||
+    signalKey === "WM_HANGING_PAWNS_12_30" ||
+    signalKey === "WM_STONEWALL_10_25" ||
+    signalKey === "WM_VS_BENONI_10_25" ||
+    signalKey === "WM_VS_ACCELERATED_DRAGON_8_16" ||
+    signalKey === "WM_FRENCH_CHAIN_8_22" ||
+    signalKey === "WM_KID_LOCKED_CENTER_10_25" ||
+    signalKey === "WM_GRUNFELD_BROAD_CENTER_8_18"
+  );
+}
+
+function weaknessSignalTitle(
+  t: (key: string, opts?: any) => string,
+  signal: ProfileWeaknessSignal,
+  impact: Record<string, unknown>,
+  trigger: Record<string, unknown>,
+): string {
+  const normalizedSignalKey = normalizeWeaknessSignalKey(signal.signalKey);
+  const dominantColor =
+    typeof trigger.dominantColor === "string" ? trigger.dominantColor.trim().toLowerCase() : "mixed";
+  const colorKey = dominantColor === "white" || dominantColor === "black" ? dominantColor : "mixed";
+  const keyByColor = `profiles.stats.weakness.signals.${normalizedSignalKey}.titleByColor.${colorKey}`;
+  const key = `profiles.stats.weakness.signals.${normalizedSignalKey}.title`;
+  if (signal.signalKey === "WM_FALLBACK_LOSS_CLUSTER") {
+    const groupKey = typeof impact.groupKey === "string" ? impact.groupKey : "-";
+    return t(key, { defaultValue: signal.title, groupKey });
+  }
+  if (isColorAwareStructureSignal(normalizedSignalKey)) {
+    return t(keyByColor, { defaultValue: signal.title });
+  }
+  return t(key, { defaultValue: signal.title });
+}
+
+function weaknessSignalTriggerText(
+  t: (key: string, opts?: any) => string,
+  signal: ProfileWeaknessSignal,
+  impact: Record<string, unknown>,
+  trigger: Record<string, unknown>,
+): string {
+  const normalizedSignalKey = normalizeWeaknessSignalKey(signal.signalKey);
+  const dominantColor =
+    typeof trigger.dominantColor === "string" ? trigger.dominantColor.trim().toLowerCase() : "mixed";
+  const colorKey = dominantColor === "white" || dominantColor === "black" ? dominantColor : "mixed";
+  const keyByColor = `profiles.stats.weakness.signals.${normalizedSignalKey}.triggerByColor.${colorKey}`;
+  const key = `profiles.stats.weakness.signals.${normalizedSignalKey}.trigger`;
+  const deltaAcpl = asFiniteNumber(impact.deltaAcpl);
+  const deltaLossRate = asFiniteNumber(impact.deltaLossRate);
+  const deltaAccuracy = asFiniteNumber(impact.deltaAccuracy);
+  const deltaBlunderRate = asFiniteNumber(impact.deltaBlunderRate);
+  const deltaMistakeRate = asFiniteNumber(impact.deltaMistakeRate);
+  const deltaInaccuracyRate = asFiniteNumber(impact.deltaInaccuracyRate);
+  const groupKey = typeof impact.groupKey === "string" ? impact.groupKey : "-";
+
+  const baseKey = isColorAwareStructureSignal(normalizedSignalKey) ? keyByColor : key;
+  return t(baseKey, {
+    defaultValue: signal.triggerText,
+    groupKey,
+    deltaAcpl: formatSignedMetric(deltaAcpl),
+    deltaLossRate: formatSignedMetric(deltaLossRate),
+    deltaAccuracy: formatSignedMetric(deltaAccuracy),
+    deltaBlunderRate: formatSignedMetric(deltaBlunderRate),
+    deltaMistakeRate: formatSignedMetric(deltaMistakeRate),
+    deltaInaccuracyRate: formatSignedMetric(deltaInaccuracyRate),
+  });
+}
+
+function weaknessSignalAttackPlan(
+  t: (key: string, opts?: any) => string,
+  signal: ProfileWeaknessSignal,
+  trigger: Record<string, unknown>,
+): string {
+  const normalizedSignalKey = normalizeWeaknessSignalKey(signal.signalKey);
+  const dominantColor =
+    typeof trigger.dominantColor === "string" ? trigger.dominantColor.trim().toLowerCase() : "mixed";
+  const colorKey = dominantColor === "white" || dominantColor === "black" ? dominantColor : "mixed";
+  const keyByColor = `profiles.stats.weakness.signals.${normalizedSignalKey}.attackPlanByColor.${colorKey}`;
+  const key = `profiles.stats.weakness.signals.${normalizedSignalKey}.attackPlan`;
+  const baseKey = isColorAwareStructureSignal(normalizedSignalKey) ? keyByColor : key;
+  return t(baseKey, { defaultValue: signal.attackPlan });
+}
+
+function weaknessOutcomeLabel(t: (key: string, opts?: any) => string, outcome: unknown): string {
+  const normalized = typeof outcome === "string" ? outcome.trim().toLowerCase() : "unknown";
+  if (normalized === "win" || normalized === "loss" || normalized === "draw") {
+    return t(`profiles.stats.weakness.outcomes.${normalized}`, { defaultValue: normalized });
+  }
+  return t("profiles.stats.weakness.outcomes.unknown", { defaultValue: "unknown" });
+}
+
+function weaknessEvidenceText(
+  t: (key: string, opts?: any) => string,
+  signal: ProfileWeaknessSignal,
+  ev: { evidenceText: string; evidenceJson: string; gameId?: number | null },
+): string {
+  const payload = parseJsonObject(ev.evidenceJson);
+  const gameId =
+    asFiniteNumber(payload.gameId) ??
+    asFiniteNumber(ev.gameId) ??
+    asFiniteNumber((payload as { game_id?: unknown }).game_id) ??
+    null;
+  const opponent =
+    (typeof payload.opponentName === "string" && payload.opponentName.trim()) ||
+    t("profiles.stats.weakness.unknownOpponent", { defaultValue: "unknown opponent" });
+  const outcome = weaknessOutcomeLabel(t, payload.outcome);
+
+  if (signal.signalKey === "WM_FALLBACK_LOSS_CLUSTER") {
+    const groupKey = typeof payload.groupKey === "string" ? payload.groupKey : "-";
+    return t("profiles.stats.weakness.signals.WM_FALLBACK_LOSS_CLUSTER.evidence", {
+      defaultValue: ev.evidenceText,
+      gameId: gameId == null ? "-" : Math.round(gameId),
+      groupKey,
+      outcome,
+    });
+  }
+
+  const acpl = asFiniteNumber(payload.acpl);
+  const accuracy = asFiniteNumber(payload.accuracy);
+  return t("profiles.stats.weakness.genericEvidence", {
+    defaultValue: ev.evidenceText,
+    gameId: gameId == null ? "-" : Math.round(gameId),
+    opponent,
+    outcome,
+    acpl: acpl == null ? "-" : acpl.toFixed(1),
+    accuracy: accuracy == null ? "-" : accuracy.toFixed(1),
+  });
+}
+
+function weaknessTimeControlLabel(t: (key: string, opts?: any) => string, value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "bullet") return t("TimeControl.Bullet", { defaultValue: "Bullet" });
+  if (normalized === "blitz") return t("TimeControl.Blitz", { defaultValue: "Blitz" });
+  if (normalized === "rapid") return t("TimeControl.Rapid", { defaultValue: "Rapid" });
+  if (normalized === "classical") return t("TimeControl.Classical", { defaultValue: "Classical" });
+  return value;
+}
+
+function weaknessContextLabel(t: (key: string, opts?: any) => string, raw: string): string {
+  const [kind, value] = raw.split(":");
+  if (!kind || !value) return raw;
+
+  if (kind === "timeControl") {
+    return t("profiles.stats.weakness.contextTypes.timeControl", {
+      defaultValue: "Time control: {{value}}",
+      value: weaknessTimeControlLabel(t, value),
+    });
+  }
+  if (kind === "openingFamily") {
+    return t("profiles.stats.weakness.contextTypes.openingFamily", {
+      defaultValue: "Opening family: {{value}}",
+      value,
+    });
+  }
+  if (kind === "color") {
+    const colorKey = value.trim().toLowerCase();
+    const colorValue =
+      colorKey === "white"
+        ? t("profiles.stats.weakness.colors.white", { defaultValue: "White" })
+        : colorKey === "black"
+          ? t("profiles.stats.weakness.colors.black", { defaultValue: "Black" })
+          : value;
+    return t("profiles.stats.weakness.contextTypes.color", {
+      defaultValue: "Color: {{value}}",
+      value: colorValue,
+    });
+  }
+  return raw;
+}
+
 type MainlineNode = { children: MainlineNode[] };
 
 function mainlinePathFromPly(root: MainlineNode, ply: number): number[] {
@@ -167,6 +382,20 @@ export default function StatsPanel({
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const sessions = useAtomValue(sessionsAtom);
+
+  const effectiveProfileId = useMemo(() => {
+    const explicit = profileId?.trim();
+    if (explicit) return explicit;
+    const player = playerName.trim().toLowerCase();
+    if (!player) return undefined;
+
+    const sessionMatch = sessions.find((s) => {
+      const identity = (s.player || s.lichess?.username || s.chessCom?.username || "").trim().toLowerCase();
+      return identity === player && !!s.profileId?.trim();
+    });
+    return sessionMatch?.profileId?.trim() || undefined;
+  }, [profileId, playerName, sessions]);
 
   const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
 
@@ -201,6 +430,8 @@ export default function StatsPanel({
   const [forkDetailsPiece, setForkDetailsPiece] = useState<ForkPiece | null>(null);
   const [forkDetailsPage, setForkDetailsPage] = useState(1);
   const [isGeneratingForkPuzzles, setIsGeneratingForkPuzzles] = useState(false);
+  const isWeaknessView = groupBy === "weakness";
+  const isForksView = tacticalFilter === "forks" && !isWeaknessView;
 
   const { data: sidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
@@ -226,7 +457,7 @@ export default function StatsPanel({
   } = useQuery<PhaseOutcomeBucket[]>({
     queryKey: [
       "profilePhaseStats",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -235,14 +466,14 @@ export default function StatsPanel({
       tacticalFilter,
     ],
     queryFn: async () => {
-      if (!profileId) return [];
+      if (!effectiveProfileId) return [];
       if (groupBy !== "phase") return [];
-      return await getProfilePhaseOutcomes({ profileId, filters });
+      return await getProfilePhaseOutcomes({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -255,7 +486,7 @@ export default function StatsPanel({
   } = useQuery<PhaseAccuracyBucket[]>({
     queryKey: [
       "profilePhaseAccuracy",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -264,14 +495,14 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return [];
+      if (!effectiveProfileId) return [];
       if (groupBy !== "phase") return [];
-      return await getProfilePhaseAccuracy({ profileId, filters });
+      return await getProfilePhaseAccuracy({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "phase",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "phase",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -284,7 +515,7 @@ export default function StatsPanel({
   } = useQuery<OutcomeAccuracyStats | null>({
     queryKey: [
       "profileOutcomeAccuracy",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -293,13 +524,14 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return null;
-      return await getProfileOutcomeAccuracy({ profileId, filters });
+      if (!effectiveProfileId) return null;
+      return await getProfileOutcomeAccuracy({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "outcomeAccuracy",
+    enabled:
+      !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "outcomeAccuracy",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -312,7 +544,7 @@ export default function StatsPanel({
   } = useQuery<ForkStats | null>({
     queryKey: [
       "profileForkStats",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -321,13 +553,42 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return null;
-      return await getProfileForkStats({ profileId, filters });
+      if (!effectiveProfileId) return null;
+      return await getProfileForkStats({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter === "forks",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && isForksView,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const {
+    data: weaknessModel,
+    isLoading: isLoadingWeaknessModel,
+    isFetching: isFetchingWeaknessModel,
+    error: weaknessModelError,
+  } = useQuery<ProfileWeaknessModel | null>({
+    queryKey: [
+      "profileWeaknessModel",
+      effectiveProfileId ?? null,
+      statsSig.key,
+      filters.platform,
+      filters.time_control,
+      filters.opponent_elo_bucket,
+      filters.date_range,
+      groupBy,
+    ],
+    queryFn: async () => {
+      if (!effectiveProfileId) return null;
+      return await getProfileWeaknessModel({ profileId: effectiveProfileId, limit: 12, filters });
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!effectiveProfileId && statsSig.games > 0 && isWeaknessView,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -340,7 +601,7 @@ export default function StatsPanel({
   } = useQuery<OutcomeReasonBreakdown | null>({
     queryKey: [
       "profileOutcomeReasonBreakdown",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -349,13 +610,14 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return null;
-      return await getProfileOutcomeReasonBreakdown({ profileId, filters });
+      if (!effectiveProfileId) return null;
+      return await getProfileOutcomeReasonBreakdown({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "outcomeReason",
+    enabled:
+      !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "outcomeReason",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -368,7 +630,7 @@ export default function StatsPanel({
   } = useQuery<IntensityBreakdown | null>({
     queryKey: [
       "profileIntensityBreakdown",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -377,13 +639,13 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return null;
-      return await getProfileIntensityBreakdown({ profileId, filters });
+      if (!effectiveProfileId) return null;
+      return await getProfileIntensityBreakdown({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "intensity",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -396,7 +658,7 @@ export default function StatsPanel({
   } = useQuery<IntensityOutcomeBucket[]>({
     queryKey: [
       "profileIntensityOutcomes",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -405,13 +667,13 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return [];
-      return await getProfileIntensityOutcomes({ profileId, filters });
+      if (!effectiveProfileId) return [];
+      return await getProfileIntensityOutcomes({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "intensity",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -424,7 +686,7 @@ export default function StatsPanel({
   } = useQuery<IntensityAccuracyBucket[]>({
     queryKey: [
       "profileIntensityAccuracy",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -433,13 +695,13 @@ export default function StatsPanel({
       groupBy,
     ],
     queryFn: async () => {
-      if (!profileId) return [];
-      return await getProfileIntensityAccuracy({ profileId, filters });
+      if (!effectiveProfileId) return [];
+      return await getProfileIntensityAccuracy({ profileId: effectiveProfileId, filters });
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: !!profileId && statsSig.games > 0 && tacticalFilter !== "forks" && groupBy === "intensity",
+    enabled: !!effectiveProfileId && statsSig.games > 0 && !isForksView && !isWeaknessView && groupBy === "intensity",
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -447,22 +709,25 @@ export default function StatsPanel({
 
   const isAnyLoading =
     isLoading ||
-    (tacticalFilter === "forks"
-      ? isLoadingForkStats || isFetchingForkStats
-      : (groupBy === "phase" &&
-          (isLoadingBuckets || isFetchingBuckets || isLoadingPhaseAccuracy || isFetchingPhaseAccuracy)) ||
-        (groupBy === "outcomeAccuracy" && (isLoadingOutcomeAccuracy || isFetchingOutcomeAccuracy)) ||
-        (groupBy === "outcomeReason" && (isLoadingOutcomeReasonBreakdown || isFetchingOutcomeReasonBreakdown)) ||
-        (groupBy === "intensity" &&
-          (isLoadingIntensityBreakdown ||
-            isFetchingIntensityBreakdown ||
-            isLoadingIntensityOutcomes ||
-            isFetchingIntensityOutcomes ||
-            isLoadingIntensityAccuracy ||
-            isFetchingIntensityAccuracy)));
+    (isWeaknessView
+      ? isLoadingWeaknessModel || isFetchingWeaknessModel
+      : isForksView
+        ? isLoadingForkStats || isFetchingForkStats
+        : (groupBy === "phase" &&
+            (isLoadingBuckets || isFetchingBuckets || isLoadingPhaseAccuracy || isFetchingPhaseAccuracy)) ||
+          (groupBy === "outcomeAccuracy" && (isLoadingOutcomeAccuracy || isFetchingOutcomeAccuracy)) ||
+          (groupBy === "outcomeReason" && (isLoadingOutcomeReasonBreakdown || isFetchingOutcomeReasonBreakdown)) ||
+          (groupBy === "intensity" &&
+            (isLoadingIntensityBreakdown ||
+              isFetchingIntensityBreakdown ||
+              isLoadingIntensityOutcomes ||
+              isFetchingIntensityOutcomes ||
+              isLoadingIntensityAccuracy ||
+              isFetchingIntensityAccuracy)));
   const hasDataContext = !!info;
-  const hasPanelData =
-    tacticalFilter === "forks"
+  const hasPanelData = isWeaknessView
+    ? (weaknessModel?.signals.length ?? 0) > 0 || (weaknessModel?.totalGames ?? 0) > 0
+    : isForksView
       ? true
       : groupBy === "phase"
         ? buckets.some((b) => (b.won ?? 0) + (b.drawn ?? 0) + (b.lost ?? 0) > 0)
@@ -495,6 +760,10 @@ export default function StatsPanel({
       {
         value: "intensity",
         label: t("profiles.stats.groupBy.intensity", { defaultValue: "By intensity" }),
+      },
+      {
+        value: "weakness",
+        label: t("profiles.stats.groupBy.weakness", { defaultValue: "Weakness model" }),
       },
     ];
   }, [t]);
@@ -584,14 +853,14 @@ export default function StatsPanel({
   }, [intensityAccuracy, intensityLabelByKey]);
 
   const generateMissedForkPuzzles = async (piece: ForkPiece | "all") => {
-    if (!profileId || isGeneratingForkPuzzles) {
+    if (!effectiveProfileId || isGeneratingForkPuzzles) {
       return;
     }
 
     setIsGeneratingForkPuzzles(true);
     try {
       const result = await generateProfileMissedForkPuzzles({
-        profileId,
+        profileId: effectiveProfileId,
         filters,
         piece: piece === "all" ? null : piece,
       });
@@ -658,7 +927,7 @@ export default function StatsPanel({
   } = useQuery<PhaseGameRow[]>({
     queryKey: [
       "profilePhaseGames",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -668,16 +937,16 @@ export default function StatsPanel({
       detailsPage,
     ],
     queryFn: async () => {
-      if (!profileId || !detailsPhase) return [];
+      if (!effectiveProfileId || !detailsPhase) return [];
       return await getProfilePhaseGames({
-        profileId,
+        profileId: effectiveProfileId,
         filters,
         phase: detailsPhase,
         limit: detailsLimit,
         offset: detailsOffset,
       });
     },
-    enabled: !!profileId && !!detailsPhase && statsSig.games > 0,
+    enabled: !!effectiveProfileId && !!detailsPhase && statsSig.games > 0,
     retry: false,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -692,7 +961,7 @@ export default function StatsPanel({
   } = useQuery<IntensityGameRow[]>({
     queryKey: [
       "profileIntensityGames",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -702,16 +971,16 @@ export default function StatsPanel({
       detailsPage,
     ],
     queryFn: async () => {
-      if (!profileId || !detailsIntensity) return [];
+      if (!effectiveProfileId || !detailsIntensity) return [];
       return await getProfileIntensityGames({
-        profileId,
+        profileId: effectiveProfileId,
         filters,
         intensity: detailsIntensity,
         limit: detailsLimit,
         offset: detailsOffset,
       });
     },
-    enabled: !!profileId && !!detailsIntensity && statsSig.games > 0,
+    enabled: !!effectiveProfileId && !!detailsIntensity && statsSig.games > 0,
     retry: false,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -728,7 +997,7 @@ export default function StatsPanel({
   } = useQuery<MissedForkGameRow[]>({
     queryKey: [
       "profileMissedForkGames",
-      profileId ?? null,
+      effectiveProfileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -738,16 +1007,16 @@ export default function StatsPanel({
       forkDetailsPage,
     ],
     queryFn: async () => {
-      if (!profileId || !forkDetailsPiece) return [];
+      if (!effectiveProfileId || !forkDetailsPiece) return [];
       return await getProfileMissedForkGames({
-        profileId,
+        profileId: effectiveProfileId,
         filters,
         piece: forkDetailsPiece,
         limit: forkDetailsLimit,
         offset: forkDetailsOffset,
       });
     },
-    enabled: !!profileId && !!forkDetailsPiece && statsSig.games > 0,
+    enabled: !!effectiveProfileId && !!forkDetailsPiece && statsSig.games > 0 && isForksView,
     retry: false,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
@@ -761,13 +1030,33 @@ export default function StatsPanel({
   const activeDetailsError = groupBy === "intensity" ? intensityDetailsError : detailsError;
 
   const hasNextPage = activeDetailGames.length === detailsLimit;
+  const weaknessModelWithColorSplit = weaknessModel as
+    | (ProfileWeaknessModel & { signalsByColor?: WeaknessSignalsByColorPayload })
+    | null;
+  const weaknessSignalsByColor = weaknessModelWithColorSplit?.signalsByColor;
+  const weaknessSignalsWhite = Array.isArray(weaknessSignalsByColor?.white) ? weaknessSignalsByColor.white : [];
+  const weaknessSignalsBlack = Array.isArray(weaknessSignalsByColor?.black) ? weaknessSignalsByColor.black : [];
+  const hasColorSignalSplit = weaknessSignalsWhite.length > 0 || weaknessSignalsBlack.length > 0;
+  const weaknessSignals = hasColorSignalSplit
+    ? [...weaknessSignalsWhite, ...weaknessSignalsBlack].sort((a, b) => b.score - a.score)
+    : (weaknessModel?.signals ?? []);
+  const weaknessSignalSummaryCount = hasColorSignalSplit
+    ? weaknessSignalsWhite.length + weaknessSignalsBlack.length
+    : weaknessSignals.length;
+  const weaknessBriefingSignals = weaknessSignals.slice(0, 3);
+  const weaknessModelErrorMessage =
+    weaknessModelError instanceof Error
+      ? weaknessModelError.message
+      : weaknessModelError
+        ? String(weaknessModelError)
+        : null;
 
   const openGame = async (gameId: number, ply?: number) => {
-    if (!profileId) return;
+    if (!effectiveProfileId) return;
 
     try {
       const currentActiveTab = activeTab;
-      const dbPath = await getProfileDbPath(profileId);
+      const dbPath = await getProfileDbPath(effectiveProfileId);
       const game = unwrap(await commands.getGame(dbPath, gameId));
       const pgn = createPgnFromNormalizedGame(game);
       const tree = await parsePGN(pgn);
@@ -807,6 +1096,265 @@ export default function StatsPanel({
       });
     }
   };
+
+  const renderWeaknessSignalCards = (signals: ProfileWeaknessSignal[], keyPrefix: string) => (
+    <Stack gap="md">
+      {signals.map((signal: ProfileWeaknessSignal) => {
+        const impact = parseJsonObject(signal.impactJson);
+        const trigger = parseJsonObject(signal.triggerJson);
+        const deltaAcpl = asFiniteNumber(impact.deltaAcpl);
+        const deltaLossRate = asFiniteNumber(impact.deltaLossRate);
+        const deltaAccuracy = asFiniteNumber(impact.deltaAccuracy);
+        const deltaBlunderRate = asFiniteNumber(impact.deltaBlunderRate);
+        const deltaMistakeRate = asFiniteNumber(impact.deltaMistakeRate);
+        const deltaInaccuracyRate = asFiniteNumber(impact.deltaInaccuracyRate);
+        const deltaLossRateCiLow = asFiniteNumber(impact.deltaLossRateCiLow);
+        const deltaLossRateCiHigh = asFiniteNumber(impact.deltaLossRateCiHigh);
+        const deltaLossRateCi =
+          deltaLossRateCiLow == null || deltaLossRateCiHigh == null
+            ? "--"
+            : `[${formatSignedMetric(deltaLossRateCiLow, 1)}, ${formatSignedMetric(deltaLossRateCiHigh, 1)}]`;
+        const confidenceBand = typeof trigger.confidenceBand === "string" ? trigger.confidenceBand : null;
+        const supportTier = typeof trigger.supportTier === "string" ? trigger.supportTier : null;
+        const baselineMode = typeof impact.baselineMode === "string" ? impact.baselineMode : null;
+        const trend =
+          trigger.trend && typeof trigger.trend === "object" ? (trigger.trend as Record<string, unknown>) : null;
+        const trendLabelRaw = typeof trend?.label === "string" ? String(trend?.label) : "insufficientData";
+        const trendLabel = t(`profiles.stats.weakness.trendValues.${trendLabelRaw}`, {
+          defaultValue: trendLabelRaw,
+        });
+        const trendRecentCount = asFiniteNumber(trend?.recentCount);
+        const trendPreviousCount = asFiniteNumber(trend?.previousCount);
+        const trendDeltaLossPp = asFiniteNumber(trend?.deltaLossRatePp);
+        const trendDeltaAcpl = asFiniteNumber(trend?.deltaAcpl);
+        const trendDetail = t("profiles.stats.weakness.trendDetail", {
+          defaultValue: "Recent {{recent}} vs previous {{previous}}",
+          recent: trendRecentCount == null ? "-" : Math.round(trendRecentCount),
+          previous: trendPreviousCount == null ? "-" : Math.round(trendPreviousCount),
+        });
+        const trendDeltaDetail = t("profiles.stats.weakness.trendDeltaDetail", {
+          defaultValue: "dLoss {{dloss}} pp, dACPL {{dacpl}}",
+          dloss: trendDeltaLossPp == null ? "--" : formatSignedMetric(trendDeltaLossPp, 1),
+          dacpl: trendDeltaAcpl == null ? "--" : formatSignedMetric(trendDeltaAcpl, 1),
+        });
+        const contextsTop = Array.isArray(trigger.contextsTop)
+          ? trigger.contextsTop.filter((ctx): ctx is { key: string; count: number } => {
+              if (!ctx || typeof ctx !== "object") return false;
+              const key = (ctx as { key?: unknown }).key;
+              const count = (ctx as { count?: unknown }).count;
+              return typeof key === "string" && typeof count === "number" && Number.isFinite(count);
+            })
+          : [];
+        const opponentsTop = Array.isArray(trigger.opponentsTop)
+          ? trigger.opponentsTop.filter((opp): opp is { name: string; count: number } => {
+              if (!opp || typeof opp !== "object") return false;
+              const name = (opp as { name?: unknown }).name;
+              const count = (opp as { count?: unknown }).count;
+              return typeof name === "string" && typeof count === "number" && Number.isFinite(count);
+            })
+          : [];
+        const contextText = contextsTop
+          .slice(0, 3)
+          .map((ctx) => `${weaknessContextLabel(t, ctx.key)} (${ctx.count})`)
+          .join(", ");
+        const opponentText = opponentsTop
+          .slice(0, 3)
+          .map((opp) => `${opp.name} (${opp.count})`)
+          .join(", ");
+
+        return (
+          <Box
+            key={`${keyPrefix}-${signal.signalKey}`}
+            style={{
+              border: "1px solid var(--mantine-color-dark-4)",
+              borderRadius: 8,
+              padding: "12px",
+            }}
+          >
+            <Stack gap={8}>
+              <Group justify="space-between" align="flex-start" wrap="nowrap">
+                <Box style={{ minWidth: 0 }}>
+                  <Text fw={700}>{weaknessSignalTitle(t, signal, impact, trigger)}</Text>
+                  <Text size="sm" c="dimmed">
+                    {weaknessSignalTriggerText(t, signal, impact, trigger)}
+                  </Text>
+                </Box>
+                <Text fw={700} c="blue.4">
+                  {t("profiles.stats.weakness.score", {
+                    defaultValue: "Score {{score}}",
+                    score: signal.score.toFixed(1),
+                  })}
+                </Text>
+              </Group>
+
+              <Group gap="md" wrap="wrap">
+                <Text size="xs">
+                  {t("profiles.stats.weakness.support", {
+                    defaultValue: "Support: {{count}}",
+                    count: signal.support,
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.confidence", {
+                    defaultValue: "Confidence: {{value}}%",
+                    value: Math.round(signal.confidence * 100),
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.severity", {
+                    defaultValue: "Severity: {{value}}%",
+                    value: Math.round(signal.severity * 100),
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.controllability", {
+                    defaultValue: "Controllability: {{value}}%",
+                    value: Math.round(signal.controllability * 100),
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.recency", {
+                    defaultValue: "Recency: {{value}}%",
+                    value: Math.round(signal.recency * 100),
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.confidenceBand", {
+                    defaultValue: "Confidence band: {{value}}",
+                    value: confidenceBand
+                      ? t(`profiles.stats.weakness.bands.${confidenceBand}`, {
+                          defaultValue: confidenceBand,
+                        })
+                      : "--",
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.supportTier", {
+                    defaultValue: "Support tier: {{value}}",
+                    value: supportTier
+                      ? t(`profiles.stats.weakness.supportTiers.${supportTier}`, {
+                          defaultValue: supportTier,
+                        })
+                      : "--",
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.baseline", {
+                    defaultValue: "Baseline: {{value}}",
+                    value: baselineMode
+                      ? t(`profiles.stats.weakness.baselineModes.${baselineMode}`, {
+                          defaultValue: baselineMode,
+                        })
+                      : "--",
+                  })}
+                </Text>
+                <Text size="xs">
+                  {t("profiles.stats.weakness.trend", {
+                    defaultValue: "Trend: {{value}}",
+                    value: trendLabel,
+                  })}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {trendDetail} | {trendDeltaDetail}
+                </Text>
+              </Group>
+
+              <Group gap="md" wrap="wrap">
+                <Text size="xs" c="orange.3">
+                  {t("profiles.stats.weakness.deltaAcpl", {
+                    defaultValue: "Delta ACPL: {{value}}",
+                    value: deltaAcpl == null ? "--" : `${deltaAcpl > 0 ? "+" : ""}${deltaAcpl.toFixed(1)}`,
+                  })}
+                </Text>
+                <Text size="xs" c="red.3">
+                  {t("profiles.stats.weakness.deltaLossRate", {
+                    defaultValue: "Delta loss rate: {{value}} pp",
+                    value: deltaLossRate == null ? "--" : `${deltaLossRate > 0 ? "+" : ""}${deltaLossRate.toFixed(1)}`,
+                  })}
+                </Text>
+                <Text size="xs" c="red.2">
+                  {t("profiles.stats.weakness.deltaLossRateCi", {
+                    defaultValue: "Delta loss CI (95%): {{value}} pp",
+                    value: deltaLossRateCi,
+                  })}
+                </Text>
+                <Text size="xs" c="yellow.3">
+                  {t("profiles.stats.weakness.deltaAccuracy", {
+                    defaultValue: "Delta accuracy: {{value}}%",
+                    value: deltaAccuracy == null ? "--" : `${deltaAccuracy > 0 ? "+" : ""}${deltaAccuracy.toFixed(1)}`,
+                  })}
+                </Text>
+                <Text size="xs" c="pink.3">
+                  {t("profiles.stats.weakness.deltaBlunderRate", {
+                    defaultValue: "Delta blunder rate: {{value}} pp",
+                    value:
+                      deltaBlunderRate == null
+                        ? "--"
+                        : `${deltaBlunderRate > 0 ? "+" : ""}${deltaBlunderRate.toFixed(1)}`,
+                  })}
+                </Text>
+                <Text size="xs" c="violet.3">
+                  {t("profiles.stats.weakness.deltaMistakeRate", {
+                    defaultValue: "Delta mistake rate: {{value}} pp",
+                    value:
+                      deltaMistakeRate == null
+                        ? "--"
+                        : `${deltaMistakeRate > 0 ? "+" : ""}${deltaMistakeRate.toFixed(1)}`,
+                  })}
+                </Text>
+                <Text size="xs" c="teal.3">
+                  {t("profiles.stats.weakness.deltaInaccuracyRate", {
+                    defaultValue: "Delta inaccuracy rate: {{value}} pp",
+                    value:
+                      deltaInaccuracyRate == null
+                        ? "--"
+                        : `${deltaInaccuracyRate > 0 ? "+" : ""}${deltaInaccuracyRate.toFixed(1)}`,
+                  })}
+                </Text>
+              </Group>
+
+              {contextText ? (
+                <Text size="xs" c="dimmed">
+                  {t("profiles.stats.weakness.contexts", {
+                    defaultValue: "Best contexts: {{contexts}}",
+                    contexts: contextText,
+                  })}
+                </Text>
+              ) : null}
+              {opponentText ? (
+                <Text size="xs" c="dimmed">
+                  {t("profiles.stats.weakness.opponents", {
+                    defaultValue: "Rivals exploiting this pattern: {{opponents}}",
+                    opponents: opponentText,
+                  })}
+                </Text>
+              ) : null}
+
+              <Text size="sm">
+                <Text span fw={600}>
+                  {t("profiles.stats.weakness.attackPlan", { defaultValue: "Attack plan: " })}
+                </Text>
+                {weaknessSignalAttackPlan(t, signal, trigger)}
+              </Text>
+
+              {signal.evidence.length > 0 ? (
+                <Stack gap={4}>
+                  <Text size="xs" fw={600}>
+                    {t("profiles.stats.weakness.evidence", { defaultValue: "Evidence" })}
+                  </Text>
+                  {signal.evidence.slice(0, 3).map((ev) => (
+                    <Text key={`${keyPrefix}-${signal.signalKey}-${ev.evidenceRank}`} size="xs" c="dimmed">
+                      - {weaknessEvidenceText(t, signal, ev)}
+                    </Text>
+                  ))}
+                </Stack>
+              ) : null}
+            </Stack>
+          </Box>
+        );
+      })}
+    </Stack>
+  );
 
   return (
     <Flex
@@ -878,15 +1426,17 @@ export default function StatsPanel({
           <PanelLoadGate
             isLoading={isAnyLoading}
             isFetching={
-              tacticalFilter === "forks"
-                ? isFetchingForkStats
-                : groupBy === "phase"
-                  ? isFetchingBuckets || isFetchingPhaseAccuracy
-                  : groupBy === "outcomeAccuracy"
-                    ? isFetchingOutcomeAccuracy
-                    : groupBy === "outcomeReason"
-                      ? isFetchingOutcomeReasonBreakdown
-                      : isFetchingIntensityBreakdown
+              isWeaknessView
+                ? isFetchingWeaknessModel
+                : isForksView
+                  ? isFetchingForkStats
+                  : groupBy === "phase"
+                    ? isFetchingBuckets || isFetchingPhaseAccuracy
+                    : groupBy === "outcomeAccuracy"
+                      ? isFetchingOutcomeAccuracy
+                      : groupBy === "outcomeReason"
+                        ? isFetchingOutcomeReasonBreakdown
+                        : isFetchingIntensityBreakdown
             }
             hasData={hasDataContext && hasPanelData}
             message={t("profiles.stats.loading", { defaultValue: "Loading stats..." })}
@@ -1049,7 +1599,138 @@ export default function StatsPanel({
                     </Group>
                   </Stack>
                 </>
-              ) : tacticalFilter === "forks" ? (
+              ) : groupBy === "weakness" ? (
+                <>
+                  <Stack gap={4}>
+                    <Text fw={700}>{t("profiles.stats.weakness.title", { defaultValue: "Weakness model" })}</Text>
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.weakness.subtitle", {
+                        defaultValue: "Ranks strategic weaknesses from analyzed games to guide practical game plans.",
+                      })}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {t("profiles.stats.weakness.scopeNote", {
+                        defaultValue:
+                          "This model uses the current platform, time control, opponent Elo, and date filters.",
+                      })}
+                    </Text>
+                  </Stack>
+
+                  <Divider />
+
+                  {!effectiveProfileId ? (
+                    <Text size="sm" c="red">
+                      {t("profiles.stats.weakness.missingProfileId", {
+                        defaultValue: "Cannot load weakness model: missing profile id for this player context.",
+                      })}
+                    </Text>
+                  ) : null}
+
+                  {weaknessModelErrorMessage ? (
+                    <Text size="sm" c="red">
+                      {t("profiles.stats.weakness.queryError", {
+                        defaultValue: "Weakness model query failed: {{message}}",
+                        message: weaknessModelErrorMessage,
+                      })}
+                    </Text>
+                  ) : null}
+
+                  <Group gap="md" wrap="wrap">
+                    <Text size="sm">
+                      {t("profiles.stats.weakness.summary", {
+                        defaultValue:
+                          "{{signals}} signals from {{scored}} scored games ({{total}} total, {{backfilled}} backfilled).",
+                        signals: weaknessSignalSummaryCount,
+                        scored: weaknessModel?.scoredGames ?? 0,
+                        total: weaknessModel?.totalGames ?? 0,
+                        backfilled: weaknessModel?.backfilledGames ?? 0,
+                      })}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {t("profiles.stats.weakness.generatedAt", {
+                        defaultValue: "Generated at {{date}}",
+                        date: weaknessModel?.generatedAt ?? "-",
+                      })}
+                    </Text>
+                  </Group>
+
+                  {weaknessBriefingSignals.length > 0 ? (
+                    <Stack gap={4}>
+                      <Text size="sm" fw={600}>
+                        {t("profiles.stats.weakness.briefingTitle", {
+                          defaultValue: "Exploit briefing",
+                        })}
+                      </Text>
+                      {weaknessBriefingSignals.map((signal, idx) => (
+                        <Text key={`brief-${idx}-${signal.signalKey}`} size="sm" c="dimmed">
+                          {idx + 1}.{" "}
+                          {weaknessSignalTriggerText(
+                            t,
+                            signal,
+                            parseJsonObject(signal.impactJson),
+                            parseJsonObject(signal.triggerJson),
+                          )}
+                        </Text>
+                      ))}
+                    </Stack>
+                  ) : null}
+
+                  {weaknessSignalSummaryCount === 0 ? (
+                    <Text size="sm" c="dimmed">
+                      {t("profiles.stats.weakness.noData", {
+                        defaultValue: "No weakness signals reached minimum support yet.",
+                      })}
+                    </Text>
+                  ) : hasColorSignalSplit ? (
+                    <Stack gap="md">
+                      <Stack gap="xs">
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text fw={700}>
+                            {t("profiles.stats.weakness.groups.whiteTitle", {
+                              defaultValue: "White signals",
+                            })}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {weaknessSignalsWhite.length}
+                          </Text>
+                        </Group>
+                        {weaknessSignalsWhite.length > 0 ? (
+                          renderWeaknessSignalCards(weaknessSignalsWhite, "white")
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            {t("profiles.stats.weakness.groups.noSignals", {
+                              defaultValue: "No signals for this color with current filters.",
+                            })}
+                          </Text>
+                        )}
+                      </Stack>
+                      <Stack gap="xs">
+                        <Group justify="space-between" wrap="nowrap">
+                          <Text fw={700}>
+                            {t("profiles.stats.weakness.groups.blackTitle", {
+                              defaultValue: "Black signals",
+                            })}
+                          </Text>
+                          <Text size="sm" c="dimmed">
+                            {weaknessSignalsBlack.length}
+                          </Text>
+                        </Group>
+                        {weaknessSignalsBlack.length > 0 ? (
+                          renderWeaknessSignalCards(weaknessSignalsBlack, "black")
+                        ) : (
+                          <Text size="sm" c="dimmed">
+                            {t("profiles.stats.weakness.groups.noSignals", {
+                              defaultValue: "No signals for this color with current filters.",
+                            })}
+                          </Text>
+                        )}
+                      </Stack>
+                    </Stack>
+                  ) : (
+                    renderWeaknessSignalCards(weaknessSignals, "all")
+                  )}
+                </>
+              ) : isForksView ? (
                 <>
                   <Stack gap={4}>
                     <Text fw={700}>{t("profiles.stats.forks.title", { defaultValue: "Forks / double attacks" })}</Text>
@@ -1599,7 +2280,7 @@ export default function StatsPanel({
       </Modal>
 
       <Modal
-        opened={tacticalFilter === "forks" && forkDetailsPiece != null}
+        opened={isForksView && forkDetailsPiece != null}
         onClose={() => setForkDetailsPiece(null)}
         title={t("profiles.stats.forks.details.title", {
           defaultValue: "Missed forks - {{piece}}",
@@ -1617,7 +2298,7 @@ export default function StatsPanel({
           <PanelLoadGate
             isLoading={isLoadingForkDetails}
             isFetching={isFetchingForkDetails}
-            hasData={forkDetailsPiece != null}
+            hasData={isForksView && forkDetailsPiece != null}
             message={t("profiles.stats.details.loading", { defaultValue: "Loading games..." })}
           >
             {missedForkDetailGames.length === 0 ? (

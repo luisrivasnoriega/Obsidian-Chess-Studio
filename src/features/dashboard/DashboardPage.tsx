@@ -60,6 +60,7 @@ import {
   createLichessGameHeaders,
   createLocalGameHeaders,
   createPGNFromMoves,
+  hasEnoughMovesInPgn,
 } from "./utils/gameHelpers";
 
 const DEFAULT_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -499,22 +500,53 @@ export default function DashboardPage() {
           setSelectedOpponentId(null);
           return;
         }
+        const normalizedTarget = stripAccountKey(name).trim().toLowerCase();
+        if (!normalizedTarget) {
+          setSelectedOpponentId(null);
+          return;
+        }
 
-        const res = await query_players(activeProfileDbPath, {
-          options: {
-            skipCount: true,
-            page: 1,
-            pageSize: 10,
-            sort: "name",
-            direction: "asc",
-          },
-          name,
-          range: null,
-        });
+        const pageSize = 100;
+        // Safety cap to avoid unbounded scans on very large databases.
+        const hardMaxPages = 50;
+        let foundId: number | null = null;
+        let page = 1;
+
+        while (page <= hardMaxPages) {
+          const res = await query_players(activeProfileDbPath, {
+            options: {
+              skipCount: false,
+              page,
+              pageSize,
+              sort: "name",
+              direction: "asc",
+            },
+            name,
+            range: null,
+          });
+
+          const exact = (res.data ?? []).find((p) => {
+            const raw = (p.name ?? "").trim().toLowerCase();
+            if (!raw) return false;
+            if (raw === normalizedTarget) return true;
+            return stripAccountKey(raw).trim().toLowerCase() === normalizedTarget;
+          });
+          if (exact?.id != null) {
+            foundId = exact.id;
+            break;
+          }
+
+          const count = typeof res.count === "number" ? res.count : null;
+          const reachedLastPageByCount = count != null && page * pageSize >= count;
+          const reachedLastPageByData = (res.data?.length ?? 0) < pageSize;
+          if (reachedLastPageByCount || reachedLastPageByData) {
+            break;
+          }
+          page += 1;
+        }
 
         if (cancelled) return;
-        const exact = (res.data ?? []).find((p) => (p.name ?? "").toLowerCase() === name.toLowerCase());
-        setSelectedOpponentId(exact?.id ?? null);
+        setSelectedOpponentId(foundId);
       } catch {
         if (!cancelled) setSelectedOpponentId(null);
       }
@@ -626,36 +658,32 @@ export default function DashboardPage() {
 
   const [lichessGames, setLichessGames] = useState<DashboardLichessGame[]>([]);
   const [isLoadingLichessGames, setIsLoadingLichessGames] = useState(false);
+  const lichessLoadRequestIdRef = useRef(0);
+  const hasEnoughMoves = useCallback((pgn?: string | null) => hasEnoughMovesInPgn(pgn, 5), []);
   useEffect(() => {
-    const hasEnoughMoves = (pgn?: string | null) => {
-      if (!pgn) return false;
-      try {
-        const movesSection = pgn.split(/\n\n/)[1] || pgn;
-        const cleanMoves = movesSection
-          .replace(/\[[^\]]*\]/g, "")
-          .replace(/\{[^}]*\}/g, "")
-          .replace(/\([^)]*\)/g, "");
-        const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-        const matches = cleanMoves.match(movePattern) || [];
-        return matches.length >= 5;
-      } catch {
-        return false;
-      }
-    };
+    let disposed = false;
 
     const loadGamesFromProfileDatabase = async () => {
-      setLichessGames([]);
+      const requestId = lichessLoadRequestIdRef.current + 1;
+      lichessLoadRequestIdRef.current = requestId;
+      const isCurrentRequest = () => !disposed && lichessLoadRequestIdRef.current === requestId;
 
       if (!activeProfileId) {
-        setIsLoadingLichessGames(false);
+        if (isCurrentRequest()) {
+          setLichessGames([]);
+          setIsLoadingLichessGames(false);
+        }
         return;
       }
 
-      setIsLoadingLichessGames(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (isCurrentRequest()) {
+        setIsLoadingLichessGames(true);
+      }
 
       try {
         const dbPath = await getProfileDbPath(activeProfileId);
+        // Keep the online cache independent from table filters; scoped filtering is applied by
+        // dashboard_get_games_history_rows when rendering/analyzing rows.
         const queryResult = await query_games(dbPath, {
           options: {
             page: 1,
@@ -664,9 +692,6 @@ export default function DashboardPage() {
             direction: "desc",
             skipCount: true,
           },
-          tournament_id: eventFilterId ?? null,
-          time_control_category: timeControlCategory ?? null,
-          ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
         } as unknown as GameQuery);
 
         const analyzedGames = await getAllAnalyzedGames(activeProfileId);
@@ -685,60 +710,61 @@ export default function DashboardPage() {
           .filter((g) => hasEnoughMoves(g.pgn))
           .slice(0, gameHistoryLimit);
 
-        setLichessGames(games);
+        if (isCurrentRequest()) {
+          setLichessGames(games);
+        }
       } catch {
+        if (isCurrentRequest()) {
+          setLichessGames([]);
+        }
       } finally {
-        setIsLoadingLichessGames(false);
+        if (isCurrentRequest()) {
+          setIsLoadingLichessGames(false);
+        }
       }
     };
 
     void loadGamesFromProfileDatabase();
 
-    const handleLichessGamesUpdated = async () => {
-      setIsLoadingLichessGames(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await loadGamesFromProfileDatabase();
+    const handleLichessGamesUpdated = () => {
+      void loadGamesFromProfileDatabase();
     };
 
     window.addEventListener("lichess:games:updated", handleLichessGamesUpdated);
 
     return () => {
+      disposed = true;
       window.removeEventListener("lichess:games:updated", handleLichessGamesUpdated);
     };
-  }, [activeProfileId, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
+  }, [activeProfileId, gameHistoryLimit, hasEnoughMoves]);
 
   const [chessComGames, setChessComGames] = useState<ChessComGameWithEvent[]>([]);
   const [isLoadingChessComGames, setIsLoadingChessComGames] = useState(false);
+  const chessComLoadRequestIdRef = useRef(0);
   useEffect(() => {
-    const hasEnoughMoves = (pgn?: string | null) => {
-      if (!pgn) return false;
-      try {
-        const movesSection = pgn.split(/\n\n/)[1] || pgn;
-        const cleanMoves = movesSection
-          .replace(/\[[^\]]*\]/g, "")
-          .replace(/\{[^}]*\}/g, "")
-          .replace(/\([^)]*\)/g, "");
-        const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-        const matches = cleanMoves.match(movePattern) || [];
-        return matches.length >= 5;
-      } catch {
-        return false;
-      }
-    };
+    let disposed = false;
 
     const loadGamesFromProfileDatabase = async () => {
-      setChessComGames([]);
+      const requestId = chessComLoadRequestIdRef.current + 1;
+      chessComLoadRequestIdRef.current = requestId;
+      const isCurrentRequest = () => !disposed && chessComLoadRequestIdRef.current === requestId;
 
       if (!activeProfileId) {
-        setIsLoadingChessComGames(false);
+        if (isCurrentRequest()) {
+          setChessComGames([]);
+          setIsLoadingChessComGames(false);
+        }
         return;
       }
 
-      setIsLoadingChessComGames(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (isCurrentRequest()) {
+        setIsLoadingChessComGames(true);
+      }
 
       try {
         const dbPath = await getProfileDbPath(activeProfileId);
+        // Keep the online cache independent from table filters; scoped filtering is applied by
+        // dashboard_get_games_history_rows when rendering/analyzing rows.
         const queryResult = await query_games(dbPath, {
           options: {
             page: 1,
@@ -747,9 +773,6 @@ export default function DashboardPage() {
             direction: "desc",
             skipCount: true,
           },
-          tournament_id: eventFilterId ?? null,
-          time_control_category: timeControlCategory ?? null,
-          ...(selectedOpponentId != null ? { sides: "Any" as const, player1: selectedOpponentId } : {}),
         } as unknown as GameQuery);
 
         const analyzedGames = await getAllAnalyzedGames(activeProfileId);
@@ -768,27 +791,33 @@ export default function DashboardPage() {
           .filter((g) => hasEnoughMoves(g.pgn))
           .slice(0, gameHistoryLimit);
 
-        setChessComGames(games);
+        if (isCurrentRequest()) {
+          setChessComGames(games);
+        }
       } catch {
+        if (isCurrentRequest()) {
+          setChessComGames([]);
+        }
       } finally {
-        setIsLoadingChessComGames(false);
+        if (isCurrentRequest()) {
+          setIsLoadingChessComGames(false);
+        }
       }
     };
 
     void loadGamesFromProfileDatabase();
 
-    const handleChessComGamesUpdated = async () => {
-      setIsLoadingChessComGames(true);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await loadGamesFromProfileDatabase();
+    const handleChessComGamesUpdated = () => {
+      void loadGamesFromProfileDatabase();
     };
 
     window.addEventListener("chesscom:games:updated", handleChessComGamesUpdated);
 
     return () => {
+      disposed = true;
       window.removeEventListener("chesscom:games:updated", handleChessComGamesUpdated);
     };
-  }, [activeProfileId, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
+  }, [activeProfileId, gameHistoryLimit, hasEnoughMoves]);
 
   const [puzzleStats, setPuzzleStats] = useState(() => getPuzzleStats());
   const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
@@ -1151,6 +1180,8 @@ export default function DashboardPage() {
               chessComGames={chessComGames}
               lichessGames={lichessGames}
               profileUsernames={profileUsernames}
+              chessComUsernames={chessComUsernames}
+              lichessUsernames={lichessUsernames}
               isLoadingOnlineGames={isLoadingChessComGames || isLoadingLichessGames}
               eventFilterId={eventFilterId}
               onEventFilterChange={setEventFilterId}
@@ -1369,10 +1400,6 @@ export default function DashboardPage() {
           opened={analyzeAllModalOpened}
           onClose={() => {
             setAnalyzeAllModalOpened(false);
-            setAnalyzeAllGameType(null);
-            setAnalyzeAllScopeFilters({ opponentContains: null, resultFilter: null });
-            setAnalyzeAllScopedRows([]);
-            setAnalyzeAllCounts(null);
           }}
           engineOptions={localEngines.map((e) => ({ value: e.path, label: e.name }))}
           initialEnginePath={defaultEngine?.path ?? null}
@@ -1495,21 +1522,7 @@ export default function DashboardPage() {
               }
             };
 
-            const hasEnoughMovesPgn = (pgn?: string | null) => {
-              if (!pgn) return false;
-              try {
-                const movesSection = pgn.split(/\n\n/)[1] || pgn;
-                const cleanMoves = movesSection
-                  .replace(/\[[^\]]*\]/g, "")
-                  .replace(/\{[^}]*\}/g, "")
-                  .replace(/\([^)]*\)/g, "");
-                const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
-                const matches = cleanMoves.match(movePattern) || [];
-                return matches.length >= 5;
-              } catch {
-                return false;
-              }
-            };
+            const hasEnoughMovesPgn = (pgn?: string | null) => hasEnoughMovesInPgn(pgn, 5);
 
             const hasEnoughMovesLocal = (g: GameRecord) => {
               if (g.moves && g.moves.length >= 5) return true;

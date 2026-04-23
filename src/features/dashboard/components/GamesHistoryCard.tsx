@@ -18,6 +18,8 @@ interface GamesHistoryCardProps {
   chessComGames: ChessComGameWithEvent[];
   lichessGames: DashboardLichessGame[];
   profileUsernames: string[];
+  chessComUsernames?: string[];
+  lichessUsernames?: string[];
   isLoadingOnlineGames?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
   onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
@@ -55,6 +57,8 @@ export function GamesHistoryCard({
   chessComGames,
   lichessGames,
   profileUsernames,
+  chessComUsernames = [],
+  lichessUsernames = [],
   isLoadingOnlineGames = false,
   onAnalyzeLocalGame,
   onAnalyzeChessComGame,
@@ -186,8 +190,8 @@ export function GamesHistoryCard({
           border: "none",
           padding: 0,
         }}
-        title="Drag to resize"
-        aria-label="Resize card"
+        title={t("features.dashboard.dragToResize", { defaultValue: "Drag to resize" })}
+        aria-label={t("features.dashboard.resizeCard", { defaultValue: "Resize card" })}
       />
       <Tabs
         value={activeTab}
@@ -196,8 +200,8 @@ export function GamesHistoryCard({
       >
         <Group justify="space-between" align="center" style={{ marginTop: "4px" }}>
           <Tabs.List>
-            <Tabs.Tab value="games">Games</Tabs.Tab>
-            <Tabs.Tab value="favorites">Favorites</Tabs.Tab>
+            <Tabs.Tab value="games">{t("features.dashboard.games", { defaultValue: "Games" })}</Tabs.Tab>
+            <Tabs.Tab value="favorites">{t("features.dashboard.favorites", { defaultValue: "Favorites" })}</Tabs.Tab>
           </Tabs.List>
           <Group gap="xs">
             <Select
@@ -265,8 +269,8 @@ export function GamesHistoryCard({
             chessComGames={chessComGames}
             lichessGames={lichessGames}
             favoriteGames={favoriteGames}
-            chessComUsernames={[]}
-            lichessUsernames={[]}
+            chessComUsernames={chessComUsernames}
+            lichessUsernames={lichessUsernames}
             onAnalyzeLocalGame={onAnalyzeLocalGame}
             onAnalyzeChessComGame={onAnalyzeChessComGame}
             onAnalyzeLichessGame={onAnalyzeLichessGame}
@@ -293,8 +297,8 @@ export function GamesHistoryCard({
           border: "none",
           padding: 0,
         }}
-        title="Drag to resize"
-        aria-label="Resize card"
+        title={t("features.dashboard.dragToResize", { defaultValue: "Drag to resize" })}
+        aria-label={t("features.dashboard.resizeCard", { defaultValue: "Resize card" })}
       />
     </Card>
   );

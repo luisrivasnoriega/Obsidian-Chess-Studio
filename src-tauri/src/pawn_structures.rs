@@ -441,6 +441,10 @@ fn has_pawn(ps: &PawnSets, file: usize, rank: usize) -> bool {
     ps.squares[file][rank]
 }
 
+fn has_pawn_on_file(ps: &PawnSets, file: usize) -> bool {
+    (0..8).any(|rank| has_pawn(ps, file, rank))
+}
+
 fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u32 {
     let mode_norm = normalize_filter_value(mode);
     let analyze_both = mode_norm == "both";
@@ -496,8 +500,22 @@ fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u3
 
         // Maróczy Bind: White pawns c4 + e4 (vs Sicilian structures). We'll just require c4+e4 for one side.
         let maroczy = match c {
-            Color::White => has_pawn(&ps, 2, 3) && has_pawn(&ps, 4, 3),
-            Color::Black => has_pawn(&opp, 2, 3) && has_pawn(&opp, 4, 3),
+            Color::White => {
+                let side_duo = has_pawn(&ps, 2, 3) && has_pawn(&ps, 4, 3);
+                let opp_c_absent = !has_pawn_on_file(&opp, 2);
+                let opp_d_break_absent = !has_pawn(&opp, 3, 4);
+                let opp_d_restrictive = has_pawn(&opp, 3, 5) || has_pawn(&opp, 3, 6);
+                let side_d_absent = !has_pawn_on_file(&ps, 3);
+                side_duo && opp_c_absent && opp_d_break_absent && opp_d_restrictive && side_d_absent
+            }
+            Color::Black => {
+                let side_duo = has_pawn(&ps, 2, 4) && has_pawn(&ps, 4, 4);
+                let opp_c_absent = !has_pawn_on_file(&opp, 2);
+                let opp_d_break_absent = !has_pawn(&opp, 3, 3);
+                let opp_d_restrictive = has_pawn(&opp, 3, 2) || has_pawn(&opp, 3, 1);
+                let side_d_absent = !has_pawn_on_file(&ps, 3);
+                side_duo && opp_c_absent && opp_d_break_absent && opp_d_restrictive && side_d_absent
+            }
         };
         if maroczy {
             mask |= MAROCZY;

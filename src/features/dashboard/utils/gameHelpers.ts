@@ -19,10 +19,38 @@ interface GameHeaders {
   orientation?: "white" | "black";
 }
 
+const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+const FEN_TAG_REGEX = /\[FEN\s+"([^"]+)"\]/i;
+
+const extractFenFromPgn = (pgn?: string | null): string | null => {
+  if (!pgn) return null;
+  const match = pgn.match(FEN_TAG_REGEX);
+  const fen = match?.[1]?.trim();
+  return fen && fen.length > 0 ? fen : null;
+};
+
+export function hasEnoughMovesInPgn(pgn?: string | null, minMoves = 5): boolean {
+  if (!pgn) return false;
+  const normalizedMinMoves = Number.isFinite(minMoves) ? Math.floor(minMoves) : 5;
+  const requiredMoves = Math.max(1, normalizedMinMoves);
+  try {
+    const movesSection = pgn.split(/\n\n/)[1] || pgn;
+    const cleanMoves = movesSection
+      .replace(/\[[^\]]*\]/g, "")
+      .replace(/\{[^}]*\}/g, "")
+      .replace(/\([^)]*\)/g, "");
+    const movePattern = /\b([NBRQK]?[a-h]?[1-8]?x?[a-h][1-8](?:=[NBRQ])?[+#]?|O-O(?:-O)?[+#]?)\b/g;
+    const matches = cleanMoves.match(movePattern) || [];
+    return matches.length >= requiredMoves;
+  } catch {
+    return false;
+  }
+}
+
 export function createLocalGameHeaders(game: GameRecord): GameHeaders {
   // Use initialFen if available, otherwise fall back to standard starting position
   // The FEN header in PGN should always be the initial position, not the final position
-  const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const fen = game.initialFen && game.initialFen !== INITIAL_FEN ? game.initialFen : INITIAL_FEN;
 
   return {
@@ -42,6 +70,8 @@ export function createLocalGameHeaders(game: GameRecord): GameHeaders {
 export function createChessComGameHeaders(game: ChessComGame): GameHeaders {
   const whiteName = stripAccountKey(game.white.username);
   const blackName = stripAccountKey(game.black.username);
+  const fenFromPgn = extractFenFromPgn(game.pgn);
+  const fen = fenFromPgn || game.initial_setup || game.fen || INITIAL_FEN;
   return {
     id: 0,
     event: "Online Game",
@@ -50,7 +80,7 @@ export function createChessComGameHeaders(game: ChessComGame): GameHeaders {
     white: whiteName,
     black: blackName,
     result: (game.white.result === "win" ? "1-0" : game.black.result === "win" ? "0-1" : "1/2-1/2") as Outcome,
-    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    fen,
   };
 }
 
@@ -62,6 +92,7 @@ export function createLichessGameHeaders(game: {
     black: { user?: { name: string } };
   };
   winner?: string;
+  pgn?: string;
   lastFen: string;
 }): GameHeaders {
   const whiteName = stripAccountKey(game.players.white.user?.name || "Unknown");
@@ -74,7 +105,7 @@ export function createLichessGameHeaders(game: {
     white: whiteName,
     black: blackName,
     result: (game.winner === "white" ? "1-0" : game.winner === "black" ? "0-1" : "1/2-1/2") as Outcome,
-    fen: game.lastFen ?? "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    fen: extractFenFromPgn(game.pgn) || game.lastFen || INITIAL_FEN,
   };
 }
 
@@ -89,7 +120,6 @@ export function createPGNFromMoves(moves: string[], result: string, initialFen?:
   pgn += `[Result "${result}"]\n`;
 
   // Include initial FEN if provided and different from standard starting position
-  const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   if (initialFen && initialFen !== INITIAL_FEN) {
     pgn += `[SetUp "1"]\n`;
     pgn += `[FEN "${initialFen}"]\n`;
@@ -133,7 +163,6 @@ export function createPgnFromLocalGame(game: GameRecord): string {
   if (headers.variant) {
     pgn += `[Variant "${headers.variant}"]\n`;
   }
-  const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   if (headers.fen && headers.fen !== INITIAL_FEN) {
     pgn += `[SetUp "1"]\n`;
     pgn += `[FEN "${headers.fen}"]\n`;
@@ -233,6 +262,8 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
     speed = "Correspondence";
   }
 
+  const initialFen = extractFenFromPgn(game.moves) || game.fen || INITIAL_FEN;
+
   return {
     id: gameId,
     players: {
@@ -245,7 +276,7 @@ export function convertNormalizedToLichessGame(game: NormalizedGame): {
     winner: winner,
     status: status,
     pgn: game.moves || undefined,
-    lastFen: game.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    lastFen: initialFen,
   };
 }
 
@@ -296,8 +327,7 @@ export function convertNormalizedToChessComGame(game: NormalizedGame): ChessComG
   }
 
   // Determine initial setup (FEN)
-  const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-  const initial_setup = game.fen || INITIAL_FEN;
+  const initial_setup = extractFenFromPgn(game.moves) || game.fen || INITIAL_FEN;
 
   return {
     url: url,
@@ -306,7 +336,7 @@ export function convertNormalizedToChessComGame(game: NormalizedGame): ChessComG
     end_time: end_time,
     rated: true,
     initial_setup: initial_setup,
-    fen: game.fen || INITIAL_FEN,
+    fen: initial_setup,
     rules: "chess",
     white: {
       rating: game.white_elo || 0,

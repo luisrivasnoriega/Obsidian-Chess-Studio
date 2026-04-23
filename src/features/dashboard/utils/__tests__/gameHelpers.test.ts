@@ -10,6 +10,7 @@ import {
   createLocalGameHeaders,
   createPGNFromMoves,
   createPgnFromLocalGame,
+  hasEnoughMovesInPgn,
 } from "../gameHelpers";
 
 describe("gameHelpers", () => {
@@ -67,6 +68,25 @@ describe("gameHelpers", () => {
       expect(headers.black).toBe("player2");
       expect(headers.result).toBe("1-0");
       expect(headers.site).toBe("Chess.com");
+      expect(headers.fen).toBe(game.initial_setup);
+    });
+
+    test("uses FEN from PGN when present (from-position games)", () => {
+      const fromPositionFen = "8/8/8/3k4/8/8/3K4/8 w - - 0 1";
+      const game: ChessComGame = {
+        url: "https://www.chess.com/game/live/456",
+        end_time: Math.floor(Date.now() / 1000),
+        white: { username: "chesscom:player1", rating: 1500, result: "win" },
+        black: { username: "chesscom:player2", rating: 1400, result: "checkmated" },
+        pgn: `[Event "Live Chess"]\n[Site "Chess.com"]\n[SetUp "1"]\n[FEN "${fromPositionFen}"]\n[Result "1-0"]\n\n1. Kc3 1-0`,
+        time_control: "600+0",
+        rated: true,
+        initial_setup: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        rules: "chess",
+      };
+      const headers = createChessComGameHeaders(game);
+      expect(headers.fen).toBe(fromPositionFen);
     });
   });
 
@@ -136,6 +156,23 @@ describe("gameHelpers", () => {
     });
   });
 
+  describe("hasEnoughMovesInPgn", () => {
+    test("returns true when the PGN has enough moves", () => {
+      const pgn = `[Event "Test"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6`;
+      expect(hasEnoughMovesInPgn(pgn, 5)).toBe(true);
+    });
+
+    test("returns false when the PGN has fewer moves than required", () => {
+      const pgn = `[Event "Test"]\n\n1. e4 e5`;
+      expect(hasEnoughMovesInPgn(pgn, 5)).toBe(false);
+    });
+
+    test("ignores comments and still counts moves correctly", () => {
+      const pgn = `[Event "Test"]\n\n1. e4 {comment} e5 2. Nf3 (2. Bc4) Nc6 3. Bb5 a6`;
+      expect(hasEnoughMovesInPgn(pgn, 5)).toBe(true);
+    });
+  });
+
   describe("convertNormalizedToLichessGame", () => {
     test("converts NormalizedGame to Lichess format", () => {
       const game: NormalizedGame = {
@@ -188,6 +225,31 @@ describe("gameHelpers", () => {
       expect(result.black.username).toBe("player2");
       expect(result.white.result).toBe("win");
       expect(result.black.result).toBe("checkmated");
+    });
+
+    test("uses FEN from PGN when moves contain from-position headers", () => {
+      const fromPositionFen = "8/8/8/3k4/8/8/3K4/8 w - - 0 1";
+      const game: NormalizedGame = {
+        id: 2,
+        white: "chesscom:player1",
+        black: "chesscom:player2",
+        result: "1-0",
+        date: "2024.01.01",
+        site: "Chess.com",
+        event: "Online Game",
+        site_id: 1,
+        event_id: 1,
+        white_id: 1,
+        black_id: 2,
+        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        moves: `[Event "Live Chess"]\n[SetUp "1"]\n[FEN "${fromPositionFen}"]\n[Result "1-0"]\n\n1. Kc3 1-0`,
+        time_control: "600+0",
+        white_elo: 1500,
+        black_elo: 1400,
+      };
+      const result = convertNormalizedToChessComGame(game);
+      expect(result.initial_setup).toBe(fromPositionFen);
+      expect(result.fen).toBe(fromPositionFen);
     });
   });
 });

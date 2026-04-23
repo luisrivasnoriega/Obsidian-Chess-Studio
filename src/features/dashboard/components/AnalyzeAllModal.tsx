@@ -1,7 +1,7 @@
 import { Button, Group, Modal, NumberInput, Progress, Radio, Select, Stack, Text } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface AnalyzeAllConfig {
@@ -37,11 +37,15 @@ export function AnalyzeAllModal({
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
   const stopAnalysisRef = useRef<(() => Promise<void>) | null>(null);
   const progressRef = useRef({ current: 0, total: 0 });
+  const runIdRef = useRef(0);
+  const closeTimeoutRef = useRef<number | null>(null);
+  const wasOpenedRef = useRef(false);
 
   const counts = useMemo(() => {
     const total = Math.max(0, Number.isFinite(gameCount) ? gameCount : 0);
@@ -65,10 +69,23 @@ export function AnalyzeAllModal({
     return form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
   }, [form.values.analyzeMode, counts]);
 
+  const clearCloseTimeout = useCallback(() => {
+    if (closeTimeoutRef.current != null) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  }, []);
+
   const handleSubmit = async () => {
+    if (isAnalyzing) return;
+    clearCloseTimeout();
     setSubmitError(null);
+    setIsStopping(false);
+    stopAnalysisRef.current = null;
     const normalizedTimeMs = Math.max(1, Math.round(Number(form.values.timeMs) || 0));
     const countToAnalyze = form.values.analyzeMode === "unanalyzed" ? counts.unanalyzed : counts.total;
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
     setIsAnalyzing(true);
     setProgress({ current: 0, total: countToAnalyze });
     progressRef.current = { current: 0, total: countToAnalyze };
@@ -82,16 +99,19 @@ export function AnalyzeAllModal({
           enginePath: form.values.enginePath,
         },
         (current, total) => {
+          if (runIdRef.current !== runId) return;
           setProgress({ current, total });
           progressRef.current = { current, total };
         },
         () => cancelledRef.current,
       );
+      if (runIdRef.current !== runId) return;
       // Store the stop function if provided
       if (result && typeof result === "object" && "stop" in result) {
         stopAnalysisRef.current = result.stop;
       }
     } catch (e) {
+      if (runIdRef.current !== runId) return;
       const msg = String(e);
       setSubmitError(msg);
       notifications.show({
@@ -103,26 +123,32 @@ export function AnalyzeAllModal({
         color: "red",
       });
     } finally {
-      setIsAnalyzing(false);
-      const latestProgress = progressRef.current;
-      if (!cancelledRef.current && latestProgress.current === latestProgress.total && latestProgress.total > 0) {
-        // Analysis complete, close modal after a short delay
-        setTimeout(() => {
-          onClose();
+      if (runIdRef.current === runId) {
+        setIsAnalyzing(false);
+        setIsStopping(false);
+        stopAnalysisRef.current = null;
+        const latestProgress = progressRef.current;
+        if (!cancelledRef.current && latestProgress.current === latestProgress.total && latestProgress.total > 0) {
+          // Analysis complete, close modal after a short delay
+          closeTimeoutRef.current = window.setTimeout(() => {
+            onClose();
+            setProgress({ current: 0, total: 0 });
+            progressRef.current = { current: 0, total: 0 };
+            closeTimeoutRef.current = null;
+          }, 1000);
+        } else if (cancelledRef.current) {
+          // Analysis was cancelled, reset progress
           setProgress({ current: 0, total: 0 });
           progressRef.current = { current: 0, total: 0 };
-        }, 1000);
-      } else if (cancelledRef.current) {
-        // Analysis was cancelled, reset progress
-        setProgress({ current: 0, total: 0 });
-        progressRef.current = { current: 0, total: 0 };
+        }
       }
     }
   };
 
   const handleStop = async () => {
+    if (!isAnalyzing || isStopping) return;
     cancelledRef.current = true;
-    setIsAnalyzing(false);
+    setIsStopping(true);
     // Stop all active engines immediately
     if (stopAnalysisRef.current) {
       try {
@@ -133,31 +159,39 @@ export function AnalyzeAllModal({
     }
   };
 
-  // Reset progress and form when modal opens/closes
+  // Reset when closed only if there is no active run; keep state alive for background analysis.
   useEffect(() => {
+    const wasOpened = wasOpenedRef.current;
+    wasOpenedRef.current = opened;
+
     if (!opened) {
+      clearCloseTimeout();
+      setSubmitError(null);
+      if (isAnalyzing) {
+        return;
+      }
+      runIdRef.current += 1;
       setProgress({ current: 0, total: 0 });
       progressRef.current = { current: 0, total: 0 };
-      setIsAnalyzing(false);
+      setIsStopping(false);
       cancelledRef.current = false;
       stopAnalysisRef.current = null;
-      setSubmitError(null);
     } else {
-      // Reset form to initial values when modal opens
-      form.setValues({
-        timeMs: 1500,
-        analyzeMode: analyzeMode,
-        enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
-      });
+      clearCloseTimeout();
+      // Reset form only on open transition to avoid render loops.
+      if (!isAnalyzing && !wasOpened) {
+        form.setValues({
+          timeMs: 1500,
+          analyzeMode: analyzeMode,
+          enginePath: initialEnginePath ?? engineOptions[0]?.value ?? "",
+        });
+      }
     }
+    return () => {
+      clearCloseTimeout();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    opened,
-    analyzeMode, // Reset form to initial values when modal opens
-    initialEnginePath,
-    engineOptions,
-    form.setValues,
-  ]);
+  }, [opened, isAnalyzing, analyzeMode, initialEnginePath, engineOptions, clearCloseTimeout, form.setValues]);
 
   return (
     <Modal opened={opened} onClose={onClose} title={t("features.dashboard.analyzeAllGames")} size="md">
@@ -240,7 +274,7 @@ export function AnalyzeAllModal({
 
           <Group justify="flex-end" mt="md">
             {isAnalyzing ? (
-              <Button variant="filled" color="red" onClick={handleStop}>
+              <Button variant="filled" color="red" onClick={handleStop} loading={isStopping} disabled={isStopping}>
                 {t("features.dashboard.stopAnalysis")}
               </Button>
             ) : (
@@ -251,7 +285,13 @@ export function AnalyzeAllModal({
                 <Button
                   type="button"
                   loading={isAnalyzing}
-                  disabled={isAnalyzing || engineOptions.length === 0 || !form.values.enginePath || !form.values.timeMs}
+                  disabled={
+                    isAnalyzing ||
+                    isStopping ||
+                    engineOptions.length === 0 ||
+                    !form.values.enginePath ||
+                    !form.values.timeMs
+                  }
                   onClick={() => void handleSubmit()}
                 >
                   {t("features.dashboard.analyze")}

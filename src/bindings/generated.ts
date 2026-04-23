@@ -421,6 +421,20 @@ async getProfileIntensityGames(profileId: string, filters: PlayerStatsFilters, i
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Build and return a ranked strategic weakness model for the profile.
+ * 
+ * The command incrementally backfills missing per-game weakness features, recomputes a snapshot,
+ * persists it, and returns top-ranked signals with evidence rows.
+ */
+async getProfileWeaknessModel(profileId: string, limit: number | null, filters: PlayerStatsFilters | null) : Promise<Result<ProfileWeaknessModel, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_weakness_model", { profileId, limit, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getPlayer(file: string, id: number) : Promise<Result<Player | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_player", { file, id }) };
@@ -1949,6 +1963,10 @@ export type PositionQueryJs = { fen: string; type_: string }
 export type PositionStats = { move: string; white: number; draw: number; black: number }
 export type PostGameReviewVariantsInput = { documentDir: string; initialFen: string; moves: string[]; humanColor: string | null }
 export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string }
+export type ProfileWeaknessModel = { snapshotKey: string; modelVersion: number; generatedAt: string; totalGames: number; scoredGames: number; backfilledGames: number; signals: ProfileWeaknessSignal[]; signalsByColor: ProfileWeaknessSignalsByColor }
+export type ProfileWeaknessSignal = { signalKey: string; title: string; triggerText: string; attackPlan: string; score: number; severity: number; confidence: number; controllability: number; recency: number; support: number; nEff: number | null; impactJson: string; triggerJson: string; evidence: ProfileWeaknessSignalEvidence[] }
+export type ProfileWeaknessSignalEvidence = { evidenceRank: number; gameId: number | null; plyFrom: number | null; plyTo: number | null; evidenceText: string; evidenceJson: string }
+export type ProfileWeaknessSignalsByColor = { white: ProfileWeaknessSignal[]; black: ProfileWeaknessSignal[] }
 export type Puzzle = { id: number; fen: string; moves: string; rating: number; rating_deviation: number; popularity: number; nb_plays: number; themes: string | null; game_url: string | null; opening_tags: string | null }
 /**
  * Information about a puzzle database

@@ -2095,6 +2095,18 @@ fn load_or_infer_profile_player_id(db: &mut SqliteConnection) -> Result<Option<i
         #[diesel(sql_type = Nullable<Text>, column_name = "Value")]
         value: Option<String>,
     }
+    #[derive(QueryableByName)]
+    struct CountRow {
+        #[diesel(sql_type = BigInt, column_name = "c")]
+        c: i64,
+    }
+    #[derive(QueryableByName)]
+    struct CandidateRow {
+        #[diesel(sql_type = Integer, column_name = "player_id")]
+        player_id: i32,
+        #[diesel(sql_type = BigInt, column_name = "c")]
+        c: i64,
+    }
 
     let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
         .load::<InfoRow>(db)?
@@ -2104,45 +2116,110 @@ fn load_or_infer_profile_player_id(db: &mut SqliteConnection) -> Result<Option<i
         .and_then(|v| v.trim().parse::<i32>().ok())
         .filter(|v| *v > 0);
 
-    if existing.is_some() {
-        return Ok(existing);
-    }
+    let existing_total_count = if let Some(existing_id) = existing {
+        sql_query("SELECT COUNT(*) AS c FROM Games WHERE WhiteID = ?1 OR BlackID = ?1")
+            .bind::<Integer, _>(existing_id)
+            .load::<CountRow>(db)?
+            .into_iter()
+            .next()
+            .map(|r| r.c)
+            .unwrap_or(0)
+    } else {
+        0
+    };
 
-    #[derive(QueryableByName)]
-    struct IdRow {
-        #[diesel(sql_type = Integer, column_name = "player_id")]
-        player_id: i32,
-    }
+    let existing_analyzed_count = if let Some(existing_id) = existing {
+        sql_query(
+            r#"
+            SELECT COUNT(*) AS c
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
+            WHERE g.WhiteID = ?1 OR g.BlackID = ?1
+            "#,
+        )
+        .bind::<Integer, _>(existing_id)
+        .load::<CountRow>(db)?
+        .into_iter()
+        .next()
+        .map(|r| r.c)
+        .unwrap_or(0)
+    } else {
+        0
+    };
 
-    let inferred: Option<i32> = sql_query(
+    let dominant_analyzed = sql_query(
         r#"
-        SELECT player_id
+        SELECT player_id, COUNT(*) AS c
         FROM (
-            SELECT WhiteId AS player_id, COUNT(*) AS c FROM Games GROUP BY WhiteId
+            SELECT g.WhiteID AS player_id
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
             UNION ALL
-            SELECT BlackId AS player_id, COUNT(*) AS c FROM Games GROUP BY BlackId
+            SELECT g.BlackID AS player_id
+            FROM Games g
+            INNER JOIN GameAnalysisStats gas ON gas.GameID = g.ID
         )
         GROUP BY player_id
-        ORDER BY SUM(c) DESC
+        ORDER BY c DESC
         LIMIT 1
         "#,
     )
-    .load::<IdRow>(db)?
+    .load::<CandidateRow>(db)?
     .into_iter()
     .next()
-    .map(|r| r.player_id)
-    .filter(|v| *v > 0);
+    .filter(|r| r.player_id > 0);
 
-    let Some(pid) = inferred else {
+    let dominant_all_games = sql_query(
+        r#"
+        SELECT player_id, COUNT(*) AS c
+        FROM (
+            SELECT WhiteID AS player_id FROM Games
+            UNION ALL
+            SELECT BlackID AS player_id FROM Games
+        )
+        GROUP BY player_id
+        ORDER BY c DESC
+        LIMIT 1
+        "#,
+    )
+    .load::<CandidateRow>(db)?
+    .into_iter()
+    .next()
+    .filter(|r| r.player_id > 0);
+
+    let chosen = if let Some(existing_id) = existing {
+        let dominant_analyzed_same = dominant_analyzed
+            .as_ref()
+            .map(|r| r.player_id == existing_id)
+            .unwrap_or(false);
+        if existing_analyzed_count >= 8 || dominant_analyzed_same {
+            Some(existing_id)
+        } else if let Some(candidate) = dominant_analyzed.as_ref() {
+            Some(candidate.player_id)
+        } else if existing_total_count > 0 {
+            Some(existing_id)
+        } else {
+            dominant_all_games.as_ref().map(|r| r.player_id)
+        }
+    } else if let Some(candidate) = dominant_analyzed.as_ref() {
+        Some(candidate.player_id)
+    } else {
+        dominant_all_games.as_ref().map(|r| r.player_id)
+    }
+    .filter(|pid| *pid > 0);
+
+    let Some(pid) = chosen else {
         return Ok(None);
     };
 
-    let _ = sql_query(
-        "INSERT INTO Info (Name, Value) VALUES ('ProfilePlayerId', ?1)
-         ON CONFLICT(Name) DO UPDATE SET Value=excluded.Value",
-    )
-    .bind::<Text, _>(pid.to_string())
-    .execute(db);
+    if existing != Some(pid) {
+        let _ = sql_query(
+            "INSERT INTO Info (Name, Value) VALUES ('ProfilePlayerId', ?1)
+             ON CONFLICT(Name) DO UPDATE SET Value=excluded.Value",
+        )
+        .bind::<Text, _>(pid.to_string())
+        .execute(db);
+    }
 
     Ok(Some(pid))
 }

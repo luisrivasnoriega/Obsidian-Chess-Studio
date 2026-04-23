@@ -7,7 +7,7 @@ mod analysis_storage;
 mod app;
 mod chess;
 mod dashboard_games_history;
-mod db;
+pub mod db;
 mod error;
 mod fide;
 mod fs;
@@ -80,6 +80,7 @@ use crate::db::{
     get_profile_intensity_accuracy,
     get_profile_phase_games,
     get_profile_intensity_games,
+    get_profile_weakness_model,
     upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
     add_profile_games_from_pgn,
     create_event_game,
@@ -221,6 +222,7 @@ pub async fn run() {
             get_profile_intensity_accuracy,
             get_profile_phase_games,
             get_profile_intensity_games,
+            get_profile_weakness_model,
             get_player,
             count_pgn_games,
             read_games,

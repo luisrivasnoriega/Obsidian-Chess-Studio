@@ -79,9 +79,12 @@ export async function createTab({
   const id = genID();
 
   if (pgn !== undefined) {
+    const pgnFenMatch = pgn.match(/\[FEN\s+"([^"]+)"\]/i);
+    const pgnFen = pgnFenMatch?.[1]?.trim();
+    const initialFenForParse = pgnFen && pgnFen.length > 0 ? pgnFen : headers?.fen;
     // For variants files, parse as normal PGN (with variations) but display in variants view
     // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-    const tree = await parsePGN(pgn, headers?.fen, false);
+    const tree = await parsePGN(pgn, initialFenForParse, false);
     // If headers are provided, only merge them if the parsed PGN headers are incomplete
     // This preserves complete headers from saved PGNs (like game.pgn) while allowing
     // updates for PGNs that were reconstructed from moves

@@ -11,7 +11,7 @@ use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -559,8 +559,25 @@ pub async fn dashboard_get_games_history_rows(
 
     let usernames_lower = usernames_lower_set(&req.profile_usernames);
 
+    let base_limit = req.game_history_limit.max(0);
+    let has_opponent_text_filter = req
+        .opponent_contains
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    // When filtering by opponent, widen the source scan window so matches are not
+    // lost just because they are older than the visible dashboard limit.
+    // Keep an upper bound to avoid expensive full-history scans on every keystroke.
+    let source_limit = if base_limit <= 0 {
+        0
+    } else if req.selected_opponent_id.is_some() || has_opponent_text_filter {
+        base_limit.max(1000).min(5000)
+    } else {
+        base_limit
+    };
+
     // 1) Load local games.
-    let local_limit = req.game_history_limit.max(0) as usize;
+    let local_limit = source_limit as usize;
     let local_games = load_local_games(&app, &profile_id, local_limit)?;
 
     // 2) Load online games (single query; later we split by platform).
@@ -581,7 +598,7 @@ pub async fn dashboard_get_games_history_rows(
     q.options = Some(QueryOptions {
         skip_count: true,
         page: Some(1),
-        page_size: Some(req.game_history_limit.max(0) as i32),
+        page_size: Some(source_limit as i32),
         sort: GameSort::Date,
         direction: SortDirection::Desc,
     });
@@ -1016,42 +1033,167 @@ pub async fn dashboard_search_profile_opponents(
         return Ok(vec![]);
     }
 
+    let q_lower = q.to_lowercase();
     let usernames_lower = usernames_lower_set(&profile_usernames);
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let profile_player_id: Option<i32> = (|| {
         let conn = Connection::open(&db_path).ok()?;
-        ensure_profile_player_id(&conn)
+        let from_usernames = find_profile_player_id_by_usernames(&conn, &usernames_lower);
+        if !usernames_lower.is_empty() {
+            from_usernames
+        } else {
+            from_usernames.or_else(|| ensure_profile_player_id(&conn))
+        }
     })();
 
-    let pq = PlayerQuery {
-        options: QueryOptions {
-            skip_count: true,
-            page: Some(1),
-            page_size: Some(25),
-            sort: PlayerSort::Name,
-            direction: SortDirection::Asc,
-        },
-        name: Some(q),
-        range: None,
+    let mut out: Vec<String> = Vec::new();
+    let mut seen_stripped_lower: HashSet<String> = HashSet::new();
+    let mut maybe_push = |name_raw: &str| {
+        let raw = name_raw.trim();
+        if raw.is_empty() {
+            return;
+        }
+        let raw_lower = raw.to_lowercase();
+        let stripped = strip_account_key(raw).trim();
+        if stripped.is_empty() {
+            return;
+        }
+        let stripped_lower = stripped.to_lowercase();
+
+        if usernames_lower.contains(&raw_lower) || usernames_lower.contains(&stripped_lower) {
+            return;
+        }
+        if !raw_lower.contains(&q_lower) && !stripped_lower.contains(&q_lower) {
+            return;
+        }
+        if seen_stripped_lower.insert(stripped_lower) {
+            out.push(stripped.to_string());
+        }
     };
 
-    let res = get_players(db_path, pq, state).await?;
-    let mut out: Vec<String> = Vec::new();
-    for p in res.data {
-        if profile_player_id.map(|pid| p.id == pid).unwrap_or(false) {
-            continue;
+    if let Some(profile_pid) = profile_player_id {
+        let conn = Connection::open(&db_path)?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT p.Name, COUNT(*) AS games_count
+            FROM Games g
+            JOIN Players p
+              ON p.ID = CASE WHEN g.WhiteID = ?1 THEN g.BlackID ELSE g.WhiteID END
+            WHERE (g.WhiteID = ?1 OR g.BlackID = ?1)
+              AND p.Name IS NOT NULL
+              AND trim(p.Name) <> ''
+              AND (
+                lower(trim(p.Name)) LIKE '%' || ?2 || '%'
+                OR replace(replace(lower(trim(p.Name)), 'lichess:', ''), 'chesscom:', '') LIKE '%' || ?2 || '%'
+              )
+            GROUP BY p.ID, p.Name
+            ORDER BY games_count DESC, p.Name COLLATE NOCASE ASC
+            LIMIT 200
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![profile_pid, q_lower.as_str()], |row| {
+            Ok(row.get::<_, Option<String>>(0)?)
+        })?;
+
+        for row in rows {
+            let Ok(name_opt) = row else {
+                continue;
+            };
+            let Some(name) = name_opt else {
+                continue;
+            };
+            maybe_push(&name);
         }
-        let Some(name_raw) = p.name else {
-            continue;
+    } else {
+        let pq = PlayerQuery {
+            options: QueryOptions {
+                skip_count: true,
+                page: Some(1),
+                page_size: Some(200),
+                sort: PlayerSort::Name,
+                direction: SortDirection::Asc,
+            },
+            name: Some(q.clone()),
+            range: None,
         };
-        let name = name_raw.trim().to_string();
-        if name.is_empty() {
-            continue;
+        let res = get_players(db_path.clone(), pq, state).await?;
+        for p in res.data {
+            let Some(name_raw) = p.name else {
+                continue;
+            };
+            maybe_push(&name_raw);
         }
-        if usernames_lower.contains(&name.to_lowercase()) {
-            continue;
+    }
+
+    // Release mutable borrows captured by the helper closure before exact-match fallback.
+    drop(maybe_push);
+
+    // Ensure exact matches are included even if they were outside the first page/ranking window.
+    if !seen_stripped_lower.contains(&q_lower) {
+        let conn = Connection::open(&db_path)?;
+        let exact_name: Option<String> = if let Some(profile_pid) = profile_player_id {
+            conn.query_row(
+                r#"
+                SELECT p.Name
+                FROM Players p
+                WHERE p.Name IS NOT NULL
+                  AND trim(p.Name) <> ''
+                  AND (
+                    lower(trim(p.Name)) = ?1
+                    OR replace(replace(lower(trim(p.Name)), 'lichess:', ''), 'chesscom:', '') = ?1
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM Games g
+                    WHERE (g.WhiteID = ?2 AND g.BlackID = p.ID)
+                       OR (g.BlackID = ?2 AND g.WhiteID = p.ID)
+                  )
+                LIMIT 1
+                "#,
+                params![q_lower.as_str(), profile_pid],
+                |row| row.get(0),
+            )
+            .optional()?
+        } else {
+            conn.query_row(
+                r#"
+                SELECT p.Name
+                FROM Players p
+                WHERE p.Name IS NOT NULL
+                  AND trim(p.Name) <> ''
+                  AND (
+                    lower(trim(p.Name)) = ?1
+                    OR replace(replace(lower(trim(p.Name)), 'lichess:', ''), 'chesscom:', '') = ?1
+                  )
+                LIMIT 1
+                "#,
+                params![q_lower.as_str()],
+                |row| row.get(0),
+            )
+            .optional()?
+        };
+
+        if let Some(name_raw) = exact_name {
+            let raw = name_raw.trim();
+            if !raw.is_empty() {
+                let raw_lower = raw.to_lowercase();
+                let stripped = strip_account_key(raw).trim().to_string();
+                let stripped_lower = stripped.to_lowercase();
+                if !stripped.is_empty()
+                    && (raw_lower.contains(&q_lower) || stripped_lower.contains(&q_lower))
+                    && !usernames_lower.contains(&raw_lower)
+                    && !usernames_lower.contains(&stripped_lower)
+                    && seen_stripped_lower.insert(stripped_lower)
+                {
+                    out.insert(0, stripped);
+                }
+            }
         }
-        out.push(name);
+    }
+
+    if out.len() > 200 {
+        out.truncate(200);
     }
     Ok(out)
 }
