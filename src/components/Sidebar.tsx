@@ -1,4 +1,5 @@
 import { AppShellSection, Group, Stack, Tooltip } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import type { IconProps } from "@tabler/icons-react";
 import {
   IconCalendarEvent,
@@ -15,14 +16,17 @@ import {
   IconUserCircle,
   IconWorld,
 } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
 import { useAtom } from "jotai";
-import { type ComponentType, useCallback } from "react";
+import { type ComponentType, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, activeTabAtom, type Profile, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import type { Session } from "@/utils/session";
 import { createTab, type Tab } from "@/utils/tabs";
 import * as classes from "./Sidebar.css";
 
@@ -145,11 +149,187 @@ export const linksdata = [...primaryLinks, ...secondaryLinksData, ...tertiaryLin
 export function SideBar() {
   const _matchesRoute = useMatchRoute();
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
+  const [profiles] = useAtom(profilesAtom);
+  const [activeProfileId] = useAtom(activeProfileIdAtom);
+  const [sessions, setSessions] = useAtom(sessionsAtom);
   const { layout } = useResponsiveLayout();
   const isFooterNav = layout.sidebar.position === "footer";
+  const profileSyncInFlightRef = useRef(false);
+
+  const sessionMeta = useCallback((session: Session) => {
+    if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
+    if (session.chessCom?.username) return { platform: "chesscom" as const, username: session.chessCom.username };
+    return { platform: "unknown" as const, username: "-" };
+  }, []);
+
+  const upsertSession = useCallback(
+    (session: Session) => {
+      setSessions((prev) => {
+        const nextMeta = sessionMeta(session);
+        const nextKey = `${session.profileId ?? ""}:${nextMeta.platform}:${nextMeta.username}`;
+        const filtered = prev.filter((existing) => {
+          const meta = sessionMeta(existing);
+          const key = `${existing.profileId ?? ""}:${meta.platform}:${meta.username}`;
+          return key !== nextKey;
+        });
+        return [...filtered, { ...session, updatedAt: session.updatedAt ?? Date.now() }];
+      });
+    },
+    [setSessions, sessionMeta],
+  );
+
+  const invalidateProfileStats = useCallback(
+    (profileId: string) => {
+      queryClient.invalidateQueries({ queryKey: ["personalInfo", profileId] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["mergedPlayerInfo"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["profilePhaseStats"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerOpeningsWhite"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerOpeningsBlack"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["playerRatingTimeline"] }).catch(() => {});
+    },
+    [queryClient],
+  );
+
+  const syncProfileSessions = useCallback(
+    async (profile: Profile) => {
+      if (profileSyncInFlightRef.current) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.sync.inProgress", { defaultValue: "A profile update is already running." }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      const linkedSessions = sessions.filter((session) => session.profileId === profile.id);
+      const syncableSessions = linkedSessions.filter((session) => {
+        const meta = sessionMeta(session);
+        return (meta.platform === "lichess" || meta.platform === "chesscom") && meta.username !== "-";
+      });
+
+      if (syncableSessions.length === 0) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.sync.noAccounts", { defaultValue: "This profile has no linked accounts to update." }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      const orderedSessions = [...syncableSessions].sort((a, b) => {
+        const aPlatform = sessionMeta(a).platform;
+        const bPlatform = sessionMeta(b).platform;
+        if (aPlatform === bPlatform) return 0;
+        return aPlatform === "lichess" ? -1 : 1;
+      });
+
+      profileSyncInFlightRef.current = true;
+      let importedGames = 0;
+
+      try {
+        for (const session of orderedSessions) {
+          const meta = sessionMeta(session);
+          const username = meta.username;
+          const notificationId = `sidebar-sync:${profile.id}:${meta.platform}:${username}`;
+
+          notifications.show({
+            id: notificationId,
+            title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
+            message: `${profile.name} - ${username} (${meta.platform})`,
+            loading: true,
+            autoClose: false,
+          });
+
+          try {
+            const result = await syncSessionGamesToProfileDb({
+              profile,
+              session,
+              onBatchUpdate: (update) => {
+                const message =
+                  update.totalBatches > 0
+                    ? `${profile.name} - ${username} (${update.platform}) ${t("accounts.sync.batchProgress", {
+                        defaultValue: "Batch {{current}} of {{total}}",
+                        current: update.currentBatch,
+                        total: update.totalBatches,
+                      })}`
+                    : `${profile.name} - ${username} (${update.platform})`;
+
+                notifications.update({
+                  id: notificationId,
+                  message,
+                  loading: true,
+                  autoClose: false,
+                });
+              },
+            });
+
+            importedGames += result.importedGames ?? 0;
+            if (result.updatedSession) upsertSession(result.updatedSession);
+
+            notifications.update({
+              id: notificationId,
+              title: t("common.success", { defaultValue: "Success" }),
+              message: `${profile.name} - ${username} (${meta.platform})`,
+              color: "green",
+              loading: false,
+              autoClose: 2500,
+            });
+          } catch (error) {
+            notifications.update({
+              id: notificationId,
+              title: t("common.error", { defaultValue: "Error" }),
+              message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${String(error)}`,
+              color: "red",
+              loading: false,
+              autoClose: 4000,
+            });
+          }
+        }
+      } finally {
+        profileSyncInFlightRef.current = false;
+      }
+
+      if (importedGames > 0) {
+        invalidateProfileStats(profile.id);
+      }
+
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.sync.completed", {
+          defaultValue: "Profile {{profile}} updated.",
+          profile: profile.name,
+        }),
+        color: "green",
+        autoClose: 2500,
+      });
+    },
+    [invalidateProfileStats, sessionMeta, sessions, t, upsertSession],
+  );
+
+  const syncActiveProfileNow = useCallback(() => {
+    const profile = profiles.find((item) => item.id === activeProfileId) ?? null;
+    if (!profile) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.selectProfile", { defaultValue: "Select profile" }),
+        color: "yellow",
+        autoClose: 3000,
+      });
+      return;
+    }
+
+    void syncProfileSessions(profile);
+  }, [activeProfileId, profiles, syncProfileSessions, t]);
+
   const openRouteTab = async (route: string, name: string) => {
     const existing = tabs.find((tab) => tab.route === route);
     if (existing) {
@@ -273,12 +453,7 @@ export function SideBar() {
       key="profiles-sync"
       icon={IconRefresh}
       label={t("profiles.sync.active", { defaultValue: "Update active profile" })}
-      onClick={() => {
-        try {
-          sessionStorage.setItem("profiles_sync_request", "active");
-        } catch {}
-        void openProfilesPage();
-      }}
+      onClick={syncActiveProfileNow}
     />
   );
 

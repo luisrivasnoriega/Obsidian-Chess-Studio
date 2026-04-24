@@ -6,6 +6,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === "dashboard_search_profile_opponents") return [];
     if (cmd === "dashboard_get_games_history_rows") return { rows: [], totalCount: 0 };
+    if (cmd === "dashboard_get_analyze_all_counts_bulk") {
+      return {
+        all: { total: 0, analyzed: 0, unanalyzed: 0 },
+        local: { total: 0, analyzed: 0, unanalyzed: 0 },
+        chesscom: { total: 0, analyzed: 0, unanalyzed: 0 },
+        lichess: { total: 0, analyzed: 0, unanalyzed: 0 },
+        chessbase: { total: 0, analyzed: 0, unanalyzed: 0 },
+      };
+    }
     return null;
   }),
 }));

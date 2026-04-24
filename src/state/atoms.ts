@@ -135,6 +135,103 @@ export const activeProfileIdAtom = atomWithStorage<string | null>("activeProfile
   getOnInit: true,
 });
 
+const profilesPageSortSchema = z.object({
+  field: z.enum(["name", "lastActivity"]),
+  direction: z.enum(["asc", "desc"]),
+});
+
+const profilesPageUiStateSchema = z.object({
+  profileQuery: z.string(),
+  detailsTab: z.enum(["database", "overview", "ratings", "openings", "stats", "pawnStructures"]),
+  profilesPage: z.number().int().min(1),
+  sortBy: profilesPageSortSchema,
+});
+
+export type ProfilesPageUiState = z.infer<typeof profilesPageUiStateSchema>;
+
+export const defaultProfilesPageUiState: ProfilesPageUiState = {
+  profileQuery: "",
+  detailsTab: "database",
+  profilesPage: 1,
+  sortBy: {
+    field: "lastActivity",
+    direction: "desc",
+  },
+};
+
+export const profilesPageUiStateAtom = atomWithStorage<ProfilesPageUiState>(
+  "profiles-page-ui-state",
+  defaultProfilesPageUiState,
+  createZodStorage(profilesPageUiStateSchema, sessionStorage),
+  { getOnInit: true },
+);
+
+const profileStatsUiStateSchema = z.object({
+  platform: z.enum(["all", "Chess.com", "Lichess"]),
+  timeControl: z.enum(["any", "ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"]),
+  opponentEloBucket: z.string(),
+  dateRange: z.enum(["7d", "30d", "90d", "1y", "all"]).nullable(),
+  groupBy: z.enum(["phase", "outcomeAccuracy", "outcomeReason", "intensity", "weakness"]),
+  tacticalFilter: z.enum(["none", "forks"]),
+});
+
+export type ProfileStatsUiState = z.infer<typeof profileStatsUiStateSchema>;
+
+export const defaultProfileStatsUiState: ProfileStatsUiState = {
+  platform: "all",
+  timeControl: "any",
+  opponentEloBucket: "all",
+  dateRange: "all",
+  groupBy: "phase",
+  tacticalFilter: "none",
+};
+
+const profileStatsUiStateByProfileSchema = z.record(z.string(), profileStatsUiStateSchema).catch({});
+
+export const profileStatsUiStateByProfileAtom = atomWithStorage<Record<string, ProfileStatsUiState>>(
+  "profile-stats-ui-by-profile",
+  {},
+  createZodStorage(profileStatsUiStateByProfileSchema, sessionStorage),
+  { getOnInit: true },
+);
+
+const profilePawnStructuresUiStateSchema = z.object({
+  pawnMoveFilter: z.number().int().min(1).max(50),
+  pawnColorFilter: z.enum(["white", "black", "any"]),
+  pawnStructureMode: z.enum(["player", "both"]),
+  pawnMotifFilters: z.array(z.string()),
+  pawnNamedStructureFilters: z.array(z.string()),
+  pawnSortBy: z.enum(["frequency", "winRate"]),
+  platform: z.enum(["all", "Chess.com", "Lichess"]),
+  timeControl: z.enum(["any", "ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"]),
+  opponentEloBucket: z.string(),
+  dateRange: z.enum(["7d", "30d", "90d", "1y", "all"]).nullable(),
+});
+
+export type ProfilePawnStructuresUiState = z.infer<typeof profilePawnStructuresUiStateSchema>;
+
+export const defaultProfilePawnStructuresUiState: ProfilePawnStructuresUiState = {
+  pawnMoveFilter: 10,
+  pawnColorFilter: "white",
+  pawnStructureMode: "player",
+  pawnMotifFilters: [],
+  pawnNamedStructureFilters: [],
+  pawnSortBy: "frequency",
+  platform: "all",
+  timeControl: "any",
+  opponentEloBucket: "all",
+  dateRange: "90d",
+};
+
+const profilePawnStructuresUiStateByProfileSchema = z.record(z.string(), profilePawnStructuresUiStateSchema).catch({});
+
+export const profilePawnStructuresUiStateByProfileAtom = atomWithStorage<Record<string, ProfilePawnStructuresUiState>>(
+  "profile-pawn-structures-ui-by-profile",
+  {},
+  createZodStorage(profilePawnStructuresUiStateByProfileSchema, sessionStorage),
+  { getOnInit: true },
+);
+
 export const activeProfileHasPremiumAccessAtom = atom((get) => {
   const activeProfileId = get(activeProfileIdAtom);
   if (!activeProfileId) return false;
@@ -429,6 +526,8 @@ export const bestMovesFamily = atomFamily(
     }),
   (a, b) => a.fen === b.fen && equal(a.gameMoves, b.gameMoves),
 );
+const BEST_MOVES_FAMILY_MAX_AGE_MS = 10 * 60 * 1000;
+bestMovesFamily.setShouldRemove((createdAt) => Date.now() - createdAt > BEST_MOVES_FAMILY_MAX_AGE_MS);
 
 export const tabEngineSettingsFamily = atomFamily(
   ({
@@ -491,3 +590,31 @@ export const enableAllAtom = atom(null, (get, set, value: boolean) => {
     set(atom, { ...get(atom), enabled: value });
   }
 });
+
+export function cleanupTabScopedAtoms(tabId: string, engineNames: string[] = []) {
+  if (!tabId) return;
+
+  threatFamily.remove(tabId);
+  evalOpenFamily.remove(tabId);
+  invisibleFamily.remove(tabId);
+  tabFamily.remove(tabId);
+  localOptionsFamily.remove(tabId);
+  dbTypeFamily.remove(tabId);
+  dbTabFamily.remove(tabId);
+  analysisTabFamily.remove(tabId);
+  practiceTabFamily.remove(tabId);
+  expandedEnginesFamily.remove(tabId);
+  pgnOptionsFamily.remove(tabId);
+  currentPuzzleFamily.remove(tabId);
+  gameStateFamily.remove(tabId);
+  playersFamily.remove(tabId);
+
+  for (const engineName of engineNames) {
+    engineMovesFamily.remove({ tab: tabId, engine: engineName });
+    engineProgressFamily.remove({ tab: tabId, engine: engineName });
+    tabEngineSettingsFamily.remove({
+      tab: tabId,
+      engineName,
+    });
+  }
+}

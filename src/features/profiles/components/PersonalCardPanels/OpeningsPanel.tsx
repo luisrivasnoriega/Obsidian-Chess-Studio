@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
 import { commands } from "@/bindings";
-import type { EloBucket, OpeningStats } from "@/bindings/playerStats";
+import type { EloBucket, OpeningStats, ProfileSidebarStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
@@ -42,8 +42,27 @@ function OpeningsPanel({
   // Create a stable signature that only changes when the actual data changes.
   const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
 
+  const {
+    data: profileSidebarStats,
+    isLoading: isLoadingProfileSidebarStats,
+    isFetching: isFetchingProfileSidebarStats,
+  } = useQuery<ProfileSidebarStats | null>({
+    queryKey: ["profileSidebarStats", profileId ?? null],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return unwrap(await playerStatsCommands.getProfileSidebarStats(profileId));
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
   // Get ELO buckets from backend
-  const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
+  const { data: localEloBuckets = [] } = useQuery<EloBucket[]>({
     queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerEloBuckets(info?.site_stats_data ?? []));
@@ -51,11 +70,13 @@ function OpeningsPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !profileId && statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+
+  const eloBuckets = profileSidebarStats?.elo_buckets ?? localEloBuckets;
 
   const opponentEloOptions = useMemo(() => {
     return [
@@ -71,7 +92,7 @@ function OpeningsPanel({
   const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
   const [activeColor, setActiveColor] = useState<"white" | "black">("white");
 
-  const { data: sidebarModel } = useQuery({
+  const { data: localSidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
       return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? []));
@@ -79,11 +100,12 @@ function OpeningsPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !profileId && statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+  const sidebarModel = profileSidebarStats?.sidebar_model ?? localSidebarModel;
 
   // Create filters for backend
   const filters = useMemo(
@@ -194,7 +216,13 @@ function OpeningsPanel({
 
   // Calculate loading state: prop from parent OR internal queries loading/fetching
   const isAnyLoading =
-    isLoading || isLoadingWhiteOpenings || isFetchingWhiteOpenings || isLoadingBlackOpenings || isFetchingBlackOpenings;
+    isLoading ||
+    isLoadingWhiteOpenings ||
+    isFetchingWhiteOpenings ||
+    isLoadingBlackOpenings ||
+    isFetchingBlackOpenings ||
+    isLoadingProfileSidebarStats ||
+    isFetchingProfileSidebarStats;
   const hasPanelData = (isStackedLayout ? activeOpenings.length : rowCount) > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;

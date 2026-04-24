@@ -5,6 +5,7 @@
 
 pub mod analysis;
 pub mod commands;
+pub mod dashboard_analyze_all;
 pub mod engine_path;
 pub mod evaluation;
 pub mod human_game_analyzer;
@@ -17,6 +18,6 @@ pub mod uci;
 
 #[allow(unused_imports)]
 pub use {
-    analysis::*, commands::*, engine_path::*, evaluation::*, manager::*, process::*, types::*,
-    uci::*,
+    analysis::*, commands::*, dashboard_analyze_all::*, engine_path::*, evaluation::*, manager::*,
+    process::*, types::*, uci::*,
 };

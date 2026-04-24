@@ -1,15 +1,14 @@
 import { Paper, Progress, Stack, Text } from "@mantine/core";
 import { useQuery } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
-import { commands, events } from "@/bindings";
+import { events } from "@/bindings";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { sessionsAtom } from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
-import { query_players } from "@/utils/db";
-import { getProfileDbPath } from "@/utils/profileDb";
 import type { Session } from "@/utils/session";
 import { unwrap } from "@/utils/unwrap";
 import PersonalPlayerCard from "../PersonalCard";
@@ -35,41 +34,36 @@ export async function fetchPersonalInfoForProfile(input: {
   effectiveProfileId: string;
   sessions: Session[];
 }): Promise<PersonalInfo[]> {
-  const dbPath = await getProfileDbPath(input.effectiveProfileId);
-
   const playerSessions = input.sessions.filter(
     (s) => s.profileId === input.effectiveProfileId && (s.lichess?.username || s.chessCom?.username),
   );
 
-  const results = await Promise.allSettled(
-    playerSessions.map(async (session) => {
-      const accountKey = session.lichess
-        ? getAccountKey("lichess", session.lichess.username)
-        : session.chessCom
-          ? getAccountKey("chesscom", session.chessCom.username)
-          : null;
-      if (!accountKey) throw new Error("Session does not have an account key");
-
-      const players = await query_players(dbPath, {
-        name: accountKey,
-        options: {
-          pageSize: 200,
-          direction: "asc",
-          sort: "id",
-          skipCount: false,
-        },
-      });
-      const normalizedAccountKey = accountKey.trim().toLowerCase();
-      const player =
-        players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
-      if (!player) throw new Error("Player not found in database");
-
-      const info = unwrap(await commands.getPlayersGameInfo(dbPath, player.id));
-      return { session, info };
-    }),
+  const accountKeys = Array.from(
+    new Set(
+      playerSessions.flatMap((session) => {
+        const accountKey = session.lichess
+          ? getAccountKey("lichess", session.lichess.username)
+          : session.chessCom
+            ? getAccountKey("chesscom", session.chessCom.username)
+            : null;
+        return accountKey ? [accountKey] : [];
+      }),
+    ),
   );
 
-  return results.filter((r) => r.status === "fulfilled").map((r) => (r as PromiseFulfilledResult<PersonalInfo>).value);
+  if (accountKeys.length === 0) return [];
+
+  const info = await invoke<PlayerGameInfo>("get_profile_accounts_game_info", {
+    profileId: input.effectiveProfileId,
+    accountKeys,
+  });
+
+  return [
+    {
+      session: playerSessions[0]!,
+      info,
+    },
+  ];
 }
 
 export function computePersonalInfoSignature(personalInfo: PersonalInfo[] | undefined | null): string | null {
@@ -88,6 +82,7 @@ export function getMergedPlayerInfoQueryKey(personalInfoSignature: string) {
 
 export async function fetchMergedPlayerInfo(personalInfo: PersonalInfo[]): Promise<PlayerGameInfo | null> {
   if (personalInfo.length === 0) return null;
+  if (personalInfo.length === 1) return personalInfo[0]?.info ?? null;
   const allSiteStats = personalInfo.flatMap((i) => i.info?.site_stats_data ?? []);
   const merged = unwrap(await playerStatsCommands.mergePlayerSiteStats(allSiteStats));
   return { site_stats_data: merged };

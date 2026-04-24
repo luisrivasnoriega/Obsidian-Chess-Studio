@@ -19,14 +19,20 @@ import { useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { useQuery } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame, PlayerGameInfo } from "@/bindings";
 import { commands } from "@/bindings";
-import type { EloBucket } from "@/bindings/playerStats";
+import type { EloBucket, ProfileSidebarStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
-import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeTabAtom,
+  defaultProfileStatsUiState,
+  profileStatsUiStateByProfileAtom,
+  sessionsAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
 import { getDocumentDir } from "@/utils/documentDir";
 import { createFile } from "@/utils/files";
@@ -382,6 +388,7 @@ export default function StatsPanel({
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const [profileStatsUiStateByProfile, setProfileStatsUiStateByProfile] = useAtom(profileStatsUiStateByProfileAtom);
   const sessions = useAtomValue(sessionsAtom);
 
   const effectiveProfileId = useMemo(() => {
@@ -399,17 +406,37 @@ export default function StatsPanel({
 
   const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
 
-  const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
+  const {
+    data: profileSidebarStats,
+    isLoading: isLoadingProfileSidebarStats,
+    isFetching: isFetchingProfileSidebarStats,
+  } = useQuery<ProfileSidebarStats | null>({
+    queryKey: ["profileSidebarStats", effectiveProfileId ?? null],
+    queryFn: async () => {
+      if (!effectiveProfileId) return null;
+      return unwrap(await playerStatsCommands.getProfileSidebarStats(effectiveProfileId));
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!effectiveProfileId,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const { data: localEloBuckets = [] } = useQuery<EloBucket[]>({
     queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => unwrap(await playerStatsCommands.calculatePlayerEloBuckets(info?.site_stats_data ?? [])),
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !effectiveProfileId && statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+  const eloBuckets = profileSidebarStats?.elo_buckets ?? localEloBuckets;
 
   const opponentEloOptions = useMemo(() => {
     return [
@@ -418,12 +445,22 @@ export default function StatsPanel({
     ];
   }, [eloBuckets, t]);
 
-  const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
-  const [platform, setPlatform] = useState<PlatformFilter>("all");
-  const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
-  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.AllTime);
-  const [groupBy, setGroupBy] = useState<StatGroupBy>("phase");
-  const [tacticalFilter, setTacticalFilter] = useState<TacticalFilter>("none");
+  const persistedStatsUiState = effectiveProfileId
+    ? (profileStatsUiStateByProfile[effectiveProfileId] ?? defaultProfileStatsUiState)
+    : defaultProfileStatsUiState;
+  const hydratedStatsProfileRef = useRef<string | null>(null);
+  const [opponentEloBucket, setOpponentEloBucket] = useState<string>(persistedStatsUiState.opponentEloBucket);
+  const [platform, setPlatform] = useState<PlatformFilter>(persistedStatsUiState.platform as PlatformFilter);
+  const [timeControl, setTimeControl] = useState<TimeControlFilter>(
+    persistedStatsUiState.timeControl as TimeControlFilter,
+  );
+  const [dateRange, setDateRange] = useState<DateRange | null>(
+    (persistedStatsUiState.dateRange as DateRange | null) ?? DateRange.AllTime,
+  );
+  const [groupBy, setGroupBy] = useState<StatGroupBy>(persistedStatsUiState.groupBy as StatGroupBy);
+  const [tacticalFilter, setTacticalFilter] = useState<TacticalFilter>(
+    persistedStatsUiState.tacticalFilter as TacticalFilter,
+  );
   const [detailsPhase, setDetailsPhase] = useState<PhaseKey | null>(null);
   const [detailsIntensity, setDetailsIntensity] = useState<IntensityKey | null>(null);
   const [detailsPage, setDetailsPage] = useState(1);
@@ -433,17 +470,81 @@ export default function StatsPanel({
   const isWeaknessView = groupBy === "weakness";
   const isForksView = tacticalFilter === "forks" && !isWeaknessView;
 
-  const { data: sidebarModel } = useQuery({
+  useEffect(() => {
+    const profileKey = effectiveProfileId ?? null;
+    if (hydratedStatsProfileRef.current === profileKey) return;
+    hydratedStatsProfileRef.current = profileKey;
+
+    const persisted = profileKey ? (profileStatsUiStateByProfile[profileKey] ?? defaultProfileStatsUiState) : null;
+    if (!persisted) return;
+
+    setPlatform(persisted.platform as PlatformFilter);
+    setTimeControl(persisted.timeControl as TimeControlFilter);
+    setOpponentEloBucket(persisted.opponentEloBucket);
+    setDateRange((persisted.dateRange as DateRange | null) ?? DateRange.AllTime);
+    setGroupBy(persisted.groupBy as StatGroupBy);
+    setTacticalFilter(persisted.tacticalFilter as TacticalFilter);
+    setDetailsPhase(null);
+    setDetailsIntensity(null);
+    setDetailsPage(1);
+    setForkDetailsPiece(null);
+    setForkDetailsPage(1);
+  }, [effectiveProfileId, profileStatsUiStateByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId) return;
+    const normalizedDateRange = (dateRange as DateRange | null) ?? null;
+
+    setProfileStatsUiStateByProfile((prev) => {
+      const current = prev[effectiveProfileId];
+      const next = {
+        platform,
+        timeControl,
+        opponentEloBucket,
+        dateRange: normalizedDateRange,
+        groupBy,
+        tacticalFilter,
+      };
+
+      if (
+        current?.platform === next.platform &&
+        current?.timeControl === next.timeControl &&
+        current?.opponentEloBucket === next.opponentEloBucket &&
+        current?.dateRange === next.dateRange &&
+        current?.groupBy === next.groupBy &&
+        current?.tacticalFilter === next.tacticalFilter
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [effectiveProfileId]: next,
+      };
+    });
+  }, [
+    dateRange,
+    effectiveProfileId,
+    groupBy,
+    opponentEloBucket,
+    platform,
+    setProfileStatsUiStateByProfile,
+    tacticalFilter,
+    timeControl,
+  ]);
+
+  const { data: localSidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => unwrap(await playerStatsCommands.calculatePlayerSidebarModel(info?.site_stats_data ?? [])),
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !effectiveProfileId && statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
+  const sidebarModel = profileSidebarStats?.sidebar_model ?? localSidebarModel;
 
   const filters = useMemo(
     () => createPlayerStatsFilters(platform, timeControl, opponentEloBucket, dateRange),
@@ -709,6 +810,8 @@ export default function StatsPanel({
 
   const isAnyLoading =
     isLoading ||
+    isLoadingProfileSidebarStats ||
+    isFetchingProfileSidebarStats ||
     (isWeaknessView
       ? isLoadingWeaknessModel || isFetchingWeaknessModel
       : isForksView

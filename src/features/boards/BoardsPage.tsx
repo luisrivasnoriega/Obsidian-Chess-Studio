@@ -74,7 +74,7 @@ export default function BoardsPage() {
       <Tabs
         value={resolvedActiveTab}
         onChange={(v) => setActiveTab(v)}
-        keepMounted={false}
+        keepMounted
         style={{
           display: "flex",
           flexDirection: "column",
@@ -107,7 +107,7 @@ export default function BoardsPage() {
                   overflow: "hidden",
                 }}
               >
-                <TabSwitch tab={tab} />
+                <TabSwitch tab={tab} isActive={tab.value === resolvedActiveTab} />
               </Tabs.Panel>
             );
           })}
@@ -151,7 +151,7 @@ function isValidMosaicLayout(node: MosaicNode<ViewId> | null): node is MosaicNod
   return leaves.has("left") && leaves.has("topRight") && leaves.has("bottomRight");
 }
 
-const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
+const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: boolean }) {
   const [windowsState, setWindowsState] = useAtom(windowsStateAtom);
 
   const { layout } = useResponsiveLayout();
@@ -200,6 +200,11 @@ const TabSwitch = function TabSwitch({ tab }: { tab: Tab }) {
     debugNavLog("tab-switch: resetting invalid mosaic layout", { currentNode: windowsState.currentNode });
     setWindowsState({ currentNode: DEFAULT_MOSAIC_LAYOUT });
   }, [isMobileLayout, setWindowsState, windowsState.currentNode]);
+
+  const keepMountedWhenInactive = tab.type === "profiles";
+  if (!isActive && !keepMountedWhenInactive) {
+    return null;
+  }
 
   if (tab.type === "play") {
     return (

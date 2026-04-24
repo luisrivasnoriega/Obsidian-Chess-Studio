@@ -23,6 +23,32 @@ import { type Engine, killEngine, type LocalEngine, getBestMoves as localGetBest
 import { getBestMoves as lichessGetBestMoves } from "@/utils/lichess/api";
 import { useThrottledEffect } from "@/utils/misc";
 
+const ENGINE_VARIATION_CACHE_LIMIT = 160;
+
+function upsertEngineVariationCache<T>(
+  prev: Map<string, T>,
+  key: string,
+  value: T,
+  deleteKeys: string[] = [],
+): Map<string, T> {
+  const next = new Map(prev);
+  for (const k of deleteKeys) {
+    next.delete(k);
+  }
+  // Refresh insertion order for existing keys to behave like a tiny LRU.
+  if (next.has(key)) {
+    next.delete(key);
+  }
+  next.set(key, value);
+
+  while (next.size > ENGINE_VARIATION_CACHE_LIMIT) {
+    const oldestKey = next.keys().next().value;
+    if (oldestKey === undefined) break;
+    next.delete(oldestKey);
+  }
+  return next;
+}
+
 function EvalListener() {
   const loadableEngines = useAtomValue(loadableEnginesAtom);
   const threat = useAtomValue(currentThreatAtom);
@@ -136,19 +162,29 @@ function EngineListener({
     pendingRef.current = null;
     startTransition(() => {
       setEngineVariation((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(`${searchingFen}:${searchingMovesKey}`, pending.ev);
+        const staleKeys: string[] = [];
         if (threat) {
-          newMap.delete(`${fen}:${movesKey}`);
+          staleKeys.push(`${fen}:${movesKey}`);
         } else if (finalFen) {
-          newMap.delete(`${swapMove(finalFen)}:`);
+          staleKeys.push(`${swapMove(finalFen)}:`);
         }
-        return newMap;
+        return upsertEngineVariationCache(prev, `${searchingFen}:${searchingMovesKey}`, pending.ev, staleKeys);
       });
       setProgress(pending.progress);
       setScore(pending.ev[0].score);
     });
   }, [fen, finalFen, movesKey, searchingFen, searchingMovesKey, setEngineVariation, setProgress, setScore, threat]);
+
+  useEffect(() => {
+    return () => {
+      if (engine.type === "local" && activeTab) {
+        // Prevent stale background engines from previous analysis tabs or unmounted boards.
+        void killEngine(engine, activeTab).catch(() => {
+          // Ignore best-effort cleanup failures.
+        });
+      }
+    };
+  }, [activeTab, engine]);
 
   useEffect(() => {
     if (!settings.enabled) return;
@@ -240,9 +276,7 @@ function EngineListener({
             if (moves) {
               const [progress, bestMoves] = moves;
               setEngineVariation((prev) => {
-                const newMap = new Map(prev);
-                newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
-                return newMap;
+                return upsertEngineVariationCache(prev, `${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
               });
               setProgress(progress);
             }

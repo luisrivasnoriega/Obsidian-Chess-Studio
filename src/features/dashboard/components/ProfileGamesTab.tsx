@@ -70,6 +70,20 @@ type GamesHistoryResponse = {
   totalCount: number;
 };
 
+type AnalyzeAllCountsResponse = {
+  total: number;
+  analyzed: number;
+  unanalyzed: number;
+};
+
+type AnalyzeAllCountsBulkResponse = {
+  all: AnalyzeAllCountsResponse;
+  local: AnalyzeAllCountsResponse;
+  chesscom: AnalyzeAllCountsResponse;
+  lichess: AnalyzeAllCountsResponse;
+  chessbase: AnalyzeAllCountsResponse;
+};
+
 function isFavorite(favorites: FavoriteGame[], source: FavoriteGame["source"], id: string) {
   return favorites.some((f) => f.source === source && f.gameId === id);
 }
@@ -339,30 +353,24 @@ export function ProfileGamesTab({
     let cancelled = false;
     const run = async () => {
       try {
-        const targets = ["all", "local", "chesscom", "lichess", "chessbase"] as const;
-        const responses = await Promise.all(
-          targets.map((target) =>
-            invoke<{ total: number }>("dashboard_get_analyze_all_counts", {
-              req: {
-                profileId,
-                profileUsernames,
-                gameHistoryLimit,
-                eventFilterId,
-                selectedOpponentId,
-                timeControlCategory,
-                target,
-              },
-            }),
-          ),
-        );
+        const response = await invoke<AnalyzeAllCountsBulkResponse>("dashboard_get_analyze_all_counts_bulk", {
+          req: {
+            profileId,
+            profileUsernames,
+            gameHistoryLimit,
+            eventFilterId,
+            selectedOpponentId,
+            timeControlCategory,
+          },
+        });
 
         if (cancelled) return;
         setAnalyzeAllTypeCounts({
-          all: Math.max(0, responses[0]?.total ?? 0),
-          local: Math.max(0, responses[1]?.total ?? 0),
-          chesscom: Math.max(0, responses[2]?.total ?? 0),
-          lichess: Math.max(0, responses[3]?.total ?? 0),
-          chessbase: Math.max(0, responses[4]?.total ?? 0),
+          all: Math.max(0, response?.all?.total ?? 0),
+          local: Math.max(0, response?.local?.total ?? 0),
+          chesscom: Math.max(0, response?.chesscom?.total ?? 0),
+          lichess: Math.max(0, response?.lichess?.total ?? 0),
+          chessbase: Math.max(0, response?.chessbase?.total ?? 0),
         });
       } catch {
         if (!cancelled) {

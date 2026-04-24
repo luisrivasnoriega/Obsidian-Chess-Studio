@@ -52,10 +52,14 @@ type TestSession = {
 
 let mockSessions: TestSession[] = [];
 let mockActiveTab = "tab-1";
+let mockPawnUiStateByProfile: Record<string, any> = {};
 
 const mockSetTabs = vi.fn();
 const mockSetActiveTab = vi.fn((next: any) => {
   mockActiveTab = typeof next === "function" ? next(mockActiveTab) : next;
+});
+const mockSetPawnUiStateByProfile = vi.fn((next: any) => {
+  mockPawnUiStateByProfile = typeof next === "function" ? next(mockPawnUiStateByProfile) : next;
 });
 
 // -----------------------------
@@ -98,6 +102,19 @@ vi.mock("@/state/atoms", () => ({
   tabsAtom: Symbol("tabsAtom"),
   activeTabAtom: Symbol("activeTabAtom"),
   sessionsAtom: Symbol("sessionsAtom"),
+  profilePawnStructuresUiStateByProfileAtom: Symbol("profilePawnStructuresUiStateByProfileAtom"),
+  defaultProfilePawnStructuresUiState: {
+    pawnMoveFilter: 10,
+    pawnColorFilter: "white",
+    pawnStructureMode: "player",
+    pawnMotifFilters: [],
+    pawnNamedStructureFilters: [],
+    pawnSortBy: "frequency",
+    platform: "all",
+    timeControl: "any",
+    opponentEloBucket: "all",
+    dateRange: "90d",
+  },
 }));
 
 // Jotai
@@ -111,6 +128,9 @@ vi.mock("jotai", async () => {
     useAtom: (atom: any) => {
       if (atom === atoms.tabsAtom) return [[], mockSetTabs] as const;
       if (atom === atoms.activeTabAtom) return [mockActiveTab, mockSetActiveTab] as const;
+      if (atom === atoms.profilePawnStructuresUiStateByProfileAtom) {
+        return [mockPawnUiStateByProfile, mockSetPawnUiStateByProfile] as const;
+      }
       return [undefined, vi.fn()] as const;
     },
   };
@@ -170,6 +190,45 @@ vi.mock("@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard", (
 
 vi.mock("@/bindings/playerStats", () => ({
   playerStatsCommands: {
+    getProfileSidebarStats: vi.fn(async (profileId: string) => {
+      const sessionsForProfile = mockSessions.filter((session) => session.profileId === profileId);
+      const hasLichess = sessionsForProfile.some((session) => !!session.lichess?.username);
+      const hasChessCom = sessionsForProfile.some((session) => !!session.chessCom?.username);
+      const elo: Array<{
+        platform: string;
+        rows: Array<{ label: string; bullet: string; blitz: string; rapid: string }>;
+      }> = [];
+      if (hasLichess) {
+        elo.push({
+          platform: "Lichess",
+          rows: [{ label: "Lichess", bullet: "-", blitz: "-", rapid: "-" }],
+        });
+      }
+      if (hasChessCom) {
+        elo.push({
+          platform: "Chess.com",
+          rows: [{ label: "Chess.com", bullet: "-", blitz: "-", rapid: "-" }],
+        });
+      }
+      return {
+        status: "ok",
+        data: {
+          sidebar_model: {
+            has_data: elo.length > 0,
+            style: {
+              label: "playerStyle.mixedStyle",
+              description: "playerStyle.mixedStyleDescription",
+              color: "gray",
+            },
+            elo,
+          },
+          elo_buckets: [
+            { value: "1400", label: "1400-1599" },
+            { value: "1600", label: "1600+" },
+          ],
+        },
+      };
+    }),
     calculatePlayerSidebarModel: vi.fn(async (siteStatsData: any[]) => {
       const sites = siteStatsData ?? [];
       return {
@@ -268,6 +327,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSessions = [];
   mockActiveTab = "tab-1";
+  mockPawnUiStateByProfile = {};
 
   // Silence intentional error branches
   consoleErrorSpy?.mockRestore();
@@ -314,6 +374,41 @@ beforeEach(() => {
           platform: site.site,
           rows: [{ label: site.site, bullet: "-", blitz: "-", rapid: "-" }],
         })),
+      },
+    };
+  });
+  mockedPlayerStatsCommands.getProfileSidebarStats.mockImplementation(async (profileId: string) => {
+    const sessionsForProfile = mockSessions.filter((session) => session.profileId === profileId);
+    const hasLichess = sessionsForProfile.some((session) => !!session.lichess?.username);
+    const hasChessCom = sessionsForProfile.some((session) => !!session.chessCom?.username);
+    const elo: Array<{
+      platform: string;
+      rows: Array<{ label: string; bullet: string; blitz: string; rapid: string }>;
+    }> = [];
+    if (hasLichess) {
+      elo.push({
+        platform: "Lichess",
+        rows: [{ label: "Lichess", bullet: "-", blitz: "-", rapid: "-" }],
+      });
+    }
+    if (hasChessCom) {
+      elo.push({
+        platform: "Chess.com",
+        rows: [{ label: "Chess.com", bullet: "-", blitz: "-", rapid: "-" }],
+      });
+    }
+    return {
+      status: "ok",
+      data: {
+        sidebar_model: {
+          has_data: elo.length > 0,
+          style: { label: "playerStyle.mixedStyle", description: "playerStyle.mixedStyleDescription", color: "gray" },
+          elo,
+        },
+        elo_buckets: [
+          { value: "1400", label: "1400-1599" },
+          { value: "1600", label: "1600+" },
+        ],
       },
     };
   });
@@ -786,23 +881,14 @@ describe("PawnStructuresPanel (high coverage)", () => {
       ],
     } as any);
 
-    // Set up the mock: return dbPath for initial queries, then null when opening game
-    let getProfileDbPathCallCount = 0;
-    mockedGetProfileDbPath.mockImplementation(async (_profileId: string) => {
-      getProfileDbPathCallCount++;
-      // First few calls (for initial data loading) return dbPath
-      // Later calls (when opening game) return null
-      if (getProfileDbPathCallCount <= 2) {
-        return "/db/p1.db3";
-      }
-      return null as any;
-    });
-
     render(<PawnStructuresPanel playerName="Human Label" profileId="p1" />);
     await waitForProfileQueryReady("1");
 
     await user.click(screen.getByRole("button", { name: /search/i }));
     await screen.findByText("S-open-nodb");
+
+    // Force openGameInNewTab path resolution to fail on this click.
+    mockedGetProfileDbPath.mockResolvedValueOnce(null as any);
 
     await user.click(screen.getByRole("button", { name: /features\.dashboard\.view/i }));
     await user.click(screen.getByRole("button", { name: /open game/i }));

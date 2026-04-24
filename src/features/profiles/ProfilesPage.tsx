@@ -42,16 +42,17 @@ import { playerStatsCommands } from "@/bindings/playerStats";
 import type { SortState } from "@/components/GenericHeader";
 import GenericHeader from "@/components/GenericHeader";
 import { DatabaseDetails } from "@/features/databases/DatabasesPage";
-import Databases, {
-  buildSessionsSignature,
-  computePersonalInfoSignature,
-  fetchMergedPlayerInfo,
-  fetchPersonalInfoForProfile,
-  getMergedPlayerInfoQueryKey,
-  getPersonalInfoQueryKey,
-} from "@/features/profiles/components/PersonalCardPanels/Databases";
+import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeProfileIdAtom, type Profile, profilesAtom, referenceDbAtom, sessionsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  defaultProfilesPageUiState,
+  type Profile,
+  profilesAtom,
+  profilesPageUiStateAtom,
+  referenceDbAtom,
+  sessionsAtom,
+} from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { getAccountSyncState } from "@/utils/accountSyncState";
@@ -61,9 +62,9 @@ import { type DatabaseInfo, getDatabases } from "@/utils/db";
 import { parseDate } from "@/utils/format";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { isFailedToFetchError } from "@/utils/networkCooldown";
-import { createSiteStatsSignature } from "@/utils/playerStats";
 import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
-import { getAccountSyncStateFromProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/profileLastActivity";
 import { normalizeProfileName } from "@/utils/profiles";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
@@ -126,10 +127,11 @@ export default function ProfilesPage() {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
   const queryClient = useQueryClient();
-  const [profileQuery, setProfileQuery] = useState("");
+  const [profilesPageUiState, setProfilesPageUiState] = useAtom(profilesPageUiStateAtom);
+  const [profileQuery, setProfileQuery] = useState(profilesPageUiState.profileQuery);
   const [detailsTab, setDetailsTab] = useState<
     "database" | "overview" | "ratings" | "openings" | "stats" | "pawnStructures"
-  >("database");
+  >(profilesPageUiState.detailsTab);
   const [syncingAccountIds, setSyncingAccountIds] = useState<Set<string>>(new Set());
   const syncingAccountIdsRef = useRef<Set<string>>(new Set());
   const deletedSessionKeysRef = useRef<Set<string>>(new Set());
@@ -156,9 +158,12 @@ export default function ProfilesPage() {
   const [draftName, setDraftName] = useState("");
   const [draftFideId, setDraftFideId] = useState("");
   const [draftLichessToken, setDraftLichessToken] = useState("");
-  const [profilesPage, setProfilesPage] = useState(1);
+  const [profilesPage, setProfilesPage] = useState(Math.max(1, profilesPageUiState.profilesPage));
   const profilesPerPage = 5;
-  const [sortBy, setSortBy] = useState<SortState>({ field: "lastActivity", direction: "desc" });
+  const [sortBy, setSortBy] = useState<SortState>({
+    field: profilesPageUiState.sortBy.field,
+    direction: profilesPageUiState.sortBy.direction,
+  });
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
   const backgroundSyncRetryTimersRef = useRef<Map<string, number>>(new Map());
   const backgroundSyncRetryAttemptsRef = useRef<Map<string, number>>(new Map());
@@ -201,6 +206,7 @@ export default function ProfilesPage() {
       // sidebar/overview panels and we only do it when we *actually* import new games.
       queryClient.invalidateQueries({ queryKey: ["personalInfo", profileId] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["mergedPlayerInfo"] }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["profileSidebarStats", profileId] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerSidebarModel"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerEloBuckets"] }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["playerGameStats"] }).catch(() => {});
@@ -214,120 +220,37 @@ export default function ProfilesPage() {
 
   // Prefetch the active profile's sidebar model as soon as Profiles loads.
   // This makes switching to Overview/Ratings/Openings instant (no "thinking").
-  const sessionsSignature = useMemo(() => buildSessionsSignature(sessions), [sessions]);
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (!activeProfileId) return;
-      if (sessions.length === 0) return;
-
-      const personalInfoKey = getPersonalInfoQueryKey(activeProfileId, sessionsSignature);
-      const personalInfo = await queryClient.fetchQuery({
-        queryKey: personalInfoKey,
-        queryFn: () => fetchPersonalInfoForProfile({ effectiveProfileId: activeProfileId, sessions }),
-        staleTime: Infinity,
-        gcTime: Infinity,
-      });
-      if (cancelled) return;
-
-      const sig = computePersonalInfoSignature(personalInfo);
-      if (!sig) return;
-
-      const mergedKey = getMergedPlayerInfoQueryKey(sig);
-      const mergedInfo = await queryClient.fetchQuery({
-        queryKey: mergedKey,
-        queryFn: () => fetchMergedPlayerInfo(personalInfo),
-        staleTime: Infinity,
-        gcTime: Infinity,
-      });
-      if (cancelled) return;
-
-      const ssd = mergedInfo?.site_stats_data ?? [];
-      const statsSig = createSiteStatsSignature(ssd);
-      if (statsSig.games <= 0) return;
 
       await queryClient.prefetchQuery({
-        queryKey: ["playerSidebarModel", statsSig.key],
-        queryFn: async () => unwrap(await playerStatsCommands.calculatePlayerSidebarModel(ssd)),
+        queryKey: ["profileSidebarStats", activeProfileId],
+        queryFn: async () => unwrap(await playerStatsCommands.getProfileSidebarStats(activeProfileId)),
         staleTime: Infinity,
         gcTime: Infinity,
       });
+      if (cancelled) return;
     };
 
     void run();
     return () => {
       cancelled = true;
     };
-  }, [activeProfileId, sessions, sessionsSignature, queryClient]);
+  }, [activeProfileId, queryClient]);
 
   // Load last activity dates for all profiles
   useEffect(() => {
     let cancelled = false;
     const loadLastActivities = async () => {
-      const activityMap = new Map<string, number | null>();
-
-      for (const profile of filteredProfiles) {
-        const linkedSessions = sessionsByProfileId.get(profile.id) ?? [];
-        if (linkedSessions.length === 0) {
-          activityMap.set(profile.id, null);
-          continue;
-        }
-
-        const lastDates = await Promise.all(
-          linkedSessions.map(async (session) => {
-            const type = session.lichess ? "lichess" : "chesscom";
-            const username = session.lichess?.username ?? session.chessCom?.username ?? "";
-            if (!username || !session.profileId) return null;
-
-            const activityDates: number[] = [];
-
-            // For Lichess accounts, use seenAt (includes all activity: games, puzzles, etc.)
-            if (session.lichess?.account?.seenAt) {
-              // seenAt is in milliseconds, same as our Date.now()
-              activityDates.push(session.lichess.account.seenAt);
-            }
-
-            // For Chess.com accounts, use the most recent last.date from stats
-            if (session.chessCom?.stats) {
-              const stats = session.chessCom.stats;
-              const lastDates = [
-                stats.chess_bullet?.last?.date,
-                stats.chess_blitz?.last?.date,
-                stats.chess_rapid?.last?.date,
-                stats.chess_daily?.last?.date,
-              ]
-                .filter((d): d is number => d !== undefined && d !== null)
-                .map((d) => d * 1000); // Convert from seconds to milliseconds
-
-              if (lastDates.length > 0) {
-                activityDates.push(Math.max(...lastDates));
-              }
-            }
-
-            // Also check last game date from database
-            try {
-              const profileDbPath = await getProfileDbPath(session.profileId);
-              const accountKey = getAccountKey(type, username);
-              const { lastGameDate } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
-              if (lastGameDate) {
-                activityDates.push(lastGameDate);
-              }
-            } catch {
-              // Ignore errors
-            }
-
-            // Return the most recent activity date
-            return activityDates.length > 0 ? Math.max(...activityDates) : null;
-          }),
-        );
-
-        const validDates = lastDates.filter((d): d is number => d !== null);
-        const mostRecent = validDates.length > 0 ? Math.max(...validDates) : null;
-        activityMap.set(profile.id, mostRecent);
-      }
+      const activityMap = await loadProfilesLastActivityMap({
+        profileIds: filteredProfiles.map((profile) => profile.id),
+        sessions,
+      });
 
       if (!cancelled) {
-        setLastActivityMap(activityMap);
+        setLastActivityMap((prev) => (areLastActivityMapsEqual(prev, activityMap) ? prev : activityMap));
       }
     };
 
@@ -335,7 +258,7 @@ export default function ProfilesPage() {
     return () => {
       cancelled = true;
     };
-  }, [filteredProfiles, sessionsByProfileId]);
+  }, [filteredProfiles, sessions]);
 
   const profileDbFile = useMemo(() => (activeProfileId ? profileDbFilename(activeProfileId) : null), [activeProfileId]);
 
@@ -420,6 +343,42 @@ export default function ProfilesPage() {
     );
     return found ? ({ ...found, dbType: "game" as const } as const) : null;
   }, [dbList, profileDbFile]);
+
+  useEffect(() => {
+    const normalizedSortField = sortBy.field === "name" ? "name" : "lastActivity";
+    const normalizedSortDirection = sortBy.direction === "asc" ? "asc" : "desc";
+    const normalizedPage = Math.max(1, profilesPage);
+    const normalizedDetailsTab =
+      detailsTab === "database" ||
+      detailsTab === "overview" ||
+      detailsTab === "ratings" ||
+      detailsTab === "openings" ||
+      detailsTab === "stats" ||
+      detailsTab === "pawnStructures"
+        ? detailsTab
+        : defaultProfilesPageUiState.detailsTab;
+
+    setProfilesPageUiState((prev) => {
+      if (
+        prev.profileQuery === profileQuery &&
+        prev.detailsTab === normalizedDetailsTab &&
+        prev.profilesPage === normalizedPage &&
+        prev.sortBy.field === normalizedSortField &&
+        prev.sortBy.direction === normalizedSortDirection
+      ) {
+        return prev;
+      }
+      return {
+        profileQuery,
+        detailsTab: normalizedDetailsTab,
+        profilesPage: normalizedPage,
+        sortBy: {
+          field: normalizedSortField,
+          direction: normalizedSortDirection,
+        },
+      };
+    });
+  }, [detailsTab, profileQuery, profilesPage, setProfilesPageUiState, sortBy.direction, sortBy.field]);
 
   const openCreateModal = useCallback(() => {
     setEditingProfileId(null);
@@ -1012,6 +971,7 @@ export default function ProfilesPage() {
           updatedAt: now,
         };
         upsertSession(session);
+        startBackgroundSync(profile, session);
         return;
       }
 
@@ -1032,8 +992,9 @@ export default function ProfilesPage() {
         updatedAt: now,
       };
       upsertSession(session);
+      startBackgroundSync(profile, session);
     },
-    [profiles, upsertSession, verificationModal],
+    [profiles, startBackgroundSync, upsertSession, verificationModal],
   );
 
   const handleVerificationResult = useCallback(
@@ -1128,6 +1089,7 @@ export default function ProfilesPage() {
         };
 
         upsertSession(session);
+        startBackgroundSync(profile, session);
       } finally {
         sessionStorage.removeItem("lichess_profile_id");
         sessionStorage.removeItem("lichess_profile_name");
@@ -1144,7 +1106,7 @@ export default function ProfilesPage() {
         unlisten?.();
       } catch {}
     };
-  }, [activeProfileId, profiles, upsertSession]);
+  }, [activeProfileId, profiles, startBackgroundSync, upsertSession]);
 
   const refreshPuzzleDatabases = useCallback(async () => {}, []);
 

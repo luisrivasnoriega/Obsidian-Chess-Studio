@@ -9,7 +9,7 @@ import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { MAX_TABS } from "@/features/boards/constants";
-import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { activeTabAtom, cleanupTabScopedAtoms, loadableEnginesAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { createTreeStore } from "@/state/store/tree";
 import { getDocumentDir } from "@/utils/documentDir";
@@ -49,11 +49,31 @@ function getTabStateData(tabId: string): { version: number; state: { dirty?: boo
   }
 }
 
+function removeTabScopedSessionKeys(tabId: string) {
+  if (typeof window === "undefined" || !tabId) return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (!key) continue;
+      if (key === tabId || key.startsWith(`${tabId}_`)) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore cleanup errors.
+  }
+}
+
 export function useTabManagement(options?: { enableHotkeys?: boolean }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const loadableEngines = useAtomValue(loadableEnginesAtom);
   const enableHotkeys = options?.enableHotkeys ?? true;
 
   useEffect(() => {
@@ -194,9 +214,15 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
         try {
           unwrap(await commands.killEngines(value));
         } catch {}
+
+        const engineNames =
+          loadableEngines.state === "hasData" ? loadableEngines.data.map((engine) => engine.name) : [];
+        cleanupTabScopedAtoms(value, engineNames);
+        removeTabState(value);
+        removeTabScopedSessionKeys(value);
       }
     },
-    [activeTab, navigate, setActiveTab, setTabs, t, tabs],
+    [activeTab, loadableEngines, navigate, setActiveTab, setTabs, t, tabs],
   );
 
   const selectTab = useCallback(

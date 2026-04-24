@@ -24,36 +24,34 @@ import { notifications } from "@mantine/notifications";
 import { IconCopy, IconSearch } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAtom, useAtomValue } from "jotai";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   NormalizedGame,
   PawnStructureGame as PawnStructureGameBackend,
   PawnStructureStat as PawnStructureStatBackend,
-  PlayerGameInfo,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import type { ProfileSidebarStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { Chessground } from "@/components/Chessground";
-import {
-  buildSessionsSignature,
-  computePersonalInfoSignature,
-  fetchMergedPlayerInfo,
-  fetchPersonalInfoForProfile,
-  getMergedPlayerInfoQueryKey,
-  getPersonalInfoQueryKey,
-} from "@/features/profiles/components/PersonalCardPanels/Databases";
 import { DateRange } from "@/features/profiles/components/PersonalCardPanels/DateRangeTabs";
 import { PanelLoadGate } from "@/features/profiles/components/PersonalCardPanels/PanelLoadGate";
 import PlayerSidebarCard, {
   type PlatformFilter,
   type TimeControlFilter,
 } from "@/features/profiles/components/PersonalCardPanels/PlayerSidebarCard";
-import { activeTabAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeTabAtom,
+  defaultProfilePawnStructuresUiState,
+  profilePawnStructuresUiStateByProfileAtom,
+  sessionsAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { getAccountKey } from "@/utils/accountKeys";
 import { parsePGN } from "@/utils/chess";
 import { query_players } from "@/utils/db";
-import { convertDateRangeToBackend, createSiteStatsSignature } from "@/utils/playerStats";
+import { convertDateRangeToBackend } from "@/utils/playerStats";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -127,17 +125,38 @@ function createPgnFromNormalizedGame(game: NormalizedGame): string {
   return pgn;
 }
 
+function sameStringArray(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export default function PawnStructuresPanel({ playerName, databaseFile, profileId }: PawnStructuresPanelProps) {
   const { t } = useTranslation();
   const isStackedLayout = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
   const queryClient = useQueryClient();
+  const [pawnUiStateByProfile, setPawnUiStateByProfile] = useAtom(profilePawnStructuresUiStateByProfileAtom);
+  const effectiveProfileId = useMemo(() => {
+    const explicit = profileId?.trim();
+    return explicit ? explicit : undefined;
+  }, [profileId]);
+  const persistedPawnUiState = effectiveProfileId
+    ? (pawnUiStateByProfile[effectiveProfileId] ?? defaultProfilePawnStructuresUiState)
+    : defaultProfilePawnStructuresUiState;
+  const hydratedPawnProfileRef = useRef<string | null>(null);
 
-  const [pawnMoveFilter, setPawnMoveFilter] = useState(10);
-  const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">("white");
-  const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">("player");
-  const [pawnMotifFilters, setPawnMotifFilters] = useState<string[]>([]);
-  const [pawnNamedStructureFilters, setPawnNamedStructureFilters] = useState<string[]>([]);
-  const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">("frequency");
+  const [pawnMoveFilter, setPawnMoveFilter] = useState(persistedPawnUiState.pawnMoveFilter);
+  const [pawnColorFilter, setPawnColorFilter] = useState<"white" | "black" | "any">(
+    persistedPawnUiState.pawnColorFilter,
+  );
+  const [pawnStructureMode, setPawnStructureMode] = useState<"player" | "both">(persistedPawnUiState.pawnStructureMode);
+  const [pawnMotifFilters, setPawnMotifFilters] = useState<string[]>(persistedPawnUiState.pawnMotifFilters);
+  const [pawnNamedStructureFilters, setPawnNamedStructureFilters] = useState<string[]>(
+    persistedPawnUiState.pawnNamedStructureFilters,
+  );
+  const [pawnSortBy, setPawnSortBy] = useState<"frequency" | "winRate">(persistedPawnUiState.pawnSortBy);
   const [pawnLoading, setPawnLoading] = useState(false);
   const [pawnProgress, setPawnProgress] = useState<number | null>(null);
   const [expandedStructure, setExpandedStructure] = useState<string | null>(null);
@@ -146,12 +165,93 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
   const [gamesPage, setGamesPage] = useState(1);
   const [, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const [platform, setPlatform] = useState<PlatformFilter>("all");
-  const [timeControl, setTimeControl] = useState<TimeControlFilter>("any");
-  const [opponentEloBucket, setOpponentEloBucket] = useState<string>("all");
-  const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
+  const [platform, setPlatform] = useState<PlatformFilter>(persistedPawnUiState.platform as PlatformFilter);
+  const [timeControl, setTimeControl] = useState<TimeControlFilter>(
+    persistedPawnUiState.timeControl as TimeControlFilter,
+  );
+  const [opponentEloBucket, setOpponentEloBucket] = useState<string>(persistedPawnUiState.opponentEloBucket);
+  const [dateRange, setDateRange] = useState<DateRange | null>(
+    (persistedPawnUiState.dateRange as DateRange | null) ?? DateRange.NinetyDays,
+  );
   const sessions = useAtomValue(sessionsAtom);
-  const sessionsSignature = useMemo(() => buildSessionsSignature(sessions), [sessions]);
+
+  useEffect(() => {
+    const profileKey = effectiveProfileId ?? null;
+    if (hydratedPawnProfileRef.current === profileKey) return;
+    hydratedPawnProfileRef.current = profileKey;
+
+    const persisted = profileKey ? (pawnUiStateByProfile[profileKey] ?? defaultProfilePawnStructuresUiState) : null;
+    if (!persisted) return;
+
+    setPawnMoveFilter(persisted.pawnMoveFilter);
+    setPawnColorFilter(persisted.pawnColorFilter);
+    setPawnStructureMode(persisted.pawnStructureMode);
+    setPawnMotifFilters(persisted.pawnMotifFilters);
+    setPawnNamedStructureFilters(persisted.pawnNamedStructureFilters);
+    setPawnSortBy(persisted.pawnSortBy);
+    setPlatform(persisted.platform as PlatformFilter);
+    setTimeControl(persisted.timeControl as TimeControlFilter);
+    setOpponentEloBucket(persisted.opponentEloBucket);
+    setDateRange((persisted.dateRange as DateRange | null) ?? DateRange.NinetyDays);
+    setExpandedStructure(null);
+    setExpandedFen(null);
+    setMobileViewedStructure(null);
+    setGamesPage(1);
+  }, [effectiveProfileId, pawnUiStateByProfile]);
+
+  useEffect(() => {
+    if (!effectiveProfileId) return;
+    const normalizedDateRange = (dateRange as DateRange | null) ?? null;
+
+    setPawnUiStateByProfile((prev) => {
+      const current = prev[effectiveProfileId];
+      const next = {
+        pawnMoveFilter,
+        pawnColorFilter,
+        pawnStructureMode,
+        pawnMotifFilters,
+        pawnNamedStructureFilters,
+        pawnSortBy,
+        platform,
+        timeControl,
+        opponentEloBucket,
+        dateRange: normalizedDateRange,
+      };
+
+      if (
+        current?.pawnMoveFilter === next.pawnMoveFilter &&
+        current?.pawnColorFilter === next.pawnColorFilter &&
+        current?.pawnStructureMode === next.pawnStructureMode &&
+        sameStringArray(current?.pawnMotifFilters ?? [], next.pawnMotifFilters) &&
+        sameStringArray(current?.pawnNamedStructureFilters ?? [], next.pawnNamedStructureFilters) &&
+        current?.pawnSortBy === next.pawnSortBy &&
+        current?.platform === next.platform &&
+        current?.timeControl === next.timeControl &&
+        current?.opponentEloBucket === next.opponentEloBucket &&
+        current?.dateRange === next.dateRange
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [effectiveProfileId]: next,
+      };
+    });
+  }, [
+    dateRange,
+    effectiveProfileId,
+    opponentEloBucket,
+    pawnColorFilter,
+    pawnMotifFilters,
+    pawnMoveFilter,
+    pawnNamedStructureFilters,
+    pawnSortBy,
+    pawnStructureMode,
+    platform,
+    setPawnUiStateByProfile,
+    timeControl,
+  ]);
 
   const moveOptions = Array.from({ length: 50 }, (_, i) => ({ value: (i + 1).toString(), label: (i + 1).toString() }));
 
@@ -317,75 +417,30 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
     return next.sort((a, b) => (pawnSortBy === "frequency" ? b.frequency - a.frequency : b.winRate - a.winRate));
   }, [pawnStructures, pawnSortBy]);
 
-  // Reuse the same cached PersonalInfo/Merge pipeline used by the other profile tabs.
   const {
-    data: personalInfo,
-    isLoading: isLoadingPersonalInfo,
-    isFetching: isFetchingPersonalInfo,
-  } = useQuery({
-    queryKey: getPersonalInfoQueryKey(profileId ?? "", sessionsSignature),
+    data: profileSidebarStats,
+    isLoading: isLoadingProfileSidebarStats,
+    isFetching: isFetchingProfileSidebarStats,
+  } = useQuery<ProfileSidebarStats | null>({
+    queryKey: ["profileSidebarStats", profileId ?? null],
     queryFn: async () => {
-      if (!profileId) return [];
-      return fetchPersonalInfoForProfile({ effectiveProfileId: profileId, sessions });
+      if (!profileId) return null;
+      return unwrap(await playerStatsCommands.getProfileSidebarStats(profileId));
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false,
-    enabled: !!profileId && sessions.length > 0,
-  });
-
-  const personalInfoSignature = useMemo(() => computePersonalInfoSignature(personalInfo), [personalInfo]);
-
-  const { data: mergedInfo } = useQuery<PlayerGameInfo | null>({
-    queryKey: personalInfoSignature ? getMergedPlayerInfoQueryKey(personalInfoSignature) : ["mergedPlayerInfo", null],
-    queryFn: async () => {
-      if (!personalInfo || personalInfo.length === 0) return null;
-      return fetchMergedPlayerInfo(personalInfo);
-    },
-    enabled: !!personalInfo && personalInfo.length > 0 && personalInfoSignature !== null,
-    staleTime: Infinity,
-    gcTime: Infinity,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false,
-  });
-
-  const playerInfo = mergedInfo ?? { site_stats_data: [] };
-
-  const statsSig = useMemo(() => createSiteStatsSignature(playerInfo.site_stats_data), [playerInfo.site_stats_data]);
-
-  const { data: sidebarModel } = useQuery({
-    queryKey: ["playerSidebarModel", statsSig.key],
-    queryFn: async () => {
-      return unwrap(await playerStatsCommands.calculatePlayerSidebarModel(playerInfo.site_stats_data ?? []));
-    },
-    staleTime: Infinity,
-    gcTime: Infinity,
-    retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !!profileId,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
 
+  const sidebarModel = profileSidebarStats?.sidebar_model ?? null;
   const opponentEloOptions = useMemo(() => {
-    const buckets = new Set<number>();
-    for (const site of playerInfo.site_stats_data ?? []) {
-      for (const game of site.data) {
-        if (typeof game.opponent_elo !== "number") continue;
-        buckets.add(Math.floor(game.opponent_elo / 200) * 200);
-      }
-    }
-    const sorted = Array.from(buckets).sort((a, b) => a - b);
-    return [
-      { value: "all", label: t("common.all", { defaultValue: "All" }) },
-      ...sorted.map((start) => ({ value: String(start), label: `${start}-${start + 199}` })),
-    ];
-  }, [playerInfo.site_stats_data, t]);
+    const buckets = profileSidebarStats?.elo_buckets ?? [];
+    return [{ value: "all", label: t("common.all", { defaultValue: "All" }) }, ...buckets];
+  }, [profileSidebarStats?.elo_buckets, t]);
 
   const handleSearch = async () => {
     // Keep the source of truth consistent with the other profile tabs:
@@ -658,7 +713,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
 
   // Show loading only if query is actively loading/fetching
   // Don't show loading if query is enabled but data is not yet available - show the card immediately
-  const isAnyLoading = isLoadingPersonalInfo || isFetchingPersonalInfo;
+  const isAnyLoading = isLoadingProfileSidebarStats || isFetchingProfileSidebarStats;
 
   return (
     <Flex
@@ -950,8 +1005,8 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           }}
         >
           <PanelLoadGate
-            isLoading={isLoadingPersonalInfo}
-            isFetching={isFetchingPersonalInfo}
+            isLoading={isLoadingProfileSidebarStats}
+            isFetching={isFetchingProfileSidebarStats}
             hasData={sortedStructures.length > 0}
           >
             <Stack gap="md" p="md" style={{ minHeight: 0 }}>

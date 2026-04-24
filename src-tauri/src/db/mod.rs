@@ -3759,24 +3759,59 @@ pub struct StatsData {
     pub opening: String,
 }
 
+#[derive(Debug, Clone, Serialize, Type, Default)]
+pub struct ProfileSidebarStats {
+    pub sidebar_model: PlayerSidebarModel,
+    pub elo_buckets: Vec<EloBucket>,
+}
+
 #[derive(Serialize, Debug, Clone, Type, tauri_specta::Event)]
 pub struct DatabaseProgress {
     pub id: String,
     pub progress: f64,
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn get_players_game_info(
-    file: PathBuf,
-    id: i32,
-    state: tauri::State<'_, AppState>,
-    app: tauri::AppHandle,
-) -> Result<PlayerGameInfo> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-    let _timer = Instant::now();
+fn normalize_account_key_parts(raw: &str) -> Option<(String, String)> {
+    let normalized = raw.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
 
-    let sql_query = games::table
+    let stripped = normalized
+        .strip_prefix("lichess:")
+        .or_else(|| normalized.strip_prefix("chesscom:"))
+        .unwrap_or(&normalized)
+        .trim()
+        .to_string();
+
+    if stripped.is_empty() {
+        return None;
+    }
+
+    Some((normalized, stripped))
+}
+
+fn collect_player_game_info(
+    db: &mut SqliteConnection,
+    id: i32,
+    include_opening: bool,
+    app: Option<&tauri::AppHandle>,
+) -> Result<PlayerGameInfo> {
+    type GameInfo = (
+        i32,
+        i32,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Vec<u8>,
+        Option<i32>,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+
+    let info: Vec<GameInfo> = games::table
         .inner_join(sites::table.on(games::site_id.eq(sites::id)))
         .inner_join(players::table.on(players::id.eq(id)))
         .select((
@@ -3793,22 +3828,8 @@ pub async fn get_players_game_info(
             players::name,
         ))
         .filter(games::white_id.eq(id).or(games::black_id.eq(id)))
-        .filter(games::fen.is_null());
-
-    type GameInfo = (
-        i32,
-        i32,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Vec<u8>,
-        Option<i32>,
-        Option<i32>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    );
-    let info: Vec<GameInfo> = sql_query.load(db)?;
+        .filter(games::fen.is_null())
+        .load(db)?;
 
     let mut game_info = PlayerGameInfo::default();
     let progress = AtomicUsize::new(0);
@@ -3851,40 +3872,46 @@ pub async fn get_players_game_info(
                     }
                 })?;
 
-                let mut setups = vec![];
-                let mut chess = Chess::default();
+                let opening = if include_opening {
+                    let mut setups = vec![];
+                    let mut chess = Chess::default();
 
-                // Extract main line moves from the extended format
-                let main_moves = match extract_main_line_moves(moves, Some(chess.clone())) {
-                    Ok(moves) => moves,
-                    Err(_) => {
-                        // If extraction fails, skip this game
-                        return None;
+                    // Extract main line moves from the extended format
+                    let main_moves = match extract_main_line_moves(moves, Some(chess.clone())) {
+                        Ok(moves) => moves,
+                        Err(_) => {
+                            // If extraction fails, skip this game
+                            return None;
+                        }
+                    };
+
+                    for (i, m) in main_moves.iter().enumerate() {
+                        if i > 54 {
+                            // max length of opening in data
+                            break;
+                        }
+                        chess.play_unchecked(m);
+                        setups.push(chess.clone().into_setup(EnPassantMode::Legal));
                     }
+
+                    setups.reverse();
+                    setups
+                        .iter()
+                        .find_map(|setup| get_opening_from_setup(setup.clone()).ok())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
                 };
 
-                for (i, m) in main_moves.iter().enumerate() {
-                    if i > 54 {
-                        // max length of opening in data
-                        break;
+                if let Some(app) = app {
+                    let p = progress.fetch_add(1, Ordering::Relaxed);
+                    if p % 1000 == 0 || p == info.len() - 1 {
+                        let _ = DatabaseProgress {
+                            id: id.to_string(),
+                            progress: (p as f64 / info.len() as f64) * 100_f64,
+                        }
+                        .emit(app);
                     }
-                    chess.play_unchecked(m);
-                    setups.push(chess.clone().into_setup(EnPassantMode::Legal));
-                }
-
-                setups.reverse();
-                let opening = setups
-                    .iter()
-                    .find_map(|setup| get_opening_from_setup(setup.clone()).ok())
-                    .unwrap_or_default();
-
-                let p = progress.fetch_add(1, Ordering::Relaxed);
-                if p % 1000 == 0 || p == info.len() - 1 {
-                    let _ = DatabaseProgress {
-                        id: id.to_string(),
-                        progress: (p as f64 / info.len() as f64) * 100_f64,
-                    }
-                    .emit(&app);
                 }
 
                 Some(SiteStatsData {
@@ -3931,9 +3958,242 @@ pub async fn get_players_game_info(
         .map(|((site, player), data)| SiteStatsData { site, player, data })
         .collect();
 
-    // Player stats computed
-
     Ok(game_info)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_players_game_info(
+    file: PathBuf,
+    id: i32,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<PlayerGameInfo> {
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    collect_player_game_info(db, id, true, Some(&app))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_accounts_game_info(
+    profile_id: String,
+    account_keys: Vec<String>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<PlayerGameInfo> {
+    if profile_id.trim().is_empty() || account_keys.is_empty() {
+        return Ok(PlayerGameInfo::default());
+    }
+
+    let profile_db = app
+        .path()
+        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
+    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+
+    #[derive(QueryableByName)]
+    struct PlayerIdRow {
+        #[diesel(sql_type = diesel::sql_types::Integer, column_name = "ID")]
+        id: i32,
+    }
+
+    let mut player_ids = Vec::new();
+    let mut seen_player_ids = std::collections::HashSet::new();
+
+    for account_key in account_keys {
+        let Some((normalized_key, stripped_key)) = normalize_account_key_parts(&account_key) else {
+            continue;
+        };
+
+        let rows: Vec<PlayerIdRow> = sql_query(
+            r#"
+            SELECT ID
+            FROM Players
+            WHERE Name IS NOT NULL
+              AND trim(Name) <> ''
+              AND (
+                lower(trim(Name)) = ?
+                OR replace(replace(lower(trim(Name)), 'lichess:', ''), 'chesscom:', '') = ?
+              )
+            ORDER BY ID ASC
+            LIMIT 1
+            "#,
+        )
+        .bind::<Text, _>(normalized_key)
+        .bind::<Text, _>(stripped_key)
+        .load(db)?;
+
+        if let Some(row) = rows.first() {
+            if seen_player_ids.insert(row.id) {
+                player_ids.push(row.id);
+            }
+        }
+    }
+
+    if player_ids.is_empty() {
+        return Ok(PlayerGameInfo::default());
+    }
+
+    let mut all_site_stats = Vec::new();
+    for player_id in player_ids {
+        let info = collect_player_game_info(db, player_id, true, Some(&app))?;
+        all_site_stats.extend(info.site_stats_data);
+    }
+
+    Ok(PlayerGameInfo {
+        site_stats_data: merge_site_stats_data(&all_site_stats),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_sidebar_stats(
+    profile_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<ProfileSidebarStats> {
+    if profile_id.trim().is_empty() {
+        return Ok(ProfileSidebarStats::default());
+    }
+
+    let profile_db = app
+        .path()
+        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
+    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+
+    // Keep compatibility with older profiles where analysis tables may still be missing.
+    analysis_stats::ensure_profile_analysis_tables(db)?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(ProfileSidebarStats::default());
+    };
+
+    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    let site_stats = game_info.site_stats_data;
+
+    Ok(ProfileSidebarStats {
+        sidebar_model: compute_player_sidebar_model(&site_stats),
+        elo_buckets: calculate_elo_buckets(&site_stats),
+    })
+}
+
+fn empty_rating_timeline() -> RatingTimeline {
+    RatingTimeline {
+        data: Vec::new(),
+        dates: Vec::new(),
+        platforms: Vec::new(),
+    }
+}
+
+fn merge_rating_timelines_from_filtered(filtered: Vec<(StatsData, String)>) -> RatingTimeline {
+    let mut by_site: HashMap<String, Vec<StatsData>> = HashMap::new();
+    for (game, site) in filtered {
+        by_site.entry(site).or_insert_with(Vec::new).push(game);
+    }
+
+    let mut all_timelines: Vec<RatingTimeline> = Vec::new();
+    for (site, games) in by_site {
+        all_timelines.push(calculate_rating_timeline(&games, &site));
+    }
+
+    if all_timelines.is_empty() {
+        return empty_rating_timeline();
+    }
+
+    let mut all_dates_set: HashSet<i64> = HashSet::new();
+    let mut all_platforms: Vec<PlatformInfo> = Vec::new();
+
+    for timeline in &all_timelines {
+        all_dates_set.extend(timeline.dates.iter().copied());
+        all_platforms.extend(timeline.platforms.clone());
+    }
+
+    let mut all_dates: Vec<i64> = all_dates_set.into_iter().collect();
+    all_dates.sort_unstable();
+
+    let mut data: Vec<RatingDataPoint> = Vec::new();
+    for &date in &all_dates {
+        let mut entry = RatingDataPoint {
+            date,
+            chesscom: None,
+            lichess: None,
+        };
+
+        for timeline in &all_timelines {
+            if let Some(point) = timeline.data.iter().find(|p| p.date == date) {
+                if point.chesscom.is_some() {
+                    entry.chesscom = point.chesscom;
+                }
+                if point.lichess.is_some() {
+                    entry.lichess = point.lichess;
+                }
+            }
+        }
+        data.push(entry);
+    }
+
+    let mut platform_map: HashMap<String, PlatformInfo> = HashMap::new();
+    for platform in all_platforms {
+        platform_map.insert(platform.key.clone(), platform);
+    }
+
+    RatingTimeline {
+        data,
+        dates: all_dates,
+        platforms: platform_map.into_values().collect(),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_game_stats(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<GameStats> {
+    if profile_id.trim().is_empty() {
+        return Ok(extract_game_stats(&[]));
+    }
+
+    let profile_db = app
+        .path()
+        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
+    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(extract_game_stats(&[]));
+    };
+
+    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    let filtered = filter_games(&game_info.site_stats_data, &filters);
+    let games: Vec<StatsData> = filtered.into_iter().map(|(game, _)| game).collect();
+    Ok(extract_game_stats(&games))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_rating_timeline(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<RatingTimeline> {
+    if profile_id.trim().is_empty() {
+        return Ok(empty_rating_timeline());
+    }
+
+    let profile_db = app
+        .path()
+        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
+    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(empty_rating_timeline());
+    };
+
+    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    let filtered = filter_games(&game_info.site_stats_data, &filters);
+    Ok(merge_rating_timelines_from_filtered(filtered))
 }
 
 /// Optimize a database: create indexes, run ANALYZE, apply pragmas, and update Lichess tournament events.

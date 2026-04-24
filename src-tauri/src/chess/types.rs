@@ -110,7 +110,7 @@ pub struct BestMovesPayload {
 }
 
 /// Analysis result for a single move/position.
-#[derive(Serialize, Deserialize, Debug, Default, Type)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, Type)]
 pub struct MoveAnalysis {
     pub best: Vec<BestMoves>,
     pub novelty: bool,

@@ -39,7 +39,7 @@ use fide::FidePlayer;
 use oauth::AuthState;
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
-use sysinfo::SystemExt;
+use sysinfo::{PidExt, ProcessExt, SystemExt};
 use tauri::AppHandle;
 
 use crate::analysis_storage::{
@@ -48,13 +48,15 @@ use crate::analysis_storage::{
     analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
 };
 use crate::dashboard_games_history::{
-    dashboard_get_analyze_all_counts, dashboard_get_games_history_rows, dashboard_resolve_profile_db_game_id,
+    dashboard_get_analyze_all_counts, dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_rows,
+    dashboard_resolve_profile_db_game_id,
     dashboard_search_profile_opponents,
 };
 use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::chess::{
     analyze_game, analyze_game_human_report, build_human_strategic_live_report, get_best_moves, get_engine_config,
     get_engine_logs, kill_engine, kill_engines, pick_human_strategic_move, stop_engine,
+    dashboard_analyze_all_run, dashboard_analyze_all_cancel,
 };
 use crate::db::{
     calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
@@ -63,7 +65,7 @@ use crate::db::{
     clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games, optimize_database,
     delete_indexes, download_position_cache, export_position_games_to_pgn,
     export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
-    get_players_game_info, get_tournaments, init_profile_db, merge_player_site_stats,
+    get_players_game_info, get_profile_accounts_game_info, get_profile_sidebar_stats, get_profile_game_stats, get_profile_rating_timeline, get_tournaments, init_profile_db, merge_player_site_stats,
     merge_years_data, precache_openings, search_position, import_online_tournament, get_account_sync_state,
     upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
     get_account_import_stats, sync_account_games_to_profile_db,
@@ -164,6 +166,8 @@ pub struct AppState {
     pgn_offsets: DashMap<String, Vec<u64>>,
     fide_players: RwLock<Vec<FidePlayer>>,
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
+    dashboard_analyze_all_cancellations: DashMap<String, bool>,
+    dashboard_analyze_all_active: DashMap<String, (String, String)>,
     auth: AuthState,
     chessbase_ws: Mutex<chessbase::ChessbaseWsState>,
     chessbase_cache: Mutex<Option<chessbase_service::ChessbaseCachedDownload>>,
@@ -195,6 +199,7 @@ pub async fn run() {
             kill_engines,
             get_engine_logs,
             memory_size,
+            process_memory_rss_mb,
             get_puzzle,
             get_puzzle_batch,
             search_opening_name,
@@ -202,6 +207,10 @@ pub async fn run() {
             get_opening_from_name,
             get_opening_info_from_fen,
             get_players_game_info,
+            get_profile_accounts_game_info,
+            get_profile_sidebar_stats,
+            get_profile_game_stats,
+            get_profile_rating_timeline,
             get_engine_config,
             file_exists,
             get_file_metadata,
@@ -292,9 +301,12 @@ pub async fn run() {
             analysis_db_clear_analyzed_pgns,
             analysis_db_get_analyzed_games_bulk,
             dashboard_get_analyze_all_counts,
+            dashboard_get_analyze_all_counts_bulk,
             dashboard_get_games_history_rows,
             dashboard_search_profile_opponents,
             dashboard_resolve_profile_db_game_id,
+            dashboard_analyze_all_run,
+            dashboard_analyze_all_cancel,
             planner_build_variant_book,
             planner_build_variant_pgn,
             chessbase_get_credentials,
@@ -661,6 +673,15 @@ fn has_arm_neon() -> bool {
 #[specta::specta]
 fn memory_size() -> u64 {
     sysinfo::System::new_all().total_memory() / (1024 * 1024)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn process_memory_rss_mb() -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+    system.refresh_process(pid);
+    system.process(pid).map(|process| process.memory() / 1024)
 }
 
 fn get_gpu_names() -> Result<Vec<String>, String> {

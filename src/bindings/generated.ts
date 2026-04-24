@@ -165,6 +165,9 @@ async getEngineLogs(engine: string, tab: string) : Promise<Result<EngineLog[], s
 async memorySize() : Promise<bigint> {
     return await TAURI_INVOKE("memory_size");
 },
+async processMemoryRssMb() : Promise<bigint | null> {
+    return await TAURI_INVOKE("process_memory_rss_mb");
+},
 /**
  * Gets a random puzzle from the database within the specified rating range
  * 
@@ -236,6 +239,38 @@ async getOpeningInfoFromFen(fen: string) : Promise<Result<OpeningInfo, string>> 
 async getPlayersGameInfo(file: string, id: number) : Promise<Result<PlayerGameInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_players_game_info", { file, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileAccountsGameInfo(profileId: string, accountKeys: string[]) : Promise<Result<PlayerGameInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_accounts_game_info", { profileId, accountKeys }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileSidebarStats(profileId: string) : Promise<Result<ProfileSidebarStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_sidebar_stats", { profileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileGameStats(profileId: string, filters: PlayerStatsFilters) : Promise<Result<GameStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_game_stats", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileRatingTimeline(profileId: string, filters: PlayerStatsFilters) : Promise<Result<RatingTimeline, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_rating_timeline", { profileId, filters }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1122,6 +1157,14 @@ async dashboardGetAnalyzeAllCounts(req: AnalyzeAllCountsRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardGetAnalyzeAllCountsBulk(req: AnalyzeAllCountsBulkRequest) : Promise<Result<AnalyzeAllCountsBulkResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_analyze_all_counts_bulk", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<GamesHistoryResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_get_games_history_rows", { req }) };
@@ -1141,6 +1184,22 @@ async dashboardSearchProfileOpponents(profileId: string, query: string, profileU
 async dashboardResolveProfileDbGameId(profileId: string, kind: GamesHistoryKind, gameKey: string) : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_resolve_profile_db_game_id", { profileId, kind, gameKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardAnalyzeAllRun(request: DashboardAnalyzeAllRunRequest) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_analyze_all_run", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardAnalyzeAllCancel(runId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_analyze_all_cancel", { runId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1582,6 +1641,8 @@ export type AccountSyncState = { account_key: string; platform: string; cursor_u
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
+export type AnalyzeAllCountsBulkRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[] }
+export type AnalyzeAllCountsBulkResponse = { all: AnalyzeAllCountsResponse; local: AnalyzeAllCountsResponse; chesscom: AnalyzeAllCountsResponse; lichess: AnalyzeAllCountsResponse; chessbase: AnalyzeAllCountsResponse }
 export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[]; target: AnalyzeAllTarget }
 export type AnalyzeAllCountsResponse = { total: number; analyzed: number; unanalyzed: number }
 export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "chessbase" | "all"
@@ -1607,6 +1668,8 @@ export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
+export type DashboardAnalyzeAllJobInput = { jobId: string; fen: string | null; moves: string[] | null; pgn: string | null }
+export type DashboardAnalyzeAllRunRequest = { runId: string; engine: string; goMode: GoMode; uciOptions: EngineOption[]; jobs: DashboardAnalyzeAllJobInput[] }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
@@ -1963,6 +2026,7 @@ export type PositionQueryJs = { fen: string; type_: string }
 export type PositionStats = { move: string; white: number; draw: number; black: number }
 export type PostGameReviewVariantsInput = { documentDir: string; initialFen: string; moves: string[]; humanColor: string | null }
 export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string }
+export type ProfileSidebarStats = { sidebar_model: PlayerSidebarModel; elo_buckets: EloBucket[] }
 export type ProfileWeaknessModel = { snapshotKey: string; modelVersion: number; generatedAt: string; totalGames: number; scoredGames: number; backfilledGames: number; signals: ProfileWeaknessSignal[]; signalsByColor: ProfileWeaknessSignalsByColor }
 export type ProfileWeaknessSignal = { signalKey: string; title: string; triggerText: string; attackPlan: string; score: number; severity: number; confidence: number; controllability: number; recency: number; support: number; nEff: number | null; impactJson: string; triggerJson: string; evidence: ProfileWeaknessSignalEvidence[] }
 export type ProfileWeaknessSignalEvidence = { evidenceRank: number; gameId: number | null; plyFrom: number | null; plyTo: number | null; evidenceText: string; evidenceJson: string }

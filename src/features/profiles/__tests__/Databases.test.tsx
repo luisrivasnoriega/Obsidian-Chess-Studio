@@ -8,14 +8,9 @@ import { render, screen, waitFor } from "./test-utils";
 // Mocks
 // -----------------------------
 
-const mockGetPlayersGameInfo = vi.hoisted(() => vi.fn());
+const mockInvoke = vi.hoisted(() => vi.fn());
 const mockFindFidePlayer = vi.hoisted(() => vi.fn().mockResolvedValue({ status: "ok", data: null }));
 const mockMergePlayerSiteStats = vi.hoisted(() => vi.fn().mockResolvedValue({ status: "ok", data: [] }));
-const mockQueryPlayers = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({
-    data: [{ id: 1, name: "lichess:player1" }],
-  }),
-);
 
 // Mock Tauri FS plugin FIRST, before any imports that might use it
 vi.mock("@tauri-apps/plugin-fs", () => ({
@@ -63,9 +58,12 @@ vi.mock("jotai", async (importOriginal) => {
 });
 
 // Mock Tauri commands and events
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: any[]) => mockInvoke(...args),
+}));
+
 vi.mock("@/bindings", () => ({
   commands: {
-    getPlayersGameInfo: (...args: any[]) => mockGetPlayersGameInfo(...args),
     findFidePlayer: (...args: any[]) => mockFindFidePlayer(...args),
   },
   events: {
@@ -79,13 +77,6 @@ vi.mock("@/bindings", () => ({
 vi.mock("@/bindings/playerStats", () => ({
   playerStatsCommands: {
     mergePlayerSiteStats: (...args: any[]) => mockMergePlayerSiteStats(...args),
-  },
-}));
-
-// Mock utils
-vi.mock("@/utils/db", () => ({
-  query_players: (...args: any[]) => {
-    return mockQueryPlayers(...args);
   },
 }));
 
@@ -143,12 +134,8 @@ describe("Databases", () => {
     ];
 
     // Default: return ok but empty to allow "no databases" branch
-    mockGetPlayersGameInfo.mockResolvedValue({ status: "ok", data: { site_stats_data: [] } });
+    mockInvoke.mockResolvedValue({ site_stats_data: [] });
     mockMergePlayerSiteStats.mockResolvedValue({ status: "ok", data: [] });
-    mockQueryPlayers.mockImplementation(async (_dbPath: string, query: any) => {
-      // Provide a matching player name so the component doesn't fall back unpredictably.
-      return { data: [{ id: 1, name: String(query?.name ?? "lichess:player1") }] };
-    });
   });
 
   const renderComponent = (props: Partial<React.ComponentProps<typeof Databases>> = {}) => {
@@ -169,7 +156,7 @@ describe("Databases", () => {
       resolveFn = res;
     });
 
-    mockGetPlayersGameInfo.mockReturnValueOnce(pending as any);
+    mockInvoke.mockReturnValueOnce(pending as any);
 
     renderComponent();
 
@@ -181,14 +168,11 @@ describe("Databases", () => {
     });
 
     // Resolve to avoid unhandled promise warning
-    resolveFn({ status: "ok", data: { site_stats_data: [] } });
+    resolveFn({ site_stats_data: [] });
   });
 
   test("renders PersonalCard when data is loaded", async () => {
-    mockGetPlayersGameInfo.mockResolvedValueOnce({
-      status: "ok",
-      data: mockPlayerInfo,
-    });
+    mockInvoke.mockResolvedValueOnce(mockPlayerInfo);
 
     renderComponent();
 
@@ -218,19 +202,18 @@ describe("Databases", () => {
   test("filters sessions by profileId when provided (calls query / load paths)", async () => {
     renderComponent({ profileId: "profile1" });
 
-    // Wait for the query to execute and call query_players + getPlayersGameInfo.
+    // Wait for the query to execute and call invoke with profile account keys.
     await waitFor(() => {
-      expect(mockQueryPlayers).toHaveBeenCalled();
-      expect(mockGetPlayersGameInfo).toHaveBeenCalled();
+      expect(mockInvoke).toHaveBeenCalled();
+      expect(mockInvoke).toHaveBeenCalledWith("get_profile_accounts_game_info", {
+        profileId: "profile1",
+        accountKeys: ["lichess:player1", "chesscom:player1com"],
+      });
     });
   });
 
   test("shows no databases message when no data", async () => {
-    const mockGetPlayersGameInfo = (globalThis as any).__mockGetPlayersGameInfo__;
-    mockGetPlayersGameInfo?.mockResolvedValueOnce({
-      status: "ok",
-      data: { site_stats_data: [] },
-    });
+    mockInvoke.mockResolvedValueOnce({ site_stats_data: [] });
 
     renderComponent();
 
@@ -246,11 +229,7 @@ describe("Databases", () => {
   });
 
   test("handles error response gracefully (no crash)", async () => {
-    const mockGetPlayersGameInfo = (globalThis as any).__mockGetPlayersGameInfo__;
-    mockGetPlayersGameInfo?.mockResolvedValueOnce({
-      status: "error",
-      error: "boom",
-    } as any);
+    mockInvoke.mockRejectedValueOnce(new Error("boom"));
 
     renderComponent();
 

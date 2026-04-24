@@ -99,12 +99,33 @@ pub struct AnalyzeAllCountsRequest {
     pub target: AnalyzeAllTarget,
 }
 
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeAllCountsBulkRequest {
+    pub profile_id: String,
+    pub game_history_limit: i32,
+    pub event_filter_id: Option<i32>,
+    pub selected_opponent_id: Option<i32>,
+    pub time_control_category: Option<String>,
+    pub profile_usernames: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeAllCountsResponse {
     pub total: i32,
     pub analyzed: i32,
     pub unanalyzed: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeAllCountsBulkResponse {
+    pub all: AnalyzeAllCountsResponse,
+    pub local: AnalyzeAllCountsResponse,
+    pub chesscom: AnalyzeAllCountsResponse,
+    pub lichess: AnalyzeAllCountsResponse,
+    pub chessbase: AnalyzeAllCountsResponse,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -944,6 +965,93 @@ pub async fn dashboard_get_games_history_rows(
     })
 }
 
+fn empty_analyze_all_counts() -> AnalyzeAllCountsResponse {
+    AnalyzeAllCountsResponse {
+        total: 0,
+        analyzed: 0,
+        unanalyzed: 0,
+    }
+}
+
+fn row_matches_target(row: &GamesHistoryRow, target: &AnalyzeAllTarget) -> bool {
+    match target {
+        AnalyzeAllTarget::All => true,
+        AnalyzeAllTarget::Local => matches!(row.kind, GamesHistoryKind::Local),
+        AnalyzeAllTarget::Chesscom => matches!(row.kind, GamesHistoryKind::Chesscom),
+        AnalyzeAllTarget::Lichess => matches!(row.kind, GamesHistoryKind::Lichess),
+        AnalyzeAllTarget::Chessbase => matches!(row.kind, GamesHistoryKind::Chessbase),
+    }
+}
+
+fn compute_analyze_all_counts(rows: &[GamesHistoryRow], target: AnalyzeAllTarget) -> AnalyzeAllCountsResponse {
+    let mut total = 0i32;
+    let mut analyzed = 0i32;
+
+    for row in rows.iter() {
+        if !row_matches_target(row, &target) {
+            continue;
+        }
+        total += 1;
+        if row.is_analyzed {
+            analyzed += 1;
+        }
+    }
+
+    AnalyzeAllCountsResponse {
+        total,
+        analyzed,
+        unanalyzed: (total - analyzed).max(0),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dashboard_get_analyze_all_counts_bulk(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: AnalyzeAllCountsBulkRequest,
+) -> Result<AnalyzeAllCountsBulkResponse> {
+    let profile_id = req.profile_id.trim().to_string();
+    if profile_id.is_empty() || req.game_history_limit <= 0 {
+        let zero = empty_analyze_all_counts();
+        return Ok(AnalyzeAllCountsBulkResponse {
+            all: zero.clone(),
+            local: zero.clone(),
+            chesscom: zero.clone(),
+            lichess: zero.clone(),
+            chessbase: zero,
+        });
+    }
+
+    // Keep counts aligned with the same source used by the dashboard table.
+    let rows_req = GamesHistoryRequest {
+        profile_id,
+        game_history_limit: req.game_history_limit,
+        page: 1,
+        page_size: req.game_history_limit,
+        event_filter_id: req.event_filter_id,
+        selected_opponent_id: req.selected_opponent_id,
+        opponent_contains: None,
+        time_control_category: req.time_control_category,
+        result_filter: None,
+        sort_by: Some("date".to_string()),
+        sort_direction: Some("desc".to_string()),
+        profile_usernames: req.profile_usernames,
+    };
+    let mut rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
+
+    // Analyze-all only processes games with enough move content.
+    rows.retain(|r| r.moves >= 5);
+
+    Ok(AnalyzeAllCountsBulkResponse {
+        all: compute_analyze_all_counts(&rows, AnalyzeAllTarget::All),
+        local: compute_analyze_all_counts(&rows, AnalyzeAllTarget::Local),
+        chesscom: compute_analyze_all_counts(&rows, AnalyzeAllTarget::Chesscom),
+        lichess: compute_analyze_all_counts(&rows, AnalyzeAllTarget::Lichess),
+        chessbase: compute_analyze_all_counts(&rows, AnalyzeAllTarget::Chessbase),
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn dashboard_get_analyze_all_counts(
@@ -951,70 +1059,26 @@ pub async fn dashboard_get_analyze_all_counts(
     state: State<'_, AppState>,
     req: AnalyzeAllCountsRequest,
 ) -> Result<AnalyzeAllCountsResponse> {
-    let profile_id = req.profile_id.trim().to_string();
-    if profile_id.is_empty() {
-        return Ok(AnalyzeAllCountsResponse {
-            total: 0,
-            analyzed: 0,
-            unanalyzed: 0,
-        });
-    }
-    if req.game_history_limit <= 0 {
-        return Ok(AnalyzeAllCountsResponse {
-            total: 0,
-            analyzed: 0,
-            unanalyzed: 0,
-        });
-    }
+    let bulk = dashboard_get_analyze_all_counts_bulk(
+        app,
+        state,
+        AnalyzeAllCountsBulkRequest {
+            profile_id: req.profile_id,
+            game_history_limit: req.game_history_limit,
+            event_filter_id: req.event_filter_id,
+            selected_opponent_id: req.selected_opponent_id,
+            time_control_category: req.time_control_category,
+            profile_usernames: req.profile_usernames,
+        },
+    )
+    .await?;
 
-    // Keep counts aligned with the same source used by the dashboard table.
-    let rows_req = GamesHistoryRequest {
-        profile_id: profile_id.clone(),
-        game_history_limit: req.game_history_limit,
-        page: 1,
-        page_size: req.game_history_limit,
-        event_filter_id: req.event_filter_id,
-        selected_opponent_id: req.selected_opponent_id,
-        opponent_contains: None,
-        time_control_category: req.time_control_category.clone(),
-        result_filter: None,
-        sort_by: Some("date".to_string()),
-        sort_direction: Some("desc".to_string()),
-        profile_usernames: req.profile_usernames.clone(),
-    };
-    let mut rows = dashboard_get_games_history_rows(app.clone(), state, rows_req).await?.rows;
-
-    // Analyze-all only processes games with enough move content.
-    rows.retain(|r| r.moves >= 5);
-
-    let target = req.target.clone();
-    rows.retain(|r| match &target {
-        AnalyzeAllTarget::All => true,
-        AnalyzeAllTarget::Local => matches!(r.kind, GamesHistoryKind::Local),
-        AnalyzeAllTarget::Chesscom => matches!(r.kind, GamesHistoryKind::Chesscom),
-        AnalyzeAllTarget::Lichess => matches!(r.kind, GamesHistoryKind::Lichess),
-        AnalyzeAllTarget::Chessbase => matches!(r.kind, GamesHistoryKind::Chessbase),
-    });
-
-    let total = rows.len() as i32;
-    if total == 0 {
-        return Ok(AnalyzeAllCountsResponse {
-            total: 0,
-            analyzed: 0,
-            unanalyzed: 0,
-        });
-    }
-
-    // 4) Count analyzed using the same criterion shown in the dashboard table.
-    // `dashboard_get_games_history_rows` already enriches and computes `is_analyzed`
-    // from analysis.db3 plus PGN analysis markers.
-    let analyzed = rows.iter().filter(|row| row.is_analyzed).count() as i32;
-    let unanalyzed = (total - analyzed).max(0);
-
-    Ok(AnalyzeAllCountsResponse {
-        total,
-        analyzed,
-        unanalyzed,
+    Ok(match req.target {
+        AnalyzeAllTarget::All => bulk.all,
+        AnalyzeAllTarget::Local => bulk.local,
+        AnalyzeAllTarget::Chesscom => bulk.chesscom,
+        AnalyzeAllTarget::Lichess => bulk.lichess,
+        AnalyzeAllTarget::Chessbase => bulk.chessbase,
     })
 }
 

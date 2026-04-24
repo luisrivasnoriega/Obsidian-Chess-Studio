@@ -7,7 +7,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, type Toolti
 import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 
 import type { PlayerGameInfo } from "@/bindings";
-import type { EloBucket, GameStats, PlayerSidebarModel } from "@/bindings/playerStats";
+import type { EloBucket, GameStats, PlayerSidebarModel, ProfileSidebarStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { ChartSizeGuard } from "@/components/ChartSizeGuard";
 import { createPlayerStatsFilters, createSiteStatsSignature } from "@/utils/playerStats";
@@ -52,8 +52,27 @@ function OverviewPanel({
   const statsSig = useMemo(() => createSiteStatsSignature(info?.site_stats_data), [info?.site_stats_data]);
   const statsEnabled = statsSig.games > 0;
 
+  const {
+    data: profileSidebarStats,
+    isLoading: isLoadingProfileSidebarStats,
+    isFetching: isFetchingProfileSidebarStats,
+  } = useQuery<ProfileSidebarStats | null>({
+    queryKey: ["profileSidebarStats", profileId ?? null],
+    queryFn: async () => {
+      if (!profileId) return null;
+      return unwrap(await playerStatsCommands.getProfileSidebarStats(profileId));
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    enabled: !!profileId,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+  });
+
   // --- Sidebar model (style + ELO summary) ---
-  const { data: sidebarModel } = useQuery({
+  const { data: localSidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
     queryFn: async () => {
       const key = makeCacheKey(["sidebar", statsSig.key]);
@@ -70,14 +89,14 @@ function OverviewPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsEnabled,
+    enabled: !profileId && statsEnabled,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: true,
   });
 
   // --- ELO buckets ---
-  const { data: eloBuckets = [] } = useQuery<EloBucket[]>({
+  const { data: localEloBuckets = [] } = useQuery<EloBucket[]>({
     queryKey: ["playerEloBuckets", statsSig.key],
     queryFn: async () => {
       const key = makeCacheKey(["elo", statsSig.key]);
@@ -96,11 +115,14 @@ function OverviewPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsEnabled,
+    enabled: !profileId && statsEnabled,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: true,
   });
+
+  const sidebarModel = profileSidebarStats?.sidebar_model ?? localSidebarModel;
+  const eloBuckets = profileSidebarStats?.elo_buckets ?? localEloBuckets;
 
   const opponentEloOptions = useMemo(() => {
     return [
@@ -123,6 +145,7 @@ function OverviewPanel({
   } = useQuery<GameStats>({
     queryKey: [
       "playerGameStats",
+      profileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -130,6 +153,10 @@ function OverviewPanel({
       filters.date_range,
     ],
     queryFn: async () => {
+      if (profileId) {
+        return unwrap(await playerStatsCommands.getProfileGameStats(profileId, filters));
+      }
+
       const key = makeCacheKey([
         "stats",
         statsSig.key,
@@ -153,7 +180,7 @@ function OverviewPanel({
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsEnabled,
+    enabled: !!profileId || statsEnabled,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchOnMount: true,
@@ -166,7 +193,12 @@ function OverviewPanel({
   const unknownCount = unknown_count;
 
   // Calculate loading state: prop from parent OR internal queries loading/fetching
-  const isAnyLoading = isLoading || isLoadingGameStats || isFetchingGameStats;
+  const isAnyLoading =
+    isLoading ||
+    isLoadingGameStats ||
+    isFetchingGameStats ||
+    isLoadingProfileSidebarStats ||
+    isFetchingProfileSidebarStats;
   const hasPanelData = total > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;

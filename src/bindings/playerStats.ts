@@ -105,6 +105,11 @@ export interface PlayerSidebarModel {
   elo: PlayerSidebarEloBlock[];
 }
 
+export interface ProfileSidebarStats {
+  sidebar_model: PlayerSidebarModel;
+  elo_buckets: EloBucket[];
+}
+
 // -----------------------------------------------------------------------------
 // Commands (snake_case = Rust `#[tauri::command]` function names)
 // -----------------------------------------------------------------------------
@@ -143,6 +148,15 @@ export const playerStatsCommands = {
   },
   mergeYearsData(data: MonthData[]) {
     return invoke_result<MonthData[]>("merge_years_data", { data });
+  },
+  getProfileSidebarStats(profile_id: string) {
+    return invoke_result<ProfileSidebarStats>("get_profile_sidebar_stats", { profileId: profile_id });
+  },
+  getProfileGameStats(profile_id: string, filters: PlayerStatsFilters) {
+    return invoke_result<GameStats>("get_profile_game_stats", { profileId: profile_id, filters });
+  },
+  getProfileRatingTimeline(profile_id: string, filters: PlayerStatsFilters) {
+    return invoke_result<RatingTimeline>("get_profile_rating_timeline", { profileId: profile_id, filters });
   },
   calculateEarliestDateFromRange(date_range: DateRange, rating_dates: number[]) {
     return invoke_result<number | null>("calculate_earliest_date_from_range", {

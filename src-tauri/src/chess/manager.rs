@@ -214,7 +214,7 @@ impl<'a> EngineManager<'a> {
                         }
                         _ => {}
                     }
-                    proc.logs.push(EngineLog::Engine(line));
+                    proc.append_log(EngineLog::Engine(line));
                 }
             }
             info!(

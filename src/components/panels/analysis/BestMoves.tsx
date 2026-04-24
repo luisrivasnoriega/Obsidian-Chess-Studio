@@ -104,6 +104,36 @@ const PLAN_SECTION_ORDER: PlanSectionKey[] = [
   "PRACTICAL_ADVICE",
 ];
 
+const HUMAN_STRATEGIC_CACHE_LIMIT = 120;
+
+function getStrategicCacheEntry(
+  cache: Map<string, HumanStrategicLiveResponse>,
+  key: string,
+): HumanStrategicLiveResponse | null {
+  const cached = cache.get(key) ?? null;
+  if (!cached) return null;
+  // Refresh insertion order for LRU behavior.
+  cache.delete(key);
+  cache.set(key, cached);
+  return cached;
+}
+
+function setStrategicCacheEntry(
+  cache: Map<string, HumanStrategicLiveResponse>,
+  key: string,
+  value: HumanStrategicLiveResponse,
+) {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+  while (cache.size > HUMAN_STRATEGIC_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
 function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps, orientation }: BestMovesProps) {
   const { t, i18n } = useTranslation();
 
@@ -248,7 +278,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
       return;
     }
 
-    const cached = humanStrategicCacheRef.current.get(humanStrategicKey);
+    const cached = getStrategicCacheEntry(humanStrategicCacheRef.current, humanStrategicKey);
     if (cached) {
       setHumanStrategicReport(cached);
       setHumanStrategicLoading(false);
@@ -271,7 +301,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
         }
 
         if (result.status === "ok") {
-          humanStrategicCacheRef.current.set(humanStrategicKey, result.data);
+          setStrategicCacheEntry(humanStrategicCacheRef.current, humanStrategicKey, result.data);
           setHumanStrategicReport(result.data);
         } else {
           setHumanStrategicReport(null);

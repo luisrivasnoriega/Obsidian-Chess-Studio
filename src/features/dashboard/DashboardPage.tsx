@@ -2,20 +2,21 @@ import type { MantineColor } from "@mantine/core";
 import { Box, Button, Grid, Group, Select, Stack, Text } from "@mantine/core";
 import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconBolt, IconChess, IconClock, IconStopwatch } from "@tabler/icons-react";
+import { IconBolt, IconChess, IconClock, IconRefresh, IconStopwatch } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Event, GameQuery, GamesHistoryRow } from "@/bindings";
+import type { Event, GameQuery, GamesHistoryRow, MoveAnalysis } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
-import { getAllAnalyzedGames, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
+import { getAnalyzedGamesBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
@@ -35,9 +36,11 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
+import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
-import { getAccountSyncStateFromProfileDb } from "@/utils/profileGameSync";
+import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/profileLastActivity";
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
@@ -75,6 +78,24 @@ type AnalyzeAllScopeFilters = {
   resultFilter: string | null;
 };
 
+type DashboardAnalyzeAllBackendJob = {
+  jobId: string;
+  fen: string | null;
+  moves: string[] | null;
+  pgn: string | null;
+};
+
+type DashboardAnalyzeAllResultPayload = {
+  runId: string;
+  jobId: string;
+  index: number;
+  total: number;
+  success: boolean;
+  analysis: MoveAnalysis[] | null;
+  error: string | null;
+  cancelled: boolean;
+};
+
 export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
   const isMobile = useMediaQuery("(max-width: 48em)");
@@ -95,79 +116,23 @@ export default function DashboardPage() {
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const [_activeTab, setActiveTab] = useAtom(activeTabAtom);
 
-  const [sessions, _setSessions] = useAtom(sessionsAtom);
+  const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
+  const [isProfileSyncing, setIsProfileSyncing] = useState(false);
 
   // Load last activity dates for all profiles
   useEffect(() => {
     let cancelled = false;
     const loadLastActivities = async () => {
-      const activityMap = new Map<string, number | null>();
-
-      for (const profile of profiles) {
-        const linkedSessions = sessions.filter((s) => s.profileId === profile.id);
-        if (linkedSessions.length === 0) {
-          activityMap.set(profile.id, null);
-          continue;
-        }
-
-        const lastDates = await Promise.all(
-          linkedSessions.map(async (session) => {
-            const type = session.lichess ? "lichess" : "chesscom";
-            const username = session.lichess?.username ?? session.chessCom?.username ?? "";
-            if (!username || !session.profileId) return null;
-
-            const activityDates: number[] = [];
-
-            // For Lichess accounts, use seenAt (includes all activity: games, puzzles, etc.)
-            if (session.lichess?.account?.seenAt) {
-              // seenAt is in milliseconds, same as our Date.now()
-              activityDates.push(session.lichess.account.seenAt);
-            }
-
-            // For Chess.com accounts, use the most recent last.date from stats
-            if (session.chessCom?.stats) {
-              const stats = session.chessCom.stats;
-              const lastDates = [
-                stats.chess_bullet?.last?.date,
-                stats.chess_blitz?.last?.date,
-                stats.chess_rapid?.last?.date,
-                stats.chess_daily?.last?.date,
-              ]
-                .filter((d): d is number => d !== undefined && d !== null)
-                .map((d) => d * 1000); // Convert from seconds to milliseconds
-
-              if (lastDates.length > 0) {
-                activityDates.push(Math.max(...lastDates));
-              }
-            }
-
-            // Also check last game date from database
-            try {
-              const profileDbPath = await getProfileDbPath(session.profileId);
-              const accountKey = getAccountKey(type, username);
-              const { lastGameDate } = await getAccountSyncStateFromProfileDb(profileDbPath, accountKey);
-              if (lastGameDate) {
-                activityDates.push(lastGameDate);
-              }
-            } catch {
-              // Ignore errors
-            }
-
-            // Return the most recent activity date
-            return activityDates.length > 0 ? Math.max(...activityDates) : null;
-          }),
-        );
-
-        const validDates = lastDates.filter((d): d is number => d !== null);
-        const mostRecent = validDates.length > 0 ? Math.max(...validDates) : null;
-        activityMap.set(profile.id, mostRecent);
-      }
+      const activityMap = await loadProfilesLastActivityMap({
+        profileIds: profiles.map((profile) => profile.id),
+        sessions,
+      });
 
       if (!cancelled) {
-        setLastActivityMap(activityMap);
+        setLastActivityMap((prev) => (areLastActivityMapsEqual(prev, activityMap) ? prev : activityMap));
       }
     };
 
@@ -201,6 +166,160 @@ export default function DashboardPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
+
+  const sessionMeta = useCallback((session: Session) => {
+    if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };
+    if (session.chessCom?.username) return { platform: "chesscom" as const, username: session.chessCom.username };
+    return { platform: "unknown" as const, username: "-" };
+  }, []);
+
+  const upsertSession = useCallback(
+    (session: Session) => {
+      setSessions((prev) => {
+        const nextMeta = sessionMeta(session);
+        const nextKey = `${session.profileId ?? ""}:${nextMeta.platform}:${nextMeta.username}`;
+        const filtered = prev.filter((existing) => {
+          const meta = sessionMeta(existing);
+          const key = `${existing.profileId ?? ""}:${meta.platform}:${meta.username}`;
+          return key !== nextKey;
+        });
+        return [...filtered, { ...session, updatedAt: session.updatedAt ?? Date.now() }];
+      });
+    },
+    [sessionMeta, setSessions],
+  );
+
+  const syncActiveProfileInPlace = useCallback(async () => {
+    if (isProfileSyncing) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.sync.inProgress", { defaultValue: "A profile update is already running." }),
+        color: "yellow",
+        autoClose: 3000,
+      });
+      return;
+    }
+
+    if (!activeProfile) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.selectProfile", { defaultValue: "Select profile" }),
+        color: "yellow",
+        autoClose: 3000,
+      });
+      return;
+    }
+
+    const linkedSessions = sessions.filter((session) => session.profileId === activeProfile.id);
+    const syncableSessions = linkedSessions.filter((session) => {
+      const meta = sessionMeta(session);
+      return (meta.platform === "lichess" || meta.platform === "chesscom") && meta.username !== "-";
+    });
+
+    if (syncableSessions.length === 0) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.sync.noAccounts", { defaultValue: "This profile has no linked accounts to update." }),
+        color: "yellow",
+        autoClose: 3000,
+      });
+      return;
+    }
+
+    setIsProfileSyncing(true);
+    let importedGames = 0;
+
+    try {
+      const orderedSessions = [...syncableSessions].sort((a, b) => {
+        const aPlatform = sessionMeta(a).platform;
+        const bPlatform = sessionMeta(b).platform;
+        if (aPlatform === bPlatform) return 0;
+        return aPlatform === "lichess" ? -1 : 1;
+      });
+
+      for (const session of orderedSessions) {
+        const meta = sessionMeta(session);
+        const username = meta.username;
+        const notificationId = `dashboard-sync:${activeProfile.id}:${meta.platform}:${username}`;
+
+        notifications.show({
+          id: notificationId,
+          title: t("accounts.processingGames", { defaultValue: "Processing Games..." }),
+          message: `${activeProfile.name} - ${username} (${meta.platform})`,
+          loading: true,
+          autoClose: false,
+        });
+
+        try {
+          const result = await syncSessionGamesToProfileDb({
+            profile: activeProfile,
+            session,
+            onBatchUpdate: (update) => {
+              const message =
+                update.totalBatches > 0
+                  ? `${activeProfile.name} - ${username} (${update.platform}) ${t("accounts.sync.batchProgress", {
+                      defaultValue: "Batch {{current}} of {{total}}",
+                      current: update.currentBatch,
+                      total: update.totalBatches,
+                    })}`
+                  : `${activeProfile.name} - ${username} (${update.platform})`;
+
+              notifications.update({
+                id: notificationId,
+                message,
+                loading: true,
+                autoClose: false,
+              });
+            },
+          });
+
+          importedGames += result.importedGames ?? 0;
+          if (result.updatedSession) upsertSession(result.updatedSession);
+
+          notifications.update({
+            id: notificationId,
+            title: t("common.success", { defaultValue: "Success" }),
+            message: `${activeProfile.name} - ${username} (${meta.platform})`,
+            color: "green",
+            loading: false,
+            autoClose: 2500,
+          });
+        } catch (error) {
+          notifications.update({
+            id: notificationId,
+            title: t("common.error", { defaultValue: "Error" }),
+            message: `${t("accounts.databaseLoadError", { defaultValue: "Error loading database" })}: ${String(error)}`,
+            color: "red",
+            loading: false,
+            autoClose: 4000,
+          });
+        }
+      }
+    } finally {
+      setIsProfileSyncing(false);
+    }
+
+    if (importedGames > 0) {
+      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+      window.dispatchEvent(new Event("chesscom:games:updated"));
+      window.dispatchEvent(new Event("lichess:games:updated"));
+      const activityMap = await loadProfilesLastActivityMap({
+        profileIds: profiles.map((profile) => profile.id),
+        sessions,
+      });
+      setLastActivityMap((prev) => (areLastActivityMapsEqual(prev, activityMap) ? prev : activityMap));
+    }
+
+    notifications.show({
+      title: t("common.success", { defaultValue: "Success" }),
+      message: t("profiles.sync.completed", {
+        defaultValue: "Profile {{profile}} updated.",
+        profile: activeProfile.name,
+      }),
+      color: "green",
+      autoClose: 2500,
+    });
+  }, [activeProfile, isProfileSyncing, profiles, sessionMeta, sessions, t, upsertSession]);
 
   const topProfileOptions = useMemo(() => sortedProfiles.slice(0, 5), [sortedProfiles]);
   const otherProfileOptions = useMemo(() => sortedProfiles.slice(5), [sortedProfiles]);
@@ -694,11 +813,14 @@ export default function DashboardPage() {
           },
         } as unknown as GameQuery);
 
-        const analyzedGames = await getAllAnalyzedGames(activeProfileId);
-        const games = (queryResult.data ?? [])
-          .filter((g) => g.site?.toLowerCase().includes("lichess.org"))
+        const lichessRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("lichess.org"));
+        const analyzedGames = await getAnalyzedGamesBulk(
+          lichessRows.map((g) => String(g.id)),
+          activeProfileId,
+        );
+        const games = lichessRows
           .map((g) => {
-            const analyzedPgn = analyzedGames[String(g.id)] ?? null;
+            const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
             const base = convertNormalizedToLichessGame(g);
             return {
               ...base,
@@ -775,11 +897,14 @@ export default function DashboardPage() {
           },
         } as unknown as GameQuery);
 
-        const analyzedGames = await getAllAnalyzedGames(activeProfileId);
-        const games = (queryResult.data ?? [])
-          .filter((g) => g.site?.toLowerCase().includes("chess.com"))
+        const chessComRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("chess.com"));
+        const analyzedGames = await getAnalyzedGamesBulk(
+          chessComRows.map((g) => String(g.id)),
+          activeProfileId,
+        );
+        const games = chessComRows
           .map((g) => {
-            const analyzedPgn = analyzedGames[String(g.id)] ?? null;
+            const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
             const base = convertNormalizedToChessComGame(g);
             return {
               ...base,
@@ -1093,6 +1218,18 @@ export default function DashboardPage() {
                 }}
               />
             )}
+            <Button
+              size="xs"
+              radius="xl"
+              variant="light"
+              leftSection={<IconRefresh size={14} />}
+              loading={isProfileSyncing}
+              onClick={() => {
+                void syncActiveProfileInPlace();
+              }}
+            >
+              {t("profiles.sync.active", { defaultValue: "Update active profile" })}
+            </Button>
           </Group>
         </Group>
 
@@ -1414,6 +1551,21 @@ export default function DashboardPage() {
               return;
             }
 
+            const analyzeAllRunSpan = startPerfBaselineSpan({
+              scope: "dashboard.analyze_all",
+              label: "run",
+              metadata: {
+                profileId: activeProfileId ?? "none",
+                target: analyzeAllGameType ?? "none",
+                analyzeMode: config.analyzeMode,
+                engine: selectedEngine.name,
+                timeMs: config.timeMs,
+              },
+            });
+            let baselineStatus = "running";
+            let baselineCandidateGames = 0;
+            let baselineGamesToAnalyze = 0;
+
             let warnedMissingInternalId = false;
             let warnedStatsPersistFailed = false;
 
@@ -1430,22 +1582,6 @@ export default function DashboardPage() {
               await Promise.all(stopPromises);
               activeAnalysisIds.clear();
             };
-
-            let analyzedGames: Record<string, string> = {};
-            try {
-              // Get all analyzed games for this profile to filter out already analyzed ones if needed
-              analyzedGames = await getAllAnalyzedGames(activeProfileId ?? null);
-            } catch (e) {
-              notifications.show({
-                title: t("common.error"),
-                message: t("features.dashboard.analysisUnexpectedError", {
-                  defaultValue: "Analyze all failed before starting. {{error}}",
-                  error: String(e),
-                }),
-                color: "red",
-              });
-              return;
-            }
 
             const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= 5);
             const rowsForSelectedType = scopedRowsForRun.filter((row) =>
@@ -1573,6 +1709,53 @@ export default function DashboardPage() {
                       : analyzeAllGameType === "chessbase"
                         ? getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g }))
                         : [];
+            baselineCandidateGames = allGames.length;
+
+            let analyzedGameIds = new Set<string>();
+            if (config.analyzeMode === "unanalyzed") {
+              const lookupIds = new Set<string>();
+              for (const item of allGames) {
+                if (item.type === "local") {
+                  lookupIds.add((item.game as GameRecord).id);
+                } else if (item.type === "chessbase") {
+                  lookupIds.add(String((item.game as GamesHistoryRow).analysisGameId));
+                } else if (item.type === "chesscom") {
+                  const internalId = internalIdByExternalKey.get(
+                    `chesscom:${(item.game as ChessComGameWithEvent).url}`,
+                  );
+                  if (internalId) {
+                    lookupIds.add(internalId);
+                  }
+                } else {
+                  const internalId = internalIdByExternalKey.get(
+                    `lichess:${(item.game as (typeof lichessGames)[0]).id}`,
+                  );
+                  if (internalId) {
+                    lookupIds.add(internalId);
+                  }
+                }
+              }
+
+              try {
+                const bulk = await getAnalyzedGamesBulk(Array.from(lookupIds), activeProfileId ?? null);
+                analyzedGameIds = new Set(bulk.keys());
+              } catch (e) {
+                notifications.show({
+                  title: t("common.error"),
+                  message: t("features.dashboard.analysisUnexpectedError", {
+                    defaultValue: "Analyze all failed before starting. {{error}}",
+                    error: String(e),
+                  }),
+                  color: "red",
+                });
+                baselineStatus = "precheck_failed";
+                await finishPerfBaselineSpan(analyzeAllRunSpan, {
+                  status: baselineStatus,
+                  candidateGames: baselineCandidateGames,
+                });
+                return;
+              }
+            }
 
             // Filter to only unanalyzed games if requested
             const gamesToAnalyze =
@@ -1583,7 +1766,7 @@ export default function DashboardPage() {
                       const scoped = analyzedByScopedRow.get(`local:${gameRecord.id}`);
                       if (scoped !== undefined) return !scoped;
                       // For "only unanalyzed", use analysis.db3 only (profile-aware).
-                      const existsInDb = !!analyzedGames[gameRecord.id];
+                      const existsInDb = analyzedGameIds.has(String(gameRecord.id));
                       if (existsInDb) return false; // Already analyzed
                       return true;
                     } else if (item.type === "chesscom") {
@@ -1592,14 +1775,14 @@ export default function DashboardPage() {
                       if (scoped !== undefined) return !scoped;
                       // Check if this game has been analyzed
                       const internalId = internalIdByExternalKey.get(`chesscom:${chessComGame.url}`);
-                      const existsInDb = internalId ? !!analyzedGames[internalId] : false;
+                      const existsInDb = internalId ? analyzedGameIds.has(internalId) : false;
                       if (existsInDb) return false; // Already analyzed
                       return true;
                     } else if (item.type === "chessbase") {
                       const row = item.game as GamesHistoryRow;
                       const scoped = analyzedByScopedRow.get(`chessbase:${row.gameKey}`);
                       if (scoped !== undefined) return !scoped;
-                      const existsInDb = !!analyzedGames[String(row.analysisGameId)];
+                      const existsInDb = analyzedGameIds.has(String(row.analysisGameId));
                       if (existsInDb) return false;
                       return true;
                     } else {
@@ -1609,12 +1792,22 @@ export default function DashboardPage() {
                       if (scoped !== undefined) return !scoped;
                       // Check if this game has been analyzed
                       const internalId = internalIdByExternalKey.get(`lichess:${lichessGame.id}`);
-                      const existsInDb = internalId ? !!analyzedGames[internalId] : false;
+                      const existsInDb = internalId ? analyzedGameIds.has(internalId) : false;
                       if (existsInDb) return false; // Already analyzed
                       return true;
                     }
                   })
                 : allGames;
+            baselineGamesToAnalyze = gamesToAnalyze.length;
+            await perfBaselinePoint({
+              scope: "dashboard.analyze_all",
+              label: "selection_ready",
+              metadata: {
+                candidateGames: baselineCandidateGames,
+                gamesToAnalyze: baselineGamesToAnalyze,
+                analyzeMode: config.analyzeMode,
+              },
+            });
 
             if (gamesToAnalyze.length === 0) {
               notifications.show({
@@ -1625,6 +1818,12 @@ export default function DashboardPage() {
                     : "No games with PGN data available to analyze.",
                 color: "orange",
               });
+              baselineStatus = "no_games";
+              await finishPerfBaselineSpan(analyzeAllRunSpan, {
+                status: baselineStatus,
+                candidateGames: baselineCandidateGames,
+                gamesToAnalyze: baselineGamesToAnalyze,
+              });
               return;
             }
 
@@ -1633,10 +1832,6 @@ export default function DashboardPage() {
               ...s,
               value: s.value?.toString() ?? "",
             }));
-
-            // Detect available CPU threads and calculate parallel analysis count (25% of available threads)
-            const availableThreads = navigator.hardwareConcurrency || 4;
-            const parallelAnalyses = Math.max(1, Math.floor(availableThreads / 4));
 
             // Force Threads to 1 for each individual analysis, regardless of engine configuration
             const threadsSetting = engineSettings.find((s) => s.name.toLowerCase() === "threads");
@@ -1662,6 +1857,12 @@ export default function DashboardPage() {
                 }),
                 color: "red",
               });
+              baselineStatus = "setup_failed";
+              await finishPerfBaselineSpan(analyzeAllRunSpan, {
+                status: baselineStatus,
+                candidateGames: baselineCandidateGames,
+                gamesToAnalyze: baselineGamesToAnalyze,
+              });
               return;
             }
 
@@ -1685,6 +1886,7 @@ export default function DashboardPage() {
             let completedCount = 0;
             let cancellationNotified = false;
             let stopRequested = false;
+            let currentRunId: string | null = null;
 
             const notifyCancellation = () => {
               if (cancellationNotified) return;
@@ -1699,6 +1901,11 @@ export default function DashboardPage() {
             const stopAllEnginesOnce = async () => {
               if (stopRequested) return;
               stopRequested = true;
+              if (currentRunId) {
+                await invoke("dashboard_analyze_all_cancel", { runId: currentRunId }).catch(() => {
+                  // best-effort
+                });
+              }
               await stopAllEngines();
             };
 
@@ -1709,7 +1916,11 @@ export default function DashboardPage() {
             }, 120);
 
             // Process games in parallel batches
-            const processGame = async (item: (typeof gamesToAnalyze)[0], index: number): Promise<void> => {
+            const processGame = async (
+              item: (typeof gamesToAnalyze)[0],
+              index: number,
+              providedAnalysis?: MoveAnalysis[] | null,
+            ): Promise<void> => {
               const gameType = item.type;
               const game = item.game;
               const analysisId = `analyze_all_${gameType}_${index}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
@@ -1786,38 +1997,42 @@ export default function DashboardPage() {
                   return;
                 }
 
-                // Analyze the game
-                const analysisPromise = commands.analyzeGame(
-                  analysisId,
-                  selectedEngine.path,
-                  goMode,
-                  {
-                    annotateNovelties: false,
-                    fen: initialFen,
-                    referenceDb: null,
-                    reversed: false,
-                    moves,
-                  },
-                  engineSettings,
-                );
+                let analysis: MoveAnalysis[];
+                if (providedAnalysis && providedAnalysis.length > 0) {
+                  analysis = providedAnalysis;
+                } else {
+                  const analysisPromise = commands.analyzeGame(
+                    analysisId,
+                    selectedEngine.path,
+                    goMode,
+                    {
+                      annotateNovelties: false,
+                      fen: initialFen,
+                      referenceDb: null,
+                      reversed: false,
+                      moves,
+                    },
+                    engineSettings,
+                  );
 
-                let analysisResult: Awaited<typeof analysisPromise>;
-                try {
-                  analysisResult = await analysisPromise;
-                } catch (_error) {
-                  // Analyze-all cancellation is handled by the shared watcher and stopAllEngines().
+                  let analysisResult: Awaited<typeof analysisPromise>;
+                  try {
+                    analysisResult = await analysisPromise;
+                  } catch (_error) {
+                    // Analyze-all cancellation is handled by the shared watcher and stopAllEngines().
+                    if (isCancelled()) {
+                      return;
+                    }
+                    throw _error;
+                  }
+
+                  // Check again if cancelled after analysis
                   if (isCancelled()) {
                     return;
                   }
-                  throw _error;
-                }
 
-                // Check again if cancelled after analysis
-                if (isCancelled()) {
-                  return;
+                  analysis = unwrap(analysisResult);
                 }
-
-                const analysis = unwrap(analysisResult);
 
                 // Apply analysis using the same function used in individual analysis
                 addAnalysis(tree, analysis);
@@ -2138,32 +2353,122 @@ export default function DashboardPage() {
                     color: "blue",
                   });
                 }
+                if (completedCount % 50 === 0 || completedCount === gamesToAnalyze.length) {
+                  void perfBaselinePoint({
+                    scope: "dashboard.analyze_all",
+                    label: "progress_checkpoint",
+                    metadata: {
+                      completed: completedCount,
+                      total: gamesToAnalyze.length,
+                      success: successCount,
+                      failed: failCount,
+                    },
+                  });
+                }
               }
             };
 
-            try {
-              // Process games in parallel batches
-              for (let i = 0; i < gamesToAnalyze.length; i += parallelAnalyses) {
-                if (isCancelled()) {
-                  await stopAllEnginesOnce();
-                  notifyCancellation();
-                  break;
-                }
-
-                const batch = gamesToAnalyze.slice(i, i + parallelAnalyses);
-                const batchPromises = batch.map((game, batchIndex) => processGame(game, i + batchIndex));
-                await Promise.allSettled(batchPromises);
-
-                if (isCancelled()) {
-                  await stopAllEnginesOnce();
-                  notifyCancellation();
-                  break;
-                }
+            const runId = `dashboard_analyze_all_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+            currentRunId = runId;
+            const jobsForBackend: DashboardAnalyzeAllBackendJob[] = gamesToAnalyze.map((item, index) => {
+              if (item.type === "local") {
+                const gameRecord = item.game as GameRecord;
+                const pgn =
+                  gameRecord.pgn || createPGNFromMoves(gameRecord.moves, gameRecord.result, gameRecord.initialFen);
+                return {
+                  jobId: String(index),
+                  fen: gameRecord.initialFen || DEFAULT_START_FEN,
+                  moves: Array.isArray(gameRecord.moves) && gameRecord.moves.length > 0 ? [...gameRecord.moves] : null,
+                  pgn: pgn || null,
+                };
               }
+              if (item.type === "chesscom") {
+                const gameRecord = item.game as ChessComGameWithEvent;
+                return {
+                  jobId: String(index),
+                  fen: null,
+                  moves: null,
+                  pgn: gameRecord.pgn ?? null,
+                };
+              }
+              if (item.type === "chessbase") {
+                const row = item.game as GamesHistoryRow;
+                return {
+                  jobId: String(index),
+                  fen: null,
+                  moves: null,
+                  pgn: row.pgn ?? null,
+                };
+              }
+              const gameRecord = item.game as (typeof lichessGames)[0];
+              return {
+                jobId: String(index),
+                fen: null,
+                moves: null,
+                pgn: gameRecord.pgn ?? null,
+              };
+            });
+
+            const jobsById = new Map(
+              jobsForBackend.map((job, index) => [job.jobId, { item: gamesToAnalyze[index], index }]),
+            );
+            let unlistenResultEvent: (() => void) | null = null;
+            const pendingHandlers = new Set<Promise<void>>();
+
+            const waitPendingHandlers = async () => {
+              if (pendingHandlers.size === 0) return;
+              await Promise.allSettled(Array.from(pendingHandlers));
+            };
+
+            try {
+              unlistenResultEvent = await listen<DashboardAnalyzeAllResultPayload>(
+                "dashboard_analyze_all_result",
+                (event) => {
+                  const payload = event.payload;
+                  if (!payload || payload.runId !== runId) return;
+
+                  const job = jobsById.get(payload.jobId);
+                  if (!job) return;
+
+                  const handled = (async () => {
+                    if (!payload.success || !payload.analysis || payload.analysis.length === 0) {
+                      failCount++;
+                      completedCount++;
+                      onProgress(completedCount, gamesToAnalyze.length);
+                      if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
+                        notifications.show({
+                          title: t("features.dashboard.analysisProgress"),
+                          message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,
+                          color: "blue",
+                        });
+                      }
+                      return;
+                    }
+                    await processGame(job.item, job.index, payload.analysis);
+                  })()
+                    .catch(() => {
+                      // progress is already counted by processGame / fallback path.
+                    })
+                    .finally(() => {
+                      pendingHandlers.delete(handled);
+                    });
+                  pendingHandlers.add(handled);
+                },
+              );
+
+              await invoke("dashboard_analyze_all_run", {
+                request: {
+                  runId,
+                  engine: selectedEngine.path,
+                  goMode,
+                  uciOptions: engineSettings,
+                  jobs: jobsForBackend,
+                },
+              });
+
+              await waitPendingHandlers();
 
               if (!isCancelled()) {
-                await stopAllEnginesOnce();
-
                 // Final progress update
                 onProgress(gamesToAnalyze.length, gamesToAnalyze.length);
 
@@ -2196,12 +2501,29 @@ export default function DashboardPage() {
                   message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
                   color: "green",
                 });
+                baselineStatus = "completed";
               } else {
-                await stopAllEnginesOnce();
                 notifyCancellation();
+                baselineStatus = "cancelled";
               }
+            } catch (error) {
+              baselineStatus = "failed";
+              throw error;
             } finally {
               clearInterval(cancellationWatcher);
+              currentRunId = null;
+              if (unlistenResultEvent) {
+                await unlistenResultEvent();
+              }
+              await finishPerfBaselineSpan(analyzeAllRunSpan, {
+                status: baselineStatus,
+                candidateGames: baselineCandidateGames,
+                gamesToAnalyze: baselineGamesToAnalyze,
+                completed: completedCount,
+                success: successCount,
+                failed: failCount,
+                cancelled: isCancelled(),
+              });
             }
 
             // Return stop function for immediate cancellation

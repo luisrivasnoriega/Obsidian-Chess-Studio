@@ -28,12 +28,22 @@ const UCI_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 const ENGINE_QUIT_TIMEOUT: Duration = Duration::from_millis(300);
 const ENGINE_FORCE_KILL_TIMEOUT: Duration = Duration::from_secs(1);
 const PARSED_POSITION_CACHE_SIZE: usize = 256;
+const MAX_ENGINE_LOG_LINES: usize = 4_000;
+const ENGINE_LOG_TRIM_BATCH: usize = 512;
 
 static PARSED_POSITION_CACHE: Lazy<StdMutex<LruCache<String, Chess>>> = Lazy::new(|| {
     let capacity = NonZeroUsize::new(PARSED_POSITION_CACHE_SIZE)
         .expect("PARSED_POSITION_CACHE_SIZE must be non-zero");
     StdMutex::new(LruCache::new(capacity))
 });
+
+fn push_capped_log(logs: &mut Vec<EngineLog>, entry: EngineLog) {
+    logs.push(entry);
+    if logs.len() > MAX_ENGINE_LOG_LINES + ENGINE_LOG_TRIM_BATCH {
+        let overflow = logs.len().saturating_sub(MAX_ENGINE_LOG_LINES);
+        logs.drain(0..overflow);
+    }
+}
 
 /// Represents a running UCI engine process and its state.
 pub struct EngineProcess {
@@ -53,6 +63,10 @@ pub struct EngineProcess {
 }
 
 impl EngineProcess {
+    pub fn append_log(&mut self, entry: EngineLog) {
+        push_capped_log(&mut self.logs, entry);
+    }
+
     async fn wait_for_token(
         comm: &mut UciCommunicator,
         logs: &mut Vec<EngineLog>,
@@ -62,7 +76,7 @@ impl EngineProcess {
             loop {
                 match comm.stdout_lines.next_line().await? {
                     Some(line) => {
-                        logs.push(EngineLog::Engine(line.clone()));
+                        push_capped_log(logs, EngineLog::Engine(line.clone()));
                         if line == token {
                             return Ok(());
                         }
@@ -87,7 +101,7 @@ impl EngineProcess {
         let write_result = timeout(UCI_COMMAND_TIMEOUT, self.stdin.write_all(msg.as_bytes())).await;
         match write_result {
             Ok(Ok(())) => {
-                self.logs.push(EngineLog::Gui(msg.to_string()));
+                self.append_log(EngineLog::Gui(msg.to_string()));
                 Ok(())
             }
             Ok(Err(err)) => Err(Error::Io(err)),
@@ -112,11 +126,11 @@ impl EngineProcess {
         let mut logs = Vec::new();
 
         comm.write_line("uci\n").await?;
-        logs.push(EngineLog::Gui("uci\n".to_string()));
+        push_capped_log(&mut logs, EngineLog::Gui("uci\n".to_string()));
         Self::wait_for_token(&mut comm, &mut logs, "uciok").await?;
 
         comm.write_line("isready\n").await?;
-        logs.push(EngineLog::Gui("isready\n".to_string()));
+        push_capped_log(&mut logs, EngineLog::Gui("isready\n".to_string()));
         Self::wait_for_token(&mut comm, &mut logs, "readyok").await?;
 
         Ok((
@@ -245,7 +259,7 @@ impl EngineProcess {
     /// Kill the engine process.
     pub async fn kill(&mut self) -> Result<(), Error> {
         let _ = timeout(UCI_COMMAND_TIMEOUT, self.stdin.write_all(b"quit\n")).await;
-        self.logs.push(EngineLog::Gui("quit\n".to_string()));
+        self.append_log(EngineLog::Gui("quit\n".to_string()));
         self.running = false;
 
         // Give the engine a brief chance to exit gracefully after "quit".
