@@ -423,10 +423,10 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 22.39% |
+| **Statements** | 22.4% |
 | **Branches** | 15.32% |
-| **Functions** | 17.14% |
-| **Lines** | 23.62% |
+| **Functions** | 17.15% |
+| **Lines** | 23.64% |
 
 **Test Statistics:**
 - ✅ **180 test files** passing

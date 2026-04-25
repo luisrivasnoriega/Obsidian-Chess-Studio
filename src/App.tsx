@@ -13,6 +13,7 @@ import {
   activeProfileIdAtom,
   activeTabAtom,
   fontSizeAtom,
+  type Profile,
   pieceSetAtom,
   profilesAtom,
   sessionsAtom,
@@ -49,8 +50,15 @@ import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
 import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
 import { ensureProfilesInitialized } from "./utils/profiles";
+import type { Session } from "./utils/session";
+import { readSharedProfileState, writeSharedProfileState } from "./utils/sharedProfileState";
 
 type InitializationState = "loading" | "initialized" | "error";
+type ProfileSnapshot = {
+  sessions: Session[];
+  profiles: Profile[];
+  activeProfileId: string | null;
+};
 
 const DEFAULT_FONT_SIZE = 18;
 const SPINNER_STYLES = {
@@ -78,6 +86,14 @@ const ERROR_CONTAINER_STYLES = {
   padding: "20px",
   minHeight: "100vh",
 } as const;
+
+function hasProfileSnapshotData(snapshot: ProfileSnapshot) {
+  return snapshot.profiles.length > 0 || snapshot.sessions.length > 0 || snapshot.activeProfileId !== null;
+}
+
+function profileSnapshotHash(snapshot: ProfileSnapshot) {
+  return JSON.stringify(snapshot);
+}
 
 let directoriesCache: Promise<Dirs> | null = null;
 
@@ -417,6 +433,10 @@ export default function App() {
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
+  const sharedStateBootstrappedRef = useRef(false);
+  const sharedStateReadyRef = useRef(false);
+  const applyingSharedStateRef = useRef(false);
+  const lastSharedStateHashRef = useRef("");
 
   const [updateModalData, setUpdateModalData] = useState<VersionCheckResult | null>(null);
 
@@ -494,6 +514,91 @@ export default function App() {
     localStorage.removeItem("orion-plan-api-key");
     sessionStorage.removeItem("orion-plan-api-key");
   }, []);
+
+  useEffect(() => {
+    if (sharedStateBootstrappedRef.current) {
+      return;
+    }
+
+    sharedStateBootstrappedRef.current = true;
+    let canceled = false;
+
+    const bootstrapSharedState = async () => {
+      try {
+        const localSnapshot: ProfileSnapshot = { sessions, profiles, activeProfileId };
+        const localHasData = hasProfileSnapshotData(localSnapshot);
+        const sharedState = await readSharedProfileState();
+        const sharedSnapshot: ProfileSnapshot | null = sharedState
+          ? {
+              sessions: sharedState.sessions as Session[],
+              profiles: sharedState.profiles as Profile[],
+              activeProfileId: sharedState.activeProfileId,
+            }
+          : null;
+        const sharedHasData = sharedSnapshot ? hasProfileSnapshotData(sharedSnapshot) : false;
+
+        // In dev, local state is the source of truth and must override shared state.
+        const shouldPromoteLocal = (import.meta.env.DEV && localHasData) || (!sharedHasData && localHasData);
+
+        if (shouldPromoteLocal) {
+          await writeSharedProfileState(localSnapshot);
+          lastSharedStateHashRef.current = profileSnapshotHash(localSnapshot);
+          return;
+        }
+
+        if (!sharedSnapshot || !sharedHasData || canceled) {
+          return;
+        }
+
+        applyingSharedStateRef.current = true;
+        setSessions(sharedSnapshot.sessions);
+        setProfiles(sharedSnapshot.profiles);
+        setActiveProfileId(sharedSnapshot.activeProfileId);
+        lastSharedStateHashRef.current = profileSnapshotHash(sharedSnapshot);
+
+        Promise.resolve().then(() => {
+          applyingSharedStateRef.current = false;
+        });
+      } finally {
+        if (!canceled) {
+          sharedStateReadyRef.current = true;
+        }
+      }
+    };
+
+    bootstrapSharedState().catch((e) => {
+      error(`Failed to bootstrap shared profile state: ${e}`);
+    });
+
+    return () => {
+      canceled = true;
+    };
+    // We only want initial bootstrap values here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setProfiles, profiles, setSessions, setActiveProfileId, sessions, activeProfileId]);
+
+  useEffect(() => {
+    if (!sharedStateBootstrappedRef.current || !sharedStateReadyRef.current || applyingSharedStateRef.current) {
+      return;
+    }
+
+    const snapshot: ProfileSnapshot = { sessions, profiles, activeProfileId };
+    const nextHash = profileSnapshotHash(snapshot);
+    if (nextHash === lastSharedStateHashRef.current) {
+      return;
+    }
+
+    lastSharedStateHashRef.current = nextHash;
+    const timeout = window.setTimeout(() => {
+      writeSharedProfileState(snapshot).catch((e) => {
+        error(`Failed to persist shared profile state: ${e}`);
+      });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [activeProfileId, profiles, sessions]);
 
   // Use ref to prevent infinite loop from state updates triggering this effect
   const isProcessingProfilesRef = useRef(false);
