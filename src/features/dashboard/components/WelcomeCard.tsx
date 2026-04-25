@@ -1,13 +1,9 @@
 import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
 import { IconChess } from "@tabler/icons-react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { useAtom, useAtomValue } from "jotai";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { currentThemeIdAtom } from "@/features/themes/state/themeAtoms";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { welcomeCardImageAtom } from "@/state/atoms";
 
 interface WelcomeCardProps {
   isFirstOpen: boolean;
@@ -28,12 +24,9 @@ interface WelcomeCardProps {
 
 export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerGender, fideInfo }: WelcomeCardProps) {
   const { t } = useTranslation();
-  const currentThemeId = useAtomValue(currentThemeIdAtom);
   const { layout } = useResponsiveLayout();
-  const [imageError, setImageError] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
-  const [customImageUrl, setCustomImageUrl] = useState<string | undefined>(undefined);
-  const [welcomeCardImage, setWelcomeCardImage] = useAtom(welcomeCardImageAtom);
+  const [heroImageSrc, setHeroImageSrc] = useState("/logo.png");
   const isCompact = layout.settings.layoutType === "mobile";
   const photoSize = isCompact ? 96 : 140;
   const heroImageSize = isCompact ? 180 : 280;
@@ -66,92 +59,11 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
     }
   }, [fideInfo?.photo]);
 
-  // Convert custom image path to URL if needed
-  useEffect(() => {
-    if (!welcomeCardImage) {
-      setCustomImageUrl(undefined);
-      return;
-    }
-
-    // If it's already a URL (http, https, or tauri://), use it directly
-    if (
-      welcomeCardImage.startsWith("http://") ||
-      welcomeCardImage.startsWith("https://") ||
-      welcomeCardImage.startsWith("tauri://") ||
-      welcomeCardImage.startsWith("data:") ||
-      welcomeCardImage.startsWith("blob:")
-    ) {
-      setCustomImageUrl(welcomeCardImage);
-      return;
-    }
-
-    // If it's a relative path (starts with welcome-card-image/), resolve it relative to AppData
-    if (welcomeCardImage.startsWith("welcome-card-image/")) {
-      // Resolve the path relative to AppData
-      import("@tauri-apps/api/path").then(({ resolve, appDataDir }) => {
-        appDataDir()
-          .then((base) => resolve(base, welcomeCardImage))
-          .then((fullPath) => {
-            try {
-              const url = convertFileSrc(fullPath);
-              setCustomImageUrl(url);
-            } catch {
-              setCustomImageUrl(welcomeCardImage);
-            }
-          })
-          .catch(() => {
-            setCustomImageUrl(welcomeCardImage);
-          });
-      });
-      return;
-    }
-
-    // Otherwise, treat as absolute path
-    try {
-      const url = convertFileSrc(welcomeCardImage);
-      setCustomImageUrl(url);
-    } catch {
-      setCustomImageUrl(welcomeCardImage);
-    }
-  }, [welcomeCardImage]);
-
-  // Determine theme-based background image
-  const isAcademiaMaya = currentThemeId === "academia-maya";
-  const defaultBackgroundImageSrc = isAcademiaMaya ? "/academia.maya.png" : "/chess-play.png";
-  const backgroundImageSrc = customImageUrl || defaultBackgroundImageSrc;
-  const backgroundImageAlt = isAcademiaMaya ? "Academia Maya" : "Chess play";
+  const backgroundImageAlt = "Obsidian Chess Studio";
 
   const handleImageError = () => {
-    if (isAcademiaMaya && !imageError) {
-      setImageError(true);
-    }
-  };
-
-  const handleImageClick = async () => {
-    try {
-      const selected = await open({
-        multiple: false,
-        filters: [
-          {
-            name: "Image",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
-          },
-        ],
-      });
-      if (selected && typeof selected === "string") {
-        // Use the command to copy the image to AppData
-        try {
-          const relativePath = await invoke<string>("save_welcome_card_image", {
-            sourcePath: selected,
-          });
-          // Save the relative path (e.g., "welcome-card-image/custom-image.png")
-          setWelcomeCardImage(relativePath);
-        } catch (error) {
-          console.error("Error saving image:", error);
-        }
-      }
-    } catch (error) {
-      console.error("Error selecting image:", error);
+    if (heroImageSrc !== "/chess-play.png") {
+      setHeroImageSrc("/chess-play.png");
     }
   };
 
@@ -295,16 +207,13 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
           {!isCompact && (
             <Box style={{ flexShrink: 0, marginLeft: "auto" }}>
               <Image
-                src={backgroundImageSrc}
+                src={heroImageSrc}
                 alt={backgroundImageAlt}
                 radius="lg"
                 onError={handleImageError}
                 width={heroImageSize}
                 height={heroImageSize}
                 fit="contain"
-                style={{ cursor: "pointer" }}
-                onClick={handleImageClick}
-                title={t("features.dashboard.welcome.clickToChangeImage")}
               />
             </Box>
           )}
@@ -313,14 +222,12 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
         {isCompact && (
           <Box style={{ width: "100%" }}>
             <Image
-              src={backgroundImageSrc}
+              src={heroImageSrc}
               alt={backgroundImageAlt}
               radius="lg"
               onError={handleImageError}
-              style={{ width: "100%", height: heroImageSize, cursor: "pointer" }}
+              style={{ width: "100%", height: heroImageSize }}
               fit="cover"
-              onClick={handleImageClick}
-              title={t("features.dashboard.welcome.clickToChangeImage")}
             />
           </Box>
         )}

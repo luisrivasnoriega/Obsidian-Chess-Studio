@@ -385,6 +385,11 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
         // Ensure dedupe protections are present for future INSERT OR IGNORE behavior.
         db.batch_execute(GAMES_DELETE_DUPLICATES)?;
         db.batch_execute(GAMES_CREATE_DEDUPE_UNIQUE_INDEX)?;
+    } else {
+        // Some legacy/partial profile DBs can have Players but miss Info.
+        // Ensure metadata table exists so profile queries never fail with
+        // "no such table: info".
+        ensure_info_table(db)?;
     }
 
     // If a previous version created Players as WITHOUT ROWID, inserts that omit ID will fail.
@@ -397,6 +402,17 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
     analysis_stats::ensure_profile_analysis_tables(db)?;
     weakness_model::ensure_profile_weakness_tables(db)?;
 
+    Ok(())
+}
+
+fn ensure_info_table(db: &mut SqliteConnection) -> Result<()> {
+    sql_query(
+        "CREATE TABLE IF NOT EXISTS Info (
+            Name TEXT PRIMARY KEY NOT NULL,
+            Value TEXT
+        ) WITHOUT ROWID",
+    )
+    .execute(db)?;
     Ok(())
 }
 
@@ -4059,6 +4075,7 @@ pub async fn get_profile_sidebar_stats(
         .path()
         .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
     let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
 
     // Keep compatibility with older profiles where analysis tables may still be missing.
     analysis_stats::ensure_profile_analysis_tables(db)?;
@@ -4159,6 +4176,7 @@ pub async fn get_profile_game_stats(
         .path()
         .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
     let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
 
     let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
         return Ok(extract_game_stats(&[]));
@@ -4186,6 +4204,7 @@ pub async fn get_profile_rating_timeline(
         .path()
         .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
     let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    ensure_db_initialized(db)?;
 
     let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
         return Ok(empty_rating_timeline());

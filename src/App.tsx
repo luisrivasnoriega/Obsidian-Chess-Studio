@@ -513,6 +513,7 @@ export default function App() {
   useEffect(() => {
     localStorage.removeItem("orion-plan-api-key");
     sessionStorage.removeItem("orion-plan-api-key");
+    localStorage.removeItem("welcome-card-image");
   }, []);
 
   useEffect(() => {
