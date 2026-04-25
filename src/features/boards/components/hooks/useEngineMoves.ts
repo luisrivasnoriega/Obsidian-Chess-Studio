@@ -9,6 +9,7 @@ import { TreeStateContext } from "@/components/TreeStateContext";
 import { activeTabAtom, currentGameStateAtom, currentPlayersAtom } from "@/state/atoms";
 import { getMainLine } from "@/utils/chess";
 import type { positionFromFen } from "@/utils/chessops";
+import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import type { TreeNode } from "@/utils/treeReducer";
 
 function movesEqual(a: string[], b: string[]): boolean {
@@ -69,7 +70,7 @@ export function useEngineMoves(
 
   const moves = useMemo(() => getMainLine(root, headers.variant === "Chess960"), [root, headers.variant]);
   const buildPayloadKey = useCallback(
-    (tab: string, fen: string, moves: string[]) => `${tab}|${fen}|${moves.join(",")}`,
+    (tab: string, fen: string, moves: string[]) => `${tab}|${buildEngineVariationCacheKey(fen, moves)}`,
     [],
   );
 
@@ -207,7 +208,7 @@ export function useEngineMoves(
 
         // Create a unique key for this request to prevent duplicate calls
         // Include engine path to ensure uniqueness per engine instance
-        const requestKey = `${tabKey}-${engine.path}-${root.fen}-${moves.join(",")}`;
+        const requestKey = `${tabKey}-${engine.path}-${buildEngineVariationCacheKey(root.fen, moves)}`;
 
         // Skip if we're already processing this exact request
         if (engineRequestRef.current === requestKey) {

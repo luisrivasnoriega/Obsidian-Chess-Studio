@@ -58,11 +58,25 @@ impl GameAnalysisService {
             let mut chess: Chess = fen.clone().into_position(CastlingMode::Chess960)?;
             let mut fens: Vec<(Fen, Vec<String>, bool)> = vec![(fen, vec![], false)];
 
-            options.moves.iter().enumerate().for_each(|(i, m)| {
-                let uci = UciMove::from_ascii(m.as_bytes()).unwrap();
-                let m = uci.to_move(&chess).unwrap();
+            for (i, raw_move) in options.moves.iter().enumerate() {
+                let uci = UciMove::from_ascii(raw_move.as_bytes()).map_err(|error| {
+                    Error::InvalidInput(format!(
+                        "Invalid UCI move '{}' at ply {}: {}",
+                        raw_move,
+                        i + 1,
+                        error
+                    ))
+                })?;
+                let mv = uci.to_move(&chess).map_err(|error| {
+                    Error::InvalidInput(format!(
+                        "Illegal UCI move '{}' at ply {}: {}",
+                        raw_move,
+                        i + 1,
+                        error
+                    ))
+                })?;
                 let previous_pos = chess.clone();
-                chess.play_unchecked(&m);
+                chess.play_unchecked(&mv);
                 let current_pos = chess.clone();
                 if !chess.is_game_over() {
                     // Detect sacrifices by comparing naive evals before and after the move.
@@ -74,7 +88,7 @@ impl GameAnalysisService {
                         prev_eval > cur_eval + 100, // Mark as sacrifice if eval drops by > 100.
                     ));
                 }
-            });
+            }
 
             if options.reversed {
                 fens.reverse();

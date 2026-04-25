@@ -14,6 +14,7 @@ import type { OpponentSettings } from "@/features/boards/components/BoardGame";
 import { type Position, positionSchema } from "@/features/files/utils/opening";
 import { positionFromFen, swapMove } from "@/utils/chessops";
 import type { SuccessDatabaseInfo } from "@/utils/db";
+import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import { type Engine, type EngineSettings, engineSchema } from "@/utils/engines";
 import {
   type LichessGamesOptions,
@@ -502,11 +503,13 @@ export const bestMovesFamily = atomFamily(
         finalFen = makeFen(basePos.toSetup());
         finalTurn = basePos.turn;
       }
+      const threatKey = buildEngineVariationCacheKey(swapMove(finalFen), []);
+      const currentKey = buildEngineVariationCacheKey(fen, gameMoves);
 
       let n = 0;
       for (const engine of engines.data.filter((e) => e.loaded)) {
         const engineMoves = get(engineMovesFamily({ tab, engine: engine.name }));
-        const moves = engineMoves.get(`${swapMove(finalFen)}:`) || engineMoves.get(`${fen}:${gameMoves.join(",")}`);
+        const moves = engineMoves.get(threatKey) || engineMoves.get(currentKey);
         if (moves && moves.length > 0) {
           const bestWinChange = getWinChance(normalizeScore(moves[0].score.value, finalTurn));
           bestMoves.set(
@@ -609,6 +612,27 @@ export function cleanupTabScopedAtoms(tabId: string, engineNames: string[] = [])
   gameStateFamily.remove(tabId);
   playersFamily.remove(tabId);
 
+  // Always remove all engine-scoped atom families for this tab, even if the caller
+  // doesn't have an up-to-date engine list.
+  for (const param of Array.from(engineMovesFamily.getParams())) {
+    if (param.tab === tabId) {
+      engineMovesFamily.remove(param);
+    }
+  }
+
+  for (const param of Array.from(engineProgressFamily.getParams())) {
+    if (param.tab === tabId) {
+      engineProgressFamily.remove(param);
+    }
+  }
+
+  for (const param of Array.from(tabEngineSettingsFamily.getParams())) {
+    if (param.tab === tabId) {
+      tabEngineSettingsFamily.remove(param);
+    }
+  }
+
+  // Backward-compatible explicit cleanup for callers providing engine names.
   for (const engineName of engineNames) {
     engineMovesFamily.remove({ tab: tabId, engine: engineName });
     engineProgressFamily.remove({ tab: tabId, engine: engineName });

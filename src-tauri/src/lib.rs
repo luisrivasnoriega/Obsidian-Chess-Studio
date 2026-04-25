@@ -24,6 +24,7 @@ mod pawn_structures;
 mod pgn;
 mod puzzle;
 mod puzzle_variants;
+mod tab_state_storage;
 mod variants_builder;
 mod variant_positions;
 
@@ -111,6 +112,7 @@ use crate::puzzle::{
     download_puzzle_database,
 };
 use crate::puzzle_variants::generate_puzzle_variants_from_tree;
+use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
 use crate::variants_builder::build_variants_tree;
 use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
@@ -167,7 +169,8 @@ pub struct AppState {
     fide_players: RwLock<Vec<FidePlayer>>,
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
     dashboard_analyze_all_cancellations: DashMap<String, bool>,
-    dashboard_analyze_all_active: DashMap<String, (String, String)>,
+    // Key: (run_id, analysis_id), Value: engine path.
+    dashboard_analyze_all_active: DashMap<(String, String), String>,
     auth: AuthState,
     chessbase_ws: Mutex<chessbase::ChessbaseWsState>,
     chessbase_cache: Mutex<Option<chessbase_service::ChessbaseCachedDownload>>,
@@ -200,6 +203,10 @@ pub async fn run() {
             get_engine_logs,
             memory_size,
             process_memory_rss_mb,
+            tab_state_write,
+            tab_state_read,
+            tab_state_remove,
+            tab_state_clear_all,
             get_puzzle,
             get_puzzle_batch,
             search_opening_name,

@@ -106,7 +106,16 @@ function RootLayout() {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
 
-  const { tabs, activeTab, setTabs, setActiveTab, closeTab } = useTabManagement({ enableHotkeys: false });
+  const {
+    tabs,
+    activeTab,
+    setTabs,
+    setActiveTab,
+    closeTab,
+    closeAllTabs: closeAllTabsFromHook,
+  } = useTabManagement({
+    enableHotkeys: false,
+  });
   const [keyMap] = useAtom(keyMapAtom);
 
   useEffect(() => {
@@ -573,13 +582,8 @@ function RootLayout() {
   }, [activeTab, closeTab]);
 
   const handleCloseAllTabs = useCallback(() => {
-    try {
-      sessionStorage.setItem("tabsClosedToZero", "1");
-    } catch {}
-    setTabs([]);
-    setActiveTab(null);
-    navigate({ to: "/" });
-  }, [navigate, setActiveTab, setTabs]);
+    void closeAllTabsFromHook();
+  }, [closeAllTabsFromHook]);
 
   const handleMinimizeWindow = useCallback(async () => {
     try {

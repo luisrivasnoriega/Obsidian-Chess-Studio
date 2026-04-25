@@ -104,6 +104,8 @@ export async function getRecentGames(profileId: string | null, limit = 20): Prom
       opponentContains: null,
       timeControlCategory: null,
       resultFilter: null,
+      playerColor: null,
+      minMoves: null,
       sortBy: null,
       sortDirection: null,
       profileUsernames: [],

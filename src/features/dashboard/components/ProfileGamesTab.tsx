@@ -194,6 +194,8 @@ export function ProfileGamesTab({
     type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
     opponentContains: string | null;
     resultFilter: string | null;
+    playerColor: "white" | "black" | null;
+    minMoves: number | null;
   }) => void;
   favoriteGames?: FavoriteGame[];
   eventFilterId: number | null;
@@ -219,6 +221,8 @@ export function ProfileGamesTab({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [opponentFilter, setOpponentFilter] = useState("");
   const [resultFilter, setResultFilter] = useState<string | null>(null);
+  const [playerColorFilter, setPlayerColorFilter] = useState<"white" | "black" | null>(null);
+  const [minMovesFilter, setMinMovesFilter] = useState<number | null>(null);
   const [opponentOptions, setOpponentOptions] = useState<string[]>([]);
   const [isLoadingOpponentOptions, setIsLoadingOpponentOptions] = useState(false);
   const [debouncedOpponentFilter] = useDebouncedValue(opponentFilter, 250);
@@ -311,6 +315,8 @@ export function ProfileGamesTab({
           opponentContains: debouncedOpponentFilter.trim() || null,
           timeControlCategory,
           resultFilter,
+          playerColor: playerColorFilter,
+          minMoves: minMovesFilter,
           sortBy: sortBy ?? "date",
           sortDirection,
         },
@@ -338,6 +344,8 @@ export function ProfileGamesTab({
     debouncedOpponentFilter,
     timeControlCategory,
     resultFilter,
+    playerColorFilter,
+    minMovesFilter,
     sortBy,
     sortDirection,
     selectedOpponentId,
@@ -361,6 +369,8 @@ export function ProfileGamesTab({
             eventFilterId,
             selectedOpponentId,
             timeControlCategory,
+            playerColor: playerColorFilter,
+            minMoves: minMovesFilter,
           },
         });
 
@@ -383,7 +393,16 @@ export function ProfileGamesTab({
     return () => {
       cancelled = true;
     };
-  }, [profileId, profileUsernames, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory]);
+  }, [
+    profileId,
+    profileUsernames,
+    gameHistoryLimit,
+    eventFilterId,
+    selectedOpponentId,
+    timeControlCategory,
+    playerColorFilter,
+    minMovesFilter,
+  ]);
 
   const handleSort = (field: "elo" | "date") => {
     if (sortBy === field) setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -400,7 +419,9 @@ export function ProfileGamesTab({
     selectedOpponentId != null ||
     opponentFilter.trim().length > 0 ||
     resultFilter != null ||
-    timeControlCategory != null;
+    timeControlCategory != null ||
+    playerColorFilter != null ||
+    minMovesFilter != null;
   const now = useMemo(() => Date.now(), []);
   const stickyFooterCellStyle = useMemo(
     () => ({
@@ -769,6 +790,42 @@ export function ProfileGamesTab({
           style={{ width: 150 }}
         />
         <Select
+          placeholder={t("features.dashboard.filterByColor", "Filter by color")}
+          value={playerColorFilter ?? undefined}
+          onChange={(value) => setPlayerColorFilter((value as "white" | "black" | null) ?? null)}
+          data={[
+            { value: "white", label: t("features.dashboard.white", "White") },
+            { value: "black", label: t("features.dashboard.black", "Black") },
+          ]}
+          clearable
+          size="sm"
+          style={{ width: 150 }}
+        />
+        <Select
+          placeholder={t("features.dashboard.filterByMinMoves", "Min moves")}
+          value={minMovesFilter != null ? String(minMovesFilter) : undefined}
+          onChange={(value) => {
+            if (!value) {
+              setMinMovesFilter(null);
+              return;
+            }
+            const parsed = Number.parseInt(value, 10);
+            setMinMovesFilter(Number.isFinite(parsed) ? parsed : null);
+          }}
+          data={[
+            { value: "5", label: ">= 5" },
+            { value: "10", label: ">= 10" },
+            { value: "15", label: ">= 15" },
+            { value: "20", label: ">= 20" },
+            { value: "30", label: ">= 30" },
+            { value: "40", label: ">= 40" },
+            { value: "60", label: ">= 60" },
+          ]}
+          clearable
+          size="sm"
+          style={{ width: 130 }}
+        />
+        <Select
           placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
           value={timeControlCategory ?? undefined}
           onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
@@ -844,6 +901,8 @@ export function ProfileGamesTab({
                               type: option.type,
                               opponentContains: opponentFilter.trim() || null,
                               resultFilter,
+                              playerColor: playerColorFilter,
+                              minMoves: minMovesFilter,
                             })
                           }
                         >

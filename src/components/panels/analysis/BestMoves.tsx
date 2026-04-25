@@ -60,6 +60,7 @@ import {
   tabEngineSettingsFamily,
 } from "@/state/atoms";
 import { chessopsError, positionFromFen, swapMove } from "@/utils/chessops";
+import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import type { Engine } from "@/utils/engines";
 import { consultOrionPlanFromAnalysis, ORION_PLAN_PROVIDER_SIGNATURE } from "@/utils/orionPlan";
 import AnalysisRow from "./AnalysisRow";
@@ -104,7 +105,7 @@ const PLAN_SECTION_ORDER: PlanSectionKey[] = [
   "PRACTICAL_ADVICE",
 ];
 
-const HUMAN_STRATEGIC_CACHE_LIMIT = 120;
+const HUMAN_STRATEGIC_CACHE_LIMIT = 48;
 
 function getStrategicCacheEntry(
   cache: Map<string, HumanStrategicLiveResponse>,
@@ -248,8 +249,13 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
     [fen, moves, threat, finalFen],
   );
 
+  const searchingVariationCacheKey = useMemo(
+    () => buildEngineVariationCacheKey(searchingFen, searchingMoves),
+    [searchingFen, searchingMoves],
+  );
+
   const engineVariations = useDeferredValue(
-    useMemo(() => ev.get(`${searchingFen}:${searchingMoves.join(",")}`), [ev, searchingFen, searchingMoves]),
+    useMemo(() => ev.get(searchingVariationCacheKey), [ev, searchingVariationCacheKey]),
   );
   const [humanStrategicReport, setHumanStrategicReport] = useState<HumanStrategicLiveResponse | null>(null);
   const [humanStrategicLoading, setHumanStrategicLoading] = useState(false);

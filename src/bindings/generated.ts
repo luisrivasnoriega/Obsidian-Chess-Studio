@@ -168,6 +168,38 @@ async memorySize() : Promise<bigint> {
 async processMemoryRssMb() : Promise<bigint | null> {
     return await TAURI_INVOKE("process_memory_rss_mb");
 },
+async tabStateWrite(tabId: string, value: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tab_state_write", { tabId, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async tabStateRead(tabId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tab_state_read", { tabId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async tabStateRemove(tabId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tab_state_remove", { tabId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async tabStateClearAll() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tab_state_clear_all") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Gets a random puzzle from the database within the specified rating range
  * 
@@ -1641,9 +1673,9 @@ export type AccountSyncState = { account_key: string; platform: string; cursor_u
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
-export type AnalyzeAllCountsBulkRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[] }
+export type AnalyzeAllCountsBulkRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
 export type AnalyzeAllCountsBulkResponse = { all: AnalyzeAllCountsResponse; local: AnalyzeAllCountsResponse; chesscom: AnalyzeAllCountsResponse; lichess: AnalyzeAllCountsResponse; chessbase: AnalyzeAllCountsResponse }
-export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; profileUsernames: string[]; target: AnalyzeAllTarget }
+export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[]; target: AnalyzeAllTarget }
 export type AnalyzeAllCountsResponse = { total: number; analyzed: number; unanalyzed: number }
 export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "chessbase" | "all"
 export type AnalyzedGameEntry = { profile_id: string; game_id: string; analyzed_pgn: string }
@@ -1721,7 +1753,7 @@ export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | 
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
 export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
-export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
+export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
 export type GamesHistoryRow = { kind: GamesHistoryKind; 
 /**

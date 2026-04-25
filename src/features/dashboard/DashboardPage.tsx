@@ -72,10 +72,14 @@ type AnalyzeAllOpenPayload = {
   type: AnalyzeAllType;
   opponentContains: string | null;
   resultFilter: string | null;
+  playerColor: "white" | "black" | null;
+  minMoves: number | null;
 };
 type AnalyzeAllScopeFilters = {
   opponentContains: string | null;
   resultFilter: string | null;
+  playerColor: "white" | "black" | null;
+  minMoves: number | null;
 };
 
 type DashboardAnalyzeAllBackendJob = {
@@ -364,6 +368,8 @@ export default function DashboardPage() {
   const [analyzeAllScopeFilters, setAnalyzeAllScopeFilters] = useState<AnalyzeAllScopeFilters>({
     opponentContains: null,
     resultFilter: null,
+    playerColor: null,
+    minMoves: null,
   });
   const [analyzeAllScopedRows, setAnalyzeAllScopedRows] = useState<GamesHistoryRow[]>([]);
   const [analyzeAllCounts, setAnalyzeAllCounts] = useState<{
@@ -956,11 +962,15 @@ export default function DashboardPage() {
   }, []);
 
   const handleAnalyzeAll = useCallback(
-    async ({ type, opponentContains, resultFilter }: AnalyzeAllOpenPayload) => {
+    async ({ type, opponentContains, resultFilter, playerColor, minMoves }: AnalyzeAllOpenPayload) => {
       const normalizedOpponentContains = opponentContains?.trim() || null;
+      const normalizedMinMoves =
+        typeof minMoves === "number" && Number.isFinite(minMoves) && minMoves > 0 ? Math.floor(minMoves) : null;
       const scopeFilters: AnalyzeAllScopeFilters = {
         opponentContains: normalizedOpponentContains,
         resultFilter: resultFilter ?? null,
+        playerColor: playerColor ?? null,
+        minMoves: normalizedMinMoves,
       };
 
       setAnalyzeAllGameType(type);
@@ -986,12 +996,15 @@ export default function DashboardPage() {
             opponentContains: normalizedOpponentContains,
             timeControlCategory,
             resultFilter: resultFilter ?? null,
+            playerColor: playerColor ?? null,
+            minMoves: normalizedMinMoves,
             sortBy: "date",
             sortDirection: "desc",
           },
         })) ?? { rows: [] };
 
-        const scopedRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= 5);
+        const analyzeMinMoves = Math.max(5, normalizedMinMoves ?? 0);
+        const scopedRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
         setAnalyzeAllScopedRows(scopedRows);
         const rowsForType = scopedRows.filter((row) => (type === "all" ? true : row.kind === type));
         const total = rowsForType.length;
@@ -1583,7 +1596,8 @@ export default function DashboardPage() {
               activeAnalysisIds.clear();
             };
 
-            const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= 5);
+            const analyzeMinMoves = Math.max(5, analyzeAllScopeFilters.minMoves ?? 0);
+            const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
             const rowsForSelectedType = scopedRowsForRun.filter((row) =>
               analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
             );
@@ -1624,11 +1638,13 @@ export default function DashboardPage() {
                       opponentContains: analyzeAllScopeFilters.opponentContains,
                       timeControlCategory,
                       resultFilter: analyzeAllScopeFilters.resultFilter,
+                      playerColor: analyzeAllScopeFilters.playerColor,
+                      minMoves: analyzeAllScopeFilters.minMoves,
                       sortBy: "date",
                       sortDirection: "desc",
                     },
                   })) ?? { rows: [] };
-                  idRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= 5);
+                  idRows = (res.rows ?? []).filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
                 } catch {
                   idRows = [];
                 }

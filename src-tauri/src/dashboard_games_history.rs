@@ -72,6 +72,8 @@ pub struct GamesHistoryRequest {
     pub opponent_contains: Option<String>,
     pub time_control_category: Option<String>,
     pub result_filter: Option<String>, // win/loss/draw
+    pub player_color: Option<String>,  // white/black
+    pub min_moves: Option<i32>,        // minimum full moves
     pub sort_by: Option<String>,       // "elo" | "date"
     pub sort_direction: Option<String>, // "asc" | "desc"
     pub profile_usernames: Vec<String>,
@@ -95,6 +97,8 @@ pub struct AnalyzeAllCountsRequest {
     pub event_filter_id: Option<i32>,
     pub selected_opponent_id: Option<i32>,
     pub time_control_category: Option<String>,
+    pub player_color: Option<String>,
+    pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
     pub target: AnalyzeAllTarget,
 }
@@ -107,6 +111,8 @@ pub struct AnalyzeAllCountsBulkRequest {
     pub event_filter_id: Option<i32>,
     pub selected_opponent_id: Option<i32>,
     pub time_control_category: Option<String>,
+    pub player_color: Option<String>,
+    pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
 }
 
@@ -876,6 +882,17 @@ pub async fn dashboard_get_games_history_rows(
             rows.retain(|r| r.time_control_category.as_deref().unwrap_or("") == want_tc);
         }
     }
+    if let Some(ref want_color) = req.player_color {
+        let want_color = want_color.trim().to_lowercase();
+        if want_color == "white" || want_color == "black" {
+            rows.retain(|r| r.color == want_color);
+        }
+    }
+    if let Some(min_moves) = req.min_moves {
+        if min_moves > 0 {
+            rows.retain(|r| r.moves >= min_moves);
+        }
+    }
 
     // 5) Enrich with analysis.db3 (bulk).
     // Primary key is (profile_id, analysis_game_id), but some older/client paths may
@@ -1034,6 +1051,8 @@ pub async fn dashboard_get_analyze_all_counts_bulk(
         opponent_contains: None,
         time_control_category: req.time_control_category,
         result_filter: None,
+        player_color: req.player_color,
+        min_moves: req.min_moves,
         sort_by: Some("date".to_string()),
         sort_direction: Some("desc".to_string()),
         profile_usernames: req.profile_usernames,
@@ -1041,7 +1060,8 @@ pub async fn dashboard_get_analyze_all_counts_bulk(
     let mut rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
 
     // Analyze-all only processes games with enough move content.
-    rows.retain(|r| r.moves >= 5);
+    let analyze_min_moves = req.min_moves.unwrap_or(0).max(5);
+    rows.retain(|r| r.moves >= analyze_min_moves);
 
     Ok(AnalyzeAllCountsBulkResponse {
         all: compute_analyze_all_counts(&rows, AnalyzeAllTarget::All),
@@ -1068,6 +1088,8 @@ pub async fn dashboard_get_analyze_all_counts(
             event_filter_id: req.event_filter_id,
             selected_opponent_id: req.selected_opponent_id,
             time_control_category: req.time_control_category,
+            player_color: req.player_color,
+            min_moves: req.min_moves,
             profile_usernames: req.profile_usernames,
         },
     )

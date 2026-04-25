@@ -6,7 +6,7 @@ import { startTransition, useCallback, useContext, useEffect, useMemo, useRef } 
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import { type EngineOptions, events, type GoMode } from "@/bindings";
+import { type BestMoves, type EngineOptions, events, type GoMode } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import {
   activeTabAtom,
@@ -19,33 +19,137 @@ import {
 import { getVariationLine } from "@/utils/chess";
 import { getBestMoves as chessdbGetBestMoves } from "@/utils/chessdb/api";
 import { positionFromFen, swapMove } from "@/utils/chessops";
+import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import { type Engine, killEngine, type LocalEngine, getBestMoves as localGetBestMoves } from "@/utils/engines";
 import { getBestMoves as lichessGetBestMoves } from "@/utils/lichess/api";
 import { useThrottledEffect } from "@/utils/misc";
 
-const ENGINE_VARIATION_CACHE_LIMIT = 160;
+const ENGINE_VARIATION_CACHE_LIMIT = 96;
+const ENGINE_VARIATION_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+const ENGINE_VARIATION_MAX_LINES = 6;
+const ENGINE_VARIATION_MAX_PV_PLIES = 24;
 
-function upsertEngineVariationCache<T>(
-  prev: Map<string, T>,
+function normalizeBestLines(lines: BestMoves[]): BestMoves[] {
+  return lines.slice(0, ENGINE_VARIATION_MAX_LINES).map((line) => ({
+    ...line,
+    // Long PVs can grow very large in memory. Keep enough context for UI while capping payload size.
+    uciMoves: line.uciMoves.slice(0, ENGINE_VARIATION_MAX_PV_PLIES),
+    sanMoves: line.sanMoves.slice(0, ENGINE_VARIATION_MAX_PV_PLIES),
+  }));
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function bestLinesEqual(a: BestMoves[], b: BestMoves[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.nodes !== y.nodes ||
+      x.depth !== y.depth ||
+      x.multipv !== y.multipv ||
+      x.nps !== y.nps ||
+      x.score.value.type !== y.score.value.type ||
+      x.score.value.value !== y.score.value.value
+    ) {
+      return false;
+    }
+    const xWdl = x.score.wdl;
+    const yWdl = y.score.wdl;
+    if (xWdl === null || yWdl === null) {
+      if (xWdl !== yWdl) return false;
+    } else if (xWdl[0] !== yWdl[0] || xWdl[1] !== yWdl[1] || xWdl[2] !== yWdl[2]) {
+      return false;
+    }
+
+    if (!arraysEqual(x.uciMoves, y.uciMoves) || !arraysEqual(x.sanMoves, y.sanMoves)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function estimateBestLineBytes(lines: BestMoves[]): number {
+  // Approximate memory usage to keep the cache bounded by payload size.
+  let bytes = 0;
+  for (const line of lines) {
+    bytes += 80; // numeric fields + object overhead approximation
+    bytes += line.uciMoves.reduce((sum, move) => sum + move.length * 2, 0);
+    bytes += line.sanMoves.reduce((sum, move) => sum + move.length * 2, 0);
+  }
+  return bytes;
+}
+
+function estimateCacheBytes(cache: Map<string, BestMoves[]>): number {
+  let total = 0;
+  for (const [key, value] of cache) {
+    total += key.length * 2;
+    total += estimateBestLineBytes(value);
+  }
+  return total;
+}
+
+function upsertEngineVariationCache(
+  prev: Map<string, BestMoves[]>,
   key: string,
-  value: T,
+  value: BestMoves[],
   deleteKeys: string[] = [],
-): Map<string, T> {
-  const next = new Map(prev);
+): Map<string, BestMoves[]> {
+  const normalizedValue = normalizeBestLines(value);
+
+  let next = prev;
+  let changed = false;
+
   for (const k of deleteKeys) {
+    if (!next.has(k)) continue;
+    if (!changed) {
+      next = new Map(next);
+      changed = true;
+    }
     next.delete(k);
   }
-  // Refresh insertion order for existing keys to behave like a tiny LRU.
-  if (next.has(key)) {
-    next.delete(key);
+
+  const existing = next.get(key);
+  if (existing !== undefined && bestLinesEqual(existing, normalizedValue)) {
+    if (!changed) {
+      return prev;
+    }
+  } else {
+    if (!changed) {
+      next = new Map(next);
+      changed = true;
+    }
+    if (next.has(key)) {
+      next.delete(key);
+    }
+    next.set(key, normalizedValue);
   }
-  next.set(key, value);
+
+  if (!changed) {
+    return prev;
+  }
 
   while (next.size > ENGINE_VARIATION_CACHE_LIMIT) {
     const oldestKey = next.keys().next().value;
     if (oldestKey === undefined) break;
     next.delete(oldestKey);
   }
+
+  let totalBytes = estimateCacheBytes(next);
+  while (totalBytes > ENGINE_VARIATION_CACHE_MAX_BYTES && next.size > 1) {
+    const oldestKey = next.keys().next().value;
+    if (oldestKey === undefined) break;
+    next.delete(oldestKey);
+    totalBytes = estimateCacheBytes(next);
+  }
+
   return next;
 }
 
@@ -148,7 +252,15 @@ function EngineListener({
   );
   const throttleMs = 100;
   const searchingMovesKey = useMemo(() => searchingMoves.join(","), [searchingMoves]);
-  const movesKey = useMemo(() => moves.join(","), [moves]);
+  const searchingVariationCacheKey = useMemo(
+    () => buildEngineVariationCacheKey(searchingFen, searchingMoves),
+    [searchingFen, searchingMoves],
+  );
+  const currentVariationCacheKey = useMemo(() => buildEngineVariationCacheKey(fen, moves), [fen, moves]);
+  const threatVariationCacheKey = useMemo(
+    () => (finalFen ? buildEngineVariationCacheKey(swapMove(finalFen), []) : null),
+    [finalFen],
+  );
   const settingsKey = useMemo(() => JSON.stringify(settings.settings), [settings.settings]);
   const pendingRef = useRef<{
     ev: typeof settings extends any ? any : any;
@@ -164,16 +276,24 @@ function EngineListener({
       setEngineVariation((prev) => {
         const staleKeys: string[] = [];
         if (threat) {
-          staleKeys.push(`${fen}:${movesKey}`);
-        } else if (finalFen) {
-          staleKeys.push(`${swapMove(finalFen)}:`);
+          staleKeys.push(currentVariationCacheKey);
+        } else if (threatVariationCacheKey) {
+          staleKeys.push(threatVariationCacheKey);
         }
-        return upsertEngineVariationCache(prev, `${searchingFen}:${searchingMovesKey}`, pending.ev, staleKeys);
+        return upsertEngineVariationCache(prev, searchingVariationCacheKey, pending.ev, staleKeys);
       });
       setProgress(pending.progress);
       setScore(pending.ev[0].score);
     });
-  }, [fen, finalFen, movesKey, searchingFen, searchingMovesKey, setEngineVariation, setProgress, setScore, threat]);
+  }, [
+    currentVariationCacheKey,
+    searchingVariationCacheKey,
+    setEngineVariation,
+    setProgress,
+    setScore,
+    threat,
+    threatVariationCacheKey,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -276,7 +396,7 @@ function EngineListener({
             if (moves) {
               const [progress, bestMoves] = moves;
               setEngineVariation((prev) => {
-                return upsertEngineVariationCache(prev, `${searchingFen}:${searchingMoves.join(",")}`, bestMoves);
+                return upsertEngineVariationCache(prev, searchingVariationCacheKey, bestMoves);
               });
               setProgress(progress);
             }
@@ -302,6 +422,7 @@ function EngineListener({
       setEngineVariation,
       setProgress,
       engine,
+      searchingVariationCacheKey,
     ],
   );
   return null;

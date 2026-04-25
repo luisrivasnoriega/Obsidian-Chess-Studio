@@ -40,7 +40,7 @@ import ThemeProvider from "@/features/themes/components/ThemeProvider";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
 import type { Dirs } from "@/types/dirs";
 import { commands } from "./bindings";
-import { IS_DEV } from "./config";
+import { isMemoryTelemetryEnabled } from "./config";
 import i18n from "./i18n";
 import { routeTree } from "./routeTree.gen";
 import type { VersionCheckResult } from "./services/version-checker";
@@ -411,6 +411,7 @@ function useFontSizeManager(fontSize: number | null) {
 
 export default function App() {
   const { t } = useTranslation();
+  const shouldMountEventMonitor = useMemo(() => isMemoryTelemetryEnabled(), []);
   const pieceSet = useAtomValue(pieceSetAtom);
   const fontSize = useAtomValue(fontSizeAtom);
   const [sessions, setSessions] = useAtom(sessionsAtom);
@@ -628,7 +629,7 @@ export default function App() {
       <ThemeProvider>
         <ContextMenuProvider>
           <Notifications />
-          {IS_DEV && <EventMonitor />}
+          {shouldMountEventMonitor && <EventMonitor />}
           <Suspense fallback={<AppLoading />}>
             <RouterProvider router={router} />
           </Suspense>

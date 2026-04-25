@@ -18,6 +18,27 @@ type PuzzleVariantsInfo = {
 
 const PUZZLE_VARIANTS_UPDATED_EVENT = "puzzle-variants:updated";
 const solutionCache = new Map<string, string[]>();
+const PUZZLE_SOLUTION_CACHE_LIMIT = 12;
+
+function getCachedSolutions(dbPath: string): string[] | null {
+  const cached = solutionCache.get(dbPath) ?? null;
+  if (!cached) return null;
+  solutionCache.delete(dbPath);
+  solutionCache.set(dbPath, cached);
+  return cached;
+}
+
+function setCachedSolutions(dbPath: string, solutions: string[]) {
+  if (solutionCache.has(dbPath)) {
+    solutionCache.delete(dbPath);
+  }
+  solutionCache.set(dbPath, solutions);
+  while (solutionCache.size > PUZZLE_SOLUTION_CACHE_LIMIT) {
+    const oldest = solutionCache.keys().next().value;
+    if (oldest === undefined) break;
+    solutionCache.delete(oldest);
+  }
+}
 
 function parsePuzzleVariantTags(tags: string[]): {
   variantName: string | null;
@@ -146,7 +167,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
         return;
       }
 
-      const cached = solutionCache.get(selectedDb);
+      const cached = getCachedSolutions(selectedDb);
       if (cached) {
         const lines = solvedIndexes
           .map((idx) => cached[idx])
@@ -158,7 +179,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
       try {
         const games = unwrap(await commands.readGames(selectedDb, 0, Math.max(0, info.puzzleCount - 1)));
         const solutions = games.map((game) => extractSolutionHeader(game) ?? "");
-        solutionCache.set(selectedDb, solutions);
+        setCachedSolutions(selectedDb, solutions);
 
         if (cancelled) return;
         const lines = solvedIndexes

@@ -13,7 +13,7 @@ import { activeTabAtom, cleanupTabScopedAtoms, loadableEnginesAtom, tabsAtom } f
 import { keyMapAtom } from "@/state/keybindings";
 import { createTreeStore } from "@/state/store/tree";
 import { getDocumentDir } from "@/utils/documentDir";
-import { getTabState as getTabStateRaw, removeTabState, setTabState } from "@/utils/tabStateStorage";
+import { getTabStateAsync as getTabStateAsyncRaw, removeTabState, setTabState } from "@/utils/tabStateStorage";
 import { createTab, genID, saveToFile, type Tab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 
@@ -29,9 +29,9 @@ function isValidTabState(value: unknown): value is { version: number; state: { d
   );
 }
 
-function getTabStateData(tabId: string): { version: number; state: { dirty?: boolean } } | null {
+async function getTabStateData(tabId: string): Promise<{ version: number; state: { dirty?: boolean } } | null> {
   try {
-    const rawState = getTabStateRaw(tabId);
+    const rawState = await getTabStateAsyncRaw(tabId);
     if (!rawState) {
       return null;
     }
@@ -75,6 +75,22 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
   const loadableEngines = useAtomValue(loadableEnginesAtom);
   const enableHotkeys = options?.enableHotkeys ?? true;
+
+  const cleanupClosedTabResources = useCallback(
+    async (tabId: string) => {
+      if (!tabId) return;
+
+      try {
+        unwrap(await commands.killEngines(tabId));
+      } catch {}
+
+      const engineNames = loadableEngines.state === "hasData" ? loadableEngines.data.map((engine) => engine.name) : [];
+      cleanupTabScopedAtoms(tabId, engineNames);
+      removeTabState(tabId);
+      removeTabScopedSessionKeys(tabId);
+    },
+    [loadableEngines],
+  );
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -128,7 +144,7 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
           }
         }
 
-        const tabState = getTabStateData(value);
+        const tabState = await getTabStateData(value);
         const tab = tabs.find((t) => t.value === value);
         const isDirty = !!tabState?.state?.dirty;
 
@@ -211,19 +227,32 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
           } catch {}
         }
 
-        try {
-          unwrap(await commands.killEngines(value));
-        } catch {}
-
-        const engineNames =
-          loadableEngines.state === "hasData" ? loadableEngines.data.map((engine) => engine.name) : [];
-        cleanupTabScopedAtoms(value, engineNames);
-        removeTabState(value);
-        removeTabScopedSessionKeys(value);
+        await cleanupClosedTabResources(value);
       }
     },
-    [activeTab, loadableEngines, navigate, setActiveTab, setTabs, t, tabs],
+    [activeTab, cleanupClosedTabResources, navigate, setActiveTab, setTabs, t, tabs],
   );
+
+  const closeAllTabs = useCallback(async () => {
+    const tabsSnapshot = [...tabs];
+    if (tabsSnapshot.length === 0) {
+      setActiveTab(null);
+      navigate({ to: "/" });
+      return;
+    }
+
+    try {
+      sessionStorage.setItem("tabsClosedToZero", "1");
+    } catch {}
+
+    setTabs([]);
+    setActiveTab(null);
+    navigate({ to: "/" });
+
+    for (const tab of tabsSnapshot) {
+      await cleanupClosedTabResources(tab.value);
+    }
+  }, [cleanupClosedTabResources, navigate, setActiveTab, setTabs, tabs]);
 
   const selectTab = useCallback(
     (index: number) => {
@@ -275,17 +304,16 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
   );
 
   const duplicateTab = useCallback(
-    (value: string) => {
+    async (value: string) => {
       const id = genID();
+      const existingState = await getTabStateAsyncRaw(value);
+
+      if (existingState) {
+        setTabState(id, existingState);
+      }
+
       setTabs((prevTabs) => {
         const tab = prevTabs.find((tab) => tab.value === value);
-
-        try {
-          const existingState = getTabStateRaw(value);
-          if (existingState) {
-            setTabState(id, existingState);
-          }
-        } catch {}
 
         if (tab) {
           setActiveTab(id);
@@ -333,7 +361,7 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
             () => {
               setActiveTab((current) => {
                 if (current) {
-                  duplicateTab(current);
+                  void duplicateTab(current);
                 }
                 return current;
               });
@@ -381,6 +409,7 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
     setActiveTab,
     setTabs,
     closeTab,
+    closeAllTabs,
     renameTab,
     duplicateTab,
     selectTab,

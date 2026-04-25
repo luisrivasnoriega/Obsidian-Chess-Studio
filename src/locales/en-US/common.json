@@ -1547,6 +1547,7 @@
     "dashboard": {
       "byColor": "By Color",
       "filterByColor": "Filter by Color",
+      "filterByMinMoves": "Min moves",
       "all": "All",
       "any": "Any",
       "white": "White",

@@ -34,6 +34,7 @@ import {
 } from "@/state/atoms";
 import { getVariationLine } from "@/utils/chess";
 import { getPiecesCount, hasCaptures, positionFromFen } from "@/utils/chessops";
+import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import type { Engine } from "@/utils/engines";
 import type { TreeNode } from "@/utils/treeReducer";
 import BestMoves, { arrowColors } from "./BestMoves";
@@ -47,6 +48,24 @@ type AnalysisPanelProps = {
   hideTabsList?: boolean;
   forceTab?: "engines" | "report" | "logs";
 };
+
+function hasAnalysisContent(root: TreeNode): boolean {
+  const stack: TreeNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.score) {
+      return true;
+    }
+    if (node.annotations.length > 0) {
+      return true;
+    }
+    if (node.comment.trim().length > 0) {
+      return true;
+    }
+    stack.push(...node.children);
+  }
+  return false;
+}
 
 function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
   const { t } = useTranslation();
@@ -112,25 +131,10 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
   // Use forced tab when provided (embedded contexts), otherwise configured/atom tab.
   const effectiveTab = (forceTab || configTabOverride || tab) as "engines" | "report" | "logs";
 
-  const hasPreexistingAnalysis = useMemo(() => {
-    const stack: TreeNode[] = [root];
-    while (stack.length > 0) {
-      const node = stack.pop()!;
-      if (node.score) {
-        return true;
-      }
-      if (node.annotations.length > 0) {
-        return true;
-      }
-      if (node.comment.trim().length > 0) {
-        return true;
-      }
-      stack.push(...node.children);
-    }
-    return false;
-  }, [root]);
-
-  const hadPreexistingAnalysisRef = useRef(hasPreexistingAnalysis);
+  const hadPreexistingAnalysisRef = useRef<boolean | null>(null);
+  if (hadPreexistingAnalysisRef.current === null) {
+    hadPreexistingAnalysisRef.current = hasAnalysisContent(root);
+  }
 
   const desiredDefaultTab: "engines" | "report" = hadPreexistingAnalysisRef.current ? "report" : "engines";
 
@@ -153,7 +157,7 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
       const next = config.analysisSubTab;
       if (next && ["engines", "report", "logs"].includes(next)) {
         // IMPORTANT: decide based on analysis state at open time, not after engines start streaming scores.
-        const hadPreexistingAnalysis = hadPreexistingAnalysisRef.current;
+        const hadPreexistingAnalysis = hadPreexistingAnalysisRef.current ?? false;
         if ((next === "report" && !hadPreexistingAnalysis) || (next === "engines" && hadPreexistingAnalysis)) {
           // Clear the one-shot config so it doesn't re-apply later (e.g. when analysis scores appear).
           try {
@@ -418,8 +422,9 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
 function EngineSummary({ engine, fen, moves, i }: { engine: Engine; fen: string; moves: string[]; i: number }) {
   const activeTab = useAtomValue(activeTabAtom);
   const [ev] = useAtom(engineMovesFamily({ engine: engine.name, tab: activeTab! }));
+  const variationCacheKey = useMemo(() => buildEngineVariationCacheKey(fen, moves), [fen, moves]);
 
-  const curEval = useDeferredValue(useMemo(() => ev.get(`${fen}:${moves.join(",")}`), [ev, fen, moves]));
+  const curEval = useDeferredValue(useMemo(() => ev.get(variationCacheKey), [ev, variationCacheKey]));
   const score = curEval && curEval.length > 0 ? curEval[0].score : null;
 
   return (

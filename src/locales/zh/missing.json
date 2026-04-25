@@ -593,6 +593,7 @@
   "features.postGameReview.openPuzzles": "Solve puzzles now",
   "features.postGameReview.noPuzzles": "No puzzles generated",
   "features.postGameReview.continuePlaying": "Continue playing",
+  "features.dashboard.filterByMinMoves": "Min moves",
   "features.dashboard.favorites": "Favorites",
   "features.dashboard.source": "Source",
   "features.dashboard.favorite": "Favorite",

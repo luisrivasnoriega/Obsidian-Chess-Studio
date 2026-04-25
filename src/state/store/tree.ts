@@ -12,7 +12,7 @@ import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { isPrefix } from "@/utils/misc";
 import { getAnnotation } from "@/utils/score";
 import { playSound } from "@/utils/sound";
-import { tabStateStorage } from "@/utils/tabStateStorage";
+import { tabStatePersistStorage } from "@/utils/tabStateStorage";
 import {
   createNode,
   defaultTree,
@@ -94,6 +94,37 @@ export interface TreeStoreState extends TreeState {
 }
 
 export type TreeStore = ReturnType<typeof createTreeStore>;
+
+type PersistedTreeState = Pick<TreeStoreState, "root" | "headers" | "position" | "dirty">;
+
+function cloneNodeForPersistence(node: TreeNode): TreeNode {
+  return {
+    fen: node.fen,
+    move: node.move,
+    san: node.san,
+    children: node.children.map(cloneNodeForPersistence),
+    // Engine eval/depth are high-churn ephemeral fields; avoid persisting them.
+    score: null,
+    depth: null,
+    halfMoves: node.halfMoves,
+    shapes: node.shapes.map((shape) => ({ ...shape })),
+    annotations: [...node.annotations],
+    comment: node.comment,
+    ...(node.clock !== undefined ? { clock: node.clock } : {}),
+  };
+}
+
+function toPersistedTreeState(state: TreeStoreState): PersistedTreeState {
+  return {
+    root: cloneNodeForPersistence(state.root),
+    headers: {
+      ...state.headers,
+      ...(state.headers.start ? { start: [...state.headers.start] } : {}),
+    },
+    position: [...state.position],
+    dirty: state.dirty,
+  };
+}
 
 export const createTreeStore = (id?: string, initialTree?: TreeState) => {
   const base = initialTree ?? defaultTree();
@@ -571,16 +602,19 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
     return createStore<TreeStoreState>()(
       persist(stateCreator, {
         name: id,
-        storage: createJSONStorage(() => tabStateStorage),
+        storage: createJSONStorage(() => tabStatePersistStorage),
+        partialize: (state) => toPersistedTreeState(state),
         merge: (persistedState, currentState) => {
           const persisted =
             persistedState && typeof persistedState === "object"
-              ? (persistedState as Partial<TreeStoreState>)
-              : ({} as Partial<TreeStoreState>);
+              ? (persistedState as Partial<PersistedTreeState>)
+              : ({} as Partial<PersistedTreeState>);
           return {
             ...currentState,
-            ...persisted,
             root: persisted.root ?? currentState.root,
+            headers: persisted.headers ? { ...currentState.headers, ...persisted.headers } : currentState.headers,
+            position: persisted.position ?? currentState.position,
+            dirty: persisted.dirty ?? currentState.dirty,
           };
         },
       }),

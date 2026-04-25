@@ -686,6 +686,7 @@
   "features.postGameReview.continuePlaying": "Continue playing",
   "features.shortcuts.title": "Keyboard Shortcuts",
   "features.shortcuts.helpTitle": "Show keyboard shortcuts help",
+  "features.dashboard.filterByMinMoves": "Min moves",
   "features.dashboard.favorites": "Favorites",
   "features.dashboard.source": "Source",
   "features.dashboard.favorite": "Favorite",

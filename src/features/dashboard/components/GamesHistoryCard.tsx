@@ -28,6 +28,8 @@ interface GamesHistoryCardProps {
     type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
     opponentContains: string | null;
     resultFilter: string | null;
+    playerColor: "white" | "black" | null;
+    minMoves: number | null;
   }) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;

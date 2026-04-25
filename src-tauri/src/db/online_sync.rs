@@ -44,6 +44,7 @@ const LICHESS_MAX_PER_BATCH: i64 = 500;
 const MAX_RETRIES_NETWORK: u32 = 8; // for timeouts, 5xx, connection issues
 const MAX_RETRIES_429: u32 = 60; // allow longer cooling if user has huge history
 const MAX_PROBE_RETRIES: u32 = 6;
+const CHESSCOM_RECENT_ARCHIVES_RECHECK: usize = 2; // always refresh latest archive months
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct AccountSyncProgress {
@@ -491,25 +492,6 @@ fn is_transient_error(err: &Error) -> bool {
     false
 }
 
-async fn download_response_to_file(mut res: reqwest::Response, dest: &PathBuf) -> Result<()> {
-    // Write atomically: download to a .part file first, then rename.
-    let part = dest.with_extension("part");
-    let _ = tokio::fs::remove_file(&part).await;
-    let mut file = tokio::fs::File::create(&part).await?;
-
-    // Stream chunks to disk (no buffering the whole body in memory)
-    while let Some(chunk) = res.chunk().await? {
-        file.write_all(&chunk).await?;
-    }
-    file.flush().await?;
-
-    // Windows does not allow renaming over existing files.
-    let _ = tokio::fs::remove_file(dest).await;
-    tokio::fs::rename(&part, dest).await?;
-
-    Ok(())
-}
-
 fn append_file(dest: &PathBuf, src: &PathBuf) -> Result<()> {
     let mut in_f = BufReader::new(fs::File::open(src)?);
     let mut out_f = BufWriter::new(OpenOptions::new().create(true).append(true).open(dest)?);
@@ -857,22 +839,24 @@ async fn chesscom_get_archives(client: &reqwest::Client, username: &str) -> Resu
     Ok(parsed.archives)
 }
 
-fn chesscom_archive_to_pgn_url(archive_url: &str) -> String {
-    // archive_url format: .../games/YYYY/MM
-    // pgn format: .../games/YYYY/MM/pgn
-    format!("{archive_url}/pgn")
-}
-
 async fn chesscom_download_archive_pgn_to_file(
     client: &reqwest::Client,
     archive_url: &str,
     dest: &PathBuf,
-) -> Result<()> {
-    let url = chesscom_archive_to_pgn_url(archive_url);
+) -> Result<i64> {
+    #[derive(Deserialize)]
+    struct ChessComArchiveGame {
+        pgn: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct ChessComArchiveResponse {
+        games: Vec<ChessComArchiveGame>,
+    }
 
     let res = client
-        .get(&url)
-        .header(reqwest::header::ACCEPT, "application/x-chess-pgn")
+        .get(archive_url)
+        .header(reqwest::header::ACCEPT, "application/json")
         .send()
         .await?;
 
@@ -888,15 +872,53 @@ async fn chesscom_download_archive_pgn_to_file(
         )));
     }
 
+    // Chess.com may expose an archive month in the index but still return 404/403 for that archive.
+    // Treat it as an empty batch instead of failing the full account sync.
+    if matches!(
+        res.status(),
+        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Ok(0);
+    }
+
     if !res.status().is_success() {
         return Err(Error::PackageManager(format!(
-            "Chess.com archive PGN request failed ({})",
+            "Chess.com archive request failed ({})",
             res.status()
         )));
     }
 
-    download_response_to_file(res, dest).await?;
-    Ok(())
+    let parsed: ChessComArchiveResponse = res.json().await.map_err(|e| {
+        Error::PackageManager(format!(
+            "Chess.com archive JSON decode failed for {}: {}",
+            archive_url, e
+        ))
+    })?;
+
+    let pgns: Vec<String> = parsed
+        .games
+        .into_iter()
+        .filter_map(|g| g.pgn)
+        .map(|pgn| pgn.trim().to_string())
+        .filter(|pgn| !pgn.is_empty())
+        .collect();
+
+    if pgns.is_empty() {
+        return Ok(0);
+    }
+
+    let part = dest.with_extension("part");
+    let _ = tokio::fs::remove_file(&part).await;
+    let mut file = tokio::fs::File::create(&part).await?;
+    let body = format!("{}\n", pgns.join("\n\n"));
+    file.write_all(body.as_bytes()).await?;
+    file.flush().await?;
+    drop(file);
+
+    let _ = tokio::fs::remove_file(dest).await;
+    tokio::fs::rename(&part, dest).await?;
+
+    Ok(pgns.len() as i64)
 }
 
 fn ensure_db_dir(app: &AppHandle) -> Result<PathBuf> {
@@ -2396,10 +2418,18 @@ pub async fn sync_account_games_to_profile_db(
         .unwrap_or_default();
         let completed_set: HashSet<String> = completed.into_iter().collect();
 
+        // Re-check recent monthly archives on every sync so new games in the current month
+        // are not missed after the archive was previously marked as completed.
         let archives_to_process: Vec<String> = archives
             .iter()
-            .cloned()
-            .filter(|a| !completed_set.contains(a))
+            .enumerate()
+            .filter_map(|(idx, a)| {
+                if idx < CHESSCOM_RECENT_ARCHIVES_RECHECK || !completed_set.contains(a) {
+                    Some(a.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let total_batches = archives.len() as i64;
@@ -2457,12 +2487,16 @@ pub async fn sync_account_games_to_profile_db(
             // Robust retry loop: 429 + network/5xx
             let mut attempts_429: u32 = 0;
             let mut attempts_net: u32 = 0;
+            let mut downloaded_games_in_batch: i64 = 0;
 
             loop {
                 let pgn_res =
                     chesscom_download_archive_pgn_to_file(&client, &archive_url, &temp_file).await;
                 match pgn_res {
-                    Ok(()) => break,
+                    Ok(count) => {
+                        downloaded_games_in_batch = count.max(0);
+                        break;
+                    }
                     Err(e) => {
                         let msg = format!("{e}");
 
@@ -2524,22 +2558,24 @@ pub async fn sync_account_games_to_profile_db(
                 break;
             }
 
-            // Normalize tags + scan (symmetric behavior; not used for cursoring)
-            let _ = rewrite_tags_and_scan_pgn_in_place(&temp_file, &platform, &username)?;
+            if downloaded_games_in_batch > 0 {
+                // Normalize tags + scan (symmetric behavior; not used for cursoring)
+                let _ = rewrite_tags_and_scan_pgn_in_place(&temp_file, &platform, &username)?;
 
-            // Append to export/debug file without loading into memory
-            let _ = append_file(&account_pgn_path, &temp_file);
+                // Append to export/debug file without loading into memory
+                let _ = append_file(&account_pgn_path, &temp_file);
 
-            // Import
-            convert_pgn_impl(
-                temp_file.clone(),
-                db_path.clone(),
-                None,
-                app.clone(),
-                profile_title.clone(),
-                None,
-                &state,
-            )?;
+                // Import
+                convert_pgn_impl(
+                    temp_file.clone(),
+                    db_path.clone(),
+                    None,
+                    app.clone(),
+                    profile_title.clone(),
+                    None,
+                    &state,
+                )?;
+            }
 
             mark_account_sync_batch_complete(
                 db_path.clone(),

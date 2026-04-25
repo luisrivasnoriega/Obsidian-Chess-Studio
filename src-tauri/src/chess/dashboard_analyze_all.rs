@@ -10,6 +10,9 @@ use shakmaty::{
 };
 use specta::Type;
 use tauri::Emitter;
+use futures_util::stream::{FuturesUnordered, StreamExt};
+use std::sync::Arc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::error::Error;
 use crate::AppState;
@@ -269,8 +272,134 @@ fn is_cancelled(state: &AppState, run_id: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn enforce_single_thread_uci_options(options: &[EngineOption]) -> Vec<EngineOption> {
+    let mut sanitized: Vec<EngineOption> = options
+        .iter()
+        .filter(|opt| !opt.name.eq_ignore_ascii_case("threads"))
+        .cloned()
+        .collect();
+    sanitized.push(EngineOption {
+        name: "Threads".to_string(),
+        value: "1".to_string(),
+    });
+    sanitized
+}
+
+fn max_parallel_jobs(total_jobs: usize) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let half_cores = (cores / 2).max(1);
+    half_cores.min(total_jobs.max(1))
+}
+
+#[derive(Debug)]
+struct DashboardAnalyzeAllWorkerResult {
+    job_id: String,
+    index: u32,
+    success: bool,
+    analysis: Option<Vec<MoveAnalysis>>,
+    error: Option<String>,
+    cancelled: bool,
+}
+
+async fn run_single_analyze_all_job(
+    run_id: String,
+    engine: String,
+    go_mode: GoMode,
+    uci_options: Vec<EngineOption>,
+    job: DashboardAnalyzeAllJobInput,
+    index: u32,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    _permit: OwnedSemaphorePermit,
+) -> DashboardAnalyzeAllWorkerResult {
+    if is_cancelled(&state, &run_id) {
+        return DashboardAnalyzeAllWorkerResult {
+            job_id: job.job_id,
+            index,
+            success: false,
+            analysis: None,
+            error: Some("Cancelled".to_string()),
+            cancelled: true,
+        };
+    }
+
+    let analysis_id = format!("dashboard_analyze_all_{}_{}", run_id, index);
+    state
+        .dashboard_analyze_all_active
+        .insert((run_id.clone(), analysis_id.clone()), engine.clone());
+
+    let job_id = job.job_id.clone();
+    let result = match resolve_job(&job) {
+        Ok((fen, moves)) => {
+            let analysis = GameAnalysisService::analyze_game(
+                analysis_id.clone(),
+                engine.clone(),
+                go_mode,
+                AnalysisOptions {
+                    fen,
+                    moves,
+                    annotate_novelties: false,
+                    reference_db: None,
+                    reversed: false,
+                },
+                uci_options,
+                state.clone(),
+                app,
+            )
+            .await;
+            match analysis {
+                Ok(analysis) => DashboardAnalyzeAllWorkerResult {
+                    job_id,
+                    index,
+                    success: true,
+                    analysis: Some(analysis),
+                    error: None,
+                    cancelled: false,
+                },
+                Err(error) => DashboardAnalyzeAllWorkerResult {
+                    job_id,
+                    index,
+                    success: false,
+                    analysis: None,
+                    error: Some(error.to_string()),
+                    cancelled: is_cancelled(&state, &run_id),
+                },
+            }
+        }
+        Err(error) => DashboardAnalyzeAllWorkerResult {
+            job_id,
+            index,
+            success: false,
+            analysis: None,
+            error: Some(error.to_string()),
+            cancelled: false,
+        },
+    };
+
+    state
+        .dashboard_analyze_all_active
+        .remove(&(run_id, analysis_id));
+    result
+}
+
 fn clear_run_state(state: &AppState, run_id: &str) {
-    state.dashboard_analyze_all_active.remove(run_id);
+    let active_keys: Vec<(String, String)> = state
+        .dashboard_analyze_all_active
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.key();
+            if key.0 == run_id {
+                Some((key.0.clone(), key.1.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    for key in active_keys {
+        state.dashboard_analyze_all_active.remove(&key);
+    }
     state.dashboard_analyze_all_cancellations.remove(run_id);
 }
 
@@ -284,12 +413,20 @@ pub async fn dashboard_analyze_all_cancel(
         .dashboard_analyze_all_cancellations
         .insert(run_id.clone(), true);
 
-    let active = state
+    let active: Vec<((String, String), String)> = state
         .dashboard_analyze_all_active
-        .get(&run_id)
-        .map(|entry| entry.clone());
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.key();
+            if key.0 == run_id {
+                Some(((key.0.clone(), key.1.clone()), entry.value().clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    if let Some((analysis_id, engine)) = active {
+    for ((run_key, analysis_id), engine) in active {
         let key = (analysis_id.clone(), engine.clone());
         if let Some(process) = state.engine_processes.get(&key) {
             let mut process = process.lock().await;
@@ -297,6 +434,9 @@ pub async fn dashboard_analyze_all_cancel(
             let _ = process.kill().await;
         }
         state.engine_processes.remove(&key);
+        state
+            .dashboard_analyze_all_active
+            .remove(&(run_key, analysis_id));
     }
 
     Ok(())
@@ -326,117 +466,113 @@ pub async fn dashboard_analyze_all_run(
         return Ok(());
     }
 
+    let DashboardAnalyzeAllRunRequest {
+        run_id,
+        engine,
+        go_mode,
+        uci_options,
+        jobs,
+    } = request;
+
     state
         .dashboard_analyze_all_cancellations
-        .insert(request.run_id.clone(), false);
+        .insert(run_id.clone(), false);
 
     let run_result: Result<(), Error> = async {
-        let total = request.jobs.len() as u32;
+        let total = jobs.len() as u32;
+        let parallelism = max_parallel_jobs(jobs.len());
+        let semaphore = Arc::new(Semaphore::new(parallelism));
+        let normalized_uci_options = enforce_single_thread_uci_options(&uci_options);
         let mut completed = 0u32;
         let mut success = 0u32;
         let mut failed = 0u32;
         let mut cancelled = false;
+        let mut workers = FuturesUnordered::new();
 
-        for (index, job) in request.jobs.iter().enumerate() {
-            if is_cancelled(&state, &request.run_id) {
-                cancelled = true;
-                break;
-            }
-
-            let job_idx = index as u32;
-            let analysis_id = format!("dashboard_analyze_all_{}_{}", request.run_id, job_idx);
-            state.dashboard_analyze_all_active.insert(
-                request.run_id.clone(),
-                (analysis_id.clone(), request.engine.clone()),
-            );
-
-            let result = match resolve_job(job) {
-                Ok((fen, moves)) => {
-                    let analysis = GameAnalysisService::analyze_game(
-                        analysis_id.clone(),
-                        request.engine.clone(),
-                        request.go_mode.clone(),
-                        AnalysisOptions {
-                            fen,
-                            moves,
-                            annotate_novelties: false,
-                            reference_db: None,
-                            reversed: false,
-                        },
-                        request.uci_options.clone(),
-                        state.clone(),
-                        app.clone(),
-                    )
-                    .await;
-                    match analysis {
-                        Ok(analysis) => Ok(analysis),
-                        Err(error) => Err(error.to_string()),
-                    }
-                }
-                Err(error) => Err(error.to_string()),
-            };
-
-            state.dashboard_analyze_all_active.remove(&request.run_id);
-
-            match result {
-                Ok(analysis) => {
-                    success = success.saturating_add(1);
-                    app.emit(
-                        event_result_name(),
-                        DashboardAnalyzeAllResultPayload {
-                            run_id: request.run_id.clone(),
-                            job_id: job.job_id.clone(),
-                            index: job_idx,
-                            total,
-                            success: true,
-                            analysis: Some(analysis),
-                            error: None,
-                            cancelled: false,
-                        },
-                    )?;
-                }
-                Err(message) => {
-                    failed = failed.saturating_add(1);
-                    app.emit(
-                        event_result_name(),
-                        DashboardAnalyzeAllResultPayload {
-                            run_id: request.run_id.clone(),
-                            job_id: job.job_id.clone(),
-                            index: job_idx,
-                            total,
+        for (index, job) in jobs.into_iter().enumerate() {
+            let run_id_worker = run_id.clone();
+            let engine_worker = engine.clone();
+            let go_mode_worker = go_mode.clone();
+            let uci_options_worker = normalized_uci_options.clone();
+            let state_ref = state.clone();
+            let app_handle = app.clone();
+            let sem = semaphore.clone();
+            workers.push(async move {
+                let permit = match sem.acquire_owned().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        return DashboardAnalyzeAllWorkerResult {
+                            job_id: job.job_id,
+                            index: index as u32,
                             success: false,
                             analysis: None,
-                            error: Some(message),
-                            cancelled: false,
-                        },
-                    )?;
-                }
+                            error: Some("Analyze-all scheduler is shutting down".to_string()),
+                            cancelled: true,
+                        };
+                    }
+                };
+                run_single_analyze_all_job(
+                    run_id_worker,
+                    engine_worker,
+                    go_mode_worker,
+                    uci_options_worker,
+                    job,
+                    index as u32,
+                    state_ref,
+                    app_handle,
+                    permit,
+                )
+                .await
+            });
+        }
+
+        while let Some(result) = workers.next().await {
+            if result.cancelled {
+                cancelled = true;
+            }
+            if result.success {
+                success = success.saturating_add(1);
+            } else {
+                failed = failed.saturating_add(1);
             }
 
-            completed = completed.saturating_add(1);
+            app.emit(
+                event_result_name(),
+                DashboardAnalyzeAllResultPayload {
+                    run_id: run_id.clone(),
+                    job_id: result.job_id,
+                    index: result.index,
+                    total,
+                    success: result.success,
+                    analysis: result.analysis,
+                    error: result.error,
+                    cancelled: result.cancelled,
+                },
+            )?;
 
+            completed = completed.saturating_add(1);
             app.emit(
                 event_progress_name(),
                 DashboardAnalyzeAllProgressPayload {
-                    run_id: request.run_id.clone(),
+                    run_id: run_id.clone(),
                     completed,
                     total,
                     success,
                     failed,
-                    cancelled: false,
+                    cancelled,
                     finished: false,
                 },
             )?;
         }
 
-        if is_cancelled(&state, &request.run_id) {
+        if is_cancelled(&state, &run_id) {
             cancelled = true;
         }
 
         app.emit(
             event_progress_name(),
             DashboardAnalyzeAllProgressPayload {
-                run_id: request.run_id.clone(),
+                run_id: run_id.clone(),
                 completed,
                 total,
                 success,
@@ -449,6 +585,6 @@ pub async fn dashboard_analyze_all_run(
     }
     .await;
 
-    clear_run_state(&state, &request.run_id);
+    clear_run_state(&state, &run_id);
     run_result
 }
