@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use log::info;
+use log::{info, warn};
 use tauri_specta::Event;
 use tokio::sync::Mutex;
 
@@ -57,9 +57,13 @@ impl<'a> EngineManager<'a> {
         let path = resolve_engine_path(&engine, &app);
         let key = (tab.clone(), engine.clone());
         // If an engine process already exists for this key, reuse or update it.
-        if self.state.engine_processes.contains_key(&key) {
+        if let Some(process) = self
+            .state
+            .engine_processes
+            .get(&key)
+            .map(|entry| entry.value().clone())
+        {
             {
-                let process = self.state.engine_processes.get_mut(&key).unwrap();
                 let mut process = process.lock().await;
                 // If options and mode match and engine is running, return cached result.
                 if options == process.options && go_mode == process.go_mode && process.running {
@@ -80,21 +84,26 @@ impl<'a> EngineManager<'a> {
                     return Err(err);
                 }
             }
-            // Wait for engine to process stop command and settle
+            // Wait for engine to process stop command and settle.
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             {
-                let process = self.state.engine_processes.get_mut(&key).unwrap();
                 let mut process = process.lock().await;
-                let reconfigure_result = async {
-                    process.set_options(options.clone()).await?;
-                    process.go(&go_mode).await?;
-                    Ok::<(), Error>(())
+                // The process can be removed asynchronously while we are waiting (e.g. engine exits).
+                // In that case, do not panic; fall through and spawn a fresh process below.
+                if !self.state.engine_processes.contains_key(&key) {
+                    process.reconfiguring = false;
+                } else {
+                    let reconfigure_result = async {
+                        process.set_options(options.clone()).await?;
+                        process.go(&go_mode).await?;
+                        Ok::<(), Error>(())
+                    }
+                    .await;
+                    process.reconfiguring = false;
+                    reconfigure_result?;
+                    return Ok(None);
                 }
-                .await;
-                process.reconfiguring = false;
-                reconfigure_result?;
             }
-            return Ok(None);
         }
 
         let (mut process, mut reader) = EngineProcess::new(path).await?;
@@ -137,9 +146,19 @@ impl<'a> EngineManager<'a> {
                             if has_wdl_in_line && !has_pv_in_line {
                                 continue;
                             }
+                            let parsed_fen = match proc.options.fen.parse() {
+                                Ok(fen) => fen,
+                                Err(err) => {
+                                    warn!(
+                                        "Skipping UCI info line due to invalid FEN in engine options: {}",
+                                        err
+                                    );
+                                    continue;
+                                }
+                            };
                             let parse_result = super::process::parse_uci_attrs_with_line(
                                 attrs,
-                                &proc.options.fen.parse().unwrap(),
+                                &parsed_fen,
                                 &proc.options.moves,
                                 Some(&line),
                             );

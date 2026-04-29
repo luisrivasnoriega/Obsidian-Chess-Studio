@@ -8,6 +8,37 @@ use tauri::{path::BaseDirectory, AppHandle, Manager};
 use crate::error::{Error, Result};
 
 const DB_FILENAME: &str = "analysis.db3";
+const ELO_MIN: f64 = 100.0;
+const ELO_MAX: f64 = 4000.0;
+const FALLBACK_PLAYER_ELO: f64 = 1000.0;
+
+fn clamp_elo(value: f64) -> f64 {
+    value.max(ELO_MIN).min(ELO_MAX)
+}
+
+fn normalize_elo_opt(value: Option<i64>) -> Option<f64> {
+    value
+        .map(|v| v as f64)
+        .filter(|v| v.is_finite())
+        .map(clamp_elo)
+}
+
+fn compute_balanced_metrics(stats: &StoredGameStats) -> (f64, i64) {
+    let player_estimated = normalize_elo_opt(stats.estimated_elo).unwrap_or(FALLBACK_PLAYER_ELO);
+    let opponent_estimated = normalize_elo_opt(stats.opponent_estimated_elo)
+        .or_else(|| normalize_elo_opt(stats.opponent_rating_elo))
+        .unwrap_or(player_estimated);
+    let opponent_reference = normalize_elo_opt(stats.opponent_rating_elo).unwrap_or(opponent_estimated);
+
+    let resistance = (0.70 * opponent_estimated) + (0.30 * opponent_reference);
+    let collapse_gap = (opponent_reference - opponent_estimated).max(0.0);
+    let collapse_penalty = 0.25 * collapse_gap;
+    let balanced = (0.55 * player_estimated) + (0.45 * resistance) - collapse_penalty;
+
+    let sanitized_resistance = clamp_elo(resistance);
+    let sanitized_balanced = clamp_elo(balanced);
+    (sanitized_resistance, sanitized_balanced.round() as i64)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct AnalyzedGameEntry {
@@ -22,6 +53,10 @@ pub struct StoredGameStats {
     pub accuracy: f64,
     pub acpl: f64,
     pub estimated_elo: Option<i64>,
+    pub resistance: Option<f64>,
+    pub elo_estimated_balanced: Option<i64>,
+    pub opponent_estimated_elo: Option<i64>,
+    pub opponent_rating_elo: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -32,6 +67,8 @@ pub struct GameStatsEntry {
     pub accuracy: f64,
     pub acpl: f64,
     pub estimated_elo: Option<i64>,
+    pub resistance: Option<f64>,
+    pub elo_estimated_balanced: Option<i64>,
 }
 
 fn normalize_game_id(game_id: &str) -> Option<&str> {
@@ -87,6 +124,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Detect whether `game_analysis` already exists and whether it's legacy.
     let mut has_table = false;
     let mut has_profile_id = false;
+    let mut has_resistance = false;
+    let mut has_elo_estimated_balanced = false;
     {
         let mut stmt = conn.prepare("PRAGMA table_info(game_analysis)")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -95,6 +134,10 @@ fn init_schema(conn: &Connection) -> Result<()> {
             let name = r?;
             if name.eq_ignore_ascii_case("profile_id") {
                 has_profile_id = true;
+            } else if name.eq_ignore_ascii_case("resistance") {
+                has_resistance = true;
+            } else if name.eq_ignore_ascii_case("elo_estimated_balanced") {
+                has_elo_estimated_balanced = true;
             }
         }
     }
@@ -110,6 +153,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
                 accuracy REAL,
                 acpl REAL,
                 estimated_elo INTEGER,
+                resistance REAL,
+                elo_estimated_balanced INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (profile_id, game_id)
@@ -140,16 +185,18 @@ fn init_schema(conn: &Connection) -> Result<()> {
                 accuracy REAL,
                 acpl REAL,
                 estimated_elo INTEGER,
+                resistance REAL,
+                elo_estimated_balanced INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (profile_id, game_id)
             );
 
             INSERT INTO game_analysis (
-                profile_id, game_id, legacy_game_key, analyzed_pgn, accuracy, acpl, estimated_elo, created_at, updated_at
+                profile_id, game_id, legacy_game_key, analyzed_pgn, accuracy, acpl, estimated_elo, resistance, elo_estimated_balanced, created_at, updated_at
             )
             SELECT
-                '', game_id, game_id, analyzed_pgn, accuracy, acpl, estimated_elo, created_at, updated_at
+                '', game_id, game_id, analyzed_pgn, accuracy, acpl, estimated_elo, NULL, NULL, created_at, updated_at
             FROM game_analysis_old;
 
             DROP TABLE game_analysis_old;
@@ -164,6 +211,13 @@ fn init_schema(conn: &Connection) -> Result<()> {
             "#,
         )?;
     } else {
+        if !has_resistance {
+            conn.execute_batch("ALTER TABLE game_analysis ADD COLUMN resistance REAL;")?;
+        }
+        if !has_elo_estimated_balanced {
+            conn.execute_batch("ALTER TABLE game_analysis ADD COLUMN elo_estimated_balanced INTEGER;")?;
+        }
+
         // Ensure indexes exist.
         conn.execute_batch(
             r#"
@@ -236,14 +290,17 @@ fn set_game_stats_conn(
     game_id: &str,
     stats: &StoredGameStats,
 ) -> Result<()> {
+    let (computed_resistance, computed_balanced_elo) = compute_balanced_metrics(stats);
     conn.execute(
         r#"
-        INSERT INTO game_analysis (profile_id, game_id, accuracy, acpl, estimated_elo, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO game_analysis (profile_id, game_id, accuracy, acpl, estimated_elo, resistance, elo_estimated_balanced, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(profile_id, game_id) DO UPDATE SET
             accuracy = excluded.accuracy,
             acpl = excluded.acpl,
             estimated_elo = excluded.estimated_elo,
+            resistance = excluded.resistance,
+            elo_estimated_balanced = excluded.elo_estimated_balanced,
             updated_at = CURRENT_TIMESTAMP
         "#,
         params![
@@ -251,7 +308,9 @@ fn set_game_stats_conn(
             game_id,
             stats.accuracy,
             stats.acpl,
-            stats.estimated_elo
+            stats.estimated_elo,
+            computed_resistance,
+            computed_balanced_elo
         ],
     )?;
     Ok(())
@@ -264,7 +323,7 @@ fn get_game_stats_conn(
 ) -> Result<Option<StoredGameStats>> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT accuracy, acpl, estimated_elo
+        SELECT accuracy, acpl, estimated_elo, resistance, elo_estimated_balanced
         FROM game_analysis
         WHERE profile_id = ?1 AND game_id = ?2 AND accuracy IS NOT NULL AND acpl IS NOT NULL
         "#,
@@ -275,6 +334,10 @@ fn get_game_stats_conn(
                 accuracy: row.get(0)?,
                 acpl: row.get(1)?,
                 estimated_elo: row.get(2)?,
+                resistance: row.get(3)?,
+                elo_estimated_balanced: row.get(4)?,
+                opponent_estimated_elo: None,
+                opponent_rating_elo: None,
             })
         })
         .optional()?;
@@ -301,7 +364,7 @@ fn get_game_stats_bulk_conn(
             .join(",");
         let sql = format!(
             r#"
-            SELECT profile_id, game_id, accuracy, acpl, estimated_elo
+            SELECT profile_id, game_id, accuracy, acpl, estimated_elo, resistance, elo_estimated_balanced
             FROM game_analysis
             WHERE profile_id = ?1
               AND game_id IN ({})
@@ -324,6 +387,8 @@ fn get_game_stats_bulk_conn(
                     accuracy: row.get(2)?,
                     acpl: row.get(3)?,
                     estimated_elo: row.get(4)?,
+                    resistance: row.get(5)?,
+                    elo_estimated_balanced: row.get(6)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -719,23 +784,35 @@ mod tests {
             accuracy: 91.2,
             acpl: 23.0,
             estimated_elo: Some(1850),
+            resistance: None,
+            elo_estimated_balanced: None,
+            opponent_estimated_elo: None,
+            opponent_rating_elo: None,
         };
         set_game_stats_conn(&conn, "", "g1", &s1)?;
         let got1 = get_game_stats_conn(&conn, "", "g1")?.unwrap();
         assert!((got1.accuracy - 91.2).abs() < 1e-9);
         assert!((got1.acpl - 23.0).abs() < 1e-9);
         assert_eq!(got1.estimated_elo, Some(1850));
+        assert_eq!(got1.resistance, Some(1850.0));
+        assert_eq!(got1.elo_estimated_balanced, Some(1850));
 
         let s2 = StoredGameStats {
             accuracy: 77.7,
             acpl: 45.0,
             estimated_elo: None,
+            resistance: None,
+            elo_estimated_balanced: None,
+            opponent_estimated_elo: None,
+            opponent_rating_elo: None,
         };
         set_game_stats_conn(&conn, "", "g2", &s2)?;
         let got2 = get_game_stats_conn(&conn, "", "g2")?.unwrap();
         assert!((got2.accuracy - 77.7).abs() < 1e-9);
         assert!((got2.acpl - 45.0).abs() < 1e-9);
         assert_eq!(got2.estimated_elo, None);
+        assert_eq!(got2.resistance, Some(1000.0));
+        assert_eq!(got2.elo_estimated_balanced, Some(1000));
 
         drop(conn);
         cleanup_db_files(&path);
@@ -752,6 +829,10 @@ mod tests {
             accuracy: 99.0,
             acpl: 5.0,
             estimated_elo: Some(2400),
+            resistance: None,
+            elo_estimated_balanced: None,
+            opponent_estimated_elo: None,
+            opponent_rating_elo: None,
         };
         set_game_stats_conn(&conn, "", "g1", &stats)?;
 
@@ -774,6 +855,10 @@ mod tests {
             accuracy: 50.0,
             acpl: 100.0,
             estimated_elo: None,
+            resistance: None,
+            elo_estimated_balanced: None,
+            opponent_estimated_elo: None,
+            opponent_rating_elo: None,
         };
         set_game_stats_conn(&conn, "", "g2", &stats)?;
 
@@ -803,6 +888,10 @@ mod tests {
                 accuracy: i as f64,
                 acpl: (i as f64) + 0.5,
                 estimated_elo: if i % 2 == 0 { Some(i as i64) } else { None },
+                resistance: None,
+                elo_estimated_balanced: None,
+                opponent_estimated_elo: None,
+                opponent_rating_elo: None,
             };
             set_game_stats_conn(&conn, "", &id, &s)?;
         }
@@ -901,6 +990,10 @@ mod tests {
             accuracy: 88.8,
             acpl: 12.3,
             estimated_elo: Some(2000),
+            resistance: None,
+            elo_estimated_balanced: None,
+            opponent_estimated_elo: None,
+            opponent_rating_elo: None,
         };
         set_game_stats_conn(&conn, "", "g1", &stats)?;
 
@@ -915,6 +1008,8 @@ mod tests {
         assert!((got.accuracy - 88.8).abs() < 1e-9);
         assert!((got.acpl - 12.3).abs() < 1e-9);
         assert_eq!(got.estimated_elo, Some(2000));
+        assert_eq!(got.resistance, Some(2000.0));
+        assert_eq!(got.elo_estimated_balanced, Some(2000));
 
         // all analyzed list now empty
         let all = get_all_analyzed_games_conn(&conn, "")?;

@@ -1205,6 +1205,14 @@ async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<Ga
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardDecodeProfileGameBlobMoves(profileId: string, gameId: number) : Promise<Result<DecodedGameMovesResponse | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_decode_profile_game_blob_moves", { profileId, gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardSearchProfileOpponents(profileId: string, query: string, profileUsernames: string[]) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_search_profile_opponents", { profileId, query, profileUsernames }) };
@@ -1705,6 +1713,7 @@ export type DashboardAnalyzeAllRunRequest = { runId: string; engine: string; goM
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
+export type DecodedGameMovesResponse = { initialFen: string; moves: string[] }
 export type DownloadProgress = { progress: number; id: string; finished: boolean }
 export type EdgeKind = "ourMove" | "opponentMove"
 export type EloBucket = { value: string; label: string }
@@ -1751,7 +1760,7 @@ game_details_limit?: bigint | null; player1?: number | null; player2?: number | 
 time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
-export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null }
+export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null }
 export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
 export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
@@ -1777,7 +1786,12 @@ outcome: string;
 /**
  * Original PGN if available (may be overwritten by analyzed PGN if present).
  */
-pgn: string | null; accuracy: number | null; acpl: number | null; estimatedElo: bigint | null; 
+pgn: string | null; 
+/**
+ * Initial FEN (start position) when available. Useful for from-position games
+ * whose movetext may not contain PGN headers.
+ */
+initialFen: string | null; accuracy: number | null; acpl: number | null; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null; 
 /**
  * Approximate number of full moves.
  */
@@ -2114,7 +2128,7 @@ export type Sides = "BlackWhite" | "WhiteBlack" | "Any"
 export type SiteStatsData = { site: string; player: string; data: StatsData[] }
 export type SortDirection = "asc" | "desc"
 export type StatsData = { date: string; time: string | null; is_player_white: boolean; player_elo: number; opponent_elo: number | null; result: GameOutcome; time_control: string; opening: string }
-export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bigint | null }
+export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null; opponentEstimatedElo: bigint | null; opponentRatingElo: bigint | null }
 /**
  * Recognized practical motifs for a candidate move.
  */

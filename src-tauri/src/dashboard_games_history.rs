@@ -1,11 +1,13 @@
 use crate::analysis_storage::{analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats_bulk};
 use crate::db::{
+    encoding::extract_main_line_moves,
     get_games, get_players, GameQueryJs, GameSort, PlayerQuery, PlayerSort, QueryOptions,
     SortDirection, Sides,
 };
 use crate::error::{Error, Result};
 use crate::AppState;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use shakmaty::{fen::Fen, san::SanPlus, CastlingMode, Chess};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
@@ -40,9 +42,14 @@ pub struct GamesHistoryRow {
     pub outcome: String,
     /// Original PGN if available (may be overwritten by analyzed PGN if present).
     pub pgn: Option<String>,
+    /// Initial FEN (start position) when available. Useful for from-position games
+    /// whose movetext may not contain PGN headers.
+    pub initial_fen: Option<String>,
     pub accuracy: Option<f64>,
     pub acpl: Option<f64>,
     pub estimated_elo: Option<i64>,
+    pub resistance: Option<f64>,
+    pub elo_estimated_balanced: Option<i64>,
     /// Approximate number of full moves.
     pub moves: i32,
     pub time_control: Option<String>,
@@ -134,12 +141,23 @@ pub struct AnalyzeAllCountsBulkResponse {
     pub chessbase: AnalyzeAllCountsResponse,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DecodedGameMovesResponse {
+    pub initial_fen: String,
+    pub moves: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LocalGameStats {
     accuracy: f64,
     acpl: f64,
+    #[serde(alias = "estimated_elo")]
     estimated_elo: Option<i64>,
+    resistance: Option<f64>,
+    #[serde(alias = "elo_estimated_balanced")]
+    elo_estimated_balanced: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -276,6 +294,142 @@ fn has_analysis_markers(pgn: &str) -> bool {
     // (e.g. raw Lichess/Chess.com PGNs) and must not mark a game as analyzed.
     let lower = pgn.to_lowercase();
     lower.contains("[%eval")
+}
+
+fn has_any_pgn_tag(text: &str) -> bool {
+    for chunk in text.split('[').skip(1).take(32) {
+        let Some(end_idx) = chunk.find(']') else {
+            continue;
+        };
+        let body = chunk[..end_idx].trim();
+        if body.is_empty() || !body.contains('"') {
+            continue;
+        }
+        let tag = body.split_whitespace().next().unwrap_or("");
+        if tag.is_empty() {
+            continue;
+        }
+        if tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn format_pgn_movetext_from_san(san_moves: &[String], black_to_move: bool) -> String {
+    if san_moves.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut idx = 0usize;
+    let mut move_no = 1usize;
+    if black_to_move {
+        out.push_str(&format!("{}... {}", move_no, san_moves[0]));
+        idx = 1;
+        move_no += 1;
+    }
+    while idx < san_moves.len() {
+        let white = &san_moves[idx];
+        idx += 1;
+        let black = if idx < san_moves.len() {
+            let b = Some(&san_moves[idx]);
+            idx += 1;
+            b
+        } else {
+            None
+        };
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(&format!("{}.", move_no));
+        out.push(' ');
+        out.push_str(white);
+        if let Some(b) = black {
+            out.push(' ');
+            out.push_str(b);
+        }
+        move_no += 1;
+    }
+    out
+}
+
+fn decode_san_movetext_from_blob(
+    conn: &Connection,
+    game_id: i32,
+    initial_fen: Option<&str>,
+) -> Option<String> {
+    let moves_blob: Vec<u8> = conn
+        .query_row("SELECT Moves FROM Games WHERE ID = ?1 LIMIT 1", [game_id], |row| row.get(0))
+        .ok()?;
+
+    let start_pos = initial_fen
+        .and_then(|f| Fen::from_ascii(f.trim().as_bytes()).ok())
+        .and_then(|f| f.into_position(CastlingMode::Chess960).ok());
+    let mut pos: Chess = start_pos.clone().unwrap_or_default();
+    let decoded = extract_main_line_moves(&moves_blob, start_pos).ok()?;
+    if decoded.is_empty() {
+        return None;
+    }
+
+    let mut sans: Vec<String> = Vec::with_capacity(decoded.len());
+    for mv in decoded {
+        let san = SanPlus::from_move_and_play_unchecked(&mut pos, &mv).to_string();
+        sans.push(san);
+    }
+
+    let black_to_move = initial_fen
+        .map(|f| f.split_whitespace().nth(1).unwrap_or("w") == "b")
+        .unwrap_or(false);
+    let movetext = format_pgn_movetext_from_san(&sans, black_to_move);
+    if movetext.trim().is_empty() {
+        None
+    } else {
+        Some(movetext)
+    }
+}
+
+fn decode_uci_moves_from_blob(
+    moves_blob: &[u8],
+    initial_fen: Option<&str>,
+) -> Option<(String, Vec<String>)> {
+    let trimmed_fen = initial_fen
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        .to_string();
+
+    let mut start_positions: Vec<Option<Chess>> = Vec::new();
+    if let Ok(fen_obj) = Fen::from_ascii(trimmed_fen.as_bytes()) {
+        if let Ok(pos_std) = fen_obj.clone().into_position(CastlingMode::Standard) {
+            start_positions.push(Some(pos_std));
+        }
+        if let Ok(pos_960) = fen_obj.into_position(CastlingMode::Chess960) {
+            start_positions.push(Some(pos_960));
+        }
+    }
+    start_positions.push(None);
+
+    for start in start_positions {
+        let decoded = match extract_main_line_moves(moves_blob, start.clone()) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if decoded.is_empty() {
+            continue;
+        }
+        let moves = decoded
+            .into_iter()
+            .map(|m| m.to_uci(CastlingMode::Standard).to_string())
+            .collect::<Vec<_>>();
+        if !moves.is_empty() {
+            return Some((trimmed_fen.clone(), moves));
+        }
+    }
+
+    None
 }
 
 fn time_control_category(site: GamesHistoryKind, time_control: &str) -> Option<String> {
@@ -644,6 +798,7 @@ pub async fn dashboard_get_games_history_rows(
     }
 
     let online = get_games(db_path, q, state).await?.data;
+    let profile_db_conn = Connection::open(parse_profile_db_path(&app, &profile_id)?).ok();
 
     // 3) Build raw rows (without analysis enrichment).
     let mut rows: Vec<GamesHistoryRow> = Vec::new();
@@ -676,9 +831,12 @@ pub async fn dashboard_get_games_history_rows(
             color: user_color.to_string(),
             outcome,
             pgn: g.pgn,
+            initial_fen: g.initial_fen,
             accuracy: stats.as_ref().map(|s| s.accuracy),
             acpl: stats.as_ref().map(|s| s.acpl),
-            estimated_elo: stats.and_then(|s| s.estimated_elo),
+            estimated_elo: stats.as_ref().and_then(|s| s.estimated_elo),
+            resistance: stats.as_ref().and_then(|s| s.resistance),
+            elo_estimated_balanced: stats.as_ref().and_then(|s| s.elo_estimated_balanced),
             moves: g.moves.len().saturating_div(2).max(1) as i32,
             time_control: if tc.trim().is_empty() { None } else { Some(tc) },
             time_control_category: tc_cat,
@@ -821,6 +979,16 @@ pub async fn dashboard_get_games_history_rows(
             time_control_category(kind.clone(), &tc)
         };
 
+        let raw_moves_text = g.moves.clone();
+        let maybe_decoded_movetext = if has_any_pgn_tag(&raw_moves_text) {
+            None
+        } else {
+            profile_db_conn
+                .as_ref()
+                .and_then(|conn| decode_san_movetext_from_blob(conn, g.id, Some(g.fen.as_str())))
+        };
+        let moves_for_pgn = maybe_decoded_movetext.unwrap_or_else(|| raw_moves_text.clone());
+
         rows.push(GamesHistoryRow {
             kind,
             analysis_game_id: g.id.to_string(),
@@ -829,7 +997,7 @@ pub async fn dashboard_get_games_history_rows(
             opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
             color: user_color.to_string(),
             outcome,
-            pgn: if g.moves.trim().is_empty() {
+            pgn: if moves_for_pgn.trim().is_empty() {
                 None
             } else if needs_minimal_pgn {
                 Some(build_minimal_pgn_from_db_game(
@@ -842,14 +1010,24 @@ pub async fn dashboard_get_games_history_rows(
                     g.time_control.as_deref(),
                     Some(g.fen.as_str()),
                     &result_str,
-                    &g.moves,
+                    &moves_for_pgn,
                 ))
             } else {
-                Some(g.moves)
+                Some(moves_for_pgn)
+            },
+            initial_fen: {
+                let fen = g.fen.trim().to_string();
+                if fen.is_empty() {
+                    None
+                } else {
+                    Some(fen)
+                }
             },
             accuracy: None,
             acpl: None,
             estimated_elo: None,
+            resistance: None,
+            elo_estimated_balanced: None,
             moves: full_moves,
             time_control: if tc.trim().is_empty() { None } else { Some(tc) },
             time_control_category: tc_cat,
@@ -916,9 +1094,20 @@ pub async fn dashboard_get_games_history_rows(
             .into_iter()
             .map(|e| (e.game_id, e.analyzed_pgn))
             .collect();
-        let stats_map: HashMap<String, (f64, f64, Option<i64>)> = stats
+        let stats_map: HashMap<String, (f64, f64, Option<i64>, Option<f64>, Option<i64>)> = stats
             .into_iter()
-            .map(|e| (e.game_id, (e.accuracy, e.acpl, e.estimated_elo)))
+            .map(|e| {
+                (
+                    e.game_id,
+                    (
+                        e.accuracy,
+                        e.acpl,
+                        e.estimated_elo,
+                        e.resistance,
+                        e.elo_estimated_balanced,
+                    ),
+                )
+            })
             .collect();
 
         for r in rows.iter_mut() {
@@ -929,13 +1118,15 @@ pub async fn dashboard_get_games_history_rows(
                 r.pgn = Some(pgn.clone());
                 r.is_analyzed = true;
             }
-            if let Some((acc, acpl, elo)) = stats_map
+            if let Some((acc, acpl, elo, resistance, elo_balanced)) = stats_map
                 .get(&r.analysis_game_id)
                 .or_else(|| stats_map.get(&r.game_key))
             {
                 r.accuracy = Some(*acc);
                 r.acpl = Some(*acpl);
                 r.estimated_elo = *elo;
+                r.resistance = *resistance;
+                r.elo_estimated_balanced = *elo_balanced;
                 r.is_analyzed = true;
             }
             if !r.is_analyzed {
@@ -1356,4 +1547,41 @@ pub fn dashboard_resolve_profile_db_game_id(
         .optional()?;
 
     Ok(id.map(|v| v.to_string()))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dashboard_decode_profile_game_blob_moves(
+    app: AppHandle,
+    profile_id: String,
+    game_id: i32,
+) -> Result<Option<DecodedGameMovesResponse>> {
+    let profile_id = profile_id.trim().to_string();
+    if profile_id.is_empty() || game_id <= 0 {
+        return Ok(None);
+    }
+
+    let db_path = parse_profile_db_path(&app, &profile_id)?;
+    let conn = Connection::open(db_path)?;
+
+    let row: Option<(Option<String>, Vec<u8>)> = conn
+        .query_row(
+            "SELECT FEN, Moves FROM Games WHERE ID = ?1 LIMIT 1",
+            [game_id],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()?;
+
+    let Some((fen_opt, moves_blob)) = row else {
+        return Ok(None);
+    };
+    if moves_blob.is_empty() {
+        return Ok(None);
+    }
+
+    let Some((initial_fen, moves)) = decode_uci_moves_from_blob(&moves_blob, fen_opt.as_deref()) else {
+        return Ok(None);
+    };
+
+    Ok(Some(DecodedGameMovesResponse { initial_fen, moves }))
 }

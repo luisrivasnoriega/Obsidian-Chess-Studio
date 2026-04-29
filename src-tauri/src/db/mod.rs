@@ -1,7 +1,7 @@
 mod bulk_insert;
 mod analysis_stats;
 mod core;
-mod encoding;
+pub(crate) mod encoding;
 mod models;
 mod ops;
 pub mod pgn;
@@ -4084,7 +4084,9 @@ pub async fn get_profile_sidebar_stats(
         return Ok(ProfileSidebarStats::default());
     };
 
-    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    // Style classification depends on opening names; without them the backend
+    // falls back to `playerStyle.noData`.
+    let game_info = collect_player_game_info(db, profile_player_id, true, None)?;
     let site_stats = game_info.site_stats_data;
 
     Ok(ProfileSidebarStats {

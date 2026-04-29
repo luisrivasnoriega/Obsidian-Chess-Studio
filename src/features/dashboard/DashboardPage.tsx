@@ -8,6 +8,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
+import { parseUci } from "chessops";
+import { makeFen } from "chessops/fen";
+import { makeSan } from "chessops/san";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,8 +19,10 @@ import { commands, type GoMode } from "@/bindings";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
-import { getAnalyzedGamesBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
+import { getAnalyzedGamesBulk, getGameStatsBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
+import { getChesscomGame } from "@/utils/chess.com/api";
+import { positionFromFen } from "@/utils/chessops";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import type { LocalEngine } from "@/utils/engines";
@@ -36,6 +41,7 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
+import { getLichessGame } from "@/utils/lichess/api";
 import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
@@ -44,7 +50,7 @@ import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/p
 import { getPuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
-import type { TreeState } from "@/utils/treeReducer";
+import { createNode, defaultTree, type TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { AnalyzeAllModal } from "./components/AnalyzeAllModal";
 import { GamesHistoryCard } from "./components/GamesHistoryCard";
@@ -99,6 +105,76 @@ type DashboardAnalyzeAllResultPayload = {
   error: string | null;
   cancelled: boolean;
 };
+
+function normalizePgnElo(raw: number | null | undefined): number | null {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
+  return Math.round(raw);
+}
+
+function hasPgnHeaders(pgn?: string | null): boolean {
+  if (!pgn) return false;
+  return /\[[A-Za-z0-9_]+\s+"[^"]*"\]/.test(pgn);
+}
+
+function buildTreeFromUciMoves(initialFen: string, moves: string[]): TreeState | null {
+  const fen = initialFen?.trim() || DEFAULT_START_FEN;
+  const [pos, err] = positionFromFen(fen);
+  if (!pos || err) return null;
+
+  const tree = defaultTree(fen);
+  let node = tree.root;
+
+  for (const rawMove of moves) {
+    const uci = rawMove.trim();
+    if (!uci) continue;
+    const move = parseUci(uci);
+    if (!move) return null;
+
+    const san = makeSan(pos, move);
+    pos.play(move);
+
+    const child = createNode({
+      fen: makeFen(pos.toSetup()),
+      move,
+      san,
+      halfMoves: node.halfMoves + 1,
+    });
+    node.children.push(child);
+    node = child;
+  }
+
+  tree.position = [];
+  return tree;
+}
+
+function getOpponentRatingFromTree(tree: TreeState, userColor: "white" | "black"): number | null {
+  const headers = tree.headers;
+  const elo = userColor === "white" ? headers.black_elo : headers.white_elo;
+  return normalizePgnElo(elo);
+}
+
+function buildStatsPayloadForBackend(
+  reportStats: ReturnType<typeof getGameStats>,
+  userColor: "white" | "black",
+  tree: TreeState,
+): GameStats | null {
+  const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
+  const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
+  if (!(accuracy > 0 || acpl > 0)) return null;
+
+  const playerEstimatedElo = acpl > 0 ? calculateEstimatedElo(acpl) : null;
+  const opponentAcpl = userColor === "white" ? reportStats.blackCPL : reportStats.whiteCPL;
+  const opponentEstimatedElo = opponentAcpl > 0 ? calculateEstimatedElo(opponentAcpl) : null;
+  const opponentRatingElo = getOpponentRatingFromTree(tree, userColor);
+
+  return {
+    accuracy,
+    acpl,
+    ...(playerEstimatedElo != null ? { estimatedElo: playerEstimatedElo } : {}),
+    ...(opponentEstimatedElo != null ? { opponentEstimatedElo } : {}),
+    ...(opponentRatingElo != null ? { opponentRatingElo } : {}),
+  };
+}
 
 export default function DashboardPage() {
   const [isFirstOpen, setIsFirstOpen] = useState(false);
@@ -377,6 +453,8 @@ export default function DashboardPage() {
     total: number;
     unanalyzed: number;
   } | null>(null);
+  const [analyzeAllAnalyzedCount, setAnalyzeAllAnalyzedCount] = useState(0);
+  const [analyzeAllMissingBalancedStatsCount, setAnalyzeAllMissingBalancedStatsCount] = useState(0);
 
   // FIDE player information
   const [fidePlayer, setFidePlayer] = useState<{
@@ -977,6 +1055,8 @@ export default function DashboardPage() {
       setAnalyzeAllScopeFilters(scopeFilters);
       setAnalyzeAllScopedRows([]);
       setAnalyzeAllCounts(null);
+      setAnalyzeAllAnalyzedCount(0);
+      setAnalyzeAllMissingBalancedStatsCount(0);
       setAnalyzeAllModalOpened(true);
 
       if (!activeProfileId) {
@@ -1009,14 +1089,254 @@ export default function DashboardPage() {
         const rowsForType = scopedRows.filter((row) => (type === "all" ? true : row.kind === type));
         const total = rowsForType.length;
         const unanalyzed = rowsForType.filter((row) => !row.isAnalyzed).length;
+        const analyzed = Math.max(0, total - unanalyzed);
 
         setAnalyzeAllCounts({ type, total, unanalyzed });
+        setAnalyzeAllAnalyzedCount(analyzed);
+
+        const analyzedRows = rowsForType.filter((row) => row.isAnalyzed && !!row.pgn?.trim());
+        if (!analyzedRows.length) {
+          setAnalyzeAllMissingBalancedStatsCount(0);
+          return;
+        }
+
+        const statsLookupIds = Array.from(
+          new Set(analyzedRows.flatMap((row) => [row.analysisGameId, row.gameKey]).filter((id) => id.trim() !== "")),
+        );
+        const statsById = await getGameStatsBulk(statsLookupIds, activeProfileId);
+        const missingCount = analyzedRows.reduce((count, row) => {
+          const stats = statsById.get(row.analysisGameId) ?? statsById.get(row.gameKey) ?? null;
+          if (!stats || stats.resistance == null || stats.eloEstimatedBalanced == null) {
+            return count + 1;
+          }
+          return count;
+        }, 0);
+        setAnalyzeAllMissingBalancedStatsCount(missingCount);
       } catch {
         setAnalyzeAllScopedRows([]);
+        setAnalyzeAllAnalyzedCount(0);
+        setAnalyzeAllMissingBalancedStatsCount(0);
       }
     },
     [activeProfileId, profileUsernames, gameHistoryLimit, eventFilterId, selectedOpponentId, timeControlCategory],
   );
+
+  const handleBackfillMissingBalancedStats = useCallback(async () => {
+    if (!activeProfileId || !analyzeAllGameType) return;
+
+    const analyzeMinMoves = Math.max(5, analyzeAllScopeFilters.minMoves ?? 0);
+    const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
+    const rowsForSelectedType = scopedRowsForRun.filter((row) =>
+      analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
+    );
+    const analyzedRows = rowsForSelectedType.filter((row) => row.isAnalyzed && !!row.pgn?.trim());
+
+    if (!analyzedRows.length) {
+      setAnalyzeAllMissingBalancedStatsCount(0);
+      return;
+    }
+
+    const statsLookupIds = Array.from(
+      new Set(analyzedRows.flatMap((row) => [row.analysisGameId, row.gameKey]).filter((id) => id.trim() !== "")),
+    );
+    const statsById = await getGameStatsBulk(statsLookupIds, activeProfileId);
+
+    const missingRows = analyzedRows.filter((row) => {
+      const stats = statsById.get(row.analysisGameId) ?? statsById.get(row.gameKey) ?? null;
+      return !stats || stats.resistance == null || stats.eloEstimatedBalanced == null;
+    });
+
+    if (!missingRows.length) {
+      setAnalyzeAllMissingBalancedStatsCount(0);
+      return;
+    }
+
+    notifications.show({
+      title: t("features.dashboard.backfillBalancedStatsStarted", { defaultValue: "Completing balanced stats" }),
+      message: t("features.dashboard.backfillBalancedStatsStartedMessage", {
+        defaultValue: "Checking {{count}} analyzed games with missing balanced metrics.",
+        count: missingRows.length,
+      }),
+      color: "blue",
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    let pendingRefreshUpdates = 0;
+
+    const emitGamesHistoryRefresh = () => {
+      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+    };
+
+    for (const row of missingRows) {
+      const pgn = row.pgn?.trim() ?? "";
+      if (!pgn) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const tree = await parsePGN(pgn);
+        const reportStats = getGameStats(tree.root);
+        const userColor = row.color === "black" ? "black" : "white";
+        const computed = buildStatsPayloadForBackend(reportStats, userColor, tree);
+        if (!computed) {
+          skipped++;
+          continue;
+        }
+
+        const existingStats = statsById.get(row.analysisGameId) ?? statsById.get(row.gameKey) ?? null;
+        const accuracy = existingStats?.accuracy ?? computed.accuracy;
+        const acpl = existingStats?.acpl ?? computed.acpl;
+        if (!(Number.isFinite(accuracy) && Number.isFinite(acpl))) {
+          skipped++;
+          continue;
+        }
+
+        const mergedStats: GameStats = {
+          accuracy,
+          acpl,
+          ...(existingStats?.estimatedElo != null
+            ? { estimatedElo: existingStats.estimatedElo }
+            : computed.estimatedElo != null
+              ? { estimatedElo: computed.estimatedElo }
+              : {}),
+          ...(computed.opponentEstimatedElo != null ? { opponentEstimatedElo: computed.opponentEstimatedElo } : {}),
+          ...(computed.opponentRatingElo != null ? { opponentRatingElo: computed.opponentRatingElo } : {}),
+        };
+
+        const gameIdToSave = statsById.has(row.analysisGameId)
+          ? row.analysisGameId
+          : statsById.has(row.gameKey)
+            ? row.gameKey
+            : row.analysisGameId || row.gameKey;
+
+        if (!gameIdToSave) {
+          skipped++;
+          continue;
+        }
+
+        await saveGameStats(gameIdToSave, mergedStats, activeProfileId);
+        statsById.set(gameIdToSave, mergedStats);
+        updated++;
+        pendingRefreshUpdates++;
+        if (pendingRefreshUpdates >= 10) {
+          emitGamesHistoryRefresh();
+          pendingRefreshUpdates = 0;
+        }
+      } catch {
+        skipped++;
+      }
+    }
+
+    const remainingMissing = Math.max(0, missingRows.length - updated);
+    setAnalyzeAllMissingBalancedStatsCount(remainingMissing);
+
+    if (updated > 0) {
+      emitGamesHistoryRefresh();
+    }
+
+    notifications.show({
+      title: t("features.dashboard.backfillBalancedStatsDone", { defaultValue: "Balanced stats updated" }),
+      message: t("features.dashboard.backfillBalancedStatsDoneMessage", {
+        defaultValue: "Updated {{updated}} games. Skipped {{skipped}}.",
+        updated,
+        skipped,
+      }),
+      color: updated > 0 ? "green" : "yellow",
+    });
+  }, [activeProfileId, analyzeAllGameType, analyzeAllScopeFilters.minMoves, analyzeAllScopedRows, t]);
+
+  const handleRecalculateBalancedElo = useCallback(async () => {
+    if (!activeProfileId || !analyzeAllGameType) return;
+
+    const analyzeMinMoves = Math.max(5, analyzeAllScopeFilters.minMoves ?? 0);
+    const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
+    const rowsForSelectedType = scopedRowsForRun.filter((row) =>
+      analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
+    );
+    const analyzedRows = rowsForSelectedType.filter((row) => row.isAnalyzed && !!row.pgn?.trim());
+
+    if (!analyzedRows.length) {
+      setAnalyzeAllAnalyzedCount(0);
+      return;
+    }
+
+    notifications.show({
+      title: t("features.dashboard.recalculateBalancedStatsStarted", { defaultValue: "Recalculating balanced Elo" }),
+      message: t("features.dashboard.recalculateBalancedStatsStartedMessage", {
+        defaultValue: "Recalculating {{count}} analyzed games with the latest formula.",
+        count: analyzedRows.length,
+      }),
+      color: "blue",
+    });
+
+    let updated = 0;
+    let skipped = 0;
+    let pendingRefreshUpdates = 0;
+
+    const emitGamesHistoryRefresh = () => {
+      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+    };
+
+    for (const row of analyzedRows) {
+      const pgn = row.pgn?.trim() ?? "";
+      if (!pgn) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const tree = await parsePGN(pgn);
+        const reportStats = getGameStats(tree.root);
+        const userColor = row.color === "black" ? "black" : "white";
+        const computed = buildStatsPayloadForBackend(reportStats, userColor, tree);
+        if (!computed) {
+          skipped++;
+          continue;
+        }
+
+        const mergedStats: GameStats = {
+          accuracy: computed.accuracy,
+          acpl: computed.acpl,
+          ...(computed.estimatedElo != null ? { estimatedElo: computed.estimatedElo } : {}),
+          ...(computed.opponentEstimatedElo != null ? { opponentEstimatedElo: computed.opponentEstimatedElo } : {}),
+          ...(computed.opponentRatingElo != null ? { opponentRatingElo: computed.opponentRatingElo } : {}),
+        };
+
+        const gameIdToSave = row.analysisGameId || row.gameKey;
+        if (!gameIdToSave) {
+          skipped++;
+          continue;
+        }
+
+        await saveGameStats(gameIdToSave, mergedStats, activeProfileId);
+        updated++;
+        pendingRefreshUpdates++;
+        if (pendingRefreshUpdates >= 10) {
+          emitGamesHistoryRefresh();
+          pendingRefreshUpdates = 0;
+        }
+      } catch {
+        skipped++;
+      }
+    }
+
+    setAnalyzeAllAnalyzedCount(Math.max(0, analyzedRows.length - skipped));
+    if (updated > 0) {
+      emitGamesHistoryRefresh();
+    }
+
+    notifications.show({
+      title: t("features.dashboard.recalculateBalancedStatsDone", { defaultValue: "Balanced Elo recalculated" }),
+      message: t("features.dashboard.recalculateBalancedStatsDoneMessage", {
+        defaultValue: "Updated {{updated}} games. Skipped {{skipped}}.",
+        updated,
+        skipped,
+      }),
+      color: updated > 0 ? "green" : "yellow",
+    });
+  }, [activeProfileId, analyzeAllGameType, analyzeAllScopeFilters.minMoves, analyzeAllScopedRows, t]);
 
   useEffect(() => {
     loadFavoriteGames();
@@ -1382,8 +1702,11 @@ export default function DashboardPage() {
                         u.toLowerCase() === game.white.username.toLowerCase() ||
                         u.toLowerCase() === game.black.username.toLowerCase(),
                     ) || game.white.username;
-                  const isUserWhite = game.white.username.toLowerCase() === accountUsername.toLowerCase();
-                  const orientation = isUserWhite ? "white" : "black";
+                  const orientation = meta?.playerColor
+                    ? meta.playerColor
+                    : game.white.username.toLowerCase() === accountUsername.toLowerCase()
+                      ? "white"
+                      : "black";
                   headers.orientation = orientation;
                   createTab({
                     tab: {
@@ -1445,8 +1768,11 @@ export default function DashboardPage() {
                         u.toLowerCase() === gameWhiteName.toLowerCase() ||
                         u.toLowerCase() === gameBlackName.toLowerCase(),
                     ) || gameWhiteName;
-                  const isUserWhite = gameWhiteName.toLowerCase() === accountUsername.toLowerCase();
-                  const orientation = isUserWhite ? "white" : "black";
+                  const orientation = meta?.playerColor
+                    ? meta.playerColor
+                    : gameWhiteName.toLowerCase() === accountUsername.toLowerCase()
+                      ? "white"
+                      : "black";
                   headers.orientation = orientation;
                   createTab({
                     tab: {
@@ -1604,19 +1930,6 @@ export default function DashboardPage() {
             const analyzedByScopedRow = new Map<string, boolean>(
               rowsForSelectedType.map((row) => [`${row.kind}:${row.gameKey}`, !!row.isAnalyzed]),
             );
-            const allowedLocalKeys = new Set(
-              rowsForSelectedType.filter((row) => row.kind === "local").map((row) => row.gameKey),
-            );
-            const allowedChessComKeys = new Set(
-              rowsForSelectedType.filter((row) => row.kind === "chesscom").map((row) => row.gameKey),
-            );
-            const allowedLichessKeys = new Set(
-              rowsForSelectedType.filter((row) => row.kind === "lichess").map((row) => row.gameKey),
-            );
-            const enforceScopedFilter =
-              !!activeProfileId && (analyzeAllCounts !== null || analyzeAllScopedRows.length > 0);
-            const isAllowedByScope = (allowed: Set<string>, key: string) =>
-              enforceScopedFilter ? allowed.has(key) : allowed.size === 0 || allowed.has(key);
 
             // Build map external key -> internal profile DB game id (Games.ID), scoped to the same
             // filters used by the modal count whenever possible.
@@ -1682,49 +1995,44 @@ export default function DashboardPage() {
             };
 
             const PLAY_VS_PC_EVENT_LOWER = "play vs pc";
-            const chessbaseRows: GamesHistoryRow[] = rowsForSelectedType.filter(
-              (row) =>
-                row.kind === "chessbase" &&
-                hasEnoughMovesPgn(row.pgn) &&
-                (row.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER,
+            const localByKey = new Map(
+              recentGames.filter((g) => hasEnoughMovesLocal(g)).map((g) => [g.id, g] as const),
+            );
+            const chessComByKey = new Map(
+              chessComGames.filter((g) => hasEnoughMovesPgn(g.pgn)).map((g) => [g.url, g] as const),
+            );
+            const lichessByKey = new Map(
+              lichessGames.filter((g) => hasEnoughMovesPgn(g.pgn)).map((g) => [g.id, g] as const),
             );
 
-            const getFilteredGames = (type: "local" | "chesscom" | "lichess" | "chessbase") => {
-              if (type === "local") {
-                return recentGames.filter((g) => {
-                  return hasEnoughMovesLocal(g) && isAllowedByScope(allowedLocalKeys, g.id);
-                });
-              } else if (type === "chesscom") {
-                return chessComGames.filter(
-                  (g) => hasEnoughMovesPgn(g.pgn) && isAllowedByScope(allowedChessComKeys, g.url),
-                );
-              } else if (type === "lichess") {
-                // lichess
-                return lichessGames.filter(
-                  (g) => hasEnoughMovesPgn(g.pgn) && isAllowedByScope(allowedLichessKeys, g.id),
-                );
-              } else {
-                return chessbaseRows;
-              }
-            };
-
-            const allGames =
-              analyzeAllGameType === "all"
-                ? [
-                    ...getFilteredGames("local").map((g) => ({ type: "local" as const, game: g })),
-                    ...getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g })),
-                    ...getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g })),
-                    ...getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g })),
-                  ]
-                : analyzeAllGameType === "local"
-                  ? getFilteredGames("local").map((g) => ({ type: "local" as const, game: g }))
-                  : analyzeAllGameType === "chesscom"
-                    ? getFilteredGames("chesscom").map((g) => ({ type: "chesscom" as const, game: g }))
-                    : analyzeAllGameType === "lichess"
-                      ? getFilteredGames("lichess").map((g) => ({ type: "lichess" as const, game: g }))
-                      : analyzeAllGameType === "chessbase"
-                        ? getFilteredGames("chessbase").map((g) => ({ type: "chessbase" as const, game: g }))
-                        : [];
+            const allGames = rowsForSelectedType
+              .filter((row) => {
+                const rowPgn = row.pgn?.trim() ?? "";
+                if (!rowPgn) return false;
+                if (row.kind === "chessbase") {
+                  return (row.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER;
+                }
+                return true;
+              })
+              .map((row) => {
+                if (row.kind === "local") {
+                  const local = localByKey.get(row.gameKey);
+                  return local ? { type: "local" as const, game: local } : { type: "chessbase" as const, game: row };
+                }
+                if (row.kind === "chesscom") {
+                  const chessCom = chessComByKey.get(row.gameKey);
+                  return chessCom
+                    ? { type: "chesscom" as const, game: chessCom }
+                    : { type: "chessbase" as const, game: row };
+                }
+                if (row.kind === "lichess") {
+                  const lichess = lichessByKey.get(row.gameKey);
+                  return lichess
+                    ? { type: "lichess" as const, game: lichess }
+                    : { type: "chessbase" as const, game: row };
+                }
+                return { type: "chessbase" as const, game: row };
+              });
             baselineCandidateGames = allGames.length;
 
             let analyzedGameIds = new Set<string>();
@@ -1774,7 +2082,7 @@ export default function DashboardPage() {
             }
 
             // Filter to only unanalyzed games if requested
-            const gamesToAnalyze =
+            let gamesToAnalyze =
               config.analyzeMode === "unanalyzed"
                 ? allGames.filter((item) => {
                     if (item.type === "local") {
@@ -1814,6 +2122,20 @@ export default function DashboardPage() {
                     }
                   })
                 : allGames;
+
+            if (config.analyzeMode === "unanalyzed" && gamesToAnalyze.length === 0) {
+              const fallbackRows = rowsForSelectedType.filter((row) => {
+                if (row.isAnalyzed) return false;
+                const rowPgn = row.pgn?.trim() ?? "";
+                if (!rowPgn) return false;
+                if (row.kind === "chessbase") {
+                  return (row.eventName?.trim() ?? "").toLowerCase() !== PLAY_VS_PC_EVENT_LOWER;
+                }
+                return true;
+              });
+              gamesToAnalyze = fallbackRows.map((row) => ({ type: "chessbase" as const, game: row }));
+            }
+
             baselineGamesToAnalyze = gamesToAnalyze.length;
             await perfBaselinePoint({
               scope: "dashboard.analyze_all",
@@ -1900,7 +2222,10 @@ export default function DashboardPage() {
             let successCount = 0;
             let failCount = 0;
             let completedCount = 0;
+            let pendingRefreshUpdates = 0;
             let cancellationNotified = false;
+            let warnedBackendJobError = false;
+            const backendJobErrors: string[] = [];
             let stopRequested = false;
             let currentRunId: string | null = null;
 
@@ -1925,6 +2250,10 @@ export default function DashboardPage() {
               await stopAllEngines();
             };
 
+            const emitGamesHistoryRefresh = () => {
+              window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+            };
+
             // Keep cancellation checks cheap: one watcher for the whole analyze-all run.
             const cancellationWatcher = setInterval(() => {
               if (!isCancelled()) return;
@@ -1936,6 +2265,7 @@ export default function DashboardPage() {
               item: (typeof gamesToAnalyze)[0],
               index: number,
               providedAnalysis?: MoveAnalysis[] | null,
+              preparedJob?: DashboardAnalyzeAllBackendJob | null,
             ): Promise<void> => {
               const gameType = item.type;
               const game = item.game;
@@ -1958,7 +2288,7 @@ export default function DashboardPage() {
                   tree = await parsePGN(pgn, gameRecord.initialFen);
                   const is960 = tree.headers?.variant === "Chess960";
                   moves = getMainLine(tree.root, is960);
-                  initialFen = gameRecord.initialFen || DEFAULT_START_FEN;
+                  initialFen = tree.headers?.fen || gameRecord.initialFen || DEFAULT_START_FEN;
                   gameHeaders = createLocalGameHeaders(gameRecord);
                 } else if (gameType === "chesscom") {
                   // For Chess.com games, parse PGN
@@ -1975,14 +2305,66 @@ export default function DashboardPage() {
                   gameHeaders = createChessComGameHeaders(chessComGame);
                 } else if (gameType === "chessbase") {
                   const row = game as GamesHistoryRow;
-                  const pgn = row.pgn?.trim() ?? "";
-                  if (!pgn) {
+                  const rowInitialFen = ((row as { initialFen?: string | null }).initialFen ?? "").trim() || undefined;
+                  const preparedFen = preparedJob?.fen?.trim() || rowInitialFen || DEFAULT_START_FEN;
+                  const preparedMoves = Array.isArray(preparedJob?.moves)
+                    ? preparedJob.moves.map((m) => m.trim()).filter((m) => m.length > 0)
+                    : [];
+
+                  const pgnCandidates = [row.pgn ?? null, preparedJob?.pgn ?? null]
+                    .map((p) => p?.trim() ?? "")
+                    .filter((p, i, arr) => p.length > 0 && arr.indexOf(p) === i);
+
+                  let parsedTree: TreeState | null = null;
+                  let parsedMoves: string[] = [];
+                  for (const pgnCandidate of pgnCandidates) {
+                    try {
+                      const candidateTree = await parsePGN(pgnCandidate, rowInitialFen);
+                      const candidateIs960 = candidateTree.headers?.variant === "Chess960";
+                      const candidateMoves = getMainLine(candidateTree.root, candidateIs960);
+                      if (!parsedTree) {
+                        parsedTree = candidateTree;
+                        parsedMoves = candidateMoves;
+                      }
+                      if (preparedMoves.length > 0) {
+                        const aligned =
+                          candidateMoves.length === preparedMoves.length &&
+                          candidateMoves.every((m, i) => m === preparedMoves[i]);
+                        if (aligned) {
+                          parsedTree = candidateTree;
+                          parsedMoves = candidateMoves;
+                          break;
+                        }
+                      } else if (candidateMoves.length > 0) {
+                        parsedTree = candidateTree;
+                        parsedMoves = candidateMoves;
+                        break;
+                      }
+                    } catch {
+                      // try next candidate
+                    }
+                  }
+
+                  if (preparedMoves.length > 0) {
+                    const parsedAligned =
+                      parsedMoves.length === preparedMoves.length &&
+                      parsedMoves.every((m, i) => m === preparedMoves[i]);
+                    if (!parsedAligned) {
+                      const rebuiltTree = buildTreeFromUciMoves(preparedFen, preparedMoves);
+                      if (rebuiltTree) {
+                        parsedTree = rebuiltTree;
+                        parsedMoves = [...preparedMoves];
+                      }
+                    }
+                  }
+                  if (!parsedTree) {
                     return;
                   }
-                  tree = await parsePGN(pgn);
-                  const is960 = tree.headers?.variant === "Chess960";
-                  moves = getMainLine(tree.root, is960);
-                  initialFen = tree.headers?.fen || DEFAULT_START_FEN;
+
+                  tree = parsedTree;
+                  moves =
+                    parsedMoves.length > 0 ? parsedMoves : getMainLine(tree.root, tree.headers?.variant === "Chess960");
+                  initialFen = tree.headers?.fen || preparedFen;
                   gameHeaders = {
                     id: 0,
                     event: tree.headers?.event || "ChessBase",
@@ -2109,20 +2491,7 @@ export default function DashboardPage() {
                     // Determine which color the user played
                     const isUserWhite = gameRecord.white.type === "human";
                     const userColor = isUserWhite ? "white" : "black";
-
-                    // Get stats for the user's color from the report
-                    const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
-                    const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
-
-                    // Calculate estimated Elo
-                    let calculatedStats: GameStats | null = null;
-                    if (accuracy > 0 || acpl > 0) {
-                      calculatedStats = {
-                        accuracy,
-                        acpl,
-                        estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
-                      };
-                    }
+                    const calculatedStats = buildStatsPayloadForBackend(reportStats, userColor, tree);
 
                     // Update the game record with analyzed PGN and stats
                     if (calculatedStats) {
@@ -2193,15 +2562,8 @@ export default function DashboardPage() {
                     const isUserWhite = whiteUsername === accountUsername;
                     const userColor = isUserWhite ? "white" : "black";
 
-                    const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
-                    const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
-
-                    if (accuracy > 0 || acpl > 0) {
-                      const stats: GameStats = {
-                        accuracy,
-                        acpl,
-                        estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
-                      };
+                    const stats = buildStatsPayloadForBackend(reportStats, userColor, tree);
+                    if (stats) {
                       await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
                     }
 
@@ -2224,35 +2586,34 @@ export default function DashboardPage() {
                     if (activeProfileId) {
                       const n = Number.parseInt(String(row.analysisGameId), 10);
                       if (Number.isFinite(n)) {
-                        saveProfileGameAnalysisStats({
-                          profileId: activeProfileId,
-                          gameId: n,
-                          initialFen,
-                          moves,
-                          analysis,
-                        }).catch(() => {
-                          // best-effort
-                        });
+                        try {
+                          await saveProfileGameAnalysisStats({
+                            profileId: activeProfileId,
+                            gameId: n,
+                            initialFen,
+                            moves,
+                            analysis,
+                          });
+                        } catch {
+                          if (!warnedStatsPersistFailed) {
+                            warnedStatsPersistFailed = true;
+                            notifications.show({
+                              title: t("common.warning", { defaultValue: "Warning" }),
+                              message: t("features.dashboard.analysisPhaseStatsSaveFailed", {
+                                defaultValue:
+                                  "Failed to save phase stats for some games. The Stats tab may not show phase data yet.",
+                              }),
+                              color: "yellow",
+                            });
+                          }
+                        }
                       }
                     }
 
-                    const normalize = (s: string) => stripAccountKey((s ?? "").trim()).toLowerCase();
-                    const usernamesLower = profileUsernames.map(normalize);
-                    const whiteName = normalize(gameHeaders.white);
-                    const blackName = normalize(gameHeaders.black);
-                    const isUserWhite =
-                      usernamesLower.includes(whiteName) ||
-                      (!usernamesLower.includes(blackName) && usernamesLower.length > 0);
-                    const userColor = isUserWhite ? "white" : "black";
+                    const userColor = row.color === "black" ? "black" : "white";
 
-                    const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
-                    const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
-                    if (accuracy > 0 || acpl > 0) {
-                      const stats: GameStats = {
-                        accuracy,
-                        acpl,
-                        estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
-                      };
+                    const stats = buildStatsPayloadForBackend(reportStats, userColor, tree);
+                    if (stats) {
                       await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
                     }
                   } else {
@@ -2317,15 +2678,8 @@ export default function DashboardPage() {
                     const isUserWhite = whiteUsername === accountUsername;
                     const userColor = isUserWhite ? "white" : "black";
 
-                    const accuracy = userColor === "white" ? reportStats.whiteAccuracy : reportStats.blackAccuracy;
-                    const acpl = userColor === "white" ? reportStats.whiteCPL : reportStats.blackCPL;
-
-                    if (accuracy > 0 || acpl > 0) {
-                      const stats: GameStats = {
-                        accuracy,
-                        acpl,
-                        estimatedElo: acpl > 0 ? calculateEstimatedElo(acpl) : undefined,
-                      };
+                    const stats = buildStatsPayloadForBackend(reportStats, userColor, tree);
+                    if (stats) {
                       await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
                     }
 
@@ -2341,6 +2695,11 @@ export default function DashboardPage() {
                   }
 
                   successCount++;
+                  pendingRefreshUpdates++;
+                  if (pendingRefreshUpdates >= 10) {
+                    emitGamesHistoryRefresh();
+                    pendingRefreshUpdates = 0;
+                  }
                 }
               } catch (_error) {
                 failCount++;
@@ -2386,47 +2745,98 @@ export default function DashboardPage() {
 
             const runId = `dashboard_analyze_all_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
             currentRunId = runId;
-            const jobsForBackend: DashboardAnalyzeAllBackendJob[] = gamesToAnalyze.map((item, index) => {
+            const errorLogPath = await resolve(folderName, `analyze-all-errors-${runId}.log`);
+            const flushErrorLog = async () => {
+              if (backendJobErrors.length === 0) return;
+              try {
+                await writeTextFile(errorLogPath, backendJobErrors.join("\n"));
+              } catch {
+                // best-effort
+              }
+            };
+            const jobsForBackend: DashboardAnalyzeAllBackendJob[] = [];
+            for (let index = 0; index < gamesToAnalyze.length; index++) {
+              const item = gamesToAnalyze[index];
               if (item.type === "local") {
                 const gameRecord = item.game as GameRecord;
                 const pgn =
                   gameRecord.pgn || createPGNFromMoves(gameRecord.moves, gameRecord.result, gameRecord.initialFen);
-                return {
+                jobsForBackend.push({
                   jobId: String(index),
                   fen: gameRecord.initialFen || DEFAULT_START_FEN,
                   moves: Array.isArray(gameRecord.moves) && gameRecord.moves.length > 0 ? [...gameRecord.moves] : null,
                   pgn: pgn || null,
-                };
+                });
+                continue;
               }
               if (item.type === "chesscom") {
                 const gameRecord = item.game as ChessComGameWithEvent;
-                return {
+                jobsForBackend.push({
                   jobId: String(index),
-                  fen: null,
+                  fen: gameRecord.initial_setup || gameRecord.fen || null,
                   moves: null,
                   pgn: gameRecord.pgn ?? null,
-                };
+                });
+                continue;
               }
               if (item.type === "chessbase") {
                 const row = item.game as GamesHistoryRow;
-                return {
+                let rowInitialFen = (row as { initialFen?: string | null }).initialFen ?? null;
+                let resolvedPgn = row.pgn ?? null;
+                let resolvedMoves: string[] | null = null;
+                if (!hasPgnHeaders(resolvedPgn)) {
+                  try {
+                    if (row.kind === "lichess") {
+                      resolvedPgn = (await getLichessGame(row.gameKey))?.trim() || resolvedPgn;
+                    } else if (row.kind === "chesscom") {
+                      const gameUrl = row.externalUrl || row.gameKey;
+                      resolvedPgn = (await getChesscomGame(gameUrl))?.trim() || resolvedPgn;
+                    }
+                  } catch {
+                    // keep existing payload
+                  }
+                }
+                if (activeProfileId) {
+                  const gameId = Number.parseInt(String(row.analysisGameId), 10);
+                  if (Number.isFinite(gameId)) {
+                    try {
+                      const decoded = await invoke<{ initialFen: string; moves: string[] } | null>(
+                        "dashboard_decode_profile_game_blob_moves",
+                        {
+                          profileId: activeProfileId,
+                          gameId,
+                        },
+                      );
+                      if (decoded && Array.isArray(decoded.moves) && decoded.moves.length > 0) {
+                        resolvedMoves = decoded.moves;
+                        if (!rowInitialFen && decoded.initialFen) {
+                          rowInitialFen = decoded.initialFen;
+                        }
+                      }
+                    } catch {
+                      // best-effort fallback
+                    }
+                  }
+                }
+                jobsForBackend.push({
                   jobId: String(index),
-                  fen: null,
-                  moves: null,
-                  pgn: row.pgn ?? null,
-                };
+                  fen: rowInitialFen,
+                  moves: resolvedMoves,
+                  pgn: resolvedPgn,
+                });
+                continue;
               }
               const gameRecord = item.game as (typeof lichessGames)[0];
-              return {
+              jobsForBackend.push({
                 jobId: String(index),
-                fen: null,
+                fen: gameRecord.lastFen || null,
                 moves: null,
                 pgn: gameRecord.pgn ?? null,
-              };
-            });
+              });
+            }
 
             const jobsById = new Map(
-              jobsForBackend.map((job, index) => [job.jobId, { item: gamesToAnalyze[index], index }]),
+              jobsForBackend.map((job, index) => [job.jobId, { item: gamesToAnalyze[index], index, preparedJob: job }]),
             );
             let unlistenResultEvent: (() => void) | null = null;
             const pendingHandlers = new Set<Promise<void>>();
@@ -2448,6 +2858,20 @@ export default function DashboardPage() {
 
                   const handled = (async () => {
                     if (!payload.success || !payload.analysis || payload.analysis.length === 0) {
+                      if (payload.error) {
+                        backendJobErrors.push(
+                          `[${new Date().toISOString()}] run=${runId} job=${payload.jobId} cancelled=${payload.cancelled} error=${payload.error}`,
+                        );
+                        await flushErrorLog();
+                      }
+                      if (!payload.cancelled && payload.error && !warnedBackendJobError) {
+                        warnedBackendJobError = true;
+                        notifications.show({
+                          title: t("common.error", { defaultValue: "Error" }),
+                          message: payload.error,
+                          color: "red",
+                        });
+                      }
                       failCount++;
                       completedCount++;
                       onProgress(completedCount, gamesToAnalyze.length);
@@ -2460,7 +2884,7 @@ export default function DashboardPage() {
                       }
                       return;
                     }
-                    await processGame(job.item, job.index, payload.analysis);
+                    await processGame(job.item, job.index, payload.analysis, job.preparedJob);
                   })()
                     .catch(() => {
                       // progress is already counted by processGame / fallback path.
@@ -2510,19 +2934,26 @@ export default function DashboardPage() {
                   // Trigger refresh for Lichess games
                   window.dispatchEvent(new Event("lichess:games:updated"));
                 }
-                window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+                if (successCount > 0) {
+                  emitGamesHistoryRefresh();
+                }
 
                 notifications.show({
                   title: t("features.dashboard.analysisComplete"),
                   message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
                   color: "green",
                 });
+                if (backendJobErrors.length > 0) {
+                  await flushErrorLog();
+                }
                 baselineStatus = "completed";
               } else {
                 notifyCancellation();
                 baselineStatus = "cancelled";
               }
             } catch (error) {
+              backendJobErrors.push(`[${new Date().toISOString()}] run=${runId} fatal=${String(error)}`);
+              await flushErrorLog();
               baselineStatus = "failed";
               throw error;
             } finally {
@@ -2555,6 +2986,10 @@ export default function DashboardPage() {
               ? analyzeAllCounts.unanalyzed
               : 0
           }
+          analyzedGameCount={analyzeAllAnalyzedCount}
+          missingBalancedStatsCount={analyzeAllMissingBalancedStatsCount}
+          onBackfillMissingStats={handleBackfillMissingBalancedStats}
+          onRecalculateBalancedElo={handleRecalculateBalancedElo}
         />
       </Stack>
     </Box>

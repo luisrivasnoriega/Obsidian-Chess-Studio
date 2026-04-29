@@ -56,6 +56,8 @@ type GamesHistoryRow = {
   accuracy: number | null;
   acpl: number | null;
   estimatedElo: number | null;
+  resistance: number | null;
+  eloEstimatedBalanced: number | null;
   moves: number;
   timeControl: string | null;
   timeControlCategory: TimeControlCategory | null;
@@ -184,8 +186,14 @@ export function ProfileGamesTab({
   profileUsernames: string[];
   isLoadingOnline?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
-  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeChessComGame: (
+    game: ChessComGameWithEvent,
+    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+  ) => void;
+  onAnalyzeLichessGame: (
+    game: DashboardLichessGame,
+    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+  ) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
@@ -450,6 +458,12 @@ export function ProfileGamesTab({
     const estimatedEloValues = rows
       .map((row) => row.estimatedElo)
       .filter((value): value is number => typeof value === "number" && value > 0);
+    const resistanceValues = rows
+      .map((row) => row.resistance)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+    const eloEstimatedBalancedValues = rows
+      .map((row) => row.eloEstimatedBalanced)
+      .filter((value): value is number => typeof value === "number" && value > 0);
 
     const average = (values: number[]) => {
       if (values.length === 0) return null;
@@ -460,6 +474,8 @@ export function ProfileGamesTab({
       accuracy: average(accuracyValues),
       acpl: average(acplValues),
       estimatedElo: average(estimatedEloValues),
+      resistance: average(resistanceValues),
+      eloEstimatedBalanced: average(eloEstimatedBalancedValues),
     };
   }, [rows]);
   const analyzeAllOptions = useMemo(() => {
@@ -522,7 +538,12 @@ export function ProfileGamesTab({
     if (row.kind === "chesscom") {
       const existing = chessComGames.find((x) => x.url === row.gameKey);
       if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-        if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+        if (profileId)
+          onAnalyzeChessComGame(existing, {
+            profileId,
+            profileDbGameId: row.analysisGameId,
+            playerColor: row.color,
+          });
         else onAnalyzeChessComGame(existing);
         return;
       }
@@ -561,7 +582,12 @@ export function ProfileGamesTab({
         eventName: row.eventName ?? null,
       };
 
-      if (profileId) onAnalyzeChessComGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+      if (profileId)
+        onAnalyzeChessComGame(stub, {
+          profileId,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        });
       else onAnalyzeChessComGame(stub);
       return;
     }
@@ -597,7 +623,12 @@ export function ProfileGamesTab({
         eventName: row.eventName ?? null,
       };
 
-      if (profileId) onAnalyzeLichessGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+      if (profileId)
+        onAnalyzeLichessGame(stub, {
+          profileId,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        });
       else onAnalyzeLichessGame(stub);
       return;
     }
@@ -605,7 +636,12 @@ export function ProfileGamesTab({
     // Lichess
     const existing = lichessGames.find((x) => x.id === row.gameKey);
     if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-      if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
+      if (profileId)
+        onAnalyzeLichessGame(existing, {
+          profileId,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        });
       else onAnalyzeLichessGame(existing);
       return;
     }
@@ -648,7 +684,12 @@ export function ProfileGamesTab({
       eventName: row.eventName ?? null,
     };
 
-    if (profileId) onAnalyzeLichessGame(stub, { profileId, profileDbGameId: row.analysisGameId });
+    if (profileId)
+      onAnalyzeLichessGame(stub, {
+        profileId,
+        profileDbGameId: row.analysisGameId,
+        playerColor: row.color,
+      });
     else onAnalyzeLichessGame(stub);
   };
 
@@ -871,6 +912,10 @@ export function ProfileGamesTab({
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
               </Table.Th>
+              <Table.Th style={{ width: 95 }}>{t("dashboard.resistance", { defaultValue: "Resistance" })}</Table.Th>
+              <Table.Th style={{ width: 120 }}>
+                {t("dashboard.eloEstimatedBalanced", { defaultValue: "Elo Balanced" })}
+              </Table.Th>
               <Table.Th style={{ width: 75 }}>{t("dashboard.tableHeaders.moves", { defaultValue: "Moves" })}</Table.Th>
               <Table.Th style={{ width: 95 }}>{t("dashboard.tableHeaders.timeControl")}</Table.Th>
               <Table.Th style={{ width: 95, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
@@ -918,7 +963,7 @@ export function ProfileGamesTab({
           <Table.Tbody>
             {rows.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
+                <Table.Td colSpan={14} style={{ textAlign: "center", padding: "2rem" }}>
                   <Text c="dimmed">
                     {hasActiveFilters
                       ? t("features.dashboard.noGamesMatchFilters", "No games match the filters")
@@ -1009,6 +1054,8 @@ export function ProfileGamesTab({
                     <Table.Td>{row.accuracy != null ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
                     <Table.Td>{row.acpl != null ? Math.round(row.acpl) : "-"}</Table.Td>
                     <Table.Td>{row.estimatedElo != null ? Math.round(row.estimatedElo) : "-"}</Table.Td>
+                    <Table.Td>{row.resistance != null ? Math.round(row.resistance) : "-"}</Table.Td>
+                    <Table.Td>{row.eloEstimatedBalanced != null ? Math.round(row.eloEstimatedBalanced) : "-"}</Table.Td>
                     <Table.Td>{row.moves || "-"}</Table.Td>
                     <Table.Td>
                       {row.timeControl?.trim()
@@ -1101,6 +1148,12 @@ export function ProfileGamesTab({
               </Table.Td>
               <Table.Td style={stickyFooterCellStyle}>
                 {averageStats.estimatedElo != null ? Math.round(averageStats.estimatedElo) : "-"}
+              </Table.Td>
+              <Table.Td style={stickyFooterCellStyle}>
+                {averageStats.resistance != null ? Math.round(averageStats.resistance) : "-"}
+              </Table.Td>
+              <Table.Td style={stickyFooterCellStyle}>
+                {averageStats.eloEstimatedBalanced != null ? Math.round(averageStats.eloEstimatedBalanced) : "-"}
               </Table.Td>
               <Table.Td colSpan={5} style={stickyFooterCellStyle} />
             </Table.Tr>

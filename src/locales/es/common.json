@@ -513,6 +513,8 @@
     },
     "noMainAccount": "No hay cuenta principal",
     "estimatedElo": "Elo Est.",
+    "resistance": "Resistencia",
+    "eloEstimatedBalanced": "Elo Balanceado",
     "suggestions": {
       "analyzeLastGame": "Analiza tu última partida",
       "exploreOpenings": "Explora aperturas populares"
@@ -1014,6 +1016,18 @@
       "allGamesReanalyze": "Todas las partidas (re-analizar)",
       "analysisDepth": "Profundidad de Análisis",
       "analysisDepthHelp": "Milisegundos por jugada del motor. Valores mas altos suelen mejorar la precision, pero tardan mas.",
+      "backfillBalancedStatsButton": "Completar metricas balanceadas faltantes ({{count}})",
+      "backfillBalancedStatsStarted": "Completando metricas balanceadas",
+      "backfillBalancedStatsStartedMessage": "Revisando {{count}} partidas analizadas con metricas faltantes.",
+      "backfillBalancedStatsDone": "Metricas balanceadas actualizadas",
+      "backfillBalancedStatsDoneMessage": "Se actualizaron {{updated}} partidas. Se omitieron {{skipped}}.",
+      "backfillBalancedStatsFailed": "No se pudieron completar las metricas balanceadas. {{error}}",
+      "recalculateBalancedStatsButton": "Recalcular Elo balanceado ({{count}})",
+      "recalculateBalancedStatsStarted": "Recalculando Elo balanceado",
+      "recalculateBalancedStatsStartedMessage": "Recalculando {{count}} partidas analizadas con la formula mas reciente.",
+      "recalculateBalancedStatsDone": "Elo balanceado recalculado",
+      "recalculateBalancedStatsDoneMessage": "Se actualizaron {{updated}} partidas. Se omitieron {{skipped}}.",
+      "recalculateBalancedStatsFailed": "No se pudieron recalcular los valores de Elo balanceado. {{error}}",
       "analyzingGames": "Analizando {{current}} de {{total}} partidas...",
       "stopAnalysis": "Detener Análisis",
       "analysisSpeeds": {

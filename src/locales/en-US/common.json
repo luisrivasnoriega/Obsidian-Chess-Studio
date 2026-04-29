@@ -1059,6 +1059,8 @@
     },
     "noMainAccount": "No main account",
     "estimatedElo": "Est. Elo",
+    "resistance": "Resistance",
+    "eloEstimatedBalanced": "Elo Balanced",
     "suggestions": {
       "analyzeLastGame": "Analyze your last game",
       "exploreOpenings": "Explore popular openings"
@@ -1736,6 +1738,18 @@
       "allGamesReanalyze": "All games (re-analyze)",
       "analysisDepth": "Analysis Depth",
       "analysisDepthHelp": "Milliseconds per move for the engine. Higher values usually improve accuracy but take longer.",
+      "backfillBalancedStatsButton": "Complete missing balanced stats ({{count}})",
+      "backfillBalancedStatsStarted": "Completing balanced stats",
+      "backfillBalancedStatsStartedMessage": "Checking {{count}} analyzed games with missing balanced metrics.",
+      "backfillBalancedStatsDone": "Balanced stats updated",
+      "backfillBalancedStatsDoneMessage": "Updated {{updated}} games. Skipped {{skipped}}.",
+      "backfillBalancedStatsFailed": "Failed to complete missing balanced stats. {{error}}",
+      "recalculateBalancedStatsButton": "Recalculate balanced Elo ({{count}})",
+      "recalculateBalancedStatsStarted": "Recalculating balanced Elo",
+      "recalculateBalancedStatsStartedMessage": "Recalculating {{count}} analyzed games with the latest formula.",
+      "recalculateBalancedStatsDone": "Balanced Elo recalculated",
+      "recalculateBalancedStatsDoneMessage": "Updated {{updated}} games. Skipped {{skipped}}.",
+      "recalculateBalancedStatsFailed": "Failed to recalculate balanced Elo values. {{error}}",
       "analyzingGames": "Analyzing {{current}} of {{total}} games...",
       "stopAnalysis": "Stop Analysis",
       "analysisSpeeds": {

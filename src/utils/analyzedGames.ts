@@ -17,8 +17,25 @@ const LEGACY_STATS_FILENAME = "game_stats.json";
 const MIGRATION_FLAG = "analysisDb.migratedFromJson.v1";
 
 type AnalyzedGameRow = { game_id: string; analyzed_pgn: string };
-type StoredGameStats = { accuracy: number; acpl: number; estimatedElo?: number | null };
-type StoredGameStatsRowBulk = { gameId: string; accuracy: number; acpl: number; estimatedElo?: number | null };
+type StoredGameStats = {
+  accuracy: number;
+  acpl: number;
+  estimatedElo?: number | null;
+  resistance?: number | null;
+  eloEstimatedBalanced?: number | null;
+  opponentEstimatedElo?: number | null;
+  opponentRatingElo?: number | null;
+};
+type StoredGameStatsRowBulk = {
+  gameId: string;
+  accuracy: number;
+  acpl: number;
+  estimatedElo?: number | null;
+  resistance?: number | null;
+  eloEstimatedBalanced?: number | null;
+  opponentEstimatedElo?: number | null;
+  opponentRatingElo?: number | null;
+};
 
 let migrationAttempted = false;
 
@@ -112,6 +129,10 @@ async function migrateLegacyJsonToSqlite(): Promise<void> {
               accuracy: gameStats.accuracy,
               acpl: gameStats.acpl,
               estimatedElo: gameStats.estimatedElo ?? null,
+              resistance: gameStats.resistance ?? null,
+              eloEstimatedBalanced: gameStats.eloEstimatedBalanced ?? null,
+              opponentEstimatedElo: gameStats.opponentEstimatedElo ?? null,
+              opponentRatingElo: gameStats.opponentRatingElo ?? null,
             },
           });
         }
@@ -268,6 +289,10 @@ export async function saveGameStats(gameId: string, stats: GameStats, profileId?
       accuracy: stats.accuracy,
       acpl: stats.acpl,
       estimatedElo: stats.estimatedElo ?? null,
+      resistance: stats.resistance ?? null,
+      eloEstimatedBalanced: stats.eloEstimatedBalanced ?? null,
+      opponentEstimatedElo: stats.opponentEstimatedElo ?? null,
+      opponentRatingElo: stats.opponentRatingElo ?? null,
     },
     profileId: pid ?? null,
   });
@@ -296,6 +321,8 @@ export async function getGameStats(gameId: string, profileId?: string | null): P
     accuracy: stats.accuracy,
     acpl: stats.acpl,
     ...(stats.estimatedElo != null ? { estimatedElo: stats.estimatedElo } : {}),
+    ...(stats.resistance != null ? { resistance: stats.resistance } : {}),
+    ...(stats.eloEstimatedBalanced != null ? { eloEstimatedBalanced: stats.eloEstimatedBalanced } : {}),
   };
 }
 
@@ -313,6 +340,8 @@ export async function getGameStatsBulk(gameIds: string[], profileId?: string | n
       accuracy: row.accuracy,
       acpl: row.acpl,
       ...(row.estimatedElo != null ? { estimatedElo: row.estimatedElo } : {}),
+      ...(row.resistance != null ? { resistance: row.resistance } : {}),
+      ...(row.eloEstimatedBalanced != null ? { eloEstimatedBalanced: row.eloEstimatedBalanced } : {}),
     });
   }
   return out;

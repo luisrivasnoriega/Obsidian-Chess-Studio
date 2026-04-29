@@ -242,6 +242,10 @@ export interface GameStats {
   accuracy: number;
   acpl: number; // Average Centipawns Loss
   estimatedElo?: number; // Estimated Elo based on ACPL (calculated once during analysis)
+  resistance?: number; // Elo-scale practical resistance faced in this game
+  eloEstimatedBalanced?: number; // Estimated Elo adjusted by opposition resistance
+  opponentEstimatedElo?: number; // Opponent estimated Elo for backend balanced-Elo calculation input
+  opponentRatingElo?: number; // Opponent reference rating Elo for backend balanced-Elo calculation input
 }
 
 /**

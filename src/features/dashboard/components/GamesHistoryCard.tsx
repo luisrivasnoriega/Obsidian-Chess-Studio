@@ -22,8 +22,14 @@ interface GamesHistoryCardProps {
   lichessUsernames?: string[];
   isLoadingOnlineGames?: boolean;
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
-  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeChessComGame: (
+    game: ChessComGameWithEvent,
+    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+  ) => void;
+  onAnalyzeLichessGame: (
+    game: DashboardLichessGame,
+    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+  ) => void;
   onAnalyzeAll?: (payload: {
     type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
     opponentContains: string | null;
