@@ -56,7 +56,9 @@ export const CUSTOM_EVENTS = {
 
 export const REPORT_ID_PREFIX = "report_";
 
-export function createFullLayout(): { [viewId: string]: JSX.Element } {
+export function createFullLayout(portalDomIds?: { left?: string; topRight?: string; bottomRight?: string }): {
+  [viewId: string]: JSX.Element;
+} {
   const portalTargetStyle: CSSProperties = {
     width: "100%",
     height: "100%",
@@ -67,10 +69,14 @@ export function createFullLayout(): { [viewId: string]: JSX.Element } {
     overflow: "hidden",
   };
 
+  const leftId = portalDomIds?.left ?? MOSAIC_PORTAL_IDS.LEFT;
+  const topRightId = portalDomIds?.topRight ?? MOSAIC_PORTAL_IDS.TOP_RIGHT;
+  const bottomRightId = portalDomIds?.bottomRight ?? MOSAIC_PORTAL_IDS.BOTTOM_RIGHT;
+
   return {
-    [MOSAIC_PORTAL_IDS.LEFT]: <div id={MOSAIC_PORTAL_IDS.LEFT} style={portalTargetStyle} />,
-    [MOSAIC_PORTAL_IDS.TOP_RIGHT]: <div id={MOSAIC_PORTAL_IDS.TOP_RIGHT} style={portalTargetStyle} />,
-    [MOSAIC_PORTAL_IDS.BOTTOM_RIGHT]: <div id={MOSAIC_PORTAL_IDS.BOTTOM_RIGHT} style={portalTargetStyle} />,
+    [MOSAIC_PORTAL_IDS.LEFT]: <div id={leftId} style={portalTargetStyle} />,
+    [MOSAIC_PORTAL_IDS.TOP_RIGHT]: <div id={topRightId} style={portalTargetStyle} />,
+    [MOSAIC_PORTAL_IDS.BOTTOM_RIGHT]: <div id={bottomRightId} style={portalTargetStyle} />,
   };
 }
 

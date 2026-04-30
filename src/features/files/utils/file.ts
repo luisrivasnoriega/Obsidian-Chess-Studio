@@ -24,10 +24,35 @@ export const FILE_TYPES: FileTypeItem[] = Object.entries(FILE_TYPE_LABELS).map((
   value: value as FileType,
 }));
 
-const fileInfoMetadataSchema = z.object({
-  type: fileTypeSchema,
-  tags: z.array(z.string()),
+const variantLinkRefSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  anchorFen: z.string(),
+  anchorPath: z.array(z.number().int().nonnegative()),
+  anchorPly: z.number().int().nonnegative(),
+  label: z.string().optional(),
 });
+
+const variantLinksSchema = z.object({
+  parent: variantLinkRefSchema.optional(),
+  children: z.array(variantLinkRefSchema).optional(),
+});
+
+const variantSplitSchema = z.object({
+  mode: z.enum(["manual", "auto"]),
+  splitAtPly: z.number().int().positive().optional(),
+  createdAt: z.string(),
+});
+
+const fileInfoMetadataSchema = z
+  .object({
+    type: fileTypeSchema,
+    tags: z.array(z.string()),
+    schemaVersion: z.literal(2).optional(),
+    links: variantLinksSchema.optional(),
+    split: variantSplitSchema.optional(),
+  })
+  .passthrough();
 
 export type FileInfoMetadata = z.infer<typeof fileInfoMetadataSchema>;
 
@@ -47,6 +72,46 @@ export type FileData = {
   games: string[];
 };
 
+const schemaVersionValue = 2 as const;
+
+function normalizeVariantMetadata(metadata: FileInfoMetadata): FileInfoMetadata {
+  if (metadata.type !== "variants") {
+    return metadata;
+  }
+  return {
+    ...metadata,
+    schemaVersion: schemaVersionValue,
+    links: {
+      ...(metadata.links ?? {}),
+      children: Array.isArray(metadata.links?.children) ? metadata.links.children : [],
+    },
+  };
+}
+
+export function createDefaultFileInfoMetadata(fileType: FileType, tags: string[] = []): FileInfoMetadata {
+  const base: FileInfoMetadata = {
+    type: fileType,
+    tags: tags.filter((tag): tag is string => typeof tag === "string"),
+  };
+  return normalizeVariantMetadata(base);
+}
+
+export function normalizeFileInfoMetadata(raw: unknown, fallbackType: FileType = "other"): FileInfoMetadata {
+  const parsed = fileInfoMetadataSchema.safeParse(raw);
+  if (parsed.success) {
+    return normalizeVariantMetadata(parsed.data);
+  }
+
+  const fallbackRecord = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const parsedType = fileTypeSchema.safeParse(fallbackRecord.type);
+  const type = parsedType.success ? parsedType.data : fallbackType;
+  const tags = Array.isArray(fallbackRecord.tags)
+    ? fallbackRecord.tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+
+  return createDefaultFileInfoMetadata(type, tags);
+}
+
 async function readFileMetadata(path: string): Promise<FileMetadata | null> {
   if (!path.endsWith(".pgn")) {
     return null;
@@ -54,12 +119,13 @@ async function readFileMetadata(path: string): Promise<FileMetadata | null> {
   const metadataPath = path.replace(".pgn", ".info");
   let metadata: FileInfoMetadata;
   if (await exists(metadataPath)) {
-    metadata = JSON.parse(await readTextFile(metadataPath));
+    try {
+      metadata = normalizeFileInfoMetadata(JSON.parse(await readTextFile(metadataPath)));
+    } catch {
+      metadata = createDefaultFileInfoMetadata("other");
+    }
   } else {
-    metadata = {
-      type: "other",
-      tags: [],
-    };
+    metadata = createDefaultFileInfoMetadata("other");
     await writeTextFile(metadataPath, JSON.stringify(metadata));
   }
   const fileMetadata = unwrap(await commands.getFileMetadata(path));

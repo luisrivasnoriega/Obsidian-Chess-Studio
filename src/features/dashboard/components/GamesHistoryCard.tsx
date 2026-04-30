@@ -24,11 +24,11 @@ interface GamesHistoryCardProps {
   onAnalyzeLocalGame: (game: GameRecord) => void;
   onAnalyzeChessComGame: (
     game: ChessComGameWithEvent,
-    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
   onAnalyzeLichessGame: (
     game: DashboardLichessGame,
-    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
   onAnalyzeAll?: (payload: {
     type: "local" | "chesscom" | "lichess" | "chessbase" | "all";

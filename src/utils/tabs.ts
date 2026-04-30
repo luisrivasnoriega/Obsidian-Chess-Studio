@@ -3,7 +3,7 @@ import { INITIAL_FEN } from "chessops/fen";
 import { z } from "zod";
 import type { StoreApi } from "zustand";
 import { commands } from "@/bindings";
-import { fileMetadataSchema } from "@/features/files/utils/file";
+import { createDefaultFileInfoMetadata, fileMetadataSchema } from "@/features/files/utils/file";
 import type { TreeStoreState } from "@/state/store/tree";
 import { getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
 import { setTabState } from "@/utils/tabStateStorage";
@@ -77,14 +77,41 @@ export async function createTab({
   autoActivate?: boolean;
 }) {
   const id = genID();
+  const explicitOrientation =
+    headers?.orientation === "white" ? "white" : headers?.orientation === "black" ? "black" : undefined;
 
   if (pgn !== undefined) {
     const pgnFenMatch = pgn.match(/\[FEN\s+"([^"]+)"\]/i);
     const pgnFen = pgnFenMatch?.[1]?.trim();
-    const initialFenForParse = pgnFen && pgnFen.length > 0 ? pgnFen : headers?.fen;
+    const hasSetupTag = /\[SetUp\s+"1"\]/i.test(pgn);
+    const initialFenForParse =
+      pgnFen && pgnFen.length > 0 ? pgnFen : hasSetupTag && headers?.fen ? headers.fen : undefined;
+
+    const countMainlineMoves = (node: TreeNode): number => {
+      let count = 0;
+      let cur: TreeNode | undefined = node;
+      while (cur && cur.children.length > 0) {
+        cur = cur.children[0];
+        count++;
+      }
+      return count;
+    };
+
     // For variants files, parse as normal PGN (with variations) but display in variants view
     // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-    const tree = await parsePGN(pgn, initialFenForParse, false);
+    let tree = await parsePGN(pgn, initialFenForParse, false);
+    const firstParseMoves = countMainlineMoves(tree.root);
+
+    // Fallback for imported profile rows where PGN may omit SetUp/FEN tags but we still have
+    // a known initial FEN in headers (from DB).
+    if (firstParseMoves === 0 && headers?.fen && (!pgnFen || pgnFen.length === 0)) {
+      const retryTree = await parsePGN(pgn, headers.fen, false);
+      const retryMoves = countMainlineMoves(retryTree.root);
+      if (retryMoves > firstParseMoves) {
+        tree = retryTree;
+      }
+    }
+
     // If headers are provided, only merge them if the parsed PGN headers are incomplete
     // This preserves complete headers from saved PGNs (like game.pgn) while allowing
     // updates for PGNs that were reconstructed from moves
@@ -108,6 +135,9 @@ export async function createTab({
           ...parsedHeaders,
           // Preserve FEN from parsed headers (it's the initial FEN from PGN)
           fen: parsedHeaders.fen,
+          // For dashboard/game-table opens, orientation is derived from active player's color.
+          // Always honor explicitly provided orientation instead of parser defaults.
+          orientation: explicitOrientation ?? parsedHeaders.orientation,
           // Only override if provided and missing in parsed headers
           time_control: parsedHeaders.time_control || headers.time_control,
           variant: parsedHeaders.variant || headers.variant,
@@ -119,7 +149,11 @@ export async function createTab({
           ...parsedHeaders,
           ...headers,
           fen: parsedHeaders.fen || headers.fen,
+          orientation: explicitOrientation ?? parsedHeaders.orientation,
         };
+      }
+      if (explicitOrientation) {
+        tree.headers.orientation = explicitOrientation;
       }
       if (position) {
         tree.position = position;
@@ -209,13 +243,7 @@ export async function saveToFile({
     if (isVariantsFile) {
       const { writeTextFile } = await import("@tauri-apps/plugin-fs");
       const infoPath = filePath.replace(".pgn", ".info");
-      await writeTextFile(
-        infoPath,
-        JSON.stringify({
-          type: "variants",
-          tags: [],
-        }),
-      );
+      await writeTextFile(infoPath, JSON.stringify(createDefaultFileInfoMetadata("variants"), null, 2));
     }
 
     setCurrentTab((prev) => {
@@ -225,7 +253,9 @@ export async function saveToFile({
           ...(prev.source ?? {
             type: "file",
             numGames: 1,
-            metadata: isVariantsFile ? { type: "variants", tags: [] } : { type: "game", tags: [] },
+            metadata: isVariantsFile
+              ? createDefaultFileInfoMetadata("variants")
+              : createDefaultFileInfoMetadata("game"),
           }),
           name: fileName,
           path: filePath,

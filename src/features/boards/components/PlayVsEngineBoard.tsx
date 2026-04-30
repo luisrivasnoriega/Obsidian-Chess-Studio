@@ -44,8 +44,6 @@ import { GameTimeProvider, useGameTime } from "./GameTimeContext";
 import { useEngineMoves } from "./hooks/useEngineMoves";
 import ResponsiveBoard from "./ResponsiveBoard";
 
-const setupLayout = createFullLayout();
-
 function formatPgnDateUtc(d: Date): string {
   const yyyy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -84,6 +82,7 @@ function PlayVsEngineBoardContent() {
   const [postGameReview, setPostGameReview] = useState<PostGameReviewResult | null>(null);
   const [isPostGameReviewRunning, setIsPostGameReviewRunning] = useState(false);
   const [postGameReviewOpened, setPostGameReviewOpened] = useState(false);
+  const setupLayout = useMemo(() => createFullLayout(), []);
 
   // Ensure a play tab exists when mounting, using the same createTab flow as the Sidebar
   // (Sidebar uses openTabAndNavigate({ tab: { name, type: "play" }, route: "/play" }))

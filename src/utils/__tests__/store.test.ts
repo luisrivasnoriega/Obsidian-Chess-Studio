@@ -483,7 +483,7 @@ test("should handle addAnalysis", () => {
             },
             wdl: null,
           },
-          annotations: ["Best"], // e4 is the best move from the initial position, so it gets "Best" annotation
+          annotations: ["!"], // Single-PV best move is classified as "!" by the current annotation logic
         },
       ],
     },

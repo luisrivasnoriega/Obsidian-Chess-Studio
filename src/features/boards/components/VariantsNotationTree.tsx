@@ -6,6 +6,18 @@ import { memo } from "react";
 import CompleteMoveCell from "@/components/CompleteMoveCell";
 import type { TreeNode } from "@/utils/treeReducer";
 
+function isPathPrefix(prefix: number[], path: number[]): boolean {
+  if (prefix.length > path.length) {
+    return false;
+  }
+  for (let i = 0; i < prefix.length; i++) {
+    if (prefix[i] !== path[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 type RenderVariationLineProps = {
   tree: TreeNode;
   path: number[];
@@ -19,6 +31,9 @@ type RenderVariationLineProps = {
   variationDepth: number;
   getExtraDepth: (pathKey: string) => number;
   onToggleExpanded: (pathKey: string) => void;
+  collapsedPaths: Set<string>;
+  onToggleCollapsedPath: (pathKey: string) => void;
+  currentPath: number[];
   extraDepth: number;
   expansionVersion: number;
 };
@@ -35,6 +50,9 @@ type VariationBranchProps = {
   variationDepth: number;
   getExtraDepth: (pathKey: string) => number;
   onToggleExpanded: (pathKey: string) => void;
+  collapsedPaths: Set<string>;
+  onToggleCollapsedPath: (pathKey: string) => void;
+  currentPath: number[];
   extraDepth: number;
   expansionVersion: number;
 };
@@ -52,6 +70,9 @@ function RenderVariationLineBase({
   variationDepth,
   getExtraDepth,
   onToggleExpanded,
+  collapsedPaths,
+  onToggleCollapsedPath,
+  currentPath,
   extraDepth,
   expansionVersion,
 }: RenderVariationLineProps) {
@@ -60,9 +81,40 @@ function RenderVariationLineBase({
     const localExtraDepth = getExtraDepth(pathKey);
     const activeExtraDepth = localExtraDepth > 0 ? localExtraDepth : extraDepth;
     const variations = tree.children;
+    const hasChildren = variations.length > 0;
+    const userCollapsed = collapsedPaths.has(pathKey) && !isPathPrefix(path, currentPath);
     const reachedDepthLimit = maxDepth != null && depth >= maxDepth;
     const reachedVariationLimit =
       maxVariationDepth != null && variationDepth >= maxVariationDepth && activeExtraDepth <= 0;
+    const showChildren = hasChildren && !userCollapsed && !(reachedDepthLimit || reachedVariationLimit);
+
+    const collapseControl = hasChildren ? (
+      <ActionIcon
+        variant="subtle"
+        size="sm"
+        color="gray"
+        onClick={() => {
+          if (userCollapsed) {
+            onToggleCollapsedPath(pathKey);
+            return;
+          }
+          if (reachedDepthLimit || reachedVariationLimit) {
+            onToggleExpanded(pathKey);
+            return;
+          }
+          onToggleCollapsedPath(pathKey);
+        }}
+        aria-label={userCollapsed ? "Expand variation" : "Collapse variation"}
+        style={{ marginLeft: "0.25rem" }}
+      >
+        {userCollapsed || reachedDepthLimit || reachedVariationLimit ? (
+          <IconChevronRight size={14} />
+        ) : (
+          <IconChevronDown size={14} />
+        )}
+      </ActionIcon>
+    ) : null;
+
     return (
       <>
         <CompleteMoveCell
@@ -78,18 +130,8 @@ function RenderVariationLineBase({
           first={first}
           enableTranspositions
         />
-        {reachedDepthLimit || reachedVariationLimit ? (
-          <ActionIcon
-            variant="subtle"
-            size="sm"
-            color="gray"
-            onClick={() => onToggleExpanded(pathKey)}
-            aria-label={activeExtraDepth > 0 ? "Collapse variation" : "Expand variation"}
-            style={{ marginLeft: "0.25rem" }}
-          >
-            {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-          </ActionIcon>
-        ) : variations && variations.length > 1 ? (
+        {collapseControl}
+        {showChildren && variations.length > 1 ? (
           variations.map((childVariation, index) => (
             <VariationBranch
               key={`${childVariation.fen}-${index}`}
@@ -104,11 +146,14 @@ function RenderVariationLineBase({
               variationDepth={variationDepth + 1}
               getExtraDepth={getExtraDepth}
               onToggleExpanded={onToggleExpanded}
+              collapsedPaths={collapsedPaths}
+              onToggleCollapsedPath={onToggleCollapsedPath}
+              currentPath={currentPath}
               extraDepth={0}
               expansionVersion={expansionVersion}
             />
           ))
-        ) : variations && variations.length === 1 ? (
+        ) : showChildren && variations.length === 1 ? (
           <RenderVariationLine
             tree={variations[0]}
             path={[...path, 0]}
@@ -122,6 +167,9 @@ function RenderVariationLineBase({
             variationDepth={variationDepth}
             getExtraDepth={getExtraDepth}
             onToggleExpanded={onToggleExpanded}
+            collapsedPaths={collapsedPaths}
+            onToggleCollapsedPath={onToggleCollapsedPath}
+            currentPath={currentPath}
             extraDepth={activeExtraDepth}
             expansionVersion={expansionVersion}
           />
@@ -140,6 +188,9 @@ function RenderVariationLineBase({
   const reachedDepthLimit = maxDepth != null && depth >= maxDepth;
   const reachedVariationLimit =
     maxVariationDepth != null && variationDepth >= maxVariationDepth && activeExtraDepth <= 0;
+  const hasChildren = variations.length > 0;
+  const userCollapsed = collapsedPaths.has(pathKey) && !isPathPrefix(path, currentPath);
+  const showChildren = hasChildren && !userCollapsed && !(reachedDepthLimit || reachedVariationLimit);
   return (
     <>
       <CompleteMoveCell
@@ -155,18 +206,33 @@ function RenderVariationLineBase({
         first={first}
         enableTranspositions
       />
-      {reachedDepthLimit || reachedVariationLimit ? (
+      {hasChildren ? (
         <ActionIcon
           variant="subtle"
           size="sm"
           color="gray"
-          onClick={() => onToggleExpanded(pathKey)}
-          aria-label={activeExtraDepth > 0 ? "Collapse variation" : "Expand variation"}
+          onClick={() => {
+            if (userCollapsed) {
+              onToggleCollapsedPath(pathKey);
+              return;
+            }
+            if (reachedDepthLimit || reachedVariationLimit) {
+              onToggleExpanded(pathKey);
+              return;
+            }
+            onToggleCollapsedPath(pathKey);
+          }}
+          aria-label={userCollapsed ? "Expand variation" : "Collapse variation"}
           style={{ marginLeft: "0.25rem" }}
         >
-          {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+          {userCollapsed || reachedDepthLimit || reachedVariationLimit ? (
+            <IconChevronRight size={14} />
+          ) : (
+            <IconChevronDown size={14} />
+          )}
         </ActionIcon>
-      ) : variations.length > 1 ? (
+      ) : null}
+      {showChildren && variations.length > 1 ? (
         variations.map((childVariation, index) => (
           <VariationBranch
             key={`${childVariation.fen}-${index}`}
@@ -181,11 +247,14 @@ function RenderVariationLineBase({
             variationDepth={variationDepth + 1}
             getExtraDepth={getExtraDepth}
             onToggleExpanded={onToggleExpanded}
+            collapsedPaths={collapsedPaths}
+            onToggleCollapsedPath={onToggleCollapsedPath}
+            currentPath={currentPath}
             extraDepth={0}
             expansionVersion={expansionVersion}
           />
         ))
-      ) : (
+      ) : showChildren ? (
         <RenderVariationLine
           tree={variations[0]}
           path={newPath}
@@ -199,10 +268,13 @@ function RenderVariationLineBase({
           variationDepth={variationDepth}
           getExtraDepth={getExtraDepth}
           onToggleExpanded={onToggleExpanded}
+          collapsedPaths={collapsedPaths}
+          onToggleCollapsedPath={onToggleCollapsedPath}
+          currentPath={currentPath}
           extraDepth={activeExtraDepth}
           expansionVersion={expansionVersion}
         />
-      )}
+      ) : null}
     </>
   );
 }
@@ -217,6 +289,7 @@ const RenderVariationLine = memo(RenderVariationLineBase, (prev, next) => {
     prev.variationDepth === next.variationDepth &&
     prev.maxVariationDepth === next.maxVariationDepth &&
     prev.expansionVersion === next.expansionVersion &&
+    equal(prev.currentPath, next.currentPath) &&
     equal(prev.path, next.path) &&
     equal(prev.start, next.start)
   );
@@ -234,6 +307,9 @@ function VariationBranchBase({
   variationDepth,
   getExtraDepth,
   onToggleExpanded,
+  collapsedPaths,
+  onToggleCollapsedPath,
+  currentPath,
   extraDepth,
   expansionVersion,
 }: VariationBranchProps) {
@@ -246,9 +322,12 @@ function VariationBranchBase({
   const moveNumber = Math.floor((firstMoveHalfMoves - 1) / 2) + 1;
   const isBlackMove = (firstMoveHalfMoves - 1) % 2 === 1;
   const marginLeft = "3rem";
+  const hasChildren = variation.children.length > 0;
+  const userCollapsed = collapsedPaths.has(pathKey) && !isPathPrefix(path, currentPath);
   const reachedDepthLimit = maxDepth != null && depth >= maxDepth;
   const reachedVariationLimit =
     maxVariationDepth != null && variationDepth >= maxVariationDepth && activeExtraDepth <= 0;
+  const showChildren = hasChildren && !userCollapsed && !(reachedDepthLimit || reachedVariationLimit);
 
   const renderVariationContent = () => (
     <>
@@ -270,18 +349,33 @@ function VariationBranchBase({
         first={false}
         enableTranspositions
       />
-      {reachedDepthLimit || reachedVariationLimit ? (
+      {hasChildren ? (
         <ActionIcon
           variant="subtle"
           size="sm"
           color="gray"
-          onClick={() => onToggleExpanded(pathKey)}
-          aria-label={activeExtraDepth > 0 ? "Collapse variation" : "Expand variation"}
+          onClick={() => {
+            if (userCollapsed) {
+              onToggleCollapsedPath(pathKey);
+              return;
+            }
+            if (reachedDepthLimit || reachedVariationLimit) {
+              onToggleExpanded(pathKey);
+              return;
+            }
+            onToggleCollapsedPath(pathKey);
+          }}
+          aria-label={userCollapsed ? "Expand variation" : "Collapse variation"}
           style={{ marginLeft: "0.25rem" }}
         >
-          {activeExtraDepth > 0 ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+          {userCollapsed || reachedDepthLimit || reachedVariationLimit ? (
+            <IconChevronRight size={14} />
+          ) : (
+            <IconChevronDown size={14} />
+          )}
         </ActionIcon>
-      ) : variation.children.length > 1 ? (
+      ) : null}
+      {showChildren && variation.children.length > 1 ? (
         variation.children.map((childVariation, index) => (
           <VariationBranch
             key={`${childVariation.fen}-${index}`}
@@ -296,11 +390,14 @@ function VariationBranchBase({
             variationDepth={variationDepth + 1}
             getExtraDepth={getExtraDepth}
             onToggleExpanded={onToggleExpanded}
+            collapsedPaths={collapsedPaths}
+            onToggleCollapsedPath={onToggleCollapsedPath}
+            currentPath={currentPath}
             extraDepth={0}
             expansionVersion={expansionVersion}
           />
         ))
-      ) : variation.children.length === 1 ? (
+      ) : showChildren && variation.children.length === 1 ? (
         <RenderVariationLine
           tree={variation.children[0]}
           path={[...path, 0]}
@@ -314,6 +411,9 @@ function VariationBranchBase({
           variationDepth={variationDepth}
           getExtraDepth={getExtraDepth}
           onToggleExpanded={onToggleExpanded}
+          collapsedPaths={collapsedPaths}
+          onToggleCollapsedPath={onToggleCollapsedPath}
+          currentPath={currentPath}
           extraDepth={activeExtraDepth}
           expansionVersion={expansionVersion}
         />
@@ -353,6 +453,7 @@ const VariationBranch = memo(VariationBranchBase, (prev, next) => {
     prev.variationDepth === next.variationDepth &&
     prev.maxVariationDepth === next.maxVariationDepth &&
     prev.expansionVersion === next.expansionVersion &&
+    equal(prev.currentPath, next.currentPath) &&
     equal(prev.path, next.path) &&
     equal(prev.start, next.start)
   );
@@ -367,6 +468,9 @@ export function VariantsNotationTree({
   maxVariationDepth,
   getExtraDepth,
   onToggleExpanded,
+  collapsedPaths,
+  onToggleCollapsedPath,
+  currentPath,
   expansionVersion,
 }: {
   root: TreeNode;
@@ -377,6 +481,9 @@ export function VariantsNotationTree({
   maxVariationDepth?: number;
   getExtraDepth: (pathKey: string) => number;
   onToggleExpanded: (pathKey: string) => void;
+  collapsedPaths: Set<string>;
+  onToggleCollapsedPath: (pathKey: string) => void;
+  currentPath: number[];
   expansionVersion: number;
 }) {
   return (
@@ -395,6 +502,9 @@ export function VariantsNotationTree({
           variationDepth={0}
           getExtraDepth={getExtraDepth}
           onToggleExpanded={onToggleExpanded}
+          collapsedPaths={collapsedPaths}
+          onToggleCollapsedPath={onToggleCollapsedPath}
+          currentPath={currentPath}
           extraDepth={0}
           expansionVersion={expansionVersion}
         />

@@ -21,8 +21,14 @@ interface FavoriteGamesTabProps {
   chessComUsernames: string[];
   lichessUsernames: string[];
   onAnalyzeLocalGame: (game: GameRecord) => void;
-  onAnalyzeChessComGame: (game: ChessComGameWithEvent, meta?: { profileId: string; profileDbGameId: string }) => void;
-  onAnalyzeLichessGame: (game: DashboardLichessGame, meta?: { profileId: string; profileDbGameId: string }) => void;
+  onAnalyzeChessComGame: (
+    game: ChessComGameWithEvent,
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
+  ) => void;
+  onAnalyzeLichessGame: (
+    game: DashboardLichessGame,
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
+  ) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
   onToggleFavoriteLichess?: (gameId: string) => Promise<void>;
@@ -32,6 +38,16 @@ type FavoriteGameItem =
   | { type: "local"; game: GameRecord }
   | { type: "chesscom"; game: ChessComGameWithEvent }
   | { type: "lichess"; game: DashboardLichessGame };
+
+function getSourceBadgeStyle(type: FavoriteGameItem["type"]) {
+  if (type === "lichess") {
+    return { backgroundColor: "#2F6F9F", color: "#FFFFFF" };
+  }
+  if (type === "chesscom") {
+    return { backgroundColor: "#81B64C", color: "#FFFFFF" };
+  }
+  return { backgroundColor: "#6B7280", color: "#FFFFFF" };
+}
 
 const normalizeAccountName = (name?: string | null) => stripAccountKey((name ?? "").trim()).toLowerCase();
 
@@ -223,9 +239,15 @@ export function FavoriteGamesTab({
     if (item.type === "local") {
       onAnalyzeLocalGame(item.game);
     } else if (item.type === "chesscom") {
-      onAnalyzeChessComGame(item.game);
+      const whiteName = item.game.white?.username ?? "";
+      const blackName = item.game.black?.username ?? "";
+      const resolved = resolveUserColorAndOpponent(whiteName, blackName, normalizedChessComUsernames);
+      onAnalyzeChessComGame(item.game, { playerColor: resolved.userColor ?? "white" });
     } else {
-      onAnalyzeLichessGame(item.game);
+      const whiteName = item.game.players.white?.user?.name ?? "";
+      const blackName = item.game.players.black?.user?.name ?? "";
+      const resolved = resolveUserColorAndOpponent(whiteName, blackName, normalizedLichessUsernames);
+      onAnalyzeLichessGame(item.game, { playerColor: resolved.userColor ?? "white" });
     }
   };
 
@@ -348,7 +370,9 @@ export function FavoriteGamesTab({
               return (
                 <Table.Tr key={`${item.type}-${gameId}`}>
                   <Table.Td>
-                    <Badge variant="light">{source}</Badge>
+                    <Badge variant="filled" style={getSourceBadgeStyle(item.type)}>
+                      {source}
+                    </Badge>
                   </Table.Td>
                   <Table.Td>
                     {userColor === "white" || userColor === "black" ? (

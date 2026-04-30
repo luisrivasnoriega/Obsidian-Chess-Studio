@@ -61,6 +61,6 @@
         "https://ocsverification20260122235102-bjhggaeuffg9cwdz.eastus-01.azurewebsites.net/**"
       ]
     },
-    "opener:allow-open-url"
+    "opener:default"
   ]
 }

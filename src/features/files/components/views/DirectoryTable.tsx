@@ -11,10 +11,12 @@ import { useContextMenu } from "mantine-contextmenu";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { loadDirectories } from "@/App";
 import { commands } from "@/bindings";
 import type { Directory, FileMetadata } from "@/features/files/utils/file";
 import { FILE_TYPE_LABELS } from "@/features/files/utils/file";
 import { getStats } from "@/features/files/utils/opening";
+import { cleanupVariantLinksAfterDelete, repairVariantLinks } from "@/features/variants/utils/links";
 import { useLanguageChangeListener } from "@/hooks/useLanguageChangeListener";
 import { activeTabAtom, deckAtomFamily, tabsAtom } from "@/state/atoms";
 import { createTab } from "@/utils/tabs";
@@ -323,10 +325,29 @@ function Table({
             title: t("features.files.delete.delete"),
             color: "red",
             onClick: async () => {
+              const dirs = await loadDirectories();
               if (record.type === "directory") {
                 await remove(record.path, { recursive: true });
+                try {
+                  await repairVariantLinks(dirs.documentDir);
+                  try {
+                    window.dispatchEvent(new Event("variants:links-updated"));
+                  } catch {}
+                } catch {
+                  // Ignore link repair errors on directory delete.
+                }
               } else {
                 await remove(record.path);
+                if (record.metadata.type === "variants") {
+                  try {
+                    await cleanupVariantLinksAfterDelete(record.path, dirs.documentDir);
+                    try {
+                      window.dispatchEvent(new Event("variants:links-updated"));
+                    } catch {}
+                  } catch {
+                    // Ignore link cleanup errors on file delete.
+                  }
+                }
               }
               setFiles(files?.filter((f) => record.path.includes(f.path)));
             },

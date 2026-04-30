@@ -268,6 +268,19 @@ pub struct EngineRequestDto {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct SplitConfigDto {
+    pub enabled: bool,
+    pub mode: String, // "none" | "manual" | "auto"
+    #[serde(default)]
+    pub split_at_ply: Option<u32>,
+    #[serde(default)]
+    pub max_segments: Option<u32>,
+    #[serde(default)]
+    pub max_lines_per_segment: Option<u32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct BuildVariantsTreeRequest {
     pub root: TreeNodeDto,
     pub start_path: Vec<u32>,
@@ -292,6 +305,8 @@ pub struct BuildVariantsTreeRequest {
     pub coverage: u32,
     pub min_moves: u32,
     pub depth: u32, // active player moves
+    #[serde(default)]
+    pub split_config: Option<SplitConfigDto>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
@@ -322,8 +337,31 @@ pub struct LineDto {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+pub struct SegmentStatsDto {
+    pub line_count: u32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentDto {
+    pub id: String,
+    pub anchor_ply: u32,
+    pub anchor_fen: String,
+    pub anchor_path: Vec<u32>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub lines: Vec<LineDto>,
+    pub stats: SegmentStatsDto,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct BuildVariantsTreeResponse {
     pub lines: Vec<LineDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segments: Option<Vec<SegmentDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
 }
 
 // -----------------------------------------------------------------------------
@@ -335,6 +373,8 @@ pub struct BuildVariantsTreeResponse {
 struct VariantsBuilderProgressPayload {
     start_path: Vec<u32>,
     moves: Vec<MoveSpecDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    segment_id: Option<String>,
 }
 
 fn emit_variants_builder_progress(app: &AppHandle, start_path: &[u32], moves: &[MoveSpecDto]) {
@@ -343,6 +383,7 @@ fn emit_variants_builder_progress(app: &AppHandle, start_path: &[u32], moves: &[
         VariantsBuilderProgressPayload {
             start_path: start_path.to_vec(),
             moves: moves.to_vec(),
+            segment_id: None,
         },
     );
 }
@@ -1200,6 +1241,197 @@ fn apply_move_to_fen(fen: &str, mv: &str, is960: bool) -> Result<String> {
     Ok(Fen::from_position(pos, EnPassantMode::Legal).to_string())
 }
 
+fn move_line_key(moves: &[MoveSpecDto]) -> String {
+    moves
+        .iter()
+        .map(|m| m.value.trim())
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
+fn push_unique_line(lines: &mut Vec<LineDto>, seen: &mut HashSet<String>, line: LineDto) {
+    let key = move_line_key(&line.moves);
+    if seen.insert(key) {
+        lines.push(line);
+    }
+}
+
+fn build_segmented_response(
+    req: &BuildVariantsTreeRequest,
+    start_fen: &str,
+    lines: &[LineDto],
+) -> (Vec<LineDto>, Option<Vec<SegmentDto>>, Option<Vec<String>>) {
+    let Some(split_cfg) = req.split_config.as_ref() else {
+        return (lines.to_vec(), None, None);
+    };
+
+    if !split_cfg.enabled || !split_cfg.mode.eq_ignore_ascii_case("auto") {
+        return (lines.to_vec(), None, None);
+    }
+
+    let split_at = split_cfg.split_at_ply.unwrap_or(0) as usize;
+    if split_at == 0 {
+        return (
+            lines.to_vec(),
+            None,
+            Some(vec![
+                "splitConfig.enabled=true requires splitAtPly > 0 for auto mode".to_string(),
+            ]),
+        );
+    }
+
+    let max_segments = std::cmp::max(1, split_cfg.max_segments.unwrap_or(64)) as usize;
+    let max_lines_per_segment =
+        std::cmp::max(1, split_cfg.max_lines_per_segment.unwrap_or(200)) as usize;
+
+    let mut warnings: Vec<String> = Vec::new();
+    let mut warning_seen: HashSet<String> = HashSet::new();
+    let mut parent_lines: Vec<LineDto> = Vec::new();
+    let mut parent_seen: HashSet<String> = HashSet::new();
+    let mut segments: Vec<SegmentDto> = Vec::new();
+    let mut segment_idx_by_key: HashMap<String, usize> = HashMap::new();
+    let mut segment_line_seen: HashMap<String, HashSet<String>> = HashMap::new();
+
+    let mut warn_once = |msg: String| {
+        if warning_seen.insert(msg.clone()) {
+            warnings.push(msg);
+        }
+    };
+
+    for line in lines {
+        if line.moves.is_empty() {
+            continue;
+        }
+
+        if line.moves.len() <= split_at {
+            push_unique_line(&mut parent_lines, &mut parent_seen, line.clone());
+            continue;
+        }
+
+        let prefix_moves = line.moves[..split_at].to_vec();
+        let tail_moves = line.moves[split_at..].to_vec();
+        if prefix_moves.is_empty() || tail_moves.is_empty() {
+            push_unique_line(&mut parent_lines, &mut parent_seen, line.clone());
+            continue;
+        }
+
+        let mut anchor_fen = start_fen.to_string();
+        let mut anchor_ok = true;
+        for step in &prefix_moves {
+            match apply_move_to_fen(&anchor_fen, &step.value, req.is960) {
+                Ok(next) => anchor_fen = next,
+                Err(err) => {
+                    anchor_ok = false;
+                    warn_once(format!(
+                        "auto split: failed to compute anchor FEN at splitAtPly={} for line starting '{}': {}",
+                        split_at, line.moves[0].value, err
+                    ));
+                    break;
+                }
+            }
+        }
+
+        if !anchor_ok {
+            push_unique_line(&mut parent_lines, &mut parent_seen, line.clone());
+            continue;
+        }
+
+        push_unique_line(
+            &mut parent_lines,
+            &mut parent_seen,
+            LineDto {
+                moves: prefix_moves.clone(),
+            },
+        );
+
+        let first_tail = tail_moves[0].value.trim().to_string();
+        if first_tail.is_empty() {
+            continue;
+        }
+
+        let segment_key = format!(
+            "{}|{}|{}",
+            split_at,
+            fen_identity_key(&anchor_fen),
+            first_tail.to_lowercase()
+        );
+
+        let segment_idx = if let Some(idx) = segment_idx_by_key.get(&segment_key) {
+            *idx
+        } else {
+            if segments.len() >= max_segments {
+                warn_once(format!(
+                    "auto split: maxSegments={} reached; keeping extra branches in parent tree",
+                    max_segments
+                ));
+                // Preserve full detail in parent when segment budget is exhausted.
+                push_unique_line(&mut parent_lines, &mut parent_seen, line.clone());
+                continue;
+            }
+
+            let next_idx = segments.len();
+            let id = format!("segment-{}", next_idx + 1);
+            segments.push(SegmentDto {
+                id: id.clone(),
+                anchor_ply: split_at as u32,
+                anchor_fen: anchor_fen.clone(),
+                anchor_path: req.start_path.clone(),
+                title: Some(format!("After {} plies: {}", split_at, first_tail)),
+                lines: Vec::new(),
+                stats: SegmentStatsDto { line_count: 0 },
+            });
+            segment_idx_by_key.insert(segment_key, next_idx);
+            next_idx
+        };
+
+        if segments[segment_idx].lines.len() >= max_lines_per_segment {
+            warn_once(format!(
+                "auto split: segment '{}' reached maxLinesPerSegment={}; keeping overflow in parent tree",
+                segments[segment_idx].id, max_lines_per_segment
+            ));
+            // Preserve full detail in parent when segment line budget is exhausted.
+            push_unique_line(&mut parent_lines, &mut parent_seen, line.clone());
+            continue;
+        }
+
+        let segment_id = segments[segment_idx].id.clone();
+        let key = move_line_key(&tail_moves);
+        let seen = segment_line_seen
+            .entry(segment_id.clone())
+            .or_insert_with(HashSet::new);
+        if seen.insert(key) {
+            segments[segment_idx].lines.push(LineDto { moves: tail_moves });
+        }
+    }
+
+    let mut non_empty_segments: Vec<SegmentDto> = Vec::new();
+    for mut seg in segments {
+        if seg.lines.is_empty() {
+            continue;
+        }
+        seg.stats.line_count = seg.lines.len() as u32;
+        non_empty_segments.push(seg);
+    }
+
+    if non_empty_segments.is_empty() {
+        return (
+            lines.to_vec(),
+            None,
+            if warnings.is_empty() { None } else { Some(warnings) },
+        );
+    }
+
+    (
+        if parent_lines.is_empty() {
+            lines.to_vec()
+        } else {
+            parent_lines
+        },
+        Some(non_empty_segments),
+        if warnings.is_empty() { None } else { Some(warnings) },
+    )
+}
+
 async fn build_variants_tree_impl(
     req: &BuildVariantsTreeRequest,
     app: AppHandle,
@@ -1495,7 +1727,13 @@ async fn build_variants_tree_impl(
     )
     .await?;
 
-    Ok(BuildVariantsTreeResponse { lines })
+    let (parent_lines, segments, warnings) = build_segmented_response(req, start_fen, &lines);
+
+    Ok(BuildVariantsTreeResponse {
+        lines: parent_lines,
+        segments,
+        warnings,
+    })
 }
 
 #[tauri::command]

@@ -6,9 +6,11 @@ import { remove } from "@tauri-apps/plugin-fs";
 import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { loadDirectories } from "@/App";
 import { commands } from "@/bindings";
 import GameSelector from "@/components/panels/info/GameSelector";
 import GamePreview from "@/features/databases/components/drawers/GamePreview";
+import { cleanupVariantLinksAfterDelete } from "@/features/variants/utils/links";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -87,6 +89,17 @@ function FileCard({
       onConfirm: async () => {
         await remove(selected.path);
         await remove(selected.path.replace(".pgn", ".info"));
+        if (selected.metadata.type === "variants") {
+          try {
+            const dirs = await loadDirectories();
+            await cleanupVariantLinksAfterDelete(selected.path, dirs.documentDir);
+            try {
+              window.dispatchEvent(new Event("variants:links-updated"));
+            } catch {}
+          } catch {
+            // Ignore link cleanup errors on file delete.
+          }
+        }
         mutate(files?.filter((file) => file.name !== selected.name));
         setSelected(null);
       },

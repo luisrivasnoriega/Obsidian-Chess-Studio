@@ -9,7 +9,14 @@ import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { MAX_TABS } from "@/features/boards/constants";
-import { activeTabAtom, cleanupTabScopedAtoms, loadableEnginesAtom, tabsAtom } from "@/state/atoms";
+import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  cleanupTabScopedAtoms,
+  loadableEnginesAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { createTreeStore } from "@/state/store/tree";
 import { getDocumentDir } from "@/utils/documentDir";
@@ -73,6 +80,7 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
   const navigate = useNavigate();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
   const loadableEngines = useAtomValue(loadableEnginesAtom);
   const enableHotkeys = options?.enableHotkeys ?? true;
 
@@ -161,7 +169,10 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
               void (async () => {
                 const noopSetCurrentTab: Dispatch<SetStateAction<Tab>> = () => {};
                 const tabStore = createTreeStore(value);
-                const documentDir = await getDocumentDir();
+                const isVariantsTab = tab?.source?.type === "file" && tab.source.metadata?.type === "variants";
+                const documentDir = isVariantsTab
+                  ? await getVariantsDirectory(activeProfileId)
+                  : await getDocumentDir();
                 const saved = await saveToFile({
                   dir: documentDir,
                   setCurrentTab: noopSetCurrentTab,
@@ -230,7 +241,7 @@ export function useTabManagement(options?: { enableHotkeys?: boolean }) {
         await cleanupClosedTabResources(value);
       }
     },
-    [activeTab, cleanupClosedTabResources, navigate, setActiveTab, setTabs, t, tabs],
+    [activeProfileId, activeTab, cleanupClosedTabResources, navigate, setActiveTab, setTabs, t, tabs],
   );
 
   const closeAllTabs = useCallback(async () => {

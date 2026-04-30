@@ -82,6 +82,9 @@ export interface TreeStoreState extends TreeState {
       novelty: boolean;
       is_sacrifice: boolean;
     }[],
+    options?: {
+      openingFens?: Set<string>;
+    },
   ) => void;
 
   setReportProgress: (progress: number) => void;
@@ -555,12 +558,12 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
           }
         }),
       ),
-    addAnalysis: (analysis) => {
+    addAnalysis: (analysis, options) => {
       set(
         produce((state) => {
           state.dirty = true;
           state.saveVersion += 1;
-          addAnalysis(state, analysis);
+          addAnalysis(state, analysis, options);
         }),
       );
     },
@@ -782,6 +785,9 @@ export function addAnalysis(
     novelty: boolean;
     is_sacrifice: boolean;
   }[],
+  options?: {
+    openingFens?: Set<string>;
+  },
 ) {
   // Recursively clear all auto-generated annotations and variations from the entire tree
   // This ensures we start fresh with each analysis run
@@ -791,7 +797,7 @@ export function addAnalysis(
     node.annotations = node.annotations.filter((ann) => {
       const info = ANNOTATION_INFO[ann];
       // Keep annotations that are not basic (group !== "basic") and not novelty ("N")
-      return ann !== "N" && (!info.group || info.group !== "basic");
+      return ann !== "N" && ann !== "Book" && ann !== "BookError" && (!info.group || info.group !== "basic");
     });
 
     // Remove all auto-generated variations (all children except the first one, which is the main line)
@@ -837,6 +843,7 @@ export function addAnalysis(
         }
         const curScore = analysis[i].best[0].score;
         const color = cur.halfMoves % 2 === 1 ? "white" : "black";
+        const isOpeningMove = !!options?.openingFens?.has(cur.fen);
         const annotation = getAnnotation(
           prevprevScore?.value || null,
           prevScore?.value || null,
@@ -845,6 +852,8 @@ export function addAnalysis(
           prevMoves,
           analysis[i].is_sacrifice,
           cur.san || "",
+          undefined,
+          isOpeningMove,
         );
         if (annotation) {
           // Remove ALL basic annotations before adding the new one

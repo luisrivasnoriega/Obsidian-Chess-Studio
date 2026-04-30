@@ -1,6 +1,6 @@
 import { Box, Center, Group, Paper, ScrollArea, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
-import { IconZoomCheck } from "@tabler/icons-react";
+import { IconBookOff, IconZoomCheck } from "@tabler/icons-react";
 import { invoke } from "@tauri-apps/api/core";
 import cx from "clsx";
 import equal from "fast-deep-equal";
@@ -13,7 +13,7 @@ import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { activeTabAtom } from "@/state/atoms";
 import { saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
-import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
+import { ANNOTATION_INFO, annotationColors } from "@/utils/annotation";
 import { getGameStats, getMainLine, getPGNFromReportView } from "@/utils/chess";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import { type GameStats, getGameRecordById, updateGameRecord } from "@/utils/gameRecords";
@@ -558,6 +558,8 @@ function TagGlyph({ annotation }: { annotation: string }) {
             d="M 50 15 L 55.9 38.1 L 80 38.1 L 60.5 52.4 L 66.4 75.5 L 50 61.2 L 33.6 75.5 L 39.5 52.4 L 20 38.1 L 44.1 38.1 Z"
           />
         </svg>
+      ) : annotation === "BookError" ? (
+        <IconBookOff size="1rem" stroke={2.2} />
       ) : (
         <Text size="sm" style={{ lineHeight: 1 }}>
           {annotation}
@@ -577,7 +579,7 @@ const ReportGameStats = memo(
 
     type Row = {
       annotation: string;
-      s: "??" | "?" | "?!" | "!!" | "!" | "!?" | "Best";
+      s: "??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError";
       title: string;
       color: string;
       w: number;
@@ -585,34 +587,29 @@ const ReportGameStats = memo(
     };
 
     const rows: Row[] = useMemo(() => {
-      return Object.keys(ANNOTATION_INFO)
-        .filter((a) => isBasicAnnotation(a))
-        .sort((a, b) => {
-          const order: Record<string, number> = {
-            "!!": 1,
-            "!": 2,
-            Best: 3,
-            "!?": 4,
-            "?!": 5,
-            "?": 6,
-            "??": 7,
-          };
-          return (order[a] || 99) - (order[b] || 99);
-        })
-        .map((annotation) => {
-          const s = annotation as "??" | "?" | "?!" | "!!" | "!" | "!?" | "Best";
-          const { name, translationKey } = ANNOTATION_INFO[s];
-          const title = translationKey ? t(`chess.annotate.${translationKey}`) : name;
+      const ordered: Array<"??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError"> = [
+        "!!",
+        "!",
+        "Best",
+        "!?",
+        "?!",
+        "?",
+        "??",
+        "BookError",
+      ];
 
-          return {
-            annotation,
-            s,
-            title,
-            color: annotationColors[s],
-            w: whiteAnnotations[s],
-            b: blackAnnotations[s],
-          };
-        }) as Row[];
+      return ordered.map((annotation) => {
+        const { name, translationKey } = ANNOTATION_INFO[annotation];
+        const title = translationKey ? t(`chess.annotate.${translationKey}`) : name;
+        return {
+          annotation,
+          s: annotation,
+          title,
+          color: annotationColors[annotation],
+          w: whiteAnnotations[annotation],
+          b: blackAnnotations[annotation],
+        };
+      });
     }, [whiteAnnotations, blackAnnotations, t]);
 
     return (

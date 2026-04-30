@@ -183,6 +183,7 @@ export function getAnnotation(
   is_sacrifice?: boolean,
   move?: string,
   currentBestMoves?: BestMoves[],
+  isOpeningMove = false,
 ): Annotation {
   const basePrevScore: ScoreValue = prev ?? { type: "cp", value: 0 };
 
@@ -197,6 +198,8 @@ export function getAnnotation(
   const wasHopeless = isHopelessScore(prev, color);
   const noRealEscape = wasHopeless && (prevMoves.length === 0 || allAlternativesHopeless(prevMoves, color));
   if (noRealEscape) return "";
+
+  if (isOpeningMove) return "Book";
 
   // Negative annotations
   const hasBetterAlternativeFlag = hasClearlyBetterAlternative(prevMoves, next, color);
@@ -245,22 +248,19 @@ export function getAnnotation(
     }
   }
 
-  // Good (!) - tactical / decisive / clearly best
-  if (isBestBySan || isNearBest) {
+  // Good (!): exact engine-best move with a unique/practical impact.
+  if (isBestBySan) {
     if (bestScore && isMateFor(bestScore, color)) return "!";
-    if (bestCP != null && bestCP >= 500) return "!";
 
-    if (bestCP != null && secondCP != null) {
-      if (bestCP - secondCP > 150) return "!";
-    }
+    const uniqueByGap = bestCP != null && secondCP != null && bestCP - secondCP > 150;
+    const uniqueBySingleLine = prevMoves.length === 1;
+    const escapedFromWorse = prevCP < -100 && nextCP >= 0;
 
-    // Appreciable improvement (even if it was not a sacrifice)
-    if (winChanceNext - winChancePrev > 5) return "!";
-    if (prevCP < -100 && nextCP >= 0) return "!";
+    if (uniqueByGap || uniqueBySingleLine || escapedFromWorse) return "!";
   }
 
-  // BEST
-  if (isBestBySan || isNearBest) return "Best";
+  // BEST: only exact engine-best move (not near-best alternatives).
+  if (isBestBySan) return "Best";
 
   // Interesting (!?) - playable sacrifice but not "narrow/only"
   if (is_sacrifice && nextCP > -250) return "!?";

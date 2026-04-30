@@ -149,6 +149,8 @@
       "great": "Excelente",
       "good": "Bueno",
       "best": "Mejor",
+      "book": "Libro",
+      "bookError": "Error de libro",
       "interesting": "Interesante",
       "dubious": "Dudoso",
       "mistake": "Error",
@@ -698,7 +700,8 @@
       "toggleFullScreen": "Alternar Pantalla Completa",
       "closeTab": "Cerrar Pestaña",
       "closeAllTabs": "Cerrar Todas las Pestañas",
-      "reportIssue": "Reportar Problema"
+      "reportIssue": "Reportar Problema",
+      "extractSubvariant": "Extraer como subvariante"
     },
     "sidebar": {
       "dashboard": "Dashboard",
@@ -1301,7 +1304,17 @@
           "run": "Ejecutar",
           "missingDb": "Selecciona una base de datos local en el panel Database para usar jugadas de la base de datos.",
           "noProgress": "No se pudo avanzar desde esta posición. Revisa las opciones de la base de datos o del motor.",
-          "done": "La generación de variantes ha finalizado."
+          "done": "La generación de variantes ha finalizado.",
+          "splitTitle": "División automática",
+          "splitAuto": "Crear subvariantes",
+          "splitAtPly": "Dividir en ply",
+          "maxSegments": "Máximo de subvariantes",
+          "maxLinesPerSegment": "Máximo de líneas por subvariante",
+          "splitHint": "Las ramas después del ply de división se guardan como subvariantes vinculadas.",
+          "splitRequiresSavedFile": "Guarda este archivo de variantes antes de usar la división automática.",
+          "splitCreated": "Se crearon y vincularon {{count}} subvariantes.",
+          "splitPartial": "La división automática omitió {{count}} segmentos.",
+          "splitWarnings": "La división automática generó {{count}} advertencia(s)."
         },
         "title": "Variantes",
         "name": "Nombre",
@@ -1312,8 +1325,14 @@
         "engine": "Motor",
         "engineMs": "Tiempo del Motor (ms)",
         "variantsCount": "Variantes",
+        "links": "Vinculos",
+        "parentLink": "Padre",
+        "childLinks": "Hijas",
         "comments": "Comentarios / Referencias",
         "createNew": "Crear Nueva",
+        "repairLinks": "Reparar vinculos",
+        "repairLinksDone": "Vinculos reparados. Actualizados: {{updated}}, agregados: {{added}}, eliminados: {{removed}}.",
+        "repairLinksFailed": "No se pudieron reparar los vinculos de variantes.",
         "searchPlaceholder": "Buscar variantes...",
         "deleteConfirm": "¿Estás seguro de que quieres eliminar esta variante?",
         "deleted": "Variante eliminada exitosamente",
@@ -1328,7 +1347,10 @@
         "nameRequired": "El nombre es obligatorio",
         "namePlaceholder": "Ingresa el nombre de la variante...",
         "createError": "Error al crear la variante",
-        "saveComments": "Guardar Comentarios"
+        "saveComments": "Guardar Comentarios",
+        "extractSubvariantSideOnly": "Solo se pueden extraer variaciones secundarias. Manten la linea principal en este archivo.",
+        "extractSubvariantCreated": "La subvariante '{{name}}' se creo y vinculo correctamente.",
+        "extractSubvariantFailed": "No se pudo extraer la subvariante."
       },
       "annotate": {
         "writeHere": "Escribe aquí..."
@@ -1574,7 +1596,18 @@
       "reportView": "Vista de informe",
       "mainLine": "Línea principal",
       "showVariationsTooltip": "Mostrar variaciones",
-      "noMoves": "Sin jugadas"
+      "noMoves": "Sin jugadas",
+      "focusCurrentMove": "Enfocar jugada actual",
+      "collapseTreeLevel": "Comprimir un nivel del arbol",
+      "expandTreeLevel": "Expandir un nivel del arbol",
+      "collapseAllVariations": "Comprimir todas las variantes",
+      "expandAllVariations": "Expandir todas las variantes",
+      "parentVariant": "Variante padre",
+      "childVariants": "Subvariantes",
+      "openLinkedVariant": "Abrir variante vinculada",
+      "goToAnchor": "Ir a la jugada ancla",
+      "linkedVariantMissing": "No se encontro la variante vinculada: {{name}}",
+      "linkedVariantOpenFailed": "No se pudo abrir la variante vinculada."
     },
     "pgnInput": {
       "comments": "Comentarios",

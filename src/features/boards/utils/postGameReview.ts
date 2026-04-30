@@ -5,6 +5,7 @@ import { makeFen } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import { commands, type MoveAnalysis } from "@/bindings";
 import { type Directory, type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
+import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
 import { addAnalysis } from "@/state/store/tree";
 import { getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
@@ -137,6 +138,10 @@ function sanitizeFileName(input: string): string {
 
 function normalizeFenKey(fen: string): string {
   return fen.trim().split(/\s+/).slice(0, 4).join(" ");
+}
+
+function normalizeMoveKey(move: string): string {
+  return move.trim().toLowerCase();
 }
 
 function escapePgnTagValue(value: string): string {
@@ -424,6 +429,68 @@ async function _loadVariantBooks(documentDir: string): Promise<VariantBook[]> {
   }
 
   return books;
+}
+
+export async function detectProfileBookErrorPlies(input: {
+  profileId: string | null;
+  initialFen: string;
+  moves: string[];
+  humanColor: "white" | "black" | null;
+}): Promise<number[]> {
+  if (!input.humanColor || input.moves.length === 0) {
+    return [];
+  }
+
+  const variantsDir = await getVariantsDirectory(input.profileId);
+  if (!(await exists(variantsDir))) {
+    return [];
+  }
+
+  const books = await _loadVariantBooks(variantsDir);
+  const scopedBooks = books.filter((book) => book.orientation === input.humanColor);
+  if (scopedBooks.length === 0) {
+    return [];
+  }
+
+  const [startPos] = positionFromFen(input.initialFen);
+  if (!startPos) {
+    return [];
+  }
+
+  const pos = startPos.clone();
+  const errorPlies: number[] = [];
+
+  for (let ply = 0; ply < input.moves.length; ply += 1) {
+    const playedMoveRaw = input.moves[ply];
+    const playedMove = normalizeMoveKey(playedMoveRaw);
+    const sideToMove = pos.turn as "white" | "black";
+
+    const fenBeforeMove = normalizeFenKey(makeFen(pos.toSetup()));
+    if (sideToMove === input.humanColor) {
+      const allowed = new Set<string>();
+      for (const book of scopedBooks) {
+        const node = book.nodesByFen.get(fenBeforeMove);
+        if (!node || node.turn !== sideToMove) {
+          continue;
+        }
+        for (const allowedMove of node.allowedMoves) {
+          allowed.add(normalizeMoveKey(allowedMove));
+        }
+      }
+
+      if (allowed.size > 0 && !allowed.has(playedMove)) {
+        errorPlies.push(ply);
+      }
+    }
+
+    const parsed = parseUci(playedMove);
+    if (!parsed) {
+      break;
+    }
+    pos.play(parsed);
+  }
+
+  return errorPlies;
 }
 
 function evaluateBookAgainstGame(args: {
@@ -851,6 +918,7 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
   let reviewStatus = "running";
   let generatedPuzzles = 0;
   const documentDir = await getDocumentDir();
+  const variantsDir = await getVariantsDirectory(input.profileId);
   let variantDeviation: VariantDeviationDecision = {
     detected: false,
     ply: null,
@@ -869,7 +937,7 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
       try {
         const variantReview = await invoke<PostGameReviewVariantsBackendResult>("post_game_review_variants", {
           input: {
-            documentDir,
+            documentDir: variantsDir,
             initialFen,
             moves,
             humanColor: input.humanColor,

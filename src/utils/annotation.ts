@@ -17,7 +17,9 @@ export type Annotation =
   | "∓"
   | "-+"
   | "N"
-  | "Best";
+  | "Best"
+  | "Book"
+  | "BookError";
 
 export const NAG_INFO = new Map<string, Annotation>([
   ["$1", "!"],
@@ -36,6 +38,8 @@ export const NAG_INFO = new Map<string, Annotation>([
   ["$18", "+-"],
   ["$19", "-+"],
   ["$146", "N"],
+  ["$250", "Book"],
+  ["$251", "BookError"],
 ]);
 
 type AnnotationInfo = {
@@ -104,6 +108,8 @@ export const ANNOTATION_INFO: Record<Annotation, AnnotationInfo> = {
   },
   N: { name: "Novelty", translationKey: "novelty", nag: 146 },
   Best: { group: "basic", name: "Best", translationKey: "best", color: "green", nag: 8 },
+  Book: { name: "Book", translationKey: "book", color: "teal", nag: 250 },
+  BookError: { name: "Book Error", translationKey: "bookError", color: "red", nag: 251 },
 };
 
 export function isBasicAnnotation(annotation: string): annotation is "!" | "!!" | "?" | "??" | "!?" | "?!" | "Best" {
@@ -118,6 +124,8 @@ export const annotationColors: Record<Annotation, string> = {
   "!!": "#67E8F9", // Brilliant - light cyan/celeste
   "!": "#3B82F6", // Great / Good / Unique - blue
   Best: "#22C55E", // Best - green
+  Book: "#14B8A6", // Opening book - teal
+  BookError: "#EF4444", // Book error - red
   "!?": "#A855F7", // Interesting - purple
   "?!": "#FACC15", // Dubious - yellow
   "?": "#FB923C", // Mistake - orange

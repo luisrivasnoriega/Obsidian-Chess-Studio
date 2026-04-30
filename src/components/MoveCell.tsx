@@ -1,5 +1,5 @@
 import { Box, rgba, useMantineTheme } from "@mantine/core";
-import { IconFlag } from "@tabler/icons-react";
+import { IconBook, IconBookOff, IconFlag } from "@tabler/icons-react";
 import { type ForwardedRef, forwardRef } from "react";
 import { useTranslation } from "react-i18next";
 import { ANNOTATION_INFO, type Annotation } from "@/utils/annotation";
@@ -61,7 +61,19 @@ const MoveCell = forwardRef(function MoveCell(props: MoveCellProps, ref: Forward
       {t("formatters.moveNotation", { move: props.move })}
       {props.annotations
         .filter((ann) => ann !== "Best") // Don't show "Best" as text, only as color
-        .join("")}
+        .map((ann, idx) =>
+          ann === "Book" ? (
+            <IconBook key={`book-${idx}`} size="0.875rem" style={{ marginLeft: 3, verticalAlign: "text-bottom" }} />
+          ) : ann === "BookError" ? (
+            <IconBookOff
+              key={`book-error-${idx}`}
+              size="0.875rem"
+              style={{ marginLeft: 3, verticalAlign: "text-bottom" }}
+            />
+          ) : (
+            <span key={`${ann}-${idx}`}>{ann}</span>
+          ),
+        )}
     </Box>
   );
 });

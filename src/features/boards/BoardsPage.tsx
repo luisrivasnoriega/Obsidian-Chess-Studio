@@ -30,7 +30,6 @@ import {
 } from "./constants";
 import { useTabManagement } from "./hooks/useTabManagement";
 
-const fullLayout = createFullLayout();
 const ProfilesPage = lazy(() => import("@/features/profiles/ProfilesPage"));
 
 export default function BoardsPage() {
@@ -151,8 +150,52 @@ function isValidMosaicLayout(node: MosaicNode<ViewId> | null): node is MosaicNod
   return leaves.has("left") && leaves.has("topRight") && leaves.has("bottomRight");
 }
 
+function sanitizeMosaicLayout(node: MosaicNode<ViewId>): MosaicNode<ViewId> {
+  if (typeof node === "string") {
+    return node;
+  }
+
+  if (isTabsNode(node)) {
+    return {
+      ...node,
+      tabs: [...node.tabs],
+    };
+  }
+
+  if (isSplitNode(node)) {
+    const left = sanitizeMosaicLayout(node.children[0]);
+    const right = sanitizeMosaicLayout(node.children[1]);
+    const constrained = constrainSplitPercentage(node.splitPercentages?.[0]);
+    return {
+      ...node,
+      children: [left, right],
+      splitPercentages: [constrained, 100 - constrained],
+    };
+  }
+
+  return node;
+}
+
 const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: boolean }) {
   const [windowsState, setWindowsState] = useAtom(windowsStateAtom);
+  const portalDomIds = useMemo(() => {
+    const safeTabId = tab.value.replace(/[^a-zA-Z0-9_-]/g, "");
+    const prefix = `mosaic-${safeTabId}`;
+    return {
+      left: `${prefix}-left`,
+      topRight: `${prefix}-topRight`,
+      bottomRight: `${prefix}-bottomRight`,
+    };
+  }, [tab.value]);
+  const fullLayout = useMemo(() => createFullLayout(portalDomIds), [portalDomIds]);
+  const portalTargets = useMemo(
+    () => ({
+      left: `#${portalDomIds.left}`,
+      topRight: `#${portalDomIds.topRight}`,
+      bottomRight: `#${portalDomIds.bottomRight}`,
+    }),
+    [portalDomIds],
+  );
 
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
@@ -172,24 +215,8 @@ const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: bo
 
   const handleMosaicChange = useCallback(
     (currentNode: MosaicNode<ViewId> | null) => {
-      if (
-        currentNode &&
-        isSplitNode(currentNode) &&
-        currentNode.direction === "row" &&
-        currentNode.children.length === 2
-      ) {
-        const currentPercentage = currentNode.splitPercentages?.[0];
-        const constrainedPercentage = constrainSplitPercentage(currentPercentage);
-
-        if (currentPercentage !== constrainedPercentage) {
-          currentNode = {
-            ...currentNode,
-            splitPercentages: [constrainedPercentage, 100 - constrainedPercentage],
-          };
-        }
-      }
-
-      setWindowsState({ currentNode: currentNode ?? DEFAULT_MOSAIC_LAYOUT });
+      const nextNode = currentNode ? sanitizeMosaicLayout(currentNode) : DEFAULT_MOSAIC_LAYOUT;
+      setWindowsState({ currentNode: nextNode });
     },
     [setWindowsState],
   );
@@ -200,6 +227,13 @@ const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: bo
     debugNavLog("tab-switch: resetting invalid mosaic layout", { currentNode: windowsState.currentNode });
     setWindowsState({ currentNode: DEFAULT_MOSAIC_LAYOUT });
   }, [isMobileLayout, setWindowsState, windowsState.currentNode]);
+
+  const mosaicValue = useMemo(() => {
+    if (!isValidMosaicLayout(windowsState.currentNode)) {
+      return DEFAULT_MOSAIC_LAYOUT;
+    }
+    return sanitizeMosaicLayout(windowsState.currentNode);
+  }, [windowsState.currentNode]);
 
   const keepMountedWhenInactive = tab.type === "profiles";
   if (!isActive && !keepMountedWhenInactive) {
@@ -227,14 +261,14 @@ const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: bo
             <Box style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
               <Mosaic<ViewId>
                 renderTile={(id) => fullLayout[id]}
-                value={isValidMosaicLayout(windowsState.currentNode) ? windowsState.currentNode : DEFAULT_MOSAIC_LAYOUT}
+                value={mosaicValue}
                 onChange={handleMosaicChange}
                 resize={resizeOptions}
               />
             </Box>
           )}
           {!isVariantsFile && <ReportProgressSubscriber id={`${REPORT_ID_PREFIX}${tab.value}`} />}
-          {isVariantsFile ? <BoardVariants /> : <BoardAnalysis />}
+          {isVariantsFile ? <BoardVariants /> : <BoardAnalysis portalTargets={portalTargets} />}
         </TreeStateProvider>
       </Box>
     );

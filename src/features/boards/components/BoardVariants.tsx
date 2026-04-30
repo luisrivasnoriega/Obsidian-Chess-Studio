@@ -46,6 +46,7 @@ import PracticePanel from "@/components/panels/practice/PracticePanel";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useDebouncedAutoSave } from "@/features/boards/hooks/useDebouncedAutoSave";
+import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeProfileIdAtom,
@@ -69,7 +70,7 @@ import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { getDatabases } from "@/utils/db";
-import { createFile, isTempImportFile } from "@/utils/files";
+import { createFile, isTempImportFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
 import { reloadTab, saveTab, saveToFile, type Tab } from "@/utils/tabs";
@@ -168,7 +169,8 @@ function BoardVariants() {
             });
           }
         } else {
-          if (!documentDir) {
+          const variantsDir = await getVariantsDirectory(activeProfileId);
+          if (!variantsDir) {
             notifications.show({
               title: t("common.error"),
               message: t("errors.missingFilePath"),
@@ -177,7 +179,7 @@ function BoardVariants() {
             return;
           }
           const saved = await saveToFile({
-            dir: documentDir,
+            dir: variantsDir,
             setCurrentTab,
             tab: currentTab,
             store,
@@ -206,7 +208,7 @@ function BoardVariants() {
         }
       }
     },
-    [setCurrentTab, currentTab, documentDir, store, setStoreSave, setTabs, treeBuilderRunning, t],
+    [activeProfileId, setCurrentTab, currentTab, store, setStoreSave, setTabs, treeBuilderRunning, t],
   );
 
   const getVariantBaseName = useCallback(() => {
@@ -927,6 +929,10 @@ function BoardVariants() {
           coverage: treeBuilderCoverage,
           minMoves: treeBuilderMinMoves,
           depth: treeBuilderDepth,
+          splitConfig: {
+            enabled: false,
+            mode: "none",
+          },
         });
       } finally {
         void unlistenProgress
@@ -988,64 +994,24 @@ function BoardVariants() {
       }
 
       if (!treeBuilderCancelRef.current) {
-        // Update metadata in .info file if this is a variants file
-        // Check if this is a variants file - either from tab metadata or by checking the .info file
-        const isVariantsFile =
-          (currentTab?.source?.type === "file" && currentTab.source.metadata?.type === "variants") ||
-          (currentTab?.source?.type === "file" && currentTab.source.path);
+        const backendWarnings = Array.isArray(res?.warnings)
+          ? res.warnings.filter(
+              (warning): warning is string => typeof warning === "string" && warning.trim().length > 0,
+            )
+          : [];
 
-        if (isVariantsFile && currentTab?.source?.type === "file" && currentTab.source.path) {
-          // Verify it's actually a variants file by checking the .info file
-          const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
-          const infoPath = currentTab.source.path.replace(".pgn", ".info");
-          let isActuallyVariants = false;
+        if (currentTab?.source?.type === "file" && currentTab.source.path) {
+          try {
+            const { getOpening } = await import("@/utils/chess");
+            const root = store.getState().root;
+            const parentFilePath = currentTab.source.path;
+            const metadata = await readInfoMetadata(parentFilePath, "variants");
 
-          if (await exists(infoPath)) {
-            try {
-              const fileMetadata = JSON.parse(await readTextFile(infoPath)) as unknown;
-              isActuallyVariants = (fileMetadata as any)?.type === "variants";
-            } catch {
-              // If parsing fails, assume it's not a variants file
-            }
-          }
-
-          if (isActuallyVariants) {
-            try {
-              const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-              const { getOpening } = await import("@/utils/chess");
-              const root = store.getState().root;
-
-              let metadata: { type: string; tags: string[] } = {
-                type: "variants",
-                tags: [],
-              };
-
-              if (await exists(infoPath)) {
-                try {
-                  const existingContent = await readTextFile(infoPath);
-                  const parsed = JSON.parse(existingContent) as any;
-                  metadata = {
-                    type: typeof parsed?.type === "string" ? parsed.type : "variants",
-                    tags: Array.isArray(parsed?.tags)
-                      ? parsed.tags.filter((t: unknown): t is string => typeof t === "string")
-                      : [],
-                  };
-                } catch (_parseError) {
-                  // If parsing fails, use default
-                }
-              }
-
-              // Use the requested depth from the modal (not the calculated tree depth)
+            if (metadata.type === "variants") {
               const requestedDepth = treeBuilderDepth;
-
-              // Use the start FEN and opening (where build variants started)
-              // Use the stored startFenForMetadata from when build started
               const startFen = startFenForMetadata;
-
-              // Get opening from the start position (where build variants began)
               const opening = await getOpening(root, startPath);
 
-              // Get database info - format: "local -nombre-" or "lichess"
               const databaseName =
                 dbType === "local" && localOptions.path
                   ? `local -${
@@ -1064,11 +1030,11 @@ function BoardVariants() {
                     : dbType === "lch_all" || dbType === "lch_master"
                       ? "lichess"
                       : null;
+
               const engineName = selectedEngine?.name || null;
               const engineMs = treeBuilderEngineMs;
               const variantsCount = res?.lines?.length || 0;
 
-              // Update tags - remove old metadata tags
               metadata.tags = (metadata.tags || []).filter(
                 (tag) =>
                   !tag.startsWith("opening:") &&
@@ -1080,14 +1046,12 @@ function BoardVariants() {
                   !tag.startsWith("variantsCount:"),
               );
 
-              // Add new metadata tags
               if (opening) {
                 metadata.tags.push(`opening:${opening}`);
               }
               if (startFen) {
                 metadata.tags.push(`fen:${startFen}`);
               }
-              // Use requested depth from modal
               if (requestedDepth > 0) {
                 metadata.tags.push(`depth:${requestedDepth}`);
               }
@@ -1104,16 +1068,26 @@ function BoardVariants() {
                 metadata.tags.push(`variantsCount:${variantsCount}`);
               }
 
-              // Ensure metadata has correct structure
               metadata.type = "variants";
               if (!Array.isArray(metadata.tags)) {
                 metadata.tags = [];
               }
-
-              const metadataJson = JSON.stringify(metadata, null, 2);
-              await writeTextFile(infoPath, metadataJson);
-            } catch (_error) {}
+              await writeInfoMetadata(parentFilePath, metadata);
+              try {
+                window.dispatchEvent(new Event("variants:links-updated"));
+              } catch {}
+            }
+          } catch {
+            // Ignore metadata update errors for variants files.
           }
+        }
+
+        if (backendWarnings.length > 0) {
+          notifications.show({
+            title: t("common.warning"),
+            message: backendWarnings[0],
+            color: "yellow",
+          });
         }
 
         notifications.show({

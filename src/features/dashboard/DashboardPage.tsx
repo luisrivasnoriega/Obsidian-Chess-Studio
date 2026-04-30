@@ -21,7 +21,6 @@ import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { getAnalyzedGamesBulk, getGameStatsBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
-import { getChesscomGame } from "@/utils/chess.com/api";
 import { positionFromFen } from "@/utils/chessops";
 import { query_games, query_players } from "@/utils/db";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
@@ -41,7 +40,6 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
-import { getLichessGame } from "@/utils/lichess/api";
 import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
@@ -106,12 +104,27 @@ type DashboardAnalyzeAllResultPayload = {
   cancelled: boolean;
 };
 
+function hasCoreAnalysisStats(row: Pick<GamesHistoryRow, "accuracy" | "acpl">): boolean {
+  return (
+    typeof row.accuracy === "number" &&
+    Number.isFinite(row.accuracy) &&
+    row.accuracy > 0 &&
+    typeof row.acpl === "number" &&
+    Number.isFinite(row.acpl) &&
+    row.acpl > 0
+  );
+}
+
+function isRowReadyForAnalyzeSkip(row: Pick<GamesHistoryRow, "isAnalyzed" | "accuracy" | "acpl">): boolean {
+  return !!row.isAnalyzed && hasCoreAnalysisStats(row);
+}
+
 function normalizePgnElo(raw: number | null | undefined): number | null {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
   return Math.round(raw);
 }
 
-function hasPgnHeaders(pgn?: string | null): boolean {
+function _hasPgnHeaders(pgn?: string | null): boolean {
   if (!pgn) return false;
   return /\[[A-Za-z0-9_]+\s+"[^"]*"\]/.test(pgn);
 }
@@ -1088,7 +1101,7 @@ export default function DashboardPage() {
         setAnalyzeAllScopedRows(scopedRows);
         const rowsForType = scopedRows.filter((row) => (type === "all" ? true : row.kind === type));
         const total = rowsForType.length;
-        const unanalyzed = rowsForType.filter((row) => !row.isAnalyzed).length;
+        const unanalyzed = rowsForType.filter((row) => !isRowReadyForAnalyzeSkip(row)).length;
         const analyzed = Math.max(0, total - unanalyzed);
 
         setAnalyzeAllCounts({ type, total, unanalyzed });
@@ -1702,11 +1715,7 @@ export default function DashboardPage() {
                         u.toLowerCase() === game.white.username.toLowerCase() ||
                         u.toLowerCase() === game.black.username.toLowerCase(),
                     ) || game.white.username;
-                  const orientation = meta?.playerColor
-                    ? meta.playerColor
-                    : game.white.username.toLowerCase() === accountUsername.toLowerCase()
-                      ? "white"
-                      : "black";
+                  const orientation = meta.playerColor;
                   headers.orientation = orientation;
                   createTab({
                     tab: {
@@ -1768,11 +1777,7 @@ export default function DashboardPage() {
                         u.toLowerCase() === gameWhiteName.toLowerCase() ||
                         u.toLowerCase() === gameBlackName.toLowerCase(),
                     ) || gameWhiteName;
-                  const orientation = meta?.playerColor
-                    ? meta.playerColor
-                    : gameWhiteName.toLowerCase() === accountUsername.toLowerCase()
-                      ? "white"
-                      : "black";
+                  const orientation = meta.playerColor;
                   headers.orientation = orientation;
                   createTab({
                     tab: {
@@ -1928,7 +1933,7 @@ export default function DashboardPage() {
               analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
             );
             const analyzedByScopedRow = new Map<string, boolean>(
-              rowsForSelectedType.map((row) => [`${row.kind}:${row.gameKey}`, !!row.isAnalyzed]),
+              rowsForSelectedType.map((row) => [`${row.kind}:${row.gameKey}`, isRowReadyForAnalyzeSkip(row)]),
             );
 
             // Build map external key -> internal profile DB game id (Games.ID), scoped to the same
@@ -2125,7 +2130,7 @@ export default function DashboardPage() {
 
             if (config.analyzeMode === "unanalyzed" && gamesToAnalyze.length === 0) {
               const fallbackRows = rowsForSelectedType.filter((row) => {
-                if (row.isAnalyzed) return false;
+                if (isRowReadyForAnalyzeSkip(row)) return false;
                 const rowPgn = row.pgn?.trim() ?? "";
                 if (!rowPgn) return false;
                 if (row.kind === "chessbase") {
@@ -2782,20 +2787,10 @@ export default function DashboardPage() {
               if (item.type === "chessbase") {
                 const row = item.game as GamesHistoryRow;
                 let rowInitialFen = (row as { initialFen?: string | null }).initialFen ?? null;
-                let resolvedPgn = row.pgn ?? null;
+                const resolvedPgn = row.pgn ?? null;
                 let resolvedMoves: string[] | null = null;
-                if (!hasPgnHeaders(resolvedPgn)) {
-                  try {
-                    if (row.kind === "lichess") {
-                      resolvedPgn = (await getLichessGame(row.gameKey))?.trim() || resolvedPgn;
-                    } else if (row.kind === "chesscom") {
-                      const gameUrl = row.externalUrl || row.gameKey;
-                      resolvedPgn = (await getChesscomGame(gameUrl))?.trim() || resolvedPgn;
-                    }
-                  } catch {
-                    // keep existing payload
-                  }
-                }
+                // For profile DB rows (including imported chess.com/lichess), analyze-all must
+                // rely on local payload (PGN/blob-decoded moves) and avoid external fetches.
                 if (activeProfileId) {
                   const gameId = Number.parseInt(String(row.analysisGameId), 10);
                   if (Number.isFinite(gameId)) {

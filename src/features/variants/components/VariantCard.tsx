@@ -94,6 +94,16 @@ export function VariantCard({ variant, isSelected, onEdit, onDelete, onEditComme
               {t("features.variants.variantsCount", { defaultValue: "Variants" })}: {variant.variantsCount}
             </Badge>
           )}
+          {variant.parentLink ? (
+            <Badge variant="outline" color="teal" size="sm">
+              {t("features.variants.parentLink", { defaultValue: "Parent" })}
+            </Badge>
+          ) : null}
+          {(variant.childLinks?.length ?? 0) > 0 ? (
+            <Badge variant="light" color="cyan" size="sm">
+              {t("features.variants.childLinks", { defaultValue: "Children" })}: {variant.childLinks?.length ?? 0}
+            </Badge>
+          ) : null}
         </Group>
 
         {variant.database && (

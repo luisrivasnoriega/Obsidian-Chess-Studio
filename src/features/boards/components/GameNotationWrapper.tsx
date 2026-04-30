@@ -14,6 +14,7 @@ interface GameNotationWrapperProps {
   topBar?: boolean;
   editingMode?: boolean;
   editingCard?: React.ReactNode;
+  portalTargetOverride?: string;
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
@@ -24,6 +25,7 @@ function GameNotationWrapper({
   topBar = false,
   editingMode = false,
   editingCard,
+  portalTargetOverride,
   isLoading = false,
   error = null,
   onRetry,
@@ -73,11 +75,11 @@ function GameNotationWrapper({
 
     return {
       isNotationUnderBoard,
-      portalTarget: isNotationUnderBoard ? "#bottom" : "#bottomRight",
+      portalTarget: isNotationUnderBoard ? "#bottom" : (portalTargetOverride ?? "#bottomRight"),
       stackDirection: isNotationUnderBoard ? ("column" as const) : ("column" as const),
       gap: isNotationUnderBoard ? "md" : "xs",
     };
-  }, [layout.gameNotationUnderBoard]);
+  }, [layout.gameNotationUnderBoard, portalTargetOverride]);
   const renderInline = layout.chessBoard.layoutType === "mobile";
 
   // Show loading state
@@ -130,12 +132,6 @@ function GameNotationWrapper({
   );
 
   if (renderInline) {
-    return analysisContent;
-  }
-
-  const portalTarget = typeof document !== "undefined" ? document.querySelector(positioning.portalTarget) : null;
-
-  if (!portalTarget) {
     return analysisContent;
   }
 

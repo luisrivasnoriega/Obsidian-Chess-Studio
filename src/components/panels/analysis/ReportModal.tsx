@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { analyzeGameHumanStrategicReport, commands, type HumanMoveNarrative, type MoveAnalysis } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
+import { detectProfileBookErrorPlies } from "@/features/boards/utils/postGameReview";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
 import type { Annotation } from "@/utils/annotation";
@@ -17,6 +18,8 @@ import type { TreeNode } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 
 const BASIC_ANNOTATIONS = new Set(["??", "?", "?!", "!?", "!", "!!", "Best"]);
+const BOOK_ERROR_ANNOTATION: Annotation = "BookError";
+const openingFenCache = new Map<string, boolean>();
 
 export function countTreeComments(node: TreeNode): number {
   let count = 0;
@@ -45,6 +48,47 @@ function getMainlineNodes(root: TreeNode): TreeNode[] {
     current = next;
   }
   return out;
+}
+
+async function isOpeningFen(fen: string): Promise<boolean> {
+  const cached = openingFenCache.get(fen);
+  if (cached !== undefined) return cached;
+
+  try {
+    const res = await commands.getOpeningFromFen(fen);
+    if (res.status === "ok" && !!res.data) {
+      openingFenCache.set(fen, true);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const resInfo = await commands.getOpeningInfoFromFen(fen);
+    if (resInfo.status === "ok" && !!resInfo.data) {
+      openingFenCache.set(fen, true);
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  openingFenCache.set(fen, false);
+  return false;
+}
+
+async function collectOpeningFensFromMainline(root: TreeNode): Promise<Set<string>> {
+  const openingFens = new Set<string>();
+  const mainline = getMainlineNodes(root);
+
+  for (const node of mainline) {
+    if (await isOpeningFen(node.fen)) {
+      openingFens.add(node.fen);
+    }
+  }
+
+  return openingFens;
 }
 
 function _countMainlineComments(root: TreeNode): number {
@@ -111,6 +155,35 @@ export function injectHumanNarrativesIntoMainline(root: TreeNode, narratives: Hu
   }
 
   return injected;
+}
+
+function clearBookErrorAnnotations(root: TreeNode): void {
+  const stack: TreeNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    if (node.annotations.includes(BOOK_ERROR_ANNOTATION)) {
+      node.annotations = node.annotations.filter((annotation) => annotation !== BOOK_ERROR_ANNOTATION);
+    }
+    for (const child of node.children) {
+      stack.push(child);
+    }
+  }
+}
+
+function applyBookErrorAnnotationsToMainline(root: TreeNode, errorPlies: number[]): void {
+  if (errorPlies.length === 0) return;
+  const mainline = getMainlineNodes(root);
+  const target = new Set(errorPlies);
+  for (let ply = 0; ply < mainline.length; ply += 1) {
+    if (!target.has(ply)) {
+      continue;
+    }
+    const node = mainline[ply];
+    if (!node.annotations.includes(BOOK_ERROR_ANNOTATION)) {
+      node.annotations = [...node.annotations, BOOK_ERROR_ANNOTATION];
+    }
+  }
 }
 
 function ReportModal({
@@ -299,6 +372,29 @@ function ReportModal({
         );
       }
 
+      let openingFensCache: Set<string> | null = null;
+      const getOpeningFens = async () => {
+        if (openingFensCache) return openingFensCache;
+        openingFensCache = await collectOpeningFensFromMainline(store.getState().root);
+        return openingFensCache;
+      };
+
+      let bookErrorPlies: number[] = [];
+      try {
+        const orientation = store.getState().headers.orientation;
+        const humanColor = orientation === "white" || orientation === "black" ? orientation : null;
+        const effectiveProfileId =
+          profileId ?? (typeof window !== "undefined" ? localStorage.getItem("activeProfileId") : null);
+        bookErrorPlies = await detectProfileBookErrorPlies({
+          profileId: effectiveProfileId,
+          initialFen,
+          moves,
+          humanColor,
+        });
+      } catch {
+        // Keep analysis flow resilient if variants-book detection fails.
+      }
+
       if (analysisEngineRef.current) {
         if (typeof window !== "undefined" && strategicPgn) {
           sessionStorage.setItem(strategicPgnStorageKey, strategicPgn);
@@ -310,6 +406,8 @@ function ReportModal({
         if (form.values.humanStrategic && strategicPgn) {
           try {
             const parsed = await parsePGN(strategicPgn);
+            clearBookErrorAnnotations(parsed.root);
+            applyBookErrorAnnotationsToMainline(parsed.root, bookErrorPlies);
             if (import.meta.env.DEV) {
               console.debug("[human-report] parsed strategic PGN", {
                 tab,
@@ -321,6 +419,8 @@ function ReportModal({
           } catch {
             try {
               const fallback = await parsePGN(originalPgn);
+              clearBookErrorAnnotations(fallback.root);
+              applyBookErrorAnnotationsToMainline(fallback.root, bookErrorPlies);
               if (import.meta.env.DEV) {
                 console.debug("[human-report] fallback to original PGN", {
                   tab,
@@ -336,11 +436,35 @@ function ReportModal({
                   analysisItems: resolvedAnalysis.length,
                 });
               }
-              addAnalysis(resolvedAnalysis);
+              addAnalysis(resolvedAnalysis, { openingFens: await getOpeningFens() });
+
+              const current = store.getState();
+              const nextState = {
+                dirty: current.dirty,
+                position: [...current.position],
+                headers: structuredClone(current.headers),
+                root: structuredClone(current.root),
+                report: structuredClone(current.report),
+              };
+              clearBookErrorAnnotations(nextState.root);
+              applyBookErrorAnnotationsToMainline(nextState.root, bookErrorPlies);
+              setTreeState(nextState);
             }
           }
         } else {
-          addAnalysis(resolvedAnalysis);
+          addAnalysis(resolvedAnalysis, { openingFens: await getOpeningFens() });
+
+          const current = store.getState();
+          const nextState = {
+            dirty: current.dirty,
+            position: [...current.position],
+            headers: structuredClone(current.headers),
+            root: structuredClone(current.root),
+            report: structuredClone(current.report),
+          };
+          clearBookErrorAnnotations(nextState.root);
+          applyBookErrorAnnotationsToMainline(nextState.root, bookErrorPlies);
+          setTreeState(nextState);
         }
 
         // Persist derived analysis stats into the profile DB (only when this tab is bound to a profile DB game).

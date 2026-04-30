@@ -11,6 +11,8 @@ use shakmaty::{fen::Fen, san::SanPlus, CastlingMode, Chess};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -224,6 +226,116 @@ fn parse_site_tag(moves: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+fn parse_link_tag(moves: &str) -> Option<String> {
+    let needle = "[Link \"";
+    let start = moves.find(needle)? + needle.len();
+    let rest = &moves[start..];
+    let end = rest.find("\"]")?;
+    Some(rest[..end].to_string())
+}
+
+fn parse_pgn_tag_line(line: &str) -> Option<(&str, String)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
+        return None;
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    let mut parts = inner.splitn(2, char::is_whitespace);
+    let key = parts.next()?.trim();
+    let rest = parts.next()?.trim();
+    if !rest.starts_with('"') || !rest.ends_with('"') || rest.len() < 2 {
+        return None;
+    }
+    let value = rest[1..rest.len() - 1].to_string();
+    Some((key, value))
+}
+
+fn normalize_player_name_for_match(name: &str) -> String {
+    strip_account_key(name).trim().to_lowercase()
+}
+
+fn find_chesscom_link_in_pgn_export(
+    pgn_path: &PathBuf,
+    target_date: &str,
+    target_time: &str,
+    target_white: &str,
+    target_black: &str,
+) -> Option<String> {
+    let file = File::open(pgn_path).ok()?;
+    let reader = BufReader::new(file);
+
+    let mut headers: HashMap<String, String> = HashMap::new();
+    let mut in_movetext = false;
+
+    let target_date = target_date.trim();
+    let target_time = target_time.trim();
+    let target_white_norm = normalize_player_name_for_match(target_white);
+    let target_black_norm = normalize_player_name_for_match(target_black);
+
+    let finalize_game = |headers: &mut HashMap<String, String>, in_movetext: &mut bool| -> Option<String> {
+        if headers.is_empty() {
+            *in_movetext = false;
+            return None;
+        }
+        let date_ok = headers.get("UTCDate").or_else(|| headers.get("Date")).map(|v| v.trim()) == Some(target_date);
+        let time_ok = headers
+            .get("UTCTime")
+            .or_else(|| headers.get("Time"))
+            .or_else(|| headers.get("StartTime"))
+            .map(|v| v.trim())
+            == Some(target_time);
+
+        let white_norm = headers
+            .get("White")
+            .map(|v| normalize_player_name_for_match(v))
+            .unwrap_or_default();
+        let black_norm = headers
+            .get("Black")
+            .map(|v| normalize_player_name_for_match(v))
+            .unwrap_or_default();
+
+        let players_ok = white_norm == target_white_norm && black_norm == target_black_norm;
+
+        let resolved = if date_ok && time_ok && players_ok {
+            headers.get("Link").and_then(|v| extract_chesscom_url(v))
+        } else {
+            None
+        };
+
+        headers.clear();
+        *in_movetext = false;
+        resolved
+    };
+
+    for line_res in reader.lines() {
+        let line = match line_res {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            if *&in_movetext {
+                if let Some(link) = finalize_game(&mut headers, &mut in_movetext) {
+                    return Some(link);
+                }
+            }
+            continue;
+        }
+
+        if let Some((key, value)) = parse_pgn_tag_line(trimmed) {
+            headers.insert(key.to_string(), value);
+            continue;
+        }
+
+        if !headers.is_empty() {
+            in_movetext = true;
+        }
+    }
+
+    finalize_game(&mut headers, &mut in_movetext)
+}
+
 fn extract_lichess_id_from_site(site: &str) -> Option<String> {
     if !site.contains("lichess.org") {
         return None;
@@ -245,10 +357,39 @@ fn extract_lichess_id_from_site(site: &str) -> Option<String> {
 }
 
 fn extract_chesscom_url(site: &str) -> Option<String> {
-    if site.contains("chess.com") && (site.starts_with("http://") || site.starts_with("https://")) {
-        Some(site.to_string())
+    let s = site.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    if s.contains("chess.com") && (s.starts_with("http://") || s.starts_with("https://")) {
+        return Some(s.to_string());
+    }
+
+    let lower = s.to_lowercase();
+    let needle = "chess.com/";
+    let idx = lower.find(needle)?;
+    let start = if idx >= 8 && &lower[idx - 8..idx] == "https://" {
+        idx - 8
+    } else if idx >= 7 && &lower[idx - 7..idx] == "http://" {
+        idx - 7
+    } else if idx >= 4 && &lower[idx - 4..idx] == "www." {
+        idx - 4
     } else {
-        None
+        idx
+    };
+    let tail = &s[start..];
+    let end = tail
+        .find(|c: char| c.is_whitespace() || c == '"' || c == ']' || c == '>' || c == '<')
+        .unwrap_or(tail.len());
+    let candidate = tail[..end].trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if candidate.starts_with("http://") || candidate.starts_with("https://") {
+        Some(candidate.to_string())
+    } else {
+        Some(format!("https://{}", candidate))
     }
 }
 
@@ -667,19 +808,26 @@ fn ensure_profile_player_id(conn: &Connection) -> Option<i32> {
     Some(pid)
 }
 
-fn find_profile_player_id_by_usernames(conn: &Connection, usernames_lower: &HashSet<String>) -> Option<i32> {
+fn find_profile_player_ids_by_usernames(conn: &Connection, usernames_lower: &HashSet<String>) -> Vec<i32> {
     if usernames_lower.is_empty() {
-        return None;
+        return Vec::new();
     }
 
-    let mut stmt = conn.prepare("SELECT Id, Name FROM Players").ok()?;
-    let rows = stmt
+    let mut stmt = match conn.prepare("SELECT Id, Name FROM Players") {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match stmt
         .query_map([], |row| {
             Ok((row.get::<_, i32>(0)?, row.get::<_, Option<String>>(1)?))
         })
-        .ok()?;
+    {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
 
     let mut candidates: Vec<i32> = Vec::new();
+    let mut seen: HashSet<i32> = HashSet::new();
     for row in rows {
         let Ok((pid, name_opt)) = row else {
             continue;
@@ -694,33 +842,32 @@ fn find_profile_player_id_by_usernames(conn: &Connection, usernames_lower: &Hash
 
         let lower = name.to_lowercase();
         let stripped = strip_account_key(name).trim().to_lowercase();
-        if usernames_lower.contains(&lower) || usernames_lower.contains(&stripped) {
+        if (usernames_lower.contains(&lower) || usernames_lower.contains(&stripped)) && seen.insert(pid) {
             candidates.push(pid);
         }
     }
 
     if candidates.is_empty() {
-        return None;
+        return Vec::new();
     }
     if candidates.len() == 1 {
-        return candidates.into_iter().next();
+        return candidates;
     }
 
-    let mut best: Option<(i32, i64)> = None;
-    for pid in candidates {
-        let games_count: i64 = conn
+    // Keep a stable order: more active account ids first.
+    let mut scored: Vec<(i32, i64)> = Vec::with_capacity(candidates.len());
+    for pid in candidates.into_iter() {
+        let games_count = conn
             .query_row(
                 "SELECT COUNT(*) FROM Games WHERE WhiteId = ?1 OR BlackId = ?1",
                 [pid],
                 |row| row.get(0),
             )
             .unwrap_or(0);
-        match best {
-            Some((_, current_best)) if games_count <= current_best => {}
-            _ => best = Some((pid, games_count)),
-        }
+        scored.push((pid, games_count));
     }
-    best.map(|(pid, _)| pid)
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    scored.into_iter().map(|(pid, _)| pid).collect()
 }
 
 #[tauri::command]
@@ -763,17 +910,27 @@ pub async fn dashboard_get_games_history_rows(
 
     // 2) Load online games (single query; later we split by platform).
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let profile_player_id: Option<i32> = (|| {
-        let conn = Connection::open(&db_path).ok()?;
-        let from_usernames = find_profile_player_id_by_usernames(&conn, &usernames_lower);
-        if !usernames_lower.is_empty() {
-            // If profile usernames are known, never fallback to inferred ProfilePlayerId.
-            // A stale/inaccurate inferred id can include games from a different player and inflate counts.
-            from_usernames
-        } else {
-            from_usernames.or_else(|| ensure_profile_player_id(&conn))
+    let profile_player_ids: HashSet<i32> = match Connection::open(&db_path) {
+        Ok(conn) => {
+            let from_usernames = find_profile_player_ids_by_usernames(&conn, &usernames_lower);
+            let resolved = if !usernames_lower.is_empty() {
+                // If profile usernames are known, never fallback to inferred ProfilePlayerId.
+                // A stale/inaccurate inferred id can include games from a different player and inflate counts.
+                from_usernames
+            } else if from_usernames.is_empty() {
+                ensure_profile_player_id(&conn).map(|pid| vec![pid]).unwrap_or_default()
+            } else {
+                from_usernames
+            };
+            resolved.into_iter().collect()
         }
-    })();
+        Err(_) => HashSet::new(),
+    };
+    let profile_player_id_single = if profile_player_ids.len() == 1 {
+        profile_player_ids.iter().copied().next()
+    } else {
+        None
+    };
 
     let mut q = GameQueryJs::default();
     q.options = Some(QueryOptions {
@@ -786,7 +943,7 @@ pub async fn dashboard_get_games_history_rows(
     q.tournament_id = req.event_filter_id;
     q.time_control_category = req.time_control_category.clone();
 
-    if let Some(profile_pid) = profile_player_id {
+    if let Some(profile_pid) = profile_player_id_single {
         q.player1 = Some(profile_pid);
         q.sides = Some(Sides::Any);
         if let Some(opponent_pid) = req.selected_opponent_id {
@@ -847,12 +1004,14 @@ pub async fn dashboard_get_games_history_rows(
         });
     }
 
-        for g in online {
+    for g in online {
             // Identify platform and extract external key.
             let site_tag = parse_site_tag(&g.moves);
+            let link_tag = parse_link_tag(&g.moves);
             let mut kind: Option<GamesHistoryKind> = None;
             let mut external_key = g.id.to_string();
             let mut external_url: Option<String> = None;
+            let chesscom_url_from_link = link_tag.as_deref().and_then(extract_chesscom_url);
 
             if let Some(site) = site_tag.as_deref() {
                 let site_lower = site.to_lowercase();
@@ -869,10 +1028,15 @@ pub async fn dashboard_get_games_history_rows(
                     kind = Some(GamesHistoryKind::Lichess);
                     external_key = id.clone();
                     external_url = Some(format!("https://lichess.org/{}", id));
-                } else if let Some(url) = extract_chesscom_url(site) {
+                } else if let Some(url) = extract_chesscom_url(site).or_else(|| chesscom_url_from_link.clone()) {
                     kind = Some(GamesHistoryKind::Chesscom);
                     external_key = url.clone();
                     external_url = Some(url);
+                } else if site_lower.contains("chess.com") {
+                    // Keep as Chess.com but do not fabricate URLs from internal DB ids.
+                    kind = Some(GamesHistoryKind::Chesscom);
+                    external_key = g.id.to_string();
+                    external_url = None;
                 } else if site_lower.contains("chessbase.com") {
                     kind = Some(GamesHistoryKind::Chessbase);
                     external_key = g.id.to_string();
@@ -891,25 +1055,26 @@ pub async fn dashboard_get_games_history_rows(
                     // If `Sites.Name` stores a URL, try to extract id; else keep numeric.
                     if let Some(id) = extract_lichess_id_from_site(&g.site) {
                         external_key = id.clone();
-                    external_url = Some(format!("https://lichess.org/{}", id));
-                } else {
-                    external_url = normalize_https_url(&g.site);
+                        external_url = Some(format!("https://lichess.org/{}", id));
+                    } else {
+                        external_url = normalize_https_url(&g.site);
+                    }
+                } else if site_lower.contains("chess.com") {
+                    kind = Some(GamesHistoryKind::Chesscom);
+                    if let Some(url) = extract_chesscom_url(&g.site).or_else(|| chesscom_url_from_link.clone()) {
+                        external_key = url.clone();
+                        external_url = Some(url);
+                    } else {
+                        // Keep as Chess.com row, but avoid fake links.
+                        external_key = g.id.to_string();
+                        external_url = None;
+                    }
+                } else if site_lower.contains("chessbase.com") {
+                    kind = Some(GamesHistoryKind::Chessbase);
+                    external_key = g.id.to_string();
+                    external_url = None;
                 }
-            } else if site_lower.contains("chess.com") {
-                kind = Some(GamesHistoryKind::Chesscom);
-                if let Some(url) = extract_chesscom_url(&g.site) {
-                    external_key = url.clone();
-                    external_url = Some(url);
-                } else {
-                    external_key = format!("https://www.chess.com/game/live/{}", g.id);
-                    external_url = Some(external_key.clone());
-                }
-            } else if site_lower.contains("chessbase.com") {
-                kind = Some(GamesHistoryKind::Chessbase);
-                external_key = g.id.to_string();
-                external_url = None;
             }
-        }
 
         // If we still couldn't identify a specific online platform, treat this as a
         // profile-local (imported) game. These come from arbitrary `Sites.Name` values
@@ -929,11 +1094,16 @@ pub async fn dashboard_get_games_history_rows(
         let black_raw = g.black.clone();
         let white_name = strip_account_key(&white_raw).to_string();
         let black_name = strip_account_key(&black_raw).to_string();
-        let (user_is_white, is_profile_game) = if let Some(pid) = profile_player_id {
-            if g.white_id == pid {
+        let (user_is_white, is_profile_game) = if !profile_player_ids.is_empty() {
+            let white_matches = profile_player_ids.contains(&g.white_id);
+            let black_matches = profile_player_ids.contains(&g.black_id);
+            if white_matches && !black_matches {
                 (true, true)
-            } else if g.black_id == pid {
+            } else if black_matches && !white_matches {
                 (false, true)
+            } else if white_matches && black_matches {
+                // Game between two profile-owned accounts.
+                (true, true)
             } else {
                 let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
                     || usernames_lower.contains(&white_name.to_lowercase());
@@ -1313,15 +1483,19 @@ pub async fn dashboard_search_profile_opponents(
     let q_lower = q.to_lowercase();
     let usernames_lower = usernames_lower_set(&profile_usernames);
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let profile_player_id: Option<i32> = (|| {
-        let conn = Connection::open(&db_path).ok()?;
-        let from_usernames = find_profile_player_id_by_usernames(&conn, &usernames_lower);
-        if !usernames_lower.is_empty() {
-            from_usernames
-        } else {
-            from_usernames.or_else(|| ensure_profile_player_id(&conn))
+    let profile_player_ids: Vec<i32> = match Connection::open(&db_path) {
+        Ok(conn) => {
+            let from_usernames = find_profile_player_ids_by_usernames(&conn, &usernames_lower);
+            if !usernames_lower.is_empty() {
+                from_usernames
+            } else if from_usernames.is_empty() {
+                ensure_profile_player_id(&conn).map(|pid| vec![pid]).unwrap_or_default()
+            } else {
+                from_usernames
+            }
         }
-    })();
+        Err(_) => Vec::new(),
+    };
 
     let mut out: Vec<String> = Vec::new();
     let mut seen_stripped_lower: HashSet<String> = HashSet::new();
@@ -1348,7 +1522,7 @@ pub async fn dashboard_search_profile_opponents(
         }
     };
 
-    if let Some(profile_pid) = profile_player_id {
+    if !profile_player_ids.is_empty() {
         let conn = Connection::open(&db_path)?;
         let mut stmt = conn.prepare(
             r#"
@@ -1369,18 +1543,20 @@ pub async fn dashboard_search_profile_opponents(
             "#,
         )?;
 
-        let rows = stmt.query_map(params![profile_pid, q_lower.as_str()], |row| {
-            Ok(row.get::<_, Option<String>>(0)?)
-        })?;
+        for profile_pid in profile_player_ids.iter().copied() {
+            let rows = stmt.query_map(params![profile_pid, q_lower.as_str()], |row| {
+                Ok(row.get::<_, Option<String>>(0)?)
+            })?;
 
-        for row in rows {
-            let Ok(name_opt) = row else {
-                continue;
-            };
-            let Some(name) = name_opt else {
-                continue;
-            };
-            maybe_push(&name);
+            for row in rows {
+                let Ok(name_opt) = row else {
+                    continue;
+                };
+                let Some(name) = name_opt else {
+                    continue;
+                };
+                maybe_push(&name);
+            }
         }
     } else {
         let pq = PlayerQuery {
@@ -1409,29 +1585,38 @@ pub async fn dashboard_search_profile_opponents(
     // Ensure exact matches are included even if they were outside the first page/ranking window.
     if !seen_stripped_lower.contains(&q_lower) {
         let conn = Connection::open(&db_path)?;
-        let exact_name: Option<String> = if let Some(profile_pid) = profile_player_id {
-            conn.query_row(
-                r#"
-                SELECT p.Name
-                FROM Players p
-                WHERE p.Name IS NOT NULL
-                  AND trim(p.Name) <> ''
-                  AND (
-                    lower(trim(p.Name)) = ?1
-                    OR replace(replace(lower(trim(p.Name)), 'lichess:', ''), 'chesscom:', '') = ?1
-                  )
-                  AND EXISTS (
-                    SELECT 1
-                    FROM Games g
-                    WHERE (g.WhiteID = ?2 AND g.BlackID = p.ID)
-                       OR (g.BlackID = ?2 AND g.WhiteID = p.ID)
-                  )
-                LIMIT 1
-                "#,
-                params![q_lower.as_str(), profile_pid],
-                |row| row.get(0),
-            )
-            .optional()?
+        let exact_name: Option<String> = if !profile_player_ids.is_empty() {
+            let mut found: Option<String> = None;
+            for profile_pid in profile_player_ids.iter().copied() {
+                let candidate: Option<String> = conn
+                    .query_row(
+                        r#"
+                        SELECT p.Name
+                        FROM Players p
+                        WHERE p.Name IS NOT NULL
+                          AND trim(p.Name) <> ''
+                          AND (
+                            lower(trim(p.Name)) = ?1
+                            OR replace(replace(lower(trim(p.Name)), 'lichess:', ''), 'chesscom:', '') = ?1
+                          )
+                          AND EXISTS (
+                            SELECT 1
+                            FROM Games g
+                            WHERE (g.WhiteID = ?2 AND g.BlackID = p.ID)
+                               OR (g.BlackID = ?2 AND g.WhiteID = p.ID)
+                          )
+                        LIMIT 1
+                        "#,
+                        params![q_lower.as_str(), profile_pid],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if candidate.is_some() {
+                    found = candidate;
+                    break;
+                }
+            }
+            found
         } else {
             conn.query_row(
                 r#"
@@ -1584,4 +1769,74 @@ pub async fn dashboard_decode_profile_game_blob_moves(
     };
 
     Ok(Some(DecodedGameMovesResponse { initial_fen, moves }))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn dashboard_resolve_chesscom_game_url(
+    app: AppHandle,
+    profile_id: String,
+    game_id: i32,
+) -> Result<Option<String>> {
+    let profile_id = profile_id.trim().to_string();
+    if profile_id.is_empty() || game_id <= 0 {
+        return Ok(None);
+    }
+
+    let db_path = parse_profile_db_path(&app, &profile_id)?;
+    let conn = Connection::open(&db_path)?;
+
+    let row = conn
+        .query_row(
+            "SELECT g.Date, g.UTCTime, pw.Name, pb.Name
+             FROM Games g
+             LEFT JOIN Players pw ON pw.ID = g.WhiteID
+             LEFT JOIN Players pb ON pb.ID = g.BlackID
+             WHERE g.ID = ?1
+             LIMIT 1",
+            [game_id],
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    let Some((date_opt, time_opt, white_opt, black_opt)) = row else {
+        return Ok(None);
+    };
+    let (Some(date), Some(time), Some(white), Some(black)) = (date_opt, time_opt, white_opt, black_opt) else {
+        return Ok(None);
+    };
+
+    let db_dir = db_path.parent().map(|p| p.to_path_buf()).ok_or_else(|| {
+        Error::PackageManager("Failed to resolve profile db directory".to_string())
+    })?;
+    let mut found: Option<String> = None;
+    for entry in std::fs::read_dir(db_dir)? {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(&format!("profile_{}_chesscom_", profile_id)) || !name.ends_with(".pgn") {
+            continue;
+        }
+        if let Some(link) = find_chesscom_link_in_pgn_export(&path, &date, &time, &white, &black) {
+            found = Some(link);
+            break;
+        }
+    }
+
+    Ok(found)
 }

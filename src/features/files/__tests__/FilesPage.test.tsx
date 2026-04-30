@@ -7,6 +7,10 @@ import { render } from "./test-utils";
 // -----------------------------
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: {
+    type: "3rdParty",
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
   }),
@@ -20,6 +24,11 @@ vi.mock("jotai", async (importOriginal) => {
     useAtomValue: () => [],
   };
 });
+
+vi.mock("@/App", () => ({
+  loadDirectories: vi.fn(),
+  updateDirectoriesCache: vi.fn(),
+}));
 
 vi.mock("@mantine/modals", () => ({
   modals: {

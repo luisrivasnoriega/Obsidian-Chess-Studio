@@ -29,13 +29,12 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Event } from "@/bindings";
 import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { stripAccountKey } from "@/utils/accountKeys";
-import { getChesscomGame } from "@/utils/chess.com/api";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
 import { getLichessGame } from "@/utils/lichess/api";
@@ -126,6 +125,35 @@ const _chessComResultsFromPgn = (pgn: string): { white: string; black: string } 
   return { white: "referred", black: "referred" };
 };
 
+const _normalizeGameUrl = (urlLike?: string | null): string | null => {
+  const raw = (urlLike ?? "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("www.")) return `https://${raw}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}\/.+$/i.test(raw)) return `https://${raw}`;
+  return null;
+};
+
+const _resolveRowGameUrl = (row: {
+  kind: GamesHistoryKind;
+  gameKey: string;
+  externalUrl: string | null;
+}): string | null => {
+  const external = _normalizeGameUrl(row.externalUrl);
+  if (external) return external;
+
+  const key = (row.gameKey ?? "").trim();
+  const keyUrl = _normalizeGameUrl(key);
+  if (keyUrl) return keyUrl;
+
+  if (row.kind === "lichess") {
+    // Some rows keep only the lichess id in gameKey.
+    if (/^[A-Za-z0-9_-]{6,}$/.test(key)) return `https://lichess.org/${key}`;
+  }
+
+  return null;
+};
+
 function getTimeControlLabel(
   t: (key: string, options?: { defaultValue?: string }) => string,
   value: TimeControlCategory,
@@ -146,6 +174,19 @@ function getTimeControlLabel(
     case "daily":
       return t("chess.timeControl.daily", { defaultValue: "Daily" });
   }
+}
+
+function getSourceBadgeStyles(kind: GamesHistoryKind) {
+  if (kind === "lichess") {
+    return { backgroundColor: "#2F6F9F", color: "#FFFFFF" };
+  }
+  if (kind === "chesscom") {
+    return { backgroundColor: "#81B64C", color: "#FFFFFF" };
+  }
+  if (kind === "chessbase") {
+    return { backgroundColor: "#3B82F6", color: "#FFFFFF" };
+  }
+  return { backgroundColor: "#6B7280", color: "#FFFFFF" };
 }
 
 export function ProfileGamesTab({
@@ -188,11 +229,11 @@ export function ProfileGamesTab({
   onAnalyzeLocalGame: (game: GameRecord) => void;
   onAnalyzeChessComGame: (
     game: ChessComGameWithEvent,
-    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
   onAnalyzeLichessGame: (
     game: DashboardLichessGame,
-    meta?: { profileId: string; profileDbGameId: string; playerColor?: "white" | "black" },
+    meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
@@ -495,33 +536,71 @@ export function ProfileGamesTab({
     ];
   }, [analyzeAllTypeCounts, localGames.length, chessComGames.length, lichessGames.length, t, totalCount]);
 
-  const handleOpenGame = async (url: string | null) => {
-    if (!url) return;
+  const handleOpenGame = async (
+    url: string | null,
+    debug?: { kind: GamesHistoryKind; gameKey: string; externalUrl: string | null },
+  ) => {
+    if (!url) {
+      console.warn("[games-table] openGame skipped: empty URL", debug ?? null);
+      notifications.show({
+        title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
+        message: "Missing game URL",
+        color: "red",
+      });
+      return;
+    }
+    console.info("[games-table] openGame start", { url, ...(debug ?? {}) });
     try {
       await openUrl(url, "inAppBrowser");
+      console.info("[games-table] openGame success via inAppBrowser", { url, ...(debug ?? {}) });
       return;
-    } catch {}
+    } catch (error) {
+      console.warn("[games-table] openGame inAppBrowser failed", { url, error: String(error), ...(debug ?? {}) });
+    }
 
     try {
       await openUrl(url);
+      console.info("[games-table] openGame success via openUrl", { url, ...(debug ?? {}) });
       return;
-    } catch {}
-
-    try {
-      await openPath(url);
-      return;
-    } catch {}
+    } catch (error) {
+      console.warn("[games-table] openGame openUrl failed", { url, error: String(error), ...(debug ?? {}) });
+    }
 
     try {
       window.open(url, "_blank", "noopener,noreferrer");
+      console.info("[games-table] openGame attempted via window.open", { url, ...(debug ?? {}) });
       return;
-    } catch {}
+    } catch (error) {
+      console.warn("[games-table] openGame window.open failed", { url, error: String(error), ...(debug ?? {}) });
+    }
 
     notifications.show({
       title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
-      message: t("features.dashboard.openGameFailedMessage", "Failed to open the game link. Please try again."),
+      message: `${t("features.dashboard.openGameFailedMessage", "Failed to open the game link. Please try again.")} URL: ${url}`,
       color: "red",
     });
+  };
+
+  const resolveChessComUrlFromProfileData = async (
+    row: Pick<GamesHistoryRow, "analysisGameId" | "kind">,
+  ): Promise<string | null> => {
+    if (row.kind !== "chesscom" || !profileId) return null;
+    const gameId = Number.parseInt(String(row.analysisGameId), 10);
+    if (!Number.isFinite(gameId) || gameId <= 0) return null;
+    try {
+      const resolved = await invoke<string | null>("dashboard_resolve_chesscom_game_url", {
+        profileId,
+        gameId,
+      });
+      return _normalizeGameUrl(resolved);
+    } catch (error) {
+      console.warn("[games-table] resolveChessComUrlFromProfileData failed", {
+        profileId,
+        gameId,
+        error: String(error),
+      });
+      return null;
+    }
   };
 
   const handleAnalyzeRow = async (row: GamesHistoryRow, pgn: string | null) => {
@@ -538,23 +617,24 @@ export function ProfileGamesTab({
     if (row.kind === "chesscom") {
       const existing = chessComGames.find((x) => x.url === row.gameKey);
       if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-        if (profileId)
-          onAnalyzeChessComGame(existing, {
-            profileId,
-            profileDbGameId: row.analysisGameId,
-            playerColor: row.color,
-          });
-        else onAnalyzeChessComGame(existing);
+        onAnalyzeChessComGame(existing, {
+          profileId: profileId ?? undefined,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        });
         return;
       }
 
       const url = row.externalUrl || row.gameKey;
-      const fetched =
-        ((await getChesscomGame(url)) ?? "").trim() || (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
+      // For profile DB rows, avoid remote fetch here. Use locally available PGN only.
+      const fetched = (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
       if (!fetched) {
         if (existing) {
-          if (profileId) onAnalyzeChessComGame(existing, { profileId, profileDbGameId: row.analysisGameId });
-          else onAnalyzeChessComGame(existing);
+          onAnalyzeChessComGame(existing, {
+            profileId: profileId ?? undefined,
+            profileDbGameId: row.analysisGameId,
+            playerColor: row.color,
+          });
         }
         return;
       }
@@ -582,13 +662,11 @@ export function ProfileGamesTab({
         eventName: row.eventName ?? null,
       };
 
-      if (profileId)
-        onAnalyzeChessComGame(stub, {
-          profileId,
-          profileDbGameId: row.analysisGameId,
-          playerColor: row.color,
-        });
-      else onAnalyzeChessComGame(stub);
+      onAnalyzeChessComGame(stub, {
+        profileId: profileId ?? undefined,
+        profileDbGameId: row.analysisGameId,
+        playerColor: row.color,
+      });
       return;
     }
 
@@ -623,26 +701,22 @@ export function ProfileGamesTab({
         eventName: row.eventName ?? null,
       };
 
-      if (profileId)
-        onAnalyzeLichessGame(stub, {
-          profileId,
-          profileDbGameId: row.analysisGameId,
-          playerColor: row.color,
-        });
-      else onAnalyzeLichessGame(stub);
+      onAnalyzeLichessGame(stub, {
+        profileId: profileId ?? undefined,
+        profileDbGameId: row.analysisGameId,
+        playerColor: row.color,
+      });
       return;
     }
 
     // Lichess
     const existing = lichessGames.find((x) => x.id === row.gameKey);
     if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-      if (profileId)
-        onAnalyzeLichessGame(existing, {
-          profileId,
-          profileDbGameId: row.analysisGameId,
-          playerColor: row.color,
-        });
-      else onAnalyzeLichessGame(existing);
+      onAnalyzeLichessGame(existing, {
+        profileId: profileId ?? undefined,
+        profileDbGameId: row.analysisGameId,
+        playerColor: row.color,
+      });
       return;
     }
 
@@ -651,8 +725,11 @@ export function ProfileGamesTab({
       ((await getLichessGame(gameId)) ?? "").trim() || (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
     if (!fetched) {
       if (existing) {
-        if (profileId) onAnalyzeLichessGame(existing, { profileId, profileDbGameId: row.analysisGameId });
-        else onAnalyzeLichessGame(existing);
+        onAnalyzeLichessGame(existing, {
+          profileId: profileId ?? undefined,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        });
       }
       return;
     }
@@ -684,13 +761,11 @@ export function ProfileGamesTab({
       eventName: row.eventName ?? null,
     };
 
-    if (profileId)
-      onAnalyzeLichessGame(stub, {
-        profileId,
-        profileDbGameId: row.analysisGameId,
-        playerColor: row.color,
-      });
-    else onAnalyzeLichessGame(stub);
+    onAnalyzeLichessGame(stub, {
+      profileId: profileId ?? undefined,
+      profileDbGameId: row.analysisGameId,
+      playerColor: row.color,
+    });
   };
 
   // Favorite toggling & analyzed detection are handled per-row using backend-provided fields.
@@ -975,6 +1050,12 @@ export function ProfileGamesTab({
               rows.map((row) => {
                 const pgn = row.pgn ?? null;
                 const dateStr = formatRelativeTimeAgo(row.timestampMs, now, t);
+                const gameUrl = _resolveRowGameUrl(row);
+                const canResolveChessComUrl =
+                  row.kind === "chesscom" &&
+                  !!profileId &&
+                  Number.isFinite(Number.parseInt(String(row.analysisGameId), 10));
+                const canOpenGame = !!gameUrl || canResolveChessComUrl;
 
                 const favoriteSource =
                   row.kind === "local"
@@ -989,18 +1070,7 @@ export function ProfileGamesTab({
                 return (
                   <Table.Tr key={`${row.kind}:${row.gameKey}`}>
                     <Table.Td>
-                      <Badge
-                        variant="light"
-                        color={
-                          row.kind === "lichess"
-                            ? "red"
-                            : row.kind === "chesscom"
-                              ? "green"
-                              : row.kind === "chessbase"
-                                ? "blue"
-                                : "gray"
-                        }
-                      >
+                      <Badge variant="filled" style={getSourceBadgeStyles(row.kind)}>
                         {row.kind === "local"
                           ? t("features.dashboard.sourceLocal", { defaultValue: "Local" })
                           : row.kind === "chesscom"
@@ -1121,7 +1191,21 @@ export function ProfileGamesTab({
                         )}
                         {row.kind !== "local" && (
                           <Tooltip label={t("features.dashboard.openGame", "Open game")}>
-                            <ActionIcon variant="subtle" onClick={() => void handleOpenGame(row.externalUrl)}>
+                            <ActionIcon
+                              variant="subtle"
+                              onClick={async () => {
+                                let finalUrl = gameUrl;
+                                if (!finalUrl && canResolveChessComUrl) {
+                                  finalUrl = await resolveChessComUrlFromProfileData(row);
+                                }
+                                await handleOpenGame(finalUrl, {
+                                  kind: row.kind,
+                                  gameKey: row.gameKey,
+                                  externalUrl: row.externalUrl,
+                                });
+                              }}
+                              disabled={!canOpenGame}
+                            >
                               <IconExternalLink size={16} />
                             </ActionIcon>
                           </Tooltip>

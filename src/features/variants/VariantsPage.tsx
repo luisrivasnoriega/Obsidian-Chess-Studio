@@ -19,37 +19,52 @@ import { useForm } from "@mantine/form";
 import { useDisclosure } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconEye, IconGitBranch, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconEdit, IconEye, IconGitBranch, IconPlus, IconRefresh, IconTrash } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { exists, readDir, readTextFile, remove, writeTextFile } from "@tauri-apps/plugin-fs";
-import { useAtom, useSetAtom } from "jotai";
+import { exists, readDir, remove } from "@tauri-apps/plugin-fs";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { loadDirectories } from "@/App";
 import GenericHeader from "@/components/GenericHeader";
 import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, activeTabAtom, tabsAtom } from "@/state/atoms";
 import { defaultPGN, parsePGN } from "@/utils/chess";
-import { createFile, openFile } from "@/utils/files";
+import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { VariantGridView } from "./components/VariantGridView";
 import type { VariantInfo } from "./types";
+import { cleanupVariantLinksAfterDelete, repairVariantLinks } from "./utils/links";
+import { getVariantsDirectory } from "./utils/profileDir";
 
-async function loadVariants(): Promise<VariantInfo[]> {
-  const dirs = await loadDirectories();
-  const documentsDir = dirs.documentDir;
-  if (!(await exists(documentsDir))) {
-    return [];
+async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
+  const scanDirs = [variantsDir];
+  const allEntries: Array<FileMetadata> = [];
+  for (const dir of scanDirs) {
+    if (!(await exists(dir))) {
+      continue;
+    }
+    const entries = await readDir(dir);
+    const resolved = await processEntriesRecursively(dir, entries);
+    allEntries.push(...resolved.filter((entry): entry is FileMetadata => entry.type === "file"));
   }
 
-  const entries = await readDir(documentsDir);
-  const allEntries = await processEntriesRecursively(documentsDir, entries);
-
-  const variantFiles = allEntries
-    .filter((entry): entry is FileMetadata => entry.type === "file")
-    .filter((file) => file.metadata.type === "variants");
+  if (allEntries.length === 0) {
+    return [];
+  }
+  const seenPaths = new Set<string>();
+  const variantFiles = allEntries.filter((file) => {
+    if (file.metadata.type !== "variants") {
+      return false;
+    }
+    const key = file.path.replace(/\\/g, "/").toLowerCase();
+    if (seenPaths.has(key)) {
+      return false;
+    }
+    seenPaths.add(key);
+    return true;
+  });
 
   const variants: VariantInfo[] = [];
 
@@ -112,6 +127,11 @@ async function loadVariants(): Promise<VariantInfo[]> {
           ?.slice("references:".length)
           .trim() || null;
       const comments = commentsTag || referencesTag || null;
+      const parentLink = file.metadata.type === "variants" ? (file.metadata.links?.parent ?? null) : null;
+      const childLinks =
+        file.metadata.type === "variants" && Array.isArray(file.metadata.links?.children)
+          ? file.metadata.links.children
+          : [];
 
       // Fallback to PGN-derived headers if metadata tags don't exist
       const opening = openingTag || gameTree?.headers?.eco || null;
@@ -128,6 +148,8 @@ async function loadVariants(): Promise<VariantInfo[]> {
         engineMs: engineMs ? Number.parseInt(engineMs, 10) : null,
         variantsCount: variantsCount ? Number.parseInt(variantsCount, 10) : null,
         comments: comments,
+        parentLink,
+        childLinks,
       });
     } catch (error) {
       console.error(`Error loading variant ${file.path}:`, error);
@@ -142,10 +164,12 @@ export default function VariantsPage() {
   const navigate = useNavigate();
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
   const { layout } = useResponsiveLayout();
 
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
+  const [repairingLinks, setRepairingLinks] = useState(false);
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<VariantInfo>>({
     columnAccessor: "name",
     direction: "asc",
@@ -162,8 +186,8 @@ export default function VariantsPage() {
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["variants"],
-    queryFn: loadVariants,
+    queryKey: ["variants", activeProfileId ?? "global"],
+    queryFn: async () => loadVariants(await getVariantsDirectory(activeProfileId)),
   });
 
   const [createNewModalOpened, { open: openCreateNewModal, close: closeCreateNewModal }] = useDisclosure(false);
@@ -189,8 +213,7 @@ export default function VariantsPage() {
 
   const handleCreateNew = useCallback(async () => {
     try {
-      const dirs = await loadDirectories();
-      const documentsDir = dirs.documentDir;
+      const variantsDir = await getVariantsDirectory(activeProfileId);
 
       let filename = createNewForm.values.name.trim();
 
@@ -217,11 +240,11 @@ export default function VariantsPage() {
         return;
       }
 
-      console.log("Creating variant file:", { filename, dir: documentsDir });
+      console.log("Creating variant file:", { filename, dir: variantsDir, profileId: activeProfileId });
       const result = await createFile({
         filename,
         filetype: "variants",
-        dir: documentsDir,
+        dir: variantsDir,
         pgn: defaultPGN(),
       });
 
@@ -265,7 +288,7 @@ export default function VariantsPage() {
         color: "red",
       });
     }
-  }, [createNewForm, setTabs, setActiveTab, navigate, closeCreateNewModal, refetch, t]);
+  }, [activeProfileId, createNewForm, setTabs, setActiveTab, navigate, closeCreateNewModal, refetch, t]);
 
   const handleEdit = useCallback(
     async (variant: VariantInfo) => {
@@ -288,8 +311,7 @@ export default function VariantsPage() {
     if (!selectedVariantForComments) return;
 
     try {
-      const infoPath = selectedVariantForComments.path.replace(".pgn", ".info");
-      const metadata = JSON.parse(await readTextFile(infoPath));
+      const metadata = await readInfoMetadata(selectedVariantForComments.path, "variants");
 
       // Remove old comments/references tags
       metadata.tags = (metadata.tags || []).filter(
@@ -301,7 +323,7 @@ export default function VariantsPage() {
         metadata.tags.push(`comments:${commentsForm.values.comments.trim()}`);
       }
 
-      await writeTextFile(infoPath, JSON.stringify(metadata, null, 2));
+      await writeInfoMetadata(selectedVariantForComments.path, metadata);
 
       notifications.show({
         title: t("common.success"),
@@ -342,6 +364,17 @@ export default function VariantsPage() {
             if (await exists(infoPath)) {
               await remove(infoPath);
             }
+            try {
+              const variantDir = variant.path.replace(/[\\/][^\\/]+$/, "");
+              const report = await cleanupVariantLinksAfterDelete(variant.path, variantDir);
+              if (report.updatedFiles > 0 || report.removedLinks > 0) {
+                try {
+                  window.dispatchEvent(new Event("variants:links-updated"));
+                } catch {}
+              }
+            } catch {
+              // Ignore link cleanup errors during delete.
+            }
             notifications.show({
               title: t("common.success"),
               message: t("features.variants.deleted", { defaultValue: "Variant deleted successfully" }),
@@ -361,6 +394,37 @@ export default function VariantsPage() {
     [refetch, t],
   );
 
+  const handleRepairLinks = useCallback(async () => {
+    try {
+      setRepairingLinks(true);
+      const variantsDir = await getVariantsDirectory(activeProfileId);
+      const report = await repairVariantLinks(variantsDir);
+      try {
+        window.dispatchEvent(new Event("variants:links-updated"));
+      } catch {}
+      await refetch();
+
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.variants.repairLinksDone", {
+          defaultValue: "Links repaired. Updated: {{updated}}, added: {{added}}, removed: {{removed}}.",
+          updated: report.updatedFiles,
+          added: report.addedLinks,
+          removed: report.removedLinks,
+        }),
+        color: "green",
+      });
+    } catch {
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.variants.repairLinksFailed", { defaultValue: "Failed to repair variant links." }),
+        color: "red",
+      });
+    } finally {
+      setRepairingLinks(false);
+    }
+  }, [activeProfileId, refetch, t]);
+
   const filteredAndSorted = useMemo(() => {
     let filtered = variants;
 
@@ -372,6 +436,10 @@ export default function VariantsPage() {
           v.opening?.toLowerCase().includes(searchLower) ||
           v.database?.toLowerCase().includes(searchLower) ||
           v.engine?.toLowerCase().includes(searchLower) ||
+          v.parentLink?.name?.toLowerCase().includes(searchLower) ||
+          v.childLinks?.some(
+            (link) => link.name.toLowerCase().includes(searchLower) || link.label?.toLowerCase().includes(searchLower),
+          ) ||
           v.comments?.toLowerCase().includes(searchLower) ||
           (v.engineMs !== null && String(v.engineMs).includes(searchLower)) ||
           (v.variantsCount !== null && String(v.variantsCount).includes(searchLower)),
@@ -537,6 +605,30 @@ export default function VariantsPage() {
         ),
     },
     {
+      accessor: "links",
+      title: t("features.variants.links", { defaultValue: "Links" }),
+      sortable: false,
+      render: (variant: VariantInfo) => (
+        <Group gap={6} wrap="wrap">
+          {variant.parentLink ? (
+            <Badge variant="outline" color="teal" size="sm">
+              {t("features.variants.parentLink", { defaultValue: "Parent" })}
+            </Badge>
+          ) : null}
+          {(variant.childLinks?.length ?? 0) > 0 ? (
+            <Badge variant="light" color="cyan" size="sm">
+              {t("features.variants.childLinks", { defaultValue: "Children" })}: {variant.childLinks?.length ?? 0}
+            </Badge>
+          ) : null}
+          {!variant.parentLink && (variant.childLinks?.length ?? 0) === 0 ? (
+            <Text size="sm" c="dimmed" fs="italic">
+              -
+            </Text>
+          ) : null}
+        </Group>
+      ),
+    },
+    {
       accessor: "comments",
       title: t("features.variants.comments", { defaultValue: "Comments / References" }),
       sortable: true,
@@ -608,9 +700,20 @@ export default function VariantsPage() {
         setViewMode={setViewMode}
         pageKey="variants"
         actions={
-          <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateNewModal}>
-            {t("features.variants.createNew", { defaultValue: "Create New" })}
-          </Button>
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconRefresh size="1rem" />}
+              loading={repairingLinks}
+              onClick={() => void handleRepairLinks()}
+            >
+              {t("features.variants.repairLinks", { defaultValue: "Repair links" })}
+            </Button>
+            <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateNewModal}>
+              {t("features.variants.createNew", { defaultValue: "Create New" })}
+            </Button>
+          </Group>
         }
       />
       <Box px="md" pb="md" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>

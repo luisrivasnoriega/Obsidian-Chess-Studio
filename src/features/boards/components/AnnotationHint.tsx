@@ -191,4 +191,29 @@ const glyphToSvg: Record<Annotation, JSX.Element> = {
       />
     </>
   ),
+  Book: (
+    <>
+      <path
+        d="M26 22h38c4 0 8 4 8 8v48H34c-4 0-8-4-8-8V22zM34 22v56M42 30h22M42 38h22M56 22v16l-5-3-5 3V22z"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="5.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </>
+  ),
+  BookError: (
+    <>
+      <path
+        d="M26 22h38c4 0 8 4 8 8v48H34c-4 0-8-4-8-8V22zM34 22v56M42 30h22M42 38h22M56 22v16l-5-3-5 3V22z"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="5.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path fill="#fff" d="M77 77 L83 83 M83 77 L77 83" stroke="#fff" strokeWidth="5" strokeLinecap="round" />
+    </>
+  ),
 } as const;

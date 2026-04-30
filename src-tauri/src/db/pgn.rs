@@ -284,6 +284,17 @@ impl Visitor for Importer {
             self.game.time = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"Site" {
             self.game.site_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+        } else if key == b"Link" {
+            // Preserve real external game links when PGN includes them.
+            // This keeps compatibility with current schema (no dedicated URL column)
+            // by storing the canonical game URL in Sites.Name.
+            let link = value.decode_utf8_lossy().into_owned();
+            let lower = link.to_ascii_lowercase();
+            if (lower.contains("chess.com") || lower.contains("lichess.org"))
+                && (link.starts_with("http://") || link.starts_with("https://"))
+            {
+                self.game.site_name = Some(link);
+            }
         } else if key == b"Event" {
             self.game.event_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"Result" {

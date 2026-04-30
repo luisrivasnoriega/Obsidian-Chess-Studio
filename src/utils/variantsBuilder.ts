@@ -32,6 +32,43 @@ export type EngineRequestDto = {
   extraOptions: Array<{ name: string; value: string }>;
 };
 
+export type VariantsSplitMode = "none" | "manual" | "auto";
+
+export type BuildVariantsSplitConfigDto = {
+  enabled: boolean;
+  mode: VariantsSplitMode;
+  splitAtPly?: number;
+  maxSegments?: number;
+  maxLinesPerSegment?: number;
+};
+
+export type MoveSpecDto = {
+  value: string;
+  source?: "db" | "engine";
+  white?: number;
+  black?: number;
+  draws?: number;
+  total?: number;
+};
+
+export type LineDto = {
+  moves: MoveSpecDto[];
+};
+
+export type VariantsSegmentStatsDto = {
+  lineCount: number;
+};
+
+export type VariantsSegmentDto = {
+  id: string;
+  anchorPly: number;
+  anchorFen: string;
+  anchorPath: number[];
+  title?: string;
+  lines: LineDto[];
+  stats: VariantsSegmentStatsDto;
+};
+
 export type BuildVariantsTreeRequest = {
   root: VariantsTreeNodeDto;
   startPath: number[];
@@ -48,19 +85,13 @@ export type BuildVariantsTreeRequest = {
   coverage: number;
   minMoves: number;
   depth: number;
+  splitConfig?: BuildVariantsSplitConfigDto;
 };
 
 export type BuildVariantsTreeResponse = {
-  lines: Array<{
-    moves: Array<{
-      value: string;
-      source?: "db" | "engine";
-      white?: number;
-      black?: number;
-      draws?: number;
-      total?: number;
-    }>;
-  }>;
+  lines: LineDto[];
+  segments?: VariantsSegmentDto[];
+  warnings?: string[];
 };
 
 export async function buildVariantsTree(request: BuildVariantsTreeRequest): Promise<BuildVariantsTreeResponse> {

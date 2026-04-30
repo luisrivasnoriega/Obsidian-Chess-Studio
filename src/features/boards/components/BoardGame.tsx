@@ -1702,31 +1702,35 @@ function BoardGame() {
     );
   }
 
+  const boardContent = (
+    <ResponsiveBoard
+      dirty={false}
+      editingMode={false}
+      toggleEditingMode={() => undefined}
+      viewOnly={gameState !== "playing"}
+      disableVariations
+      boardRef={boardRef}
+      canTakeBack={onePlayerIsEngine}
+      movable={movable}
+      whiteTime={gameState === "playing" ? (whiteTime ?? undefined) : undefined}
+      blackTime={gameState === "playing" ? (blackTime ?? undefined) : undefined}
+      topBar={false}
+      viewPawnStructure={viewPawnStructure}
+      setViewPawnStructure={setViewPawnStructure}
+      selectedPiece={selectedPiece}
+      setSelectedPiece={setSelectedPiece}
+      changeTabType={changeToAnalysisMode}
+      currentTabType="play"
+      startGame={startGame}
+      gameState={gameState}
+      startGameDisabled={error !== null}
+    />
+  );
+
   return (
     <>
       <Portal target="#left" style={{ height: "100%" }}>
-        <ResponsiveBoard
-          dirty={false}
-          editingMode={false}
-          toggleEditingMode={() => undefined}
-          viewOnly={gameState !== "playing"}
-          disableVariations
-          boardRef={boardRef}
-          canTakeBack={onePlayerIsEngine}
-          movable={movable}
-          whiteTime={gameState === "playing" ? (whiteTime ?? undefined) : undefined}
-          blackTime={gameState === "playing" ? (blackTime ?? undefined) : undefined}
-          topBar={false}
-          viewPawnStructure={viewPawnStructure}
-          setViewPawnStructure={setViewPawnStructure}
-          selectedPiece={selectedPiece}
-          setSelectedPiece={setSelectedPiece}
-          changeTabType={changeToAnalysisMode}
-          currentTabType="play"
-          startGame={startGame}
-          gameState={gameState}
-          startGameDisabled={error !== null}
-        />
+        {boardContent}
       </Portal>
       <Portal target="#topRight" style={{ height: "100%", overflow: "hidden" }}>
         <Paper withBorder shadow="sm" p="md" h="100%">

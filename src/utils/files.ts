@@ -5,7 +5,13 @@ import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-f
 import { platform } from "@tauri-apps/plugin-os";
 import { defaultGame, makePgn } from "chessops/pgn";
 import { commands } from "@/bindings";
-import type { FileMetadata } from "@/features/files/utils/file";
+import {
+  createDefaultFileInfoMetadata,
+  type FileInfoMetadata,
+  type FileMetadata,
+  type FileType,
+  normalizeFileInfoMetadata,
+} from "@/features/files/utils/file";
 import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
 import { createTab, type Tab } from "./tabs";
@@ -28,10 +34,36 @@ export async function getFileNameWithoutExtension(filePath: string): Promise<str
   return fileNameWithExtension.replace(`.${extension}`, "");
 }
 
+export async function readInfoMetadata(filePath: string, fallbackType: FileType = "other"): Promise<FileInfoMetadata> {
+  const metadataPath = filePath.replace(".pgn", ".info");
+  if (!(await exists(metadataPath))) {
+    return createDefaultFileInfoMetadata(fallbackType);
+  }
+
+  try {
+    const raw = JSON.parse(await readTextFile(metadataPath));
+    return normalizeFileInfoMetadata(raw, fallbackType);
+  } catch {
+    return createDefaultFileInfoMetadata(fallbackType);
+  }
+}
+
+export async function writeInfoMetadata(filePath: string, metadata: FileInfoMetadata): Promise<void> {
+  const metadataPath = filePath.replace(".pgn", ".info");
+  const normalized = normalizeFileInfoMetadata(metadata, metadata.type);
+  await writeTextFile(metadataPath, JSON.stringify(normalized, null, 2));
+}
+
 export async function openFile(
   file: string,
   setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
   setActiveTab: React.Dispatch<React.SetStateAction<string | null>>,
+  options?: {
+    position?: number[];
+    initialAnalysisTab?: string;
+    initialAnalysisSubTab?: string;
+    initialNotationView?: "variations" | "repertoire" | "report";
+  },
 ) {
   const count = unwrap(await commands.countPgnGames(file));
   const games = unwrap(await commands.readGames(file, 0, count - 1));
@@ -40,29 +72,12 @@ export async function openFile(
   const fileName = await getFileNameWithoutExtension(file);
 
   // Read the file metadata from .info file to get the correct file type
-  const metadataPath = file.replace(".pgn", ".info");
-  let fileType: "game" | "repertoire" | "tournament" | "puzzle" | "variants" | "other" = "game";
-  let fileTags: string[] = [];
-  if (await exists(metadataPath)) {
-    try {
-      const metadata = JSON.parse(await readTextFile(metadataPath));
-      if (metadata.type) {
-        fileType = metadata.type;
-      }
-      if (Array.isArray(metadata.tags)) {
-        fileTags = metadata.tags.filter((tag: unknown): tag is string => typeof tag === "string");
-      }
-    } catch {
-      // If parsing fails, use default type
-    }
-  }
+  const metadata = await readInfoMetadata(file, "game");
+  const fileType = metadata.type;
 
   const fileInfo: FileMetadata = {
     type: "file",
-    metadata: {
-      tags: fileTags,
-      type: fileType,
-    },
+    metadata,
     name: fileName,
     path: file,
     numGames: count,
@@ -86,10 +101,17 @@ export async function openFile(
     setActiveTab,
     pgn: allGamesContent,
     srcInfo: fileInfo,
+    position: options?.position,
+    initialAnalysisTab: options?.initialAnalysisTab,
+    initialAnalysisSubTab: options?.initialAnalysisSubTab,
+    initialNotationView: options?.initialNotationView,
   });
 
   // Store the first game's state in session storage (for backward compatibility)
   // The analysis board will handle multiple games through the pgn content
+  if (options?.position) {
+    firstGameTree.position = [...options.position];
+  }
   sessionStorage.setItem(
     tabId,
     JSON.stringify({
@@ -117,16 +139,13 @@ export async function createFile({
     if (await exists(file)) {
       return Result.err(Error("File already exists"));
     }
-    const metadata = {
-      type: filetype,
-      tags: tags ?? [],
-    };
+    const metadata = createDefaultFileInfoMetadata(filetype, tags ?? []);
     // Ensure directory exists
     if (!(await exists(dir))) {
       await mkdir(dir, { recursive: true });
     }
     await writeTextFile(file, pgn || makePgn(defaultGame()));
-    await writeTextFile(file.replace(".pgn", ".info"), JSON.stringify(metadata));
+    await writeInfoMetadata(file, metadata);
 
     const numGames = unwrap(await commands.countPgnGames(file));
 
@@ -177,10 +196,7 @@ export async function createTempImportFile(
     name: "Untitled",
     path: tempFilePath,
     numGames,
-    metadata: {
-      type: filetype,
-      tags: [],
-    },
+    metadata: createDefaultFileInfoMetadata(filetype),
     lastModified: Date.now(),
   };
 }

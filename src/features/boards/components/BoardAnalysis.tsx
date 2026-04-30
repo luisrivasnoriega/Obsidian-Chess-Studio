@@ -32,7 +32,21 @@ import GameNotationWrapper from "./GameNotationWrapper";
 import ResponsiveAnalysisPanels from "./ResponsiveAnalysisPanels";
 import ResponsiveBoard from "./ResponsiveBoard";
 
-function BoardAnalysis() {
+type BoardAnalysisProps = {
+  portalTargets?: {
+    left: string;
+    topRight: string;
+    bottomRight: string;
+  };
+};
+
+function BoardAnalysis({
+  portalTargets = {
+    left: "#left",
+    topRight: "#topRight",
+    bottomRight: "#bottomRight",
+  },
+}: BoardAnalysisProps) {
   const { t } = useTranslation();
   const [editingMode, toggleEditingMode] = useToggle();
   const [selectedPiece, setSelectedPiece] = useState<Piece | null>(null);
@@ -424,55 +438,64 @@ function BoardAnalysis() {
     );
   }
 
+  const boardContent = (
+    <ResponsiveBoard
+      practicing={practicing}
+      dirty={dirty}
+      editingMode={editingMode}
+      toggleEditingMode={toggleEditingMode}
+      boardRef={boardRef}
+      saveFile={saveFile}
+      copyPgn={copyPgn}
+      reload={reloadBoard}
+      addGame={addGame}
+      topBar={false}
+      editingCard={
+        editingMode ? (
+          <EditingCard
+            boardRef={boardRef}
+            setEditingMode={toggleEditingMode}
+            selectedPiece={selectedPiece}
+            setSelectedPiece={setSelectedPiece}
+          />
+        ) : undefined
+      }
+      // Board controls props
+      viewPawnStructure={viewPawnStructure}
+      setViewPawnStructure={setViewPawnStructure}
+      selectedPiece={selectedPiece}
+      setSelectedPiece={setSelectedPiece}
+      canTakeBack={false}
+      changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
+      currentTabType="analysis"
+      clearShapes={clearShapes}
+      toggleOrientation={flipBoard}
+      disableVariations={false}
+      currentTabSourceType={currentTab?.source?.type}
+    />
+  );
+
+  const analysisPanelsContent = (
+    <ResponsiveAnalysisPanels
+      currentTab={currentTabSelected}
+      onTabChange={(v) => setCurrentTabSelected(v || "info")}
+      isRepertoire={isRepertoire}
+      isPuzzle={isPuzzle}
+    />
+  );
+
   return (
     <>
       <EvalListener />
-      <Portal target="#left" style={{ height: "100%" }}>
-        <ResponsiveBoard
-          practicing={practicing}
-          dirty={dirty}
-          editingMode={editingMode}
-          toggleEditingMode={toggleEditingMode}
-          boardRef={boardRef}
-          saveFile={saveFile}
-          copyPgn={copyPgn}
-          reload={reloadBoard}
-          addGame={addGame}
-          topBar={false}
-          editingCard={
-            editingMode ? (
-              <EditingCard
-                boardRef={boardRef}
-                setEditingMode={toggleEditingMode}
-                selectedPiece={selectedPiece}
-                setSelectedPiece={setSelectedPiece}
-              />
-            ) : undefined
-          }
-          // Board controls props
-          viewPawnStructure={viewPawnStructure}
-          setViewPawnStructure={setViewPawnStructure}
-          selectedPiece={selectedPiece}
-          setSelectedPiece={setSelectedPiece}
-          canTakeBack={false}
-          changeTabType={() => setCurrentTab((prev) => ({ ...prev, type: "play" }))}
-          currentTabType="analysis"
-          clearShapes={clearShapes}
-          toggleOrientation={flipBoard}
-          disableVariations={false}
-          currentTabSourceType={currentTab?.source?.type}
-        />
+      <Portal target={portalTargets.left} style={{ height: "100%" }}>
+        {boardContent}
       </Portal>
-      <Portal target="#topRight" style={{ height: "100%" }}>
-        <ResponsiveAnalysisPanels
-          currentTab={currentTabSelected}
-          onTabChange={(v) => setCurrentTabSelected(v || "info")}
-          isRepertoire={isRepertoire}
-          isPuzzle={isPuzzle}
-        />
+      <Portal target={portalTargets.topRight} style={{ height: "100%" }}>
+        {analysisPanelsContent}
       </Portal>
       <GameNotationWrapper
         topBar
+        portalTargetOverride={portalTargets.bottomRight}
         editingMode={editingMode}
         editingCard={
           <EditingCard

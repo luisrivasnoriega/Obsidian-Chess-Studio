@@ -13,13 +13,26 @@ beforeAll(() => {
 });
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: {
+    type: "3rdParty",
+    init: vi.fn(),
+  },
   useTranslation: () => ({
     t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key,
   }),
 }));
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...actual,
+    useNavigate: () => vi.fn(),
+  };
+});
+
+vi.mock("@/App", () => ({
+  loadDirectories: vi.fn(),
+  updateDirectoriesCache: vi.fn(),
 }));
 
 vi.mock("jotai", async (importOriginal) => {

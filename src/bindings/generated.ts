@@ -1221,6 +1221,14 @@ async dashboardSearchProfileOpponents(profileId: string, query: string, profileU
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardResolveChesscomGameUrl(profileId: string, gameId: number) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_resolve_chesscom_game_url", { profileId, gameId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardResolveProfileDbGameId(profileId: string, kind: GamesHistoryKind, gameKey: string) : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_resolve_profile_db_game_id", { profileId, kind, gameKey }) };
@@ -1697,8 +1705,8 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
 export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; kind: EdgeKind; evCpFromOurPerspective: number | null; predictedProb: number | null }
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
-export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number }
-export type BuildVariantsTreeResponse = { lines: LineDto[] }
+export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; splitConfig?: SplitConfigDto | null }
+export type BuildVariantsTreeResponse = { lines: LineDto[]; segments?: SegmentDto[] | null; warnings?: string[] | null }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
 export type ChessbaseDownloadResult = { pgn: string; games: number }
 export type ChessbaseImportPreparedResult = { downloadedGames: number; importedGames: number }
@@ -2124,9 +2132,12 @@ export type Score = { value: ScoreValue; wdl: [number, number, number] | null }
  * UCI score value (centipawns or mate).
  */
 export type ScoreValue = { type: "cp"; value: number } | { type: "mate"; value: number }
+export type SegmentDto = { id: string; anchorPly: number; anchorFen: string; anchorPath: number[]; title?: string | null; lines: LineDto[]; stats: SegmentStatsDto }
+export type SegmentStatsDto = { lineCount: number }
 export type Sides = "BlackWhite" | "WhiteBlack" | "Any"
 export type SiteStatsData = { site: string; player: string; data: StatsData[] }
 export type SortDirection = "asc" | "desc"
+export type SplitConfigDto = { enabled: boolean; mode: string; splitAtPly?: number | null; maxSegments?: number | null; maxLinesPerSegment?: number | null }
 export type StatsData = { date: string; time: string | null; is_player_white: boolean; player_elo: number; opponent_elo: number | null; result: GameOutcome; time_control: string; opening: string }
 export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null; opponentEstimatedElo: bigint | null; opponentRatingElo: bigint | null }
 /**

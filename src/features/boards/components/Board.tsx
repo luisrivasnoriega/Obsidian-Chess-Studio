@@ -711,7 +711,8 @@ function Board({
                     }
                   : {}),
                 width: boardSquareSize ? `${boardSquareSize}px` : "100%",
-                height: boardSquareSize ? `${boardSquareSize}px` : undefined,
+                height: boardSquareSize ? `${boardSquareSize}px` : "100%",
+                aspectRatio: boardSquareSize ? undefined : "1 / 1",
                 maxWidth: "100%",
                 maxHeight: "100%",
                 minWidth: 0,
