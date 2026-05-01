@@ -64,6 +64,20 @@ const MoveCell = forwardRef(function MoveCell(props: MoveCellProps, ref: Forward
         .map((ann, idx) =>
           ann === "Book" ? (
             <IconBook key={`book-${idx}`} size="0.875rem" style={{ marginLeft: 3, verticalAlign: "text-bottom" }} />
+          ) : ann === "BookUnknown" ? (
+            <span
+              key={`book-unknown-${idx}`}
+              style={{
+                marginLeft: 3,
+                verticalAlign: "text-bottom",
+                display: "inline-flex",
+                alignItems: "center",
+                color: "#F59E0B",
+              }}
+            >
+              <IconBook size="0.875rem" />
+              <span style={{ marginLeft: 1, fontSize: "0.625rem", fontWeight: 700 }}>?</span>
+            </span>
           ) : ann === "BookError" ? (
             <IconBookOff
               key={`book-error-${idx}`}

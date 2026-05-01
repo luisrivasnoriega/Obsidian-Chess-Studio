@@ -71,6 +71,10 @@ type GamesHistoryResponse = {
   totalCount: number;
 };
 
+type GamesHistoryFilterMetaResponse = {
+  availableTimeControlCategories: TimeControlCategory[];
+};
+
 type AnalyzeAllCountsResponse = {
   total: number;
   analyzed: number;
@@ -283,6 +287,7 @@ export function ProfileGamesTab({
     lichess: number;
     chessbase: number;
   } | null>(null);
+  const [availableTimeControlCategories, setAvailableTimeControlCategories] = useState<TimeControlCategory[]>([]);
 
   useEffect(() => {
     const query = debouncedOpponentFilter.trim();
@@ -399,6 +404,59 @@ export function ProfileGamesTab({
     sortDirection,
     selectedOpponentId,
     itemsPerPage,
+  ]);
+
+  useEffect(() => {
+    if (!profileId) {
+      setAvailableTimeControlCategories([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      const res = (await invoke<GamesHistoryFilterMetaResponse>("dashboard_get_games_history_filter_meta", {
+        req: {
+          profileId,
+          profileUsernames,
+          gameHistoryLimit,
+          eventFilterId,
+          selectedOpponentId,
+          opponentContains: debouncedOpponentFilter.trim() || null,
+          resultFilter,
+          playerColor: playerColorFilter,
+          minMoves: minMovesFilter,
+        },
+      })) ?? { availableTimeControlCategories: [] };
+
+      if (cancelled) return;
+      const categories = Array.isArray(res.availableTimeControlCategories) ? res.availableTimeControlCategories : [];
+      setAvailableTimeControlCategories(categories);
+      if (timeControlCategory && !categories.includes(timeControlCategory)) {
+        onTimeControlCategoryChange(null);
+      }
+    };
+
+    void run().catch(() => {
+      if (!cancelled) {
+        setAvailableTimeControlCategories([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    profileId,
+    profileUsernames,
+    gameHistoryLimit,
+    eventFilterId,
+    selectedOpponentId,
+    debouncedOpponentFilter,
+    resultFilter,
+    playerColorFilter,
+    minMovesFilter,
+    timeControlCategory,
+    onTimeControlCategoryChange,
   ]);
 
   useEffect(() => {
@@ -945,12 +1003,10 @@ export function ProfileGamesTab({
           placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
           value={timeControlCategory ?? undefined}
           onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
-          data={(["ultra_bullet", "bullet", "blitz", "rapid", "classical", "correspondence", "daily"] as const).map(
-            (value) => ({
-              value,
-              label: getTimeControlLabel(t, value),
-            }),
-          )}
+          data={availableTimeControlCategories.map((value) => ({
+            value,
+            label: getTimeControlLabel(t, value),
+          }))}
           clearable
           searchable
           size="sm"

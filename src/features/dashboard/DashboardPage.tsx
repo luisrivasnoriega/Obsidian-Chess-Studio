@@ -16,10 +16,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Event, GameQuery, GamesHistoryRow, MoveAnalysis } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
+import { detectProfileBookReview } from "@/features/boards/utils/postGameReview";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { getAnalyzedGamesBulk, getGameStatsBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
+import { applyProfileBookPriorityToMainline, clearBookErrorAnnotations } from "@/utils/bookErrors";
 import { getGameStats, getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { query_games, query_players } from "@/utils/db";
@@ -2009,6 +2011,9 @@ export default function DashboardPage() {
             const lichessByKey = new Map(
               lichessGames.filter((g) => hasEnoughMovesPgn(g.pgn)).map((g) => [g.id, g] as const),
             );
+            const rowByKindKey = new Map(
+              rowsForSelectedType.map((row) => [`${row.kind}:${row.gameKey}`, row] as const),
+            );
 
             const allGames = rowsForSelectedType
               .filter((row) => {
@@ -2233,6 +2238,7 @@ export default function DashboardPage() {
             const backendJobErrors: string[] = [];
             let stopRequested = false;
             let currentRunId: string | null = null;
+            let gamesHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
             const notifyCancellation = () => {
               if (cancellationNotified) return;
@@ -2255,8 +2261,62 @@ export default function DashboardPage() {
               await stopAllEngines();
             };
 
-            const emitGamesHistoryRefresh = () => {
-              window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+            const emitGamesHistoryRefresh = (immediate = false) => {
+              if (immediate) {
+                if (gamesHistoryRefreshTimer) {
+                  clearTimeout(gamesHistoryRefreshTimer);
+                  gamesHistoryRefreshTimer = null;
+                }
+                window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+                return;
+              }
+              if (gamesHistoryRefreshTimer) {
+                clearTimeout(gamesHistoryRefreshTimer);
+              }
+              gamesHistoryRefreshTimer = setTimeout(() => {
+                window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+                gamesHistoryRefreshTimer = null;
+              }, 250);
+            };
+
+            const openingFenCache = new Map<string, boolean>();
+            const isOpeningFen = async (fen: string): Promise<boolean> => {
+              const cached = openingFenCache.get(fen);
+              if (cached !== undefined) return cached;
+              try {
+                const res = await commands.getOpeningFromFen(fen);
+                if (res.status === "ok" && !!res.data) {
+                  openingFenCache.set(fen, true);
+                  return true;
+                }
+              } catch {
+                // ignore
+              }
+              try {
+                const resInfo = await commands.getOpeningInfoFromFen(fen);
+                if (resInfo.status === "ok" && !!resInfo.data) {
+                  openingFenCache.set(fen, true);
+                  return true;
+                }
+              } catch {
+                // ignore
+              }
+              openingFenCache.set(fen, false);
+              return false;
+            };
+
+            const collectOpeningFensFromMainline = async (root: TreeState["root"]): Promise<Set<string>> => {
+              const out = new Set<string>();
+              let current = root;
+              while (current.children.length > 0) {
+                const next = current.children[0];
+                if (!next) break;
+                if (await isOpeningFen(next.fen)) {
+                  out.add(next.fen);
+                }
+                current = next;
+              }
+              return out;
             };
 
             // Keep cancellation checks cheap: one watcher for the whole analyze-all run.
@@ -2284,6 +2344,7 @@ export default function DashboardPage() {
                 let gameHeaders: ReturnType<
                   typeof createLocalGameHeaders | typeof createChessComGameHeaders | typeof createLichessGameHeaders
                 >;
+                let inferredOrientation: "white" | "black" | undefined;
 
                 if (gameType === "local") {
                   // For local games, use PGN if available, otherwise reconstruct from moves
@@ -2295,6 +2356,11 @@ export default function DashboardPage() {
                   moves = getMainLine(tree.root, is960);
                   initialFen = tree.headers?.fen || gameRecord.initialFen || DEFAULT_START_FEN;
                   gameHeaders = createLocalGameHeaders(gameRecord);
+                  if (gameRecord.white.type === "human") {
+                    inferredOrientation = "white";
+                  } else if (gameRecord.black.type === "human") {
+                    inferredOrientation = "black";
+                  }
                 } else if (gameType === "chesscom") {
                   // For Chess.com games, parse PGN
                   const chessComGame = game as ChessComGameWithEvent;
@@ -2308,6 +2374,21 @@ export default function DashboardPage() {
                   moves = getMainLine(tree.root, is960);
                   initialFen = tree.headers?.fen || DEFAULT_START_FEN;
                   gameHeaders = createChessComGameHeaders(chessComGame);
+                  const whiteUsername = chessComGame.white.username.toLowerCase();
+                  const blackUsername = chessComGame.black.username.toLowerCase();
+                  const accountUsername =
+                    chessComUsernames
+                      .find((u) => u.toLowerCase() === whiteUsername || u.toLowerCase() === blackUsername)
+                      ?.toLowerCase() ?? null;
+                  if (accountUsername) {
+                    inferredOrientation = whiteUsername === accountUsername ? "white" : "black";
+                  }
+                  if (!inferredOrientation) {
+                    const row = rowByKindKey.get(`chesscom:${chessComGame.url}`);
+                    if (row) {
+                      inferredOrientation = row.color === "black" ? "black" : "white";
+                    }
+                  }
                 } else if (gameType === "chessbase") {
                   const row = game as GamesHistoryRow;
                   const rowInitialFen = ((row as { initialFen?: string | null }).initialFen ?? "").trim() || undefined;
@@ -2380,6 +2461,7 @@ export default function DashboardPage() {
                     result: (tree.headers?.result || "*") as any,
                     fen: initialFen,
                   } as ReturnType<typeof createLocalGameHeaders>;
+                  inferredOrientation = row.color === "black" ? "black" : "white";
                 } else {
                   // Lichess games
                   const lichessGame = game as (typeof lichessGames)[0];
@@ -2393,6 +2475,31 @@ export default function DashboardPage() {
                   moves = getMainLine(tree.root, is960);
                   initialFen = tree.headers?.fen || DEFAULT_START_FEN;
                   gameHeaders = createLichessGameHeaders(lichessGame);
+                  const whiteUsername = (lichessGame.players.white.user?.name || "").toLowerCase();
+                  const blackUsername = (lichessGame.players.black.user?.name || "").toLowerCase();
+                  const accountUsername =
+                    lichessUsernames
+                      .find((u) => u.toLowerCase() === whiteUsername || u.toLowerCase() === blackUsername)
+                      ?.toLowerCase() ?? null;
+                  if (accountUsername) {
+                    inferredOrientation = whiteUsername === accountUsername ? "white" : "black";
+                  }
+                  if (!inferredOrientation) {
+                    const row = rowByKindKey.get(`lichess:${lichessGame.id}`);
+                    if (row) {
+                      inferredOrientation = row.color === "black" ? "black" : "white";
+                    }
+                  }
+                }
+
+                if (!inferredOrientation) {
+                  const parsedOrientation = tree.headers?.orientation;
+                  if (parsedOrientation === "white" || parsedOrientation === "black") {
+                    inferredOrientation = parsedOrientation;
+                  }
+                }
+                if (inferredOrientation) {
+                  gameHeaders.orientation = inferredOrientation;
                 }
 
                 // Check if cancelled before starting analysis
@@ -2437,8 +2544,10 @@ export default function DashboardPage() {
                   analysis = unwrap(analysisResult);
                 }
 
-                // Apply analysis using the same function used in individual analysis
-                addAnalysis(tree, analysis);
+                // Apply analysis using the same function used in individual analysis.
+                // Include opening-book scope so "Book" marks are generated consistently.
+                const openingFens = await collectOpeningFensFromMainline(tree.root);
+                addAnalysis(tree, analysis, { openingFens });
 
                 // Update tree headers with gameHeaders to ensure names are included
                 tree.headers = {
@@ -2446,6 +2555,55 @@ export default function DashboardPage() {
                   ...gameHeaders,
                   fen: tree.headers.fen || gameHeaders.fen, // Preserve FEN from parsed PGN
                 };
+
+                try {
+                  const orientation = tree.headers.orientation;
+                  const humanColor = orientation === "white" || orientation === "black" ? orientation : null;
+                  const effectiveBookProfileId =
+                    gameType === "local"
+                      ? ((game as GameRecord).profileId ?? activeProfileId ?? null)
+                      : (activeProfileId ?? null);
+                  const bookReview = await detectProfileBookReview({
+                    profileId: effectiveBookProfileId,
+                    initialFen,
+                    moves,
+                    humanColor,
+                  });
+                  const bookErrors = bookReview.errors;
+                  const bookUnknowns = bookReview.unknowns;
+                  const variantBookPlies = bookReview.matchedPlies;
+                  if (import.meta.env.DEV) {
+                    console.debug("[analyze-all] variants book check", {
+                      gameType,
+                      index,
+                      orientation,
+                      humanColor,
+                      effectiveBookProfileId,
+                      errors: bookErrors.length,
+                      unknowns: bookUnknowns.length,
+                      matches: variantBookPlies.length,
+                      first: bookErrors[0] ?? null,
+                    });
+                  }
+                  clearBookErrorAnnotations(tree.root);
+                  applyProfileBookPriorityToMainline(tree.root, {
+                    matchedPlies: variantBookPlies,
+                    errors: bookErrors.map((item) => ({
+                      ply: item.ply,
+                      expectedMove: item.expectedMove,
+                      expectedMoves: item.expectedMoves,
+                      playedMove: item.playedMove,
+                    })),
+                    unknowns: bookUnknowns.map((item) => ({
+                      ply: item.ply,
+                      expectedMove: item.expectedMove,
+                      expectedMoves: item.expectedMoves,
+                      playedMove: item.playedMove,
+                    })),
+                  });
+                } catch {
+                  // Keep analyze-all resilient if variants-book detection fails.
+                }
 
                 // Check if cancelled before saving
                 if (isCancelled()) {
@@ -2727,6 +2885,7 @@ export default function DashboardPage() {
 
                 // Update notifications less frequently
                 if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
+                  emitGamesHistoryRefresh();
                   notifications.show({
                     title: t("features.dashboard.analysisProgress"),
                     message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,
@@ -2871,6 +3030,7 @@ export default function DashboardPage() {
                       completedCount++;
                       onProgress(completedCount, gamesToAnalyze.length);
                       if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
+                        emitGamesHistoryRefresh();
                         notifications.show({
                           title: t("features.dashboard.analysisProgress"),
                           message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,
@@ -2929,9 +3089,7 @@ export default function DashboardPage() {
                   // Trigger refresh for Lichess games
                   window.dispatchEvent(new Event("lichess:games:updated"));
                 }
-                if (successCount > 0) {
-                  emitGamesHistoryRefresh();
-                }
+                emitGamesHistoryRefresh(true);
 
                 notifications.show({
                   title: t("features.dashboard.analysisComplete"),
@@ -2953,6 +3111,10 @@ export default function DashboardPage() {
               throw error;
             } finally {
               clearInterval(cancellationWatcher);
+              if (gamesHistoryRefreshTimer) {
+                clearTimeout(gamesHistoryRefreshTimer);
+                gamesHistoryRefreshTimer = null;
+              }
               currentRunId = null;
               if (unlistenResultEvent) {
                 await unlistenResultEvent();

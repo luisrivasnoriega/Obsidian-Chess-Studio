@@ -120,7 +120,6 @@ export function getMoveText(
 
       // Add non-basic annotations as NAGs
       for (const annotation of otherAnnotations) {
-        if (annotation === "Book" || annotation === "BookError") continue;
         const annotationInfo = ANNOTATION_INFO[annotation];
         if (annotationInfo) {
           moveText += ` $${annotationInfo.nag}`;
@@ -1031,6 +1030,7 @@ export function getGameStats(root: TreeNode) {
     "!?": 0,
     Best: 0,
     BookError: 0,
+    BookUnknown: 0,
   };
 
   const blackAnnotations = {
@@ -1042,6 +1042,7 @@ export function getGameStats(root: TreeNode) {
     "!?": 0,
     Best: 0,
     BookError: 0,
+    BookUnknown: 0,
   };
 
   if (root.children.length === 0) {
@@ -1068,7 +1069,7 @@ export function getGameStats(root: TreeNode) {
   while (node.children.length > 0) {
     node = node.children[0];
     for (const annotation of node.annotations) {
-      if (isBasicAnnotation(annotation) || annotation === "BookError") {
+      if (isBasicAnnotation(annotation) || annotation === "BookError" || annotation === "BookUnknown") {
         if (node.halfMoves % 2 === 1) {
           whiteAnnotations[annotation]++;
         } else {

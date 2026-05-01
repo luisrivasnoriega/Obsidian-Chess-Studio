@@ -69,6 +69,12 @@ pub struct GamesHistoryResponse {
     pub total_count: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GamesHistoryFilterMetaResponse {
+    pub available_time_control_categories: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GamesHistoryRequest {
@@ -85,6 +91,20 @@ pub struct GamesHistoryRequest {
     pub min_moves: Option<i32>,        // minimum full moves
     pub sort_by: Option<String>,       // "elo" | "date"
     pub sort_direction: Option<String>, // "asc" | "desc"
+    pub profile_usernames: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GamesHistoryFilterMetaRequest {
+    pub profile_id: String,
+    pub game_history_limit: i32,
+    pub event_filter_id: Option<i32>,
+    pub selected_opponent_id: Option<i32>,
+    pub opponent_contains: Option<String>,
+    pub result_filter: Option<String>,
+    pub player_color: Option<String>,
+    pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
 }
 
@@ -1340,6 +1360,69 @@ pub async fn dashboard_get_games_history_rows(
     Ok(GamesHistoryResponse {
         rows: page_rows,
         total_count: total,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dashboard_get_games_history_filter_meta(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: GamesHistoryFilterMetaRequest,
+) -> Result<GamesHistoryFilterMetaResponse> {
+    let rows_req = GamesHistoryRequest {
+        profile_id: req.profile_id,
+        // Scan a broader window than the visible table page so filter options are not
+        // constrained to the current pagination slice.
+        game_history_limit: req.game_history_limit.max(5000),
+        page: 1,
+        page_size: req.game_history_limit.max(5000),
+        event_filter_id: req.event_filter_id,
+        selected_opponent_id: req.selected_opponent_id,
+        opponent_contains: req.opponent_contains,
+        // Important: this metadata query should not self-filter by time control.
+        time_control_category: None,
+        result_filter: req.result_filter,
+        player_color: req.player_color,
+        min_moves: req.min_moves,
+        sort_by: Some("date".to_string()),
+        sort_direction: Some("desc".to_string()),
+        profile_usernames: req.profile_usernames,
+    };
+
+    let rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
+    let mut seen: HashSet<String> = HashSet::new();
+    for row in rows.iter() {
+        if let Some(cat) = row.time_control_category.as_deref() {
+            let trimmed = cat.trim().to_lowercase();
+            if !trimmed.is_empty() {
+                seen.insert(trimmed);
+            }
+        }
+    }
+
+    let ordered = [
+        "ultra_bullet",
+        "bullet",
+        "blitz",
+        "rapid",
+        "classical",
+        "correspondence",
+        "daily",
+    ];
+    let available_time_control_categories = ordered
+        .iter()
+        .filter_map(|value| {
+            if seen.contains(*value) {
+                Some((*value).to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(GamesHistoryFilterMetaResponse {
+        available_time_control_categories,
     })
 }
 

@@ -40,6 +40,27 @@ pub struct PostGameReviewVariantsResult {
     pub added_variant_line: Option<String>,
     pub open_variants_after_review: bool,
     pub kind: String,
+    pub book_match_plies: Vec<usize>,
+    pub book_errors: Vec<BookErrorEntry>,
+    pub book_unknowns: Vec<BookUnknownEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BookErrorEntry {
+    pub ply: usize,
+    pub played_move: String,
+    pub expected_move: Option<String>,
+    pub expected_moves: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BookUnknownEntry {
+    pub ply: usize,
+    pub played_move: String,
+    pub expected_move: Option<String>,
+    pub expected_moves: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +179,23 @@ fn parse_side_from_tags(tags: &[String]) -> Option<Side> {
     None
 }
 
+fn parse_side_from_pgn_headers(raw_pgn: &str) -> Option<Side> {
+    for line in raw_pgn.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("[orientation \"") {
+            let value = rest.split('"').next().unwrap_or_default().trim();
+            if let Some(side) = Side::parse(value) {
+                return Some(side);
+            }
+        }
+    }
+    None
+}
+
 fn parse_entry_fen_from_tags(tags: &[String]) -> Option<String> {
     for raw in tags {
         let trimmed = raw.trim();
@@ -266,7 +304,7 @@ fn parse_games_into_book(path: &Path, metadata: &FileInfoMetadata) -> Option<Var
     let mut reader = BufferedReader::new_cursor(&raw[..]);
     let mut importer = Importer::new(None);
 
-    let side = parse_side_from_tags(&metadata.tags);
+    let side = parse_side_from_tags(&metadata.tags).or_else(|| parse_side_from_pgn_headers(&raw));
     let entry_fen_key = parse_entry_fen_from_tags(&metadata.tags);
     let mut entry_ply: Option<usize> = None;
     let mut nodes_by_fen: HashMap<String, BookNode> = HashMap::new();
@@ -308,6 +346,81 @@ fn load_variant_books(document_dir: &str) -> Vec<VariantBook> {
         }
     }
     books
+}
+
+fn detect_book_errors(
+    initial_fen: &str,
+    moves: &[String],
+    human_color: Side,
+    books: &[VariantBook],
+) -> (Vec<usize>, Vec<BookErrorEntry>, Vec<BookUnknownEntry>) {
+    let scoped: Vec<&VariantBook> = books
+        .iter()
+        .filter(|book| book.side.map_or(false, |side| side == human_color))
+        .collect();
+    if scoped.is_empty() {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    let Some(mut position) = parse_position(initial_fen) else {
+        return (Vec::new(), Vec::new(), Vec::new());
+    };
+
+    let mut matches = Vec::new();
+    let mut out_errors = Vec::new();
+    let mut out_unknowns = Vec::new();
+    for (ply, played_move_raw) in moves.iter().enumerate() {
+        let played_move = normalize_move_key(played_move_raw);
+        let turn = if position.turn().is_white() {
+            Side::White
+        } else {
+            Side::Black
+        };
+
+        let fen_before_move = pos_fen_key(&position);
+        let mut allowed_moves: HashSet<String> = HashSet::new();
+
+        for book in &scoped {
+            if let Some(node) = book.nodes_by_fen.get(&fen_before_move) {
+                allowed_moves.extend(node.allowed_moves.iter().cloned());
+            }
+        }
+
+        if !allowed_moves.is_empty() {
+            if allowed_moves.contains(&played_move) {
+                // Variants take priority for both sides whenever the played move is mapped.
+                matches.push(ply);
+            } else if turn == human_color {
+                let mut expected_moves: Vec<String> = allowed_moves.iter().cloned().collect();
+                expected_moves.sort();
+                out_errors.push(BookErrorEntry {
+                    ply,
+                    played_move: played_move_raw.clone(),
+                    expected_move: expected_moves.first().cloned(),
+                    expected_moves,
+                });
+            } else if turn == human_color.other() {
+                let mut expected_moves: Vec<String> = allowed_moves.into_iter().collect();
+                expected_moves.sort();
+                out_unknowns.push(BookUnknownEntry {
+                    ply,
+                    played_move: played_move_raw.clone(),
+                    expected_move: expected_moves.first().cloned(),
+                    expected_moves,
+                });
+            }
+        }
+
+        let Ok(uci) = UciMove::from_ascii(played_move.as_bytes()) else {
+            break;
+        };
+        let Ok(mv) = uci.to_move(&position) else {
+            break;
+        };
+        position.play_unchecked(&mv);
+    }
+
+    (matches, out_errors, out_unknowns)
 }
 
 fn evaluate_book_against_game(
@@ -421,7 +534,7 @@ fn decide_variant_action(
 ) -> Decision {
     let scoped: Vec<VariantBook> = books
         .iter()
-        .filter(|book| book.side.map_or(true, |s| s == human_color))
+        .filter(|book| book.side.map_or(false, |s| s == human_color))
         .cloned()
         .collect();
 
@@ -647,8 +760,16 @@ fn extract_book_name(path: Option<&str>) -> Option<String> {
 pub async fn post_game_review_variants(
     input: PostGameReviewVariantsInput,
 ) -> Result<PostGameReviewVariantsResult> {
+    log::info!(
+        "post_game_review_variants:start dir={} human_color={:?} moves={} initial_fen={}",
+        input.document_dir,
+        input.human_color,
+        input.moves.len(),
+        input.initial_fen
+    );
     let human = input.human_color.as_deref().and_then(Side::parse);
     let Some(human_color) = human else {
+        log::info!("post_game_review_variants:skip no-human-color");
         return Ok(PostGameReviewVariantsResult {
             detected: false,
             variant_deviation_ply: None,
@@ -658,11 +779,30 @@ pub async fn post_game_review_variants(
             added_variant_line: None,
             open_variants_after_review: false,
             kind: "none".to_string(),
+            book_match_plies: Vec::new(),
+            book_errors: Vec::new(),
+            book_unknowns: Vec::new(),
         });
     };
 
     let books = load_variant_books(&input.document_dir);
+    let scoped_books = books
+        .iter()
+        .filter(|book| book.side.map_or(false, |s| s == human_color))
+        .count();
     let decision = decide_variant_action(&input.initial_fen, &input.moves, human_color, &books);
+    let (book_match_plies, book_errors, book_unknowns) =
+        detect_book_errors(&input.initial_fen, &input.moves, human_color, &books);
+    log::info!(
+        "post_game_review_variants:loaded books_total={} books_scoped={} matches={} errors={} unknowns={} decision_kind={} decision_ply={:?}",
+        books.len(),
+        scoped_books,
+        book_match_plies.len(),
+        book_errors.len(),
+        book_unknowns.len(),
+        decision.kind,
+        decision.ply
+    );
 
     let mut new_line_added = false;
     let mut variants_book_path = decision.book_path.clone();
@@ -685,5 +825,8 @@ pub async fn post_game_review_variants(
         added_variant_line,
         open_variants_after_review: decision.should_open_variants,
         kind: decision.kind.to_string(),
+        book_match_plies,
+        book_errors,
+        book_unknowns,
     })
 }

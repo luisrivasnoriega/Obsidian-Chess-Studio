@@ -6,6 +6,7 @@
   "common.options": "Options",
   "chess.annotate.book": "Book",
   "chess.annotate.bookError": "Book error",
+  "chess.annotate.bookUnknown": "Book unknown",
   "chess.timeControl.daily": "Daily",
   "game.advanced": "Advanced",
   "game.enginePlayProfile": "Engine play profile",

@@ -1205,6 +1205,14 @@ async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<Ga
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardGetGamesHistoryFilterMeta(req: GamesHistoryFilterMetaRequest) : Promise<Result<GamesHistoryFilterMetaResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_games_history_filter_meta", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardDecodeProfileGameBlobMoves(profileId: string, gameId: number) : Promise<Result<DecodedGameMovesResponse | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_decode_profile_game_blob_moves", { profileId, gameId }) };
@@ -1704,7 +1712,9 @@ export type BestMoves = { nodes: number; depth: number; score: Score; uciMoves: 
  */
 export type BestMovesPayload = { bestLines: BestMoves[]; engine: string; tab: string; fen: string; moves: string[]; progress: number }
 export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; kind: EdgeKind; evCpFromOurPerspective: number | null; predictedProb: number | null }
+export type BookErrorEntry = { ply: bigint; playedMove: string; expectedMove: string | null; expectedMoves: string[] }
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
+export type BookUnknownEntry = { ply: bigint; playedMove: string; expectedMove: string | null; expectedMoves: string[] }
 export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; splitConfig?: SplitConfigDto | null }
 export type BuildVariantsTreeResponse = { lines: LineDto[]; segments?: SegmentDto[] | null; warnings?: string[] | null }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
@@ -1769,6 +1779,8 @@ time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null }
+export type GamesHistoryFilterMetaRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
+export type GamesHistoryFilterMetaResponse = { availableTimeControlCategories: string[] }
 export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
 export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
@@ -2079,7 +2091,7 @@ export type PlayersTime = { white: number; black: number; winc: number; binc: nu
 export type PositionQueryJs = { fen: string; type_: string }
 export type PositionStats = { move: string; white: number; draw: number; black: number }
 export type PostGameReviewVariantsInput = { documentDir: string; initialFen: string; moves: string[]; humanColor: string | null }
-export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string }
+export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string; bookMatchPlies: bigint[]; bookErrors: BookErrorEntry[]; bookUnknowns: BookUnknownEntry[] }
 export type ProfileSidebarStats = { sidebar_model: PlayerSidebarModel; elo_buckets: EloBucket[] }
 export type ProfileWeaknessModel = { snapshotKey: string; modelVersion: number; generatedAt: string; totalGames: number; scoredGames: number; backfilledGames: number; signals: ProfileWeaknessSignal[]; signalsByColor: ProfileWeaknessSignalsByColor }
 export type ProfileWeaknessSignal = { signalKey: string; title: string; triggerText: string; attackPlan: string; score: number; severity: number; confidence: number; controllability: number; recency: number; support: number; nEff: number | null; impactJson: string; triggerJson: string; evidence: ProfileWeaknessSignalEvidence[] }

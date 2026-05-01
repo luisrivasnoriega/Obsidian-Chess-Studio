@@ -7,10 +7,16 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { analyzeGameHumanStrategicReport, commands, type HumanMoveNarrative, type MoveAnalysis } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { detectProfileBookErrorPlies } from "@/features/boards/utils/postGameReview";
+import { detectProfileBookReview } from "@/features/boards/utils/postGameReview";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import { reportSettingsAtom } from "@/state/reportSettings";
 import type { Annotation } from "@/utils/annotation";
+import {
+  applyProfileBookPriorityToMainline,
+  type BookErrorMatch,
+  type BookUnknownMatch,
+  clearBookErrorAnnotations,
+} from "@/utils/bookErrors";
 import { parsePGN } from "@/utils/chess";
 import type { LocalEngine } from "@/utils/engines";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
@@ -18,7 +24,6 @@ import type { TreeNode } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 
 const BASIC_ANNOTATIONS = new Set(["??", "?", "?!", "!?", "!", "!!", "Best"]);
-const BOOK_ERROR_ANNOTATION: Annotation = "BookError";
 const openingFenCache = new Map<string, boolean>();
 
 export function countTreeComments(node: TreeNode): number {
@@ -155,35 +160,6 @@ export function injectHumanNarrativesIntoMainline(root: TreeNode, narratives: Hu
   }
 
   return injected;
-}
-
-function clearBookErrorAnnotations(root: TreeNode): void {
-  const stack: TreeNode[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node) continue;
-    if (node.annotations.includes(BOOK_ERROR_ANNOTATION)) {
-      node.annotations = node.annotations.filter((annotation) => annotation !== BOOK_ERROR_ANNOTATION);
-    }
-    for (const child of node.children) {
-      stack.push(child);
-    }
-  }
-}
-
-function applyBookErrorAnnotationsToMainline(root: TreeNode, errorPlies: number[]): void {
-  if (errorPlies.length === 0) return;
-  const mainline = getMainlineNodes(root);
-  const target = new Set(errorPlies);
-  for (let ply = 0; ply < mainline.length; ply += 1) {
-    if (!target.has(ply)) {
-      continue;
-    }
-    const node = mainline[ply];
-    if (!node.annotations.includes(BOOK_ERROR_ANNOTATION)) {
-      node.annotations = [...node.annotations, BOOK_ERROR_ANNOTATION];
-    }
-  }
 }
 
 function ReportModal({
@@ -379,18 +355,23 @@ function ReportModal({
         return openingFensCache;
       };
 
-      let bookErrorPlies: number[] = [];
+      let bookErrors: BookErrorMatch[] = [];
+      let bookUnknowns: BookUnknownMatch[] = [];
+      let variantBookPlies: number[] = [];
       try {
         const orientation = store.getState().headers.orientation;
         const humanColor = orientation === "white" || orientation === "black" ? orientation : null;
         const effectiveProfileId =
           profileId ?? (typeof window !== "undefined" ? localStorage.getItem("activeProfileId") : null);
-        bookErrorPlies = await detectProfileBookErrorPlies({
+        const review = await detectProfileBookReview({
           profileId: effectiveProfileId,
           initialFen,
           moves,
           humanColor,
         });
+        bookErrors = review.errors;
+        bookUnknowns = review.unknowns;
+        variantBookPlies = review.matchedPlies;
       } catch {
         // Keep analysis flow resilient if variants-book detection fails.
       }
@@ -407,7 +388,11 @@ function ReportModal({
           try {
             const parsed = await parsePGN(strategicPgn);
             clearBookErrorAnnotations(parsed.root);
-            applyBookErrorAnnotationsToMainline(parsed.root, bookErrorPlies);
+            applyProfileBookPriorityToMainline(parsed.root, {
+              matchedPlies: variantBookPlies,
+              errors: bookErrors,
+              unknowns: bookUnknowns,
+            });
             if (import.meta.env.DEV) {
               console.debug("[human-report] parsed strategic PGN", {
                 tab,
@@ -420,7 +405,11 @@ function ReportModal({
             try {
               const fallback = await parsePGN(originalPgn);
               clearBookErrorAnnotations(fallback.root);
-              applyBookErrorAnnotationsToMainline(fallback.root, bookErrorPlies);
+              applyProfileBookPriorityToMainline(fallback.root, {
+                matchedPlies: variantBookPlies,
+                errors: bookErrors,
+                unknowns: bookUnknowns,
+              });
               if (import.meta.env.DEV) {
                 console.debug("[human-report] fallback to original PGN", {
                   tab,
@@ -447,7 +436,11 @@ function ReportModal({
                 report: structuredClone(current.report),
               };
               clearBookErrorAnnotations(nextState.root);
-              applyBookErrorAnnotationsToMainline(nextState.root, bookErrorPlies);
+              applyProfileBookPriorityToMainline(nextState.root, {
+                matchedPlies: variantBookPlies,
+                errors: bookErrors,
+                unknowns: bookUnknowns,
+              });
               setTreeState(nextState);
             }
           }
@@ -463,7 +456,11 @@ function ReportModal({
             report: structuredClone(current.report),
           };
           clearBookErrorAnnotations(nextState.root);
-          applyBookErrorAnnotationsToMainline(nextState.root, bookErrorPlies);
+          applyProfileBookPriorityToMainline(nextState.root, {
+            matchedPlies: variantBookPlies,
+            errors: bookErrors,
+            unknowns: bookUnknowns,
+          });
           setTreeState(nextState);
         }
 

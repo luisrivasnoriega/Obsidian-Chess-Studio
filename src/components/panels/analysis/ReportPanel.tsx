@@ -1,6 +1,6 @@
 import { Box, Center, Group, Paper, ScrollArea, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
-import { IconBookOff, IconZoomCheck } from "@tabler/icons-react";
+import { IconBook, IconBookOff, IconZoomCheck } from "@tabler/icons-react";
 import { invoke } from "@tauri-apps/api/core";
 import cx from "clsx";
 import equal from "fast-deep-equal";
@@ -560,6 +560,13 @@ function TagGlyph({ annotation }: { annotation: string }) {
         </svg>
       ) : annotation === "BookError" ? (
         <IconBookOff size="1rem" stroke={2.2} />
+      ) : annotation === "BookUnknown" ? (
+        <Group gap={2} wrap="nowrap">
+          <IconBook size="0.9rem" stroke={2.2} />
+          <Text size="xs" fw={700} style={{ lineHeight: 1 }}>
+            ?
+          </Text>
+        </Group>
       ) : (
         <Text size="sm" style={{ lineHeight: 1 }}>
           {annotation}
@@ -579,7 +586,7 @@ const ReportGameStats = memo(
 
     type Row = {
       annotation: string;
-      s: "??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError";
+      s: "??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError" | "BookUnknown";
       title: string;
       color: string;
       w: number;
@@ -587,7 +594,7 @@ const ReportGameStats = memo(
     };
 
     const rows: Row[] = useMemo(() => {
-      const ordered: Array<"??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError"> = [
+      const ordered: Array<"??" | "?" | "?!" | "!!" | "!" | "!?" | "Best" | "BookError" | "BookUnknown"> = [
         "!!",
         "!",
         "Best",
@@ -596,6 +603,7 @@ const ReportGameStats = memo(
         "?",
         "??",
         "BookError",
+        "BookUnknown",
       ];
 
       return ordered.map((annotation) => {

@@ -78,14 +78,58 @@ type VariantDeviationDecision = {
 
 type PostGameReviewVariantsBackendResult = {
   detected: boolean;
-  variantDeviationPly: number | null;
+  variantDeviationPly: number | bigint | null;
   newLineAdded: boolean;
   variantsBookPath: string | null;
   variantsBookName: string | null;
   addedVariantLine: string | null;
   openVariantsAfterReview: boolean;
   kind: "none" | "self" | "opp" | "no-entry" | "ambiguous" | "no-book";
+  bookMatchPlies?: Array<number | bigint>;
+  bookErrors?: Array<{
+    ply: number | bigint;
+    playedMove: string;
+    expectedMove: string | null;
+    expectedMoves: string[];
+  }>;
+  bookUnknowns?: Array<{
+    ply: number | bigint;
+    playedMove: string;
+    expectedMove: string | null;
+    expectedMoves: string[];
+  }>;
 };
+
+export type ProfileBookError = {
+  ply: number;
+  playedMove: string;
+  expectedMove: string | null;
+  expectedMoves: string[];
+};
+
+export type ProfileBookUnknown = {
+  ply: number;
+  playedMove: string;
+  expectedMove: string | null;
+  expectedMoves: string[];
+};
+
+export type ProfileBookReview = {
+  matchedPlies: number[];
+  errors: ProfileBookError[];
+  unknowns: ProfileBookUnknown[];
+};
+
+function normalizePly(value: number | bigint | null | undefined): number | null {
+  if (typeof value === "bigint") {
+    const asNumber = Number(value);
+    return Number.isFinite(asNumber) ? asNumber : null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
 
 type BookEvaluationStatus =
   | "NO_MATCH"
@@ -140,7 +184,7 @@ function normalizeFenKey(fen: string): string {
   return fen.trim().split(/\s+/).slice(0, 4).join(" ");
 }
 
-function normalizeMoveKey(move: string): string {
+function _normalizeMoveKey(move: string): string {
   return move.trim().toLowerCase();
 }
 
@@ -431,66 +475,80 @@ async function _loadVariantBooks(documentDir: string): Promise<VariantBook[]> {
   return books;
 }
 
+export async function detectProfileBookReview(input: {
+  profileId: string | null;
+  initialFen: string;
+  moves: string[];
+  humanColor: "white" | "black" | null;
+}): Promise<ProfileBookReview> {
+  if (!input.humanColor || input.moves.length === 0) {
+    return { matchedPlies: [], errors: [], unknowns: [] };
+  }
+
+  const variantsDir = await getVariantsDirectory(input.profileId);
+  if (import.meta.env.DEV) {
+    console.debug("[variants-book] detectProfileBookErrors request", {
+      profileId: input.profileId,
+      variantsDir,
+      humanColor: input.humanColor,
+      moves: input.moves.length,
+      initialFen: input.initialFen,
+    });
+  }
+  const variantReview = await invoke<PostGameReviewVariantsBackendResult>("post_game_review_variants", {
+    input: {
+      documentDir: variantsDir,
+      initialFen: input.initialFen,
+      moves: input.moves,
+      humanColor: input.humanColor,
+    },
+  });
+  const mappedErrors = (variantReview.bookErrors ?? []).map((entry) => ({
+    ply: normalizePly(entry.ply) ?? 0,
+    playedMove: entry.playedMove,
+    expectedMove: entry.expectedMove ?? null,
+    expectedMoves: Array.isArray(entry.expectedMoves) ? entry.expectedMoves : [],
+  }));
+  const mappedUnknowns = (variantReview.bookUnknowns ?? []).map((entry) => ({
+    ply: normalizePly(entry.ply) ?? 0,
+    playedMove: entry.playedMove,
+    expectedMove: entry.expectedMove ?? null,
+    expectedMoves: Array.isArray(entry.expectedMoves) ? entry.expectedMoves : [],
+  }));
+  const mappedMatches = (variantReview.bookMatchPlies ?? [])
+    .map((ply) => normalizePly(ply))
+    .filter((ply): ply is number => ply !== null && ply >= 0);
+  if (import.meta.env.DEV) {
+    console.debug("[variants-book] detectProfileBookErrors result", {
+      profileId: input.profileId,
+      variantsDir,
+      errors: mappedErrors.length,
+      unknowns: mappedUnknowns.length,
+      matches: mappedMatches.length,
+      first: mappedErrors[0] ?? null,
+    });
+  }
+  return { matchedPlies: mappedMatches, errors: mappedErrors, unknowns: mappedUnknowns };
+}
+
+export async function detectProfileBookErrors(input: {
+  profileId: string | null;
+  initialFen: string;
+  moves: string[];
+  humanColor: "white" | "black" | null;
+}): Promise<ProfileBookError[]> {
+  const review = await detectProfileBookReview(input);
+  return review.errors;
+}
+
 export async function detectProfileBookErrorPlies(input: {
   profileId: string | null;
   initialFen: string;
   moves: string[];
   humanColor: "white" | "black" | null;
 }): Promise<number[]> {
-  if (!input.humanColor || input.moves.length === 0) {
-    return [];
-  }
-
-  const variantsDir = await getVariantsDirectory(input.profileId);
-  if (!(await exists(variantsDir))) {
-    return [];
-  }
-
-  const books = await _loadVariantBooks(variantsDir);
-  const scopedBooks = books.filter((book) => book.orientation === input.humanColor);
-  if (scopedBooks.length === 0) {
-    return [];
-  }
-
-  const [startPos] = positionFromFen(input.initialFen);
-  if (!startPos) {
-    return [];
-  }
-
-  const pos = startPos.clone();
-  const errorPlies: number[] = [];
-
-  for (let ply = 0; ply < input.moves.length; ply += 1) {
-    const playedMoveRaw = input.moves[ply];
-    const playedMove = normalizeMoveKey(playedMoveRaw);
-    const sideToMove = pos.turn as "white" | "black";
-
-    const fenBeforeMove = normalizeFenKey(makeFen(pos.toSetup()));
-    if (sideToMove === input.humanColor) {
-      const allowed = new Set<string>();
-      for (const book of scopedBooks) {
-        const node = book.nodesByFen.get(fenBeforeMove);
-        if (!node || node.turn !== sideToMove) {
-          continue;
-        }
-        for (const allowedMove of node.allowedMoves) {
-          allowed.add(normalizeMoveKey(allowedMove));
-        }
-      }
-
-      if (allowed.size > 0 && !allowed.has(playedMove)) {
-        errorPlies.push(ply);
-      }
-    }
-
-    const parsed = parseUci(playedMove);
-    if (!parsed) {
-      break;
-    }
-    pos.play(parsed);
-  }
-
-  return errorPlies;
+  const review = await detectProfileBookReview(input);
+  return review.errors.map((item) => item.ply);
 }
 
 function evaluateBookAgainstGame(args: {
@@ -946,7 +1004,7 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
 
         variantDeviation = {
           detected: variantReview.detected,
-          ply: variantReview.variantDeviationPly,
+          ply: normalizePly(variantReview.variantDeviationPly),
           targetBookPath: null,
           bookPath: variantReview.variantsBookPath,
           shouldOpenVariants: variantReview.openVariantsAfterReview,

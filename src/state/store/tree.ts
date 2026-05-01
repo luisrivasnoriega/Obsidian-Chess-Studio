@@ -797,7 +797,13 @@ export function addAnalysis(
     node.annotations = node.annotations.filter((ann) => {
       const info = ANNOTATION_INFO[ann];
       // Keep annotations that are not basic (group !== "basic") and not novelty ("N")
-      return ann !== "N" && ann !== "Book" && ann !== "BookError" && (!info.group || info.group !== "basic");
+      return (
+        ann !== "N" &&
+        ann !== "Book" &&
+        ann !== "BookError" &&
+        ann !== "BookUnknown" &&
+        (!info.group || info.group !== "basic")
+      );
     });
 
     // Remove all auto-generated variations (all children except the first one, which is the main line)
