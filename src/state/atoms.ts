@@ -259,6 +259,12 @@ export const orionPlanProviderSignatureAtom = atomWithStorage<string>("orion-pla
 export const referenceDbAtom = atomWithStorage<string | null>("reference-database", null);
 
 export const selectedPuzzleDbAtom = atomWithStorage<string | null>("puzzle-db", null);
+export const puzzleUnsolvedOnlyDbAtom = atomWithStorage<string | null>(
+  "puzzle-unsolved-only-db",
+  null,
+  createJSONStorage(() => sessionStorage),
+  { getOnInit: true },
+);
 
 export const selectedDatabaseAtom = atomWithStorage<SuccessDatabaseInfo | null>(
   "database-view",

@@ -1,4 +1,5 @@
 import { Badge, Button, Card, Group, Loader, ScrollArea, Stack, Text } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { IconPuzzle } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useSetAtom } from "jotai";
@@ -6,8 +7,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { loadDirectories } from "@/App";
 import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
-import { activeTabAtom, selectedPuzzleDbAtom, tabsAtom } from "@/state/atoms";
-import { getSolvedPgnPuzzleCount, PGN_PUZZLE_PROGRESS_UPDATED_EVENT } from "@/utils/pgnPuzzleProgress";
+import { activeTabAtom, puzzleUnsolvedOnlyDbAtom, selectedPuzzleDbAtom, tabsAtom } from "@/state/atoms";
+import {
+  getSolvedPgnPuzzleCount,
+  PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
+  resetPgnPuzzleProgressForPaths,
+} from "@/utils/pgnPuzzleProgress";
 import { createTab } from "@/utils/tabs";
 
 type PuzzleVariantFile = {
@@ -56,16 +61,18 @@ export function PuzzleVariantsCard() {
   const [, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
   const setSelectedPuzzleDb = useSetAtom(selectedPuzzleDbAtom);
+  const setPuzzleUnsolvedOnlyDb = useSetAtom(puzzleUnsolvedOnlyDbAtom);
 
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<PuzzleVariantFile[]>([]);
   const [_progressVersion, setProgressVersion] = useState(0);
 
   const openPuzzles = useCallback(
-    (dbPath?: string) => {
+    (dbPath?: string, unsolvedOnly = false) => {
       if (dbPath) {
         setSelectedPuzzleDb(dbPath);
       }
+      setPuzzleUnsolvedOnlyDb(unsolvedOnly && dbPath ? dbPath : null);
       void createTab({
         tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
         setTabs,
@@ -73,7 +80,7 @@ export function PuzzleVariantsCard() {
       });
       navigate({ to: "/puzzles" });
     },
-    [navigate, setActiveTab, setSelectedPuzzleDb, setTabs, t],
+    [navigate, setActiveTab, setPuzzleUnsolvedOnlyDb, setSelectedPuzzleDb, setTabs, t],
   );
 
   const reloadFiles = useCallback(async () => {
@@ -145,13 +152,75 @@ export function PuzzleVariantsCard() {
     });
   }, [files]);
 
+  const resetProgress = useCallback(() => {
+    try {
+      const changed = resetPgnPuzzleProgressForPaths(files.map((file) => file.path));
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("features.dashboard.puzzleVariants.resetDone", {
+          defaultValue: "Progress reset for {{count}} puzzle files.",
+          count: changed,
+        }),
+        color: "green",
+      });
+    } catch {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message: t("features.dashboard.puzzleVariants.resetFailed", {
+          defaultValue: "Failed to reset puzzle progress.",
+        }),
+        color: "red",
+      });
+    }
+  }, [files, t]);
+
+  const resetSingleProgress = useCallback(
+    (row: { path: string; variantName: string | null; title: string }) => {
+      try {
+        const changed = resetPgnPuzzleProgressForPaths([row.path]);
+        if (changed === 0) {
+          notifications.show({
+            title: t("common.success", { defaultValue: "Success" }),
+            message: t("features.dashboard.puzzleVariants.resetOneNoChanges", {
+              defaultValue: "This puzzle variant had no saved progress.",
+            }),
+            color: "blue",
+          });
+          return;
+        }
+        notifications.show({
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("features.dashboard.puzzleVariants.resetOneDone", {
+            defaultValue: "Progress reset for {{name}}.",
+            name: row.variantName ?? row.title,
+          }),
+          color: "green",
+        });
+      } catch {
+        notifications.show({
+          title: t("common.error", { defaultValue: "Error" }),
+          message: t("features.dashboard.puzzleVariants.resetFailed", {
+            defaultValue: "Failed to reset puzzle progress.",
+          }),
+          color: "red",
+        });
+      }
+    },
+    [t],
+  );
+
   return (
     <Card withBorder p="lg" radius="md" h="100%">
       <Group justify="space-between" mb="sm">
         <Text fw={700}>{t("features.dashboard.puzzleVariants.title", { defaultValue: "Puzzle variants" })}</Text>
-        <Button size="xs" variant="light" onClick={() => openPuzzles()} leftSection={<IconPuzzle size={16} />}>
-          {t("features.tabs.puzzle.button")}
-        </Button>
+        <Group gap="xs">
+          <Button size="xs" variant="default" disabled={rows.length === 0} onClick={resetProgress}>
+            {t("features.dashboard.puzzleVariants.resetProgress", { defaultValue: "Reset progress" })}
+          </Button>
+          <Button size="xs" variant="light" onClick={() => openPuzzles()} leftSection={<IconPuzzle size={16} />}>
+            {t("features.tabs.puzzle.button")}
+          </Button>
+        </Group>
       </Group>
       {loading ? (
         <Group justify="center" py="md">
@@ -199,6 +268,26 @@ export function PuzzleVariantsCard() {
                   <Text size="xs" c="dimmed">
                     {row.solvedCount}/{row.puzzleCount}
                   </Text>
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      resetSingleProgress(row);
+                    }}
+                  >
+                    {t("features.dashboard.puzzleVariants.resetOne", { defaultValue: "Reset" })}
+                  </Button>
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openPuzzles(row.path, true);
+                    }}
+                  >
+                    {t("features.dashboard.puzzleVariants.solveUnsolved", { defaultValue: "Solve Unsolved" })}
+                  </Button>
                 </Stack>
               </Group>
             ))}

@@ -9,7 +9,7 @@ import {
   Group,
   Loader,
   Modal,
-  Select,
+  NumberInput,
   Stack,
   Text,
   Textarea,
@@ -35,17 +35,23 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { join } from "@tauri-apps/api/path";
-import { exists, mkdir, readDir, readFile, remove, writeFile } from "@tauri-apps/plugin-fs";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { exists, mkdir, readDir, readTextFile, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
-import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
+import {
+  createDefaultFileInfoMetadata,
+  type FileMetadata,
+  normalizeFileInfoMetadata,
+  processEntriesRecursively,
+} from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, activeTabAtom, tabsAtom } from "@/state/atoms";
 import { defaultPGN, getMoveText, parsePGN } from "@/utils/chess";
 import { getDocumentDir } from "@/utils/documentDir";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
@@ -96,6 +102,19 @@ type VariantValidationReport = {
   orientationMismatches: string[];
 };
 
+type VariantsPackageEntry = {
+  relativePath: string;
+  pgn: string;
+  info: unknown;
+};
+
+type VariantsPackageFile = {
+  schema: "ocs-variants-package";
+  version: 1;
+  exportedAt: string;
+  variants: VariantsPackageEntry[];
+};
+
 const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
 
 function normalizePath(path: string): string {
@@ -129,6 +148,22 @@ function relativePath(fromDir: string, toPath: string): string {
 function parentDir(path: string): string {
   const match = path.match(/^(.*)[\\/][^\\/]+$/);
   return match?.[1] ?? path;
+}
+
+function sanitizePackageRelativePath(input: string): string | null {
+  const normalized = input.replace(/\\/g, "/").trim().replace(/^\/+/, "");
+  if (!normalized || ABSOLUTE_PATH_RE.test(normalized) || normalized.includes("\0")) {
+    return null;
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+  const candidate = segments.join("/");
+  if (!candidate.toLowerCase().endsWith(".pgn")) {
+    return null;
+  }
+  return candidate;
 }
 
 function sanitizeFileStem(input: string): string {
@@ -206,6 +241,10 @@ async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
         .find((tag) => tag.startsWith("opening:"))
         ?.slice("opening:".length)
         .trim();
+      const priorityTag = tags
+        .find((tag) => tag.startsWith("priority:"))
+        ?.slice("priority:".length)
+        .trim();
       const fenTag = tags
         .find((tag) => tag.startsWith("fen:"))
         ?.slice("fen:".length)
@@ -256,9 +295,12 @@ async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
       const opening = openingTag || gameTree?.headers?.eco || null;
       const fen = fenTag || gameTree?.headers?.fen || null;
 
+      const parsedPriority = priorityTag ? Number.parseInt(priorityTag, 10) : Number.NaN;
+
       variants.push({
         name: file.name,
         path: file.path,
+        priority: Number.isFinite(parsedPriority) ? parsedPriority : null,
         opening: opening || null,
         fen: fen || null,
         depth: depth ? Number.parseInt(depth, 10) : null,
@@ -280,10 +322,10 @@ async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
 
 export default function VariantsPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const navigate = useNavigate();
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
-  const profiles = useAtomValue(profilesAtom);
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const { layout } = useResponsiveLayout();
 
@@ -298,8 +340,6 @@ export default function VariantsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [transferBusy, setTransferBusy] = useState(false);
-  const [exportTargetProfileId, setExportTargetProfileId] = useState<string | null>(null);
-  const [importSourceProfileId, setImportSourceProfileId] = useState<string | null>(null);
   const [puzzleModalOpened, setPuzzleModalOpened] = useState(false);
   const [puzzleDepth, setPuzzleDepth] = useState(1);
   const [maxPuzzleDepth, setMaxPuzzleDepth] = useState(24);
@@ -320,7 +360,17 @@ export default function VariantsPage() {
   } = useQuery({
     queryKey: ["variants", activeProfileId ?? "global"],
     queryFn: async () => loadVariants(await getVariantsDirectory(activeProfileId)),
+    staleTime: 0,
+    gcTime: 60_000,
+    refetchOnMount: "always",
+    refetchOnReconnect: true,
   });
+
+  useEffect(() => {
+    if (location.pathname === "/variants") {
+      void refetch();
+    }
+  }, [location.pathname, refetch]);
 
   useEffect(() => {
     const onVariantsUpdated = () => {
@@ -337,8 +387,6 @@ export default function VariantsPage() {
   const [createNewModalOpened, { open: openCreateNewModal, close: closeCreateNewModal }] = useDisclosure(false);
   const [editCommentsModalOpened, { open: openEditCommentsModal, close: closeEditCommentsModal }] =
     useDisclosure(false);
-  const [exportModalOpened, { open: openExportModal, close: closeExportModal }] = useDisclosure(false);
-  const [importModalOpened, { open: openImportModal, close: closeImportModal }] = useDisclosure(false);
   const [selectedVariantForComments, setSelectedVariantForComments] = useState<VariantInfo | null>(null);
 
   const createNewForm = useForm({
@@ -353,81 +401,176 @@ export default function VariantsPage() {
 
   const commentsForm = useForm({
     initialValues: {
+      name: "",
+      priority: null as number | null,
+      opening: "",
       comments: "",
     },
   });
 
-  const transferProfileOptions = useMemo(
-    () =>
-      profiles
-        .filter((profile) => profile.id !== activeProfileId)
-        .map((profile) => ({
-          value: profile.id,
-          label: profile.displayName?.trim() || profile.name,
-        })),
-    [profiles, activeProfileId],
-  );
-
-  const transferVariantsBetweenProfiles = useCallback(async (sourceProfileId: string, targetProfileId: string) => {
-    const sourceDir = await getVariantsDirectory(sourceProfileId);
-    const targetDir = await getVariantsDirectory(targetProfileId);
-    if (!(await exists(sourceDir))) {
-      return {
-        copiedFiles: 0,
-        copiedVariants: 0,
-        overwrittenFiles: 0,
-      };
-    }
-
-    await mkdir(targetDir, { recursive: true });
-    const sourceEntries = await readDir(sourceDir);
-    const allSourceEntries = await processEntriesRecursively(sourceDir, sourceEntries);
-    const variantFiles = allSourceEntries.filter((entry): entry is FileMetadata => entry.type === "file");
-    const variantsOnly = variantFiles.filter((file) => file.metadata.type === "variants");
-
-    let copiedFiles = 0;
-    let copiedVariants = 0;
-    let overwrittenFiles = 0;
-
-    for (const variantFile of variantsOnly) {
-      const pgnRelative = relativePath(sourceDir, variantFile.path);
-      const pgnTarget = await join(targetDir, pgnRelative);
-      const pgnTargetParent = parentDir(pgnTarget);
-      await mkdir(pgnTargetParent, { recursive: true });
-      if (await exists(pgnTarget)) {
-        overwrittenFiles += 1;
-      }
-      const pgnBytes = await readFile(variantFile.path);
-      await writeFile(pgnTarget, pgnBytes);
-      copiedFiles += 1;
-      copiedVariants += 1;
-
-      const infoSource = variantFile.path.replace(".pgn", ".info");
-      if (await exists(infoSource)) {
-        const infoRelative = relativePath(sourceDir, infoSource);
-        const infoTarget = await join(targetDir, infoRelative);
-        const infoTargetParent = parentDir(infoTarget);
-        await mkdir(infoTargetParent, { recursive: true });
-        if (await exists(infoTarget)) {
-          overwrittenFiles += 1;
-        }
-        const infoBytes = await readFile(infoSource);
-        await writeFile(infoTarget, infoBytes);
-        copiedFiles += 1;
-      }
-    }
-
-    await repairVariantLinks(targetDir);
+  const handleExportToFile = useCallback(async () => {
+    if (!activeProfileId || transferBusy) return;
     try {
-      window.dispatchEvent(new Event("variants:links-updated"));
-    } catch {}
+      setTransferBusy(true);
+      const variantsDir = await getVariantsDirectory(activeProfileId);
+      const entries = await readDir(variantsDir);
+      const allEntries = await processEntriesRecursively(variantsDir, entries);
+      const variantFiles = allEntries.filter(
+        (entry): entry is FileMetadata => entry.type === "file" && entry.metadata.type === "variants",
+      );
 
-    return {
-      copiedFiles,
-      copiedVariants,
-      overwrittenFiles,
-    };
-  }, []);
+      const payloadVariants: VariantsPackageEntry[] = [];
+      for (const variantFile of variantFiles) {
+        const pgn = await readTextFile(variantFile.path);
+        const metadata = await readInfoMetadata(variantFile.path, "variants");
+        payloadVariants.push({
+          relativePath: relativePath(variantsDir, variantFile.path).replace(/\\/g, "/"),
+          pgn,
+          info: metadata,
+        });
+      }
+
+      const pkg: VariantsPackageFile = {
+        schema: "ocs-variants-package",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        variants: payloadVariants,
+      };
+
+      const defaultName = `variants-${activeProfileId}-${new Date().toISOString().slice(0, 10)}.ocs-variants.json`;
+      const destination = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!destination) {
+        return;
+      }
+
+      await writeTextFile(destination, JSON.stringify(pkg, null, 2));
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.variants.exportToFileDone", {
+          defaultValue: "Variants package exported. Variants: {{variants}}.",
+          variants: payloadVariants.length,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error"),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("features.variants.exportToFileFailed", {
+                defaultValue: "Failed to export variants package.",
+              }),
+        color: "red",
+      });
+    } finally {
+      setTransferBusy(false);
+    }
+  }, [activeProfileId, t, transferBusy]);
+
+  const handleImportFromFile = useCallback(async () => {
+    if (!activeProfileId || transferBusy) return;
+    try {
+      setTransferBusy(true);
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      const sourceFile = Array.isArray(selected) ? selected[0] : selected;
+      if (!sourceFile || typeof sourceFile !== "string") {
+        return;
+      }
+
+      const raw = await readTextFile(sourceFile);
+      const parsed = JSON.parse(raw) as Partial<VariantsPackageFile> | null;
+      if (
+        !parsed ||
+        parsed.schema !== "ocs-variants-package" ||
+        parsed.version !== 1 ||
+        !Array.isArray(parsed.variants)
+      ) {
+        throw new Error(
+          t("features.variants.invalidVariantsPackage", {
+            defaultValue: "Invalid variants package format.",
+          }),
+        );
+      }
+
+      const variantsDir = await getVariantsDirectory(activeProfileId);
+      await mkdir(variantsDir, { recursive: true });
+
+      let importedVariants = 0;
+      let overwrittenVariants = 0;
+      let skippedVariants = 0;
+
+      for (const entry of parsed.variants) {
+        if (!entry || typeof entry !== "object") {
+          skippedVariants += 1;
+          continue;
+        }
+
+        const record = entry as Partial<VariantsPackageEntry>;
+        const cleanRelativePath =
+          typeof record.relativePath === "string" ? sanitizePackageRelativePath(record.relativePath) : null;
+        if (!cleanRelativePath || typeof record.pgn !== "string") {
+          skippedVariants += 1;
+          continue;
+        }
+
+        const targetPgn = await join(variantsDir, cleanRelativePath);
+        await mkdir(parentDir(targetPgn), { recursive: true });
+        if (await exists(targetPgn)) {
+          overwrittenVariants += 1;
+        }
+        await writeTextFile(targetPgn, record.pgn);
+
+        const infoMetadata = normalizeFileInfoMetadata(record.info, "variants");
+        const normalizedInfo = {
+          ...createDefaultFileInfoMetadata("variants"),
+          ...infoMetadata,
+          type: "variants" as const,
+        };
+        const targetInfo = targetPgn.replace(".pgn", ".info");
+        await writeTextFile(targetInfo, JSON.stringify(normalizedInfo, null, 2));
+        importedVariants += 1;
+      }
+
+      await repairVariantLinks(variantsDir);
+      try {
+        window.dispatchEvent(new Event("variants:links-updated"));
+        window.dispatchEvent(new Event("variants:updated"));
+      } catch {}
+      await refetch();
+
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.variants.importFromFileDone", {
+          defaultValue:
+            "Variants package imported. Imported: {{imported}}, overwritten: {{overwritten}}, skipped: {{skipped}}.",
+          imported: importedVariants,
+          overwritten: overwrittenVariants,
+          skipped: skippedVariants,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error"),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("features.variants.importFromFileFailed", {
+                defaultValue: "Failed to import variants package.",
+              }),
+        color: "red",
+      });
+    } finally {
+      setTransferBusy(false);
+    }
+  }, [activeProfileId, refetch, t, transferBusy]);
 
   const handleCreateNew = useCallback(async () => {
     try {
@@ -519,6 +662,9 @@ export default function VariantsPage() {
   const handleEditComments = useCallback(
     (variant: VariantInfo) => {
       setSelectedVariantForComments(variant);
+      commentsForm.setFieldValue("name", variant.name || "");
+      commentsForm.setFieldValue("priority", variant.priority ?? null);
+      commentsForm.setFieldValue("opening", variant.opening || "");
       commentsForm.setFieldValue("comments", variant.comments || "");
       openEditCommentsModal();
     },
@@ -529,19 +675,99 @@ export default function VariantsPage() {
     if (!selectedVariantForComments) return;
 
     try {
-      const metadata = await readInfoMetadata(selectedVariantForComments.path, "variants");
+      const requestedName = commentsForm.values.name.trim();
+      if (!requestedName) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.variants.nameRequired", { defaultValue: "Name is required" }),
+          color: "red",
+        });
+        return;
+      }
+
+      const sanitizedName = requestedName.replace(/[<>:"/\\|?*]/g, "").trim();
+      if (!sanitizedName) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.variants.invalidName", {
+            defaultValue: "Invalid file name. Please use only valid characters.",
+          }),
+          color: "red",
+        });
+        return;
+      }
+
+      const priorityRaw = commentsForm.values.priority;
+      const priorityValue =
+        priorityRaw === null || priorityRaw === undefined || Number.isNaN(Number(priorityRaw))
+          ? null
+          : Number(priorityRaw);
+      if (priorityValue !== null && (!Number.isInteger(priorityValue) || priorityValue < 1 || priorityValue > 4)) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.variants.priorityInvalid", { defaultValue: "Priority must be between 1 and 4." }),
+          color: "red",
+        });
+        return;
+      }
+
+      const currentPath = selectedVariantForComments.path;
+      const renamedPath = currentPath.replace(/[^\\/]+\.pgn$/i, `${sanitizedName}.pgn`);
+      let finalPath = currentPath;
+      const renamed = sanitizedName !== selectedVariantForComments.name;
+
+      if (renamed) {
+        if (await exists(renamedPath)) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("errors.fileAlreadyExists", { defaultValue: "File already exists" }),
+            color: "red",
+          });
+          return;
+        }
+        const currentInfoPath = currentPath.replace(".pgn", ".info");
+        const renamedInfoPath = renamedPath.replace(".pgn", ".info");
+        await rename(currentPath, renamedPath);
+        if (await exists(currentInfoPath)) {
+          await rename(currentInfoPath, renamedInfoPath);
+        }
+        finalPath = renamedPath;
+      }
+
+      const metadata = await readInfoMetadata(finalPath, "variants");
 
       // Remove old comments/references tags
       metadata.tags = (metadata.tags || []).filter(
-        (tag: string) => !tag.startsWith("comments:") && !tag.startsWith("references:"),
+        (tag: string) =>
+          !tag.startsWith("opening:") &&
+          !tag.startsWith("priority:") &&
+          !tag.startsWith("comments:") &&
+          !tag.startsWith("references:"),
       );
+
+      // Add opening tag if not empty
+      if (commentsForm.values.opening.trim()) {
+        metadata.tags.push(`opening:${commentsForm.values.opening.trim()}`);
+      }
+      if (priorityValue !== null) {
+        metadata.tags.push(`priority:${priorityValue}`);
+      }
 
       // Add new comments tag if not empty
       if (commentsForm.values.comments.trim()) {
         metadata.tags.push(`comments:${commentsForm.values.comments.trim()}`);
       }
 
-      await writeInfoMetadata(selectedVariantForComments.path, metadata);
+      await writeInfoMetadata(finalPath, metadata);
+
+      if (renamed) {
+        const variantsDir = await getVariantsDirectory(activeProfileId);
+        await repairVariantLinks(variantsDir);
+      }
+      try {
+        window.dispatchEvent(new Event("variants:links-updated"));
+        window.dispatchEvent(new Event("variants:updated"));
+      } catch {}
 
       notifications.show({
         title: t("common.success"),
@@ -557,7 +783,17 @@ export default function VariantsPage() {
         color: "red",
       });
     }
-  }, [closeEditCommentsModal, commentsForm.values.comments, refetch, selectedVariantForComments, t]);
+  }, [
+    activeProfileId,
+    closeEditCommentsModal,
+    commentsForm.values.comments,
+    commentsForm.values.name,
+    commentsForm.values.priority,
+    commentsForm.values.opening,
+    refetch,
+    selectedVariantForComments,
+    t,
+  ]);
 
   const handleDelete = useCallback(
     (variant: VariantInfo) => {
@@ -642,98 +878,6 @@ export default function VariantsPage() {
       setRepairingLinks(false);
     }
   }, [activeProfileId, refetch, t]);
-
-  const handleExportToProfile = useCallback(async () => {
-    if (!activeProfileId || !exportTargetProfileId || transferBusy) return;
-    try {
-      setTransferBusy(true);
-      const report = await transferVariantsBetweenProfiles(activeProfileId, exportTargetProfileId);
-      const targetName =
-        profiles.find((profile) => profile.id === exportTargetProfileId)?.displayName ||
-        profiles.find((profile) => profile.id === exportTargetProfileId)?.name ||
-        exportTargetProfileId;
-      notifications.show({
-        title: t("common.success"),
-        message: t("features.variants.exportToProfileDone", {
-          defaultValue:
-            "Variants exported to {{profile}}. Variants: {{variants}}, files: {{files}}, overwritten: {{overwritten}}.",
-          profile: targetName,
-          variants: report.copiedVariants,
-          files: report.copiedFiles,
-          overwritten: report.overwrittenFiles,
-        }),
-        color: "green",
-      });
-      closeExportModal();
-      setExportTargetProfileId(null);
-    } catch (error) {
-      notifications.show({
-        title: t("common.error"),
-        message:
-          error instanceof Error
-            ? error.message
-            : t("features.variants.transferFailed", { defaultValue: "Failed to transfer variants between profiles." }),
-        color: "red",
-      });
-    } finally {
-      setTransferBusy(false);
-    }
-  }, [
-    activeProfileId,
-    closeExportModal,
-    exportTargetProfileId,
-    profiles,
-    t,
-    transferBusy,
-    transferVariantsBetweenProfiles,
-  ]);
-
-  const handleImportFromProfile = useCallback(async () => {
-    if (!activeProfileId || !importSourceProfileId || transferBusy) return;
-    try {
-      setTransferBusy(true);
-      const report = await transferVariantsBetweenProfiles(importSourceProfileId, activeProfileId);
-      await refetch();
-      const sourceName =
-        profiles.find((profile) => profile.id === importSourceProfileId)?.displayName ||
-        profiles.find((profile) => profile.id === importSourceProfileId)?.name ||
-        importSourceProfileId;
-      notifications.show({
-        title: t("common.success"),
-        message: t("features.variants.importFromProfileDone", {
-          defaultValue:
-            "Variants imported from {{profile}}. Variants: {{variants}}, files: {{files}}, overwritten: {{overwritten}}.",
-          profile: sourceName,
-          variants: report.copiedVariants,
-          files: report.copiedFiles,
-          overwritten: report.overwrittenFiles,
-        }),
-        color: "green",
-      });
-      closeImportModal();
-      setImportSourceProfileId(null);
-    } catch (error) {
-      notifications.show({
-        title: t("common.error"),
-        message:
-          error instanceof Error
-            ? error.message
-            : t("features.variants.transferFailed", { defaultValue: "Failed to transfer variants between profiles." }),
-        color: "red",
-      });
-    } finally {
-      setTransferBusy(false);
-    }
-  }, [
-    activeProfileId,
-    closeImportModal,
-    importSourceProfileId,
-    profiles,
-    refetch,
-    t,
-    transferBusy,
-    transferVariantsBetweenProfiles,
-  ]);
 
   const sortVariants = useCallback(
     (a: VariantInfo, b: VariantInfo) => {
@@ -1425,6 +1569,21 @@ export default function VariantsPage() {
         ),
     },
     {
+      accessor: "priority",
+      title: t("features.variants.priority", { defaultValue: "Priority" }),
+      sortable: true,
+      render: (row: VariantTableRow) =>
+        row.variant.priority !== null ? (
+          <Badge variant="light" color="indigo" size="sm">
+            {row.variant.priority}
+          </Badge>
+        ) : (
+          <Text size="sm" c="dimmed" fs="italic">
+            -
+          </Text>
+        ),
+    },
+    {
       accessor: "fen",
       title: t("features.variants.fen", { defaultValue: "FEN" }),
       sortable: true,
@@ -1442,36 +1601,6 @@ export default function VariantsPage() {
           >
             {row.variant.fen}
           </Code>
-        ) : (
-          <Text size="sm" c="dimmed" fs="italic">
-            -
-          </Text>
-        ),
-    },
-    {
-      accessor: "depth",
-      title: t("features.variants.depth", { defaultValue: "Depth" }),
-      sortable: true,
-      render: (row: VariantTableRow) =>
-        row.variant.depth !== null ? (
-          <Badge variant="light" size="sm">
-            {row.variant.depth}
-          </Badge>
-        ) : (
-          <Text size="sm" c="dimmed" fs="italic">
-            -
-          </Text>
-        ),
-    },
-    {
-      accessor: "database",
-      title: t("features.variants.database", { defaultValue: "Database" }),
-      sortable: true,
-      render: (row: VariantTableRow) =>
-        row.variant.database ? (
-          <Text size="sm" truncate style={{ maxWidth: 200 }}>
-            {row.variant.database}
-          </Text>
         ) : (
           <Text size="sm" c="dimmed" fs="italic">
             -
@@ -1616,8 +1745,8 @@ export default function VariantsPage() {
         setQuery={setSearch}
         sortOptions={[
           { value: "name", label: t("features.variants.name", { defaultValue: "Name" }) },
+          { value: "priority", label: t("features.variants.priority", { defaultValue: "Priority" }) },
           { value: "opening", label: t("features.variants.opening", { defaultValue: "Opening" }) },
-          { value: "depth", label: t("features.variants.depth", { defaultValue: "Depth" }) },
         ]}
         currentSort={
           sortStatus.columnAccessor
@@ -1642,19 +1771,21 @@ export default function VariantsPage() {
               size="xs"
               variant="default"
               leftSection={<IconFileImport size="1rem" />}
-              onClick={openImportModal}
-              disabled={!activeProfileId || transferProfileOptions.length === 0}
+              onClick={() => void handleImportFromFile()}
+              disabled={!activeProfileId}
+              loading={transferBusy}
             >
-              {t("features.variants.importFromProfile", { defaultValue: "Import from profile" })}
+              {t("features.variants.importFromFile", { defaultValue: "Import variants file" })}
             </Button>
             <Button
               size="xs"
               variant="default"
               leftSection={<IconFileExport size="1rem" />}
-              onClick={openExportModal}
-              disabled={!activeProfileId || transferProfileOptions.length === 0}
+              onClick={() => void handleExportToFile()}
+              disabled={!activeProfileId}
+              loading={transferBusy}
             >
-              {t("features.variants.exportToProfile", { defaultValue: "Export to profile" })}
+              {t("features.variants.exportToFile", { defaultValue: "Export variants file" })}
             </Button>
             <Button
               size="xs"
@@ -1823,74 +1954,6 @@ export default function VariantsPage() {
       </Modal>
 
       <Modal
-        opened={importModalOpened}
-        onClose={closeImportModal}
-        title={t("features.variants.importFromProfile", { defaultValue: "Import from profile" })}
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            {t("features.variants.importFromProfileHint", {
-              defaultValue: "Copy variants from another profile into the active profile.",
-            })}
-          </Text>
-          <Select
-            label={t("features.variants.sourceProfile", { defaultValue: "Source profile" })}
-            placeholder={t("features.variants.selectProfile", { defaultValue: "Select a profile" })}
-            data={transferProfileOptions}
-            value={importSourceProfileId}
-            onChange={setImportSourceProfileId}
-            searchable
-          />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closeImportModal} disabled={transferBusy}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              onClick={() => void handleImportFromProfile()}
-              disabled={!importSourceProfileId}
-              loading={transferBusy}
-            >
-              {t("features.variants.importAction", { defaultValue: "Import variants" })}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      <Modal
-        opened={exportModalOpened}
-        onClose={closeExportModal}
-        title={t("features.variants.exportToProfile", { defaultValue: "Export to profile" })}
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            {t("features.variants.exportToProfileHint", {
-              defaultValue: "Copy variants from the active profile into another profile.",
-            })}
-          </Text>
-          <Select
-            label={t("features.variants.targetProfile", { defaultValue: "Target profile" })}
-            placeholder={t("features.variants.selectProfile", { defaultValue: "Select a profile" })}
-            data={transferProfileOptions}
-            value={exportTargetProfileId}
-            onChange={setExportTargetProfileId}
-            searchable
-          />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={closeExportModal} disabled={transferBusy}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              onClick={() => void handleExportToProfile()}
-              disabled={!exportTargetProfileId}
-              loading={transferBusy}
-            >
-              {t("features.variants.exportAction", { defaultValue: "Export variants" })}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      <Modal
         opened={createNewModalOpened}
         onClose={closeCreateNewModal}
         title={t("features.variants.createNew", { defaultValue: "Create New Variant" })}
@@ -1920,6 +1983,25 @@ export default function VariantsPage() {
       >
         <form onSubmit={commentsForm.onSubmit(handleSaveComments)}>
           <Stack>
+            <TextInput
+              label={t("features.variants.name", { defaultValue: "Name" })}
+              placeholder={t("features.variants.namePlaceholder", { defaultValue: "Enter variant name..." })}
+              {...commentsForm.getInputProps("name")}
+              required
+            />
+            <NumberInput
+              label={t("features.variants.priority", { defaultValue: "Priority" })}
+              placeholder={t("features.variants.priorityPlaceholder", { defaultValue: "Set priority (1-4)" })}
+              min={1}
+              max={4}
+              allowDecimal={false}
+              {...commentsForm.getInputProps("priority")}
+            />
+            <TextInput
+              label={t("features.variants.opening", { defaultValue: "Opening" })}
+              placeholder={t("features.variants.openingPlaceholder", { defaultValue: "Enter opening name..." })}
+              {...commentsForm.getInputProps("opening")}
+            />
             <Textarea
               label={t("features.variants.comments", { defaultValue: "Comments / References" })}
               placeholder={t("features.variants.commentsPlaceholder", {

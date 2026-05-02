@@ -4,11 +4,11 @@ import { parseSan } from "chessops/san";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useState } from "react";
 import { commands, getPuzzleBatch, type PuzzleDatabaseInfo, type Token } from "@/bindings";
-import { puzzleRatingRangeAtom, selectedPuzzleDbAtom } from "@/state/atoms";
+import { puzzleRatingRangeAtom, puzzleUnsolvedOnlyDbAtom, selectedPuzzleDbAtom } from "@/state/atoms";
 import { getPgnHeaders, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { logger } from "@/utils/logger";
-import { getAttemptedPgnPuzzleCount, isPgnPuzzleAttempted } from "@/utils/pgnPuzzleProgress";
+import { getAttemptedPgnPuzzleCount, isPgnPuzzleAttempted, isPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
 import { getPuzzleDatabases, type Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
@@ -28,6 +28,7 @@ type PuzzleCacheEntry = {
     maxRating: number;
     random: boolean;
     sideToMove: PuzzleSideToMove;
+    unsolvedOnly: boolean;
     counter: number;
     puzzle_indexes: number[];
   };
@@ -155,6 +156,7 @@ export const usePuzzleDatabase = () => {
   const [puzzleDbs, setPuzzleDbs] = useState<PuzzleDatabaseInfo[]>([]);
   const [isLoadingPuzzleDbs, setIsLoadingPuzzleDbs] = useState(true);
   const [selectedDb, setSelectedDb] = useAtom(selectedPuzzleDbAtom);
+  const [puzzleUnsolvedOnlyDb] = useAtom(puzzleUnsolvedOnlyDbAtom);
   const [ratingRange, setRatingRange] = useAtom(puzzleRatingRangeAtom);
   const [dbRatingRange, setDbRatingRange] = useState<[number, number] | null>(null);
 
@@ -266,6 +268,7 @@ export const usePuzzleDatabase = () => {
             maxRating: 0,
             random: false,
             sideToMove: "any",
+            unsolvedOnly: false,
             counter: 0,
             puzzle_indexes: [],
           },
@@ -376,6 +379,7 @@ export const usePuzzleDatabase = () => {
     // Check if this is a puzzle variants file and if we should filter unsolved puzzles
     let isPuzzleVariants = false;
     let shouldFilterUnattempted = false;
+    const unsolvedOnly = puzzleUnsolvedOnlyDb === db;
 
     if (random && db.endsWith(".pgn")) {
       try {
@@ -408,6 +412,7 @@ export const usePuzzleDatabase = () => {
       localPuzzleDb.generated.maxRating !== maxRating ||
       localPuzzleDb.generated.random !== random ||
       localPuzzleDb.generated.sideToMove !== sideToMove ||
+      localPuzzleDb.generated.unsolvedOnly !== unsolvedOnly ||
       localPuzzleDb.generated.counter >= localPuzzleDb.generated.puzzle_indexes.length
     ) {
       // UI filter is the player's side. Puzzle auto-plays first move, so player side
@@ -425,6 +430,9 @@ export const usePuzzleDatabase = () => {
       if (isPuzzleVariants && random && shouldFilterUnattempted) {
         puzzle_indexes = puzzle_indexes.filter((idx) => !isPgnPuzzleAttempted(db, idx));
       }
+      if (unsolvedOnly) {
+        puzzle_indexes = puzzle_indexes.filter((idx) => !isPgnPuzzleSolved(db, idx));
+      }
 
       // For random selection (inOrder=false), we want "random but no repeats" until exhausted.
       // Shuffle the candidate list once, then walk through it with `counter`.
@@ -440,6 +448,7 @@ export const usePuzzleDatabase = () => {
         maxRating,
         random,
         sideToMove,
+        unsolvedOnly,
         counter: 0,
         puzzle_indexes,
       };
@@ -459,6 +468,10 @@ export const usePuzzleDatabase = () => {
       // If this is a puzzle-variants file and we are filtering unattempted, skip entries that
       // became attempted since the list was generated.
       if (isPuzzleVariants && random && shouldFilterUnattempted && isPgnPuzzleAttempted(db, idx)) {
+        attempts += 1;
+        continue;
+      }
+      if (unsolvedOnly && isPgnPuzzleSolved(db, idx)) {
         attempts += 1;
         continue;
       }
@@ -771,6 +784,7 @@ export const usePuzzleDatabase = () => {
         maxRating: 0,
         random: false,
         sideToMove: "any",
+        unsolvedOnly: false,
         counter: 0,
         puzzle_indexes: [],
       };

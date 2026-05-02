@@ -1,6 +1,7 @@
 export type VariantInfo = {
   name: string;
   path: string;
+  priority: number | null;
   opening: string | null;
   fen: string | null;
   depth: number | null;

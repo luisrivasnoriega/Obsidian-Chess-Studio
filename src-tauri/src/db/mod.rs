@@ -4271,6 +4271,33 @@ pub async fn delete_database(
     use std::fs::remove_file;
 
     let path_str = file.to_string_lossy().into_owned();
+    let canonical_path_str = std::fs::canonicalize(&file)
+        .ok()
+        .and_then(|path| path.to_str().map(|value| value.to_string()));
+
+    let same_path = |left: &str, right: &str| {
+        if cfg!(windows) {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    };
+
+    let remove_pool_entry = |state: &tauri::State<'_, AppState>, key: &str| {
+        if let Some((_, pool)) = state.connection_pool.remove(key) {
+            drop(pool);
+        }
+    };
+
+    let clear_readonly = |path: &PathBuf| {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mut permissions = metadata.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                let _ = std::fs::set_permissions(path, permissions);
+            }
+        }
+    };
 
     // STEP 1: Cancel any ongoing searches by acquiring all permits
     // This will stop new searches and wait for current ones to complete
@@ -4280,16 +4307,29 @@ pub async fn delete_database(
 
     // STEP 2: Remove from connection pool FIRST - this closes all connections
     // Do this BEFORE any database operations to ensure connections are closed immediately
-    if let Some((_, pool)) = state.connection_pool.remove(&path_str) {
-        // Force drop the pool to close all connections immediately
-        drop(pool);
+    remove_pool_entry(&state, &path_str);
+    if let Some(canonical) = canonical_path_str.as_deref() {
+        if !same_path(&path_str, canonical) {
+            remove_pool_entry(&state, canonical);
+        }
     }
 
     // STEP 3: Clear in-memory cache (do this after closing connections)
+    let mut path_aliases: Vec<String> = vec![path_str.clone()];
+    if let Some(canonical) = canonical_path_str.as_ref() {
+        if !path_aliases.iter().any(|existing| same_path(existing, canonical)) {
+            path_aliases.push(canonical.clone());
+        }
+    }
     let cache_keys_to_remove: Vec<_> = state
         .line_cache
         .iter()
-        .filter(|entry| entry.key().1 == file)
+        .filter(|entry| {
+            let key_path = entry.key().1.to_string_lossy();
+            path_aliases
+                .iter()
+                .any(|candidate| same_path(candidate, key_path.as_ref()))
+        })
         .map(|entry| entry.key().clone())
         .collect();
 
@@ -4305,26 +4345,62 @@ pub async fn delete_database(
     // This operation can be slow, but we don't wait for it to complete
     let _ = crate::db::position_cache::clear_cache_for_database(&app, &file);
 
-    // STEP 5: Brief wait for OS to release file handles (reduced from 500ms to 100ms)
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let wal_path = PathBuf::from(format!("{}-wal", file.display()));
+    let shm_path = PathBuf::from(format!("{}-shm", file.display()));
+    let sidecar_paths = [wal_path, shm_path];
 
-    // STEP 6: Try to delete with fewer retries and shorter delays
-    for attempt in 1..=2 {
-        if file.exists() {
-            match remove_file(&file) {
-                Ok(_) => {
-                    return Ok(());
-                }
-                Err(_e) if attempt < 2 => {
-                    // Shorter delay: 200ms instead of 500ms * attempt
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                }
-                Err(e) => {
-                    return Err(Error::Io(e));
+    // STEP 5: Retry aggressively on lock/contention scenarios (common on Windows).
+    let mut last_delete_error: Option<std::io::Error> = None;
+    for attempt in 0..8u64 {
+        if !file.exists() {
+            break;
+        }
+
+        clear_readonly(&file);
+        match remove_file(&file) {
+            Ok(_) => {
+                last_delete_error = None;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                last_delete_error = None;
+                break;
+            }
+            Err(e) => {
+                last_delete_error = Some(e);
+                if attempt < 7 {
+                    tokio::time::sleep(std::time::Duration::from_millis(120 * (attempt + 1))).await;
                 }
             }
-        } else {
-            return Ok(());
+        }
+    }
+
+    if file.exists() {
+        let reason = last_delete_error
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "unknown file lock error".to_string());
+        return Err(Error::PackageManager(format!(
+            "Failed to delete database file '{}': {reason}",
+            file.display()
+        )));
+    }
+
+    // STEP 6: Best-effort cleanup for SQLite sidecar files.
+    for sidecar in sidecar_paths {
+        for attempt in 0..5u64 {
+            if !sidecar.exists() {
+                break;
+            }
+
+            clear_readonly(&sidecar);
+            match remove_file(&sidecar) {
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(_) if attempt < 4 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(80 * (attempt + 1))).await;
+                }
+                Err(_) => break,
+            }
         }
     }
 

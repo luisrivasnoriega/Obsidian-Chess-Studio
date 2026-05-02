@@ -19,6 +19,7 @@ import {
   puzzleAdaptiveOffsetAtom,
   puzzlePlayerRatingAtom,
   puzzleSideToMoveAtom,
+  puzzleUnsolvedOnlyDbAtom,
 } from "@/state/atoms";
 import { positionFromFen } from "@/utils/chessops";
 import { getAdaptivePuzzleRange, getPuzzleDatabases } from "@/utils/puzzles";
@@ -65,6 +66,7 @@ function Puzzles({ id }: { id: string }) {
   const [hideRating, setHideRating] = useAtom(hidePuzzleRatingAtom);
   const [inOrder, setInOrder] = useAtom(inOrderPuzzlesAtom);
   const [jumpToNext, setJumpToNext] = useAtom(jumpToNextPuzzleAtom);
+  const [puzzleUnsolvedOnlyDb, setPuzzleUnsolvedOnlyDb] = useAtom(puzzleUnsolvedOnlyDbAtom);
   const [playerRating] = useAtom(puzzlePlayerRatingAtom);
   const [puzzleSideToMove, setPuzzleSideToMove] = useAtom(puzzleSideToMoveAtom);
 
@@ -177,10 +179,20 @@ function Puzzles({ id }: { id: string }) {
 
   const handleDatabaseChange = (value: string | null) => {
     setSelectedDb(value);
+    if (!value || puzzleUnsolvedOnlyDb !== value) {
+      setPuzzleUnsolvedOnlyDb(null);
+    }
     // Reset filters when database changes
     setThemes([]);
     setOpeningTags([]);
   };
+
+  useEffect(() => {
+    if (!selectedDb || !puzzleUnsolvedOnlyDb) return;
+    if (selectedDb !== puzzleUnsolvedOnlyDb) {
+      setPuzzleUnsolvedOnlyDb(null);
+    }
+  }, [puzzleUnsolvedOnlyDb, selectedDb, setPuzzleUnsolvedOnlyDb]);
 
   const handleAdaptiveOffsetChange = (value: number) => {
     setAdaptiveOffset(value);

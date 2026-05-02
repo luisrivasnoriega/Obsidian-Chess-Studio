@@ -26,6 +26,8 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconEdit,
+  IconFileExport,
+  IconFileImport,
   IconPlus,
   IconRefresh,
   IconTrash,
@@ -33,7 +35,17 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { remove } from "@tauri-apps/plugin-fs";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import {
+  exists,
+  mkdir,
+  readDir,
+  readFile,
+  readTextFile,
+  remove,
+  writeFile,
+  writeTextFile,
+} from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,12 +54,16 @@ import { playerStatsCommands } from "@/bindings/playerStats";
 import type { SortState } from "@/components/GenericHeader";
 import GenericHeader from "@/components/GenericHeader";
 import { DatabaseDetails } from "@/features/databases/DatabasesPage";
+import { type FileMetadata, normalizeFileInfoMetadata, processEntriesRecursively } from "@/features/files/utils/file";
 import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
+import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeProfileIdAtom,
   defaultProfilesPageUiState,
   type Profile,
+  profilePawnStructuresUiStateByProfileAtom,
+  profileStatsUiStateByProfileAtom,
   profilesAtom,
   profilesPageUiStateAtom,
   referenceDbAtom,
@@ -59,6 +75,7 @@ import { getAccountSyncState } from "@/utils/accountSyncState";
 import { getAccountProtectionStatus, type Platform, validateCredentials } from "@/utils/accountVerification";
 import { getChessComAccount } from "@/utils/chess.com/api";
 import { type DatabaseInfo, getDatabases } from "@/utils/db";
+import { readInfoMetadata } from "@/utils/files";
 import { parseDate } from "@/utils/format";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { isFailedToFetchError } from "@/utils/networkCooldown";
@@ -123,6 +140,133 @@ function truncateMiddle(text: string, maxLen: number) {
   return `${text.slice(0, head)}...${text.slice(text.length - tail)}`;
 }
 
+type ProfilePackageVariantEntry = {
+  relativePath: string;
+  pgn: string;
+  info: unknown;
+};
+
+type ProfilePackageAccountPgnEntry = {
+  fileName: string;
+  pgn: string;
+};
+
+type ProfilePackageAnalyzedGameEntry = {
+  gameId: string;
+  analyzedPgn: string;
+};
+
+type ProfilePackageGameStatsEntry = {
+  gameId: string;
+  accuracy: number;
+  acpl: number;
+  estimatedElo: number | null;
+  resistance: number | null;
+  eloEstimatedBalanced: number | null;
+  opponentEstimatedElo: number | null;
+  opponentRatingElo: number | null;
+};
+
+type ProfileTransferPackageV1 = {
+  schema: "ocs-profile-package";
+  version: 1;
+  exportedAt: string;
+  profile: Profile;
+  sessions: Session[];
+  profileStatsUiState: unknown | null;
+  profilePawnStructuresUiState: unknown | null;
+  profileDbBase64: string;
+  accountPgnFiles: ProfilePackageAccountPgnEntry[];
+  variants: ProfilePackageVariantEntry[];
+  analysis: {
+    analyzedGames: ProfilePackageAnalyzedGameEntry[];
+    gameStats: ProfilePackageGameStatsEntry[];
+  };
+};
+
+const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+function profileRelativePath(rootDir: string, targetPath: string): string {
+  const root = rootDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const target = targetPath.replace(/\\/g, "/");
+  const rootLower = root.toLowerCase();
+  const targetLower = target.toLowerCase();
+  if (targetLower.startsWith(`${rootLower}/`)) {
+    return target.slice(root.length + 1);
+  }
+  return target.split("/").filter(Boolean).pop() ?? target;
+}
+
+function sanitizePackageRelativePath(input: string): string | null {
+  const normalized = input.replace(/\\/g, "/").trim().replace(/^\/+/, "");
+  if (!normalized || ABSOLUTE_PATH_RE.test(normalized) || normalized.includes("\0")) {
+    return null;
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+  const candidate = segments.join("/");
+  if (!candidate.toLowerCase().endsWith(".pgn")) {
+    return null;
+  }
+  return candidate;
+}
+
+function parentDir(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) {
+    return normalized;
+  }
+  return normalized.slice(0, index);
+}
+
+function safePgnFileName(value: string): string | null {
+  const name = value.trim();
+  if (!name || name.includes("/") || name.includes("\\") || name.includes("\0")) {
+    return null;
+  }
+  if (!name.toLowerCase().endsWith(".pgn")) {
+    return null;
+  }
+  return name;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+}
+
+function toI64NumberOrNull(value: unknown): number | null {
+  const numeric = toNumberOrNull(value);
+  if (numeric == null) return null;
+  if (!Number.isFinite(numeric)) return null;
+  if (Math.abs(numeric) > Number.MAX_SAFE_INTEGER) return null;
+  return Math.round(numeric);
+}
+
 export default function ProfilesPage() {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
@@ -140,11 +284,16 @@ export default function ProfilesPage() {
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [referenceDb, setReferenceDb] = useAtom(referenceDbAtom);
+  const [profileStatsUiStateByProfile, setProfileStatsUiStateByProfile] = useAtom(profileStatsUiStateByProfileAtom);
+  const [profilePawnUiStateByProfile, setProfilePawnUiStateByProfile] = useAtom(
+    profilePawnStructuresUiStateByProfileAtom,
+  );
 
   const [dbList, setDbList] = useState<DatabaseInfo[] | null>(null);
   const [dbLoading, setDbLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [convertLoading, setConvertLoading] = useState(false);
+  const [profileTransferBusy, setProfileTransferBusy] = useState(false);
 
   const [modalOpened, modal] = useDisclosure(false);
   const [accountModalOpened, accountModal] = useDisclosure(false);
@@ -524,6 +673,15 @@ export default function ProfilesPage() {
 
   const deleteProfile = useCallback(
     async (profile: Profile) => {
+      if (isAccountSyncRunning) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("profiles.sync.inProgress", { defaultValue: "A profile update is already running." }),
+          color: "red",
+        });
+        return;
+      }
+
       const linked = sessions.some((s) => s.profileId === profile.id);
       if (linked) {
         notifications.show({
@@ -536,27 +694,60 @@ export default function ProfilesPage() {
         return;
       }
 
+      let dbPath = "";
       try {
-        const dbPath = await getProfileDbPath(profile.id);
+        dbPath = await getProfileDbPath(profile.id);
         const result = await commands.deleteDatabase(dbPath);
         if (result.status === "error") {
+          const errorMessage =
+            typeof result.error === "string" && result.error.trim()
+              ? result.error
+              : t("common.errorUnknown", { defaultValue: "Something went wrong." });
+          console.error("[profiles] deleteProfile failed", {
+            profileId: profile.id,
+            dbPath,
+            error: result.error,
+          });
           notifications.show({
             title: t("common.error"),
-            message: t("common.errorUnknown", { defaultValue: "Something went wrong." }),
+            message: errorMessage,
             color: "red",
           });
           return;
         }
-      } catch {
+      } catch (error) {
+        const errorMessage =
+          formatSyncError(error) || t("common.errorUnknown", { defaultValue: "Something went wrong." });
+        console.error("[profiles] deleteProfile threw", {
+          profileId: profile.id,
+          dbPath,
+          error,
+        });
         notifications.show({
           title: t("common.error"),
-          message: t("common.errorUnknown", { defaultValue: "Something went wrong." }),
+          message: errorMessage,
           color: "red",
         });
         return;
       }
 
       setProfiles((prev) => prev.filter((p) => p.id !== profile.id));
+      setProfileStatsUiStateByProfile((prev) => {
+        if (!(profile.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[profile.id];
+        return next;
+      });
+      setProfilePawnUiStateByProfile((prev) => {
+        if (!(profile.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[profile.id];
+        return next;
+      });
+
+      if (dbPath && referenceDb === dbPath) {
+        setReferenceDb(null);
+      }
 
       if (activeProfileId === profile.id) {
         const remaining = profiles.filter((p) => p.id !== profile.id);
@@ -569,7 +760,19 @@ export default function ProfilesPage() {
         color: "green",
       });
     },
-    [activeProfileId, profiles, sessions, setActiveProfileId, setProfiles, t],
+    [
+      activeProfileId,
+      isAccountSyncRunning,
+      profiles,
+      referenceDb,
+      sessions,
+      setActiveProfileId,
+      setProfilePawnUiStateByProfile,
+      setProfileStatsUiStateByProfile,
+      setProfiles,
+      setReferenceDb,
+      t,
+    ],
   );
 
   const assignSessionToProfile = useCallback(
@@ -1108,6 +1311,458 @@ export default function ProfilesPage() {
     };
   }, [activeProfileId, profiles, startBackgroundSync, upsertSession]);
 
+  const collectAllProfileGameIds = useCallback(async (profileId: string, profileUsernames: string[]) => {
+    const ids = new Set<string>();
+    const pageSize = 500;
+    const maxPages = 4000;
+    const gameHistoryLimit = 1_000_000;
+
+    let page = 1;
+    let totalCount = 0;
+    while (page <= maxPages) {
+      const res = unwrap(
+        await commands.dashboardGetGamesHistoryRows({
+          profileId,
+          profileUsernames,
+          gameHistoryLimit,
+          page,
+          pageSize,
+          eventFilterId: null,
+          selectedOpponentId: null,
+          opponentContains: null,
+          timeControlCategory: null,
+          resultFilter: null,
+          playerColor: null,
+          minMoves: null,
+          sortBy: "date",
+          sortDirection: "desc",
+        }),
+      );
+      const rows = res.rows ?? [];
+      totalCount = res.totalCount ?? totalCount;
+      for (const row of rows) {
+        if (row.analysisGameId) {
+          ids.add(String(row.analysisGameId));
+        }
+      }
+      if (rows.length === 0) break;
+      if (totalCount > 0 && page * pageSize >= totalCount) break;
+      page += 1;
+    }
+
+    return ids;
+  }, []);
+
+  const exportProfileToFile = useCallback(async () => {
+    if (!activeProfile) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.transfer.noActiveProfile", { defaultValue: "Select an active profile first." }),
+        color: "yellow",
+      });
+      return;
+    }
+
+    try {
+      setProfileTransferBusy(true);
+      const profileId = activeProfile.id;
+      const profileDbPath = await getProfileDbPath(profileId);
+      if (!(await exists(profileDbPath))) {
+        throw new Error(
+          t("profiles.transfer.profileDbMissing", {
+            defaultValue: "Could not find the profile database for export.",
+          }),
+        );
+      }
+
+      const profileDbBytes = await readFile(profileDbPath);
+      const profileDbBase64 = bytesToBase64(new Uint8Array(profileDbBytes));
+
+      const linkedSessions = sessions.filter((session) => session.profileId === profileId);
+      const profileUsernames = linkedSessions
+        .map((session) => session.lichess?.username ?? session.chessCom?.username ?? null)
+        .filter((value): value is string => !!value);
+
+      const appData = await appDataDir();
+      const dbDir = await resolve(appData, "db");
+      const accountPgnFiles: ProfilePackageAccountPgnEntry[] = [];
+      const seenAccountFileNames = new Set<string>();
+      if (await exists(dbDir)) {
+        const entries = await readDir(dbDir);
+        for (const entry of entries) {
+          if (!entry.isFile) continue;
+          const fileName = entry.name ?? "";
+          if (!fileName.toLowerCase().endsWith(".pgn")) continue;
+          const expectedPrefix = `profile_${profileId}_`;
+          if (!fileName.startsWith(expectedPrefix)) continue;
+          const filePath = await resolve(dbDir, fileName);
+          const pgn = await readTextFile(filePath);
+          accountPgnFiles.push({ fileName, pgn });
+          seenAccountFileNames.add(fileName.toLowerCase());
+        }
+      }
+
+      for (const session of linkedSessions) {
+        const meta = sessionMeta(session);
+        if (meta.platform !== "lichess" && meta.platform !== "chesscom") continue;
+        if (!meta.username || meta.username === "-") continue;
+
+        const scopedPath = await getAccountPgnPath({
+          appDataDir: appData,
+          profileId,
+          platform: meta.platform,
+          username: meta.username,
+        });
+        const scopedFileName = scopedPath.replace(/\\/g, "/").split("/").pop() ?? "";
+        if (scopedFileName && !seenAccountFileNames.has(scopedFileName.toLowerCase()) && (await exists(scopedPath))) {
+          const pgn = await readTextFile(scopedPath);
+          accountPgnFiles.push({ fileName: scopedFileName, pgn });
+          seenAccountFileNames.add(scopedFileName.toLowerCase());
+        }
+
+        const legacyFileName = `${meta.username}_${meta.platform}.pgn`;
+        if (seenAccountFileNames.has(legacyFileName.toLowerCase())) continue;
+        const legacyPath = await resolve(dbDir, legacyFileName);
+        if (await exists(legacyPath)) {
+          const pgn = await readTextFile(legacyPath);
+          accountPgnFiles.push({ fileName: legacyFileName, pgn });
+          seenAccountFileNames.add(legacyFileName.toLowerCase());
+        }
+      }
+
+      const variantsDir = await getVariantsDirectory(profileId);
+      const variants: ProfilePackageVariantEntry[] = [];
+      if (await exists(variantsDir)) {
+        const variantEntries = await readDir(variantsDir);
+        const allVariantEntries = await processEntriesRecursively(variantsDir, variantEntries);
+        const variantsOnly = allVariantEntries.filter(
+          (entry): entry is FileMetadata => entry.type === "file" && entry.metadata.type === "variants",
+        );
+        for (const variantFile of variantsOnly) {
+          const pgn = await readTextFile(variantFile.path);
+          const info = await readInfoMetadata(variantFile.path, "variants");
+          variants.push({
+            relativePath: profileRelativePath(variantsDir, variantFile.path),
+            pgn,
+            info,
+          });
+        }
+      }
+
+      const analyzedRows = unwrap(await commands.analysisDbGetAllAnalyzedGames(profileId));
+      const analyzedGames: ProfilePackageAnalyzedGameEntry[] = analyzedRows.map((row) => ({
+        gameId: row.game_id,
+        analyzedPgn: row.analyzed_pgn,
+      }));
+
+      const analysisGameIds = await collectAllProfileGameIds(profileId, profileUsernames);
+      for (const row of analyzedRows) {
+        if (row.game_id) analysisGameIds.add(String(row.game_id));
+      }
+
+      const statsRows =
+        analysisGameIds.size > 0
+          ? unwrap(await commands.analysisDbGetGameStatsBulk(Array.from(analysisGameIds), profileId))
+          : [];
+      const gameStats: ProfilePackageGameStatsEntry[] = statsRows.map((row) => ({
+        gameId: String(row.gameId),
+        accuracy: row.accuracy,
+        acpl: row.acpl,
+        estimatedElo: toNumberOrNull(row.estimatedElo),
+        resistance: toNumberOrNull(row.resistance),
+        eloEstimatedBalanced: toNumberOrNull(row.eloEstimatedBalanced),
+        opponentEstimatedElo: null,
+        opponentRatingElo: null,
+      }));
+
+      const pkg: ProfileTransferPackageV1 = {
+        schema: "ocs-profile-package",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        profile: activeProfile,
+        sessions: linkedSessions,
+        profileStatsUiState: profileStatsUiStateByProfile[profileId] ?? null,
+        profilePawnStructuresUiState: profilePawnUiStateByProfile[profileId] ?? null,
+        profileDbBase64,
+        accountPgnFiles,
+        variants,
+        analysis: {
+          analyzedGames,
+          gameStats,
+        },
+      };
+
+      const defaultNameBase = normalizeProfileName(activeProfile.name).replace(/[<>:"/\\|?*\s]+/g, "-") || "profile";
+      const destination = await save({
+        defaultPath: `${defaultNameBase}-${new Date().toISOString().slice(0, 10)}.ocs-profile.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!destination) {
+        return;
+      }
+
+      await writeTextFile(destination, JSON.stringify(pkg, null, 2));
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.transfer.exportDone", {
+          defaultValue:
+            "Profile exported. Sessions: {{sessions}}, variants: {{variants}}, analyzed games: {{analyzed}}.",
+          sessions: linkedSessions.length,
+          variants: variants.length,
+          analyzed: analyzedGames.length,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("profiles.transfer.exportFailed", { defaultValue: "Failed to export the profile package." }),
+        color: "red",
+      });
+    } finally {
+      setProfileTransferBusy(false);
+    }
+  }, [activeProfile, collectAllProfileGameIds, profilePawnUiStateByProfile, profileStatsUiStateByProfile, sessions, t]);
+
+  const importProfileFromFile = useCallback(async () => {
+    try {
+      setProfileTransferBusy(true);
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      const filePath = Array.isArray(selected) ? selected[0] : selected;
+      if (!filePath || typeof filePath !== "string") {
+        return;
+      }
+
+      const raw = await readTextFile(filePath);
+      const parsed = JSON.parse(raw) as Partial<ProfileTransferPackageV1> | null;
+      if (
+        !parsed ||
+        parsed.schema !== "ocs-profile-package" ||
+        parsed.version !== 1 ||
+        !parsed.profile ||
+        typeof parsed.profile.id !== "string" ||
+        typeof parsed.profile.name !== "string" ||
+        typeof parsed.profileDbBase64 !== "string"
+      ) {
+        throw new Error(
+          t("profiles.transfer.invalidPackage", {
+            defaultValue: "Invalid profile package format.",
+          }),
+        );
+      }
+
+      const sourceProfile = parsed.profile as Profile;
+      const sourceProfileId = sourceProfile.id.trim() || genID();
+      let targetProfileId = sourceProfileId;
+      if (profiles.some((profile) => profile.id === targetProfileId)) {
+        targetProfileId = genID();
+      }
+
+      const normalizedName =
+        normalizeProfileName(sourceProfile.name) || t("profiles.profile", { defaultValue: "Profile" });
+      let targetProfileName = normalizedName;
+      if (profiles.some((profile) => profile.name.toLowerCase() === targetProfileName.toLowerCase())) {
+        let suffix = 2;
+        while (
+          profiles.some((profile) => profile.name.toLowerCase() === `${normalizedName} (${suffix})`.toLowerCase())
+        ) {
+          suffix += 1;
+        }
+        targetProfileName = `${normalizedName} (${suffix})`;
+      }
+
+      const now = Date.now();
+      const importedProfile: Profile = {
+        ...sourceProfile,
+        id: targetProfileId,
+        name: targetProfileName,
+        createdAt: typeof sourceProfile.createdAt === "number" ? sourceProfile.createdAt : now,
+        updatedAt: now,
+      };
+
+      const normalizedSessions = (Array.isArray(parsed.sessions) ? parsed.sessions : [])
+        .map((value) => value as Session)
+        .map((session) => {
+          const meta = sessionMeta(session);
+          if (meta.platform === "unknown" || !meta.username || meta.username === "-") return null;
+          return {
+            ...session,
+            profileId: targetProfileId,
+            player: targetProfileName,
+            updatedAt: typeof session.updatedAt === "number" ? session.updatedAt : now,
+          } as Session;
+        })
+        .filter((session): session is Session => !!session);
+
+      const profileDbPath = await getProfileDbPath(targetProfileId);
+      const profileDbBytes = base64ToBytes(parsed.profileDbBase64);
+      await writeFile(profileDbPath, profileDbBytes);
+      unwrap(await commands.initProfileDb(profileDbPath, targetProfileName, null));
+
+      const appData = await appDataDir();
+      const dbDir = await resolve(appData, "db");
+      await mkdir(dbDir, { recursive: true });
+
+      let accountFilesImported = 0;
+      const accountPgnFiles = Array.isArray(parsed.accountPgnFiles) ? parsed.accountPgnFiles : [];
+      for (const entry of accountPgnFiles) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Partial<ProfilePackageAccountPgnEntry>;
+        if (typeof item.fileName !== "string" || typeof item.pgn !== "string") continue;
+        const safeName = safePgnFileName(item.fileName);
+        if (!safeName) continue;
+        const sourcePrefix = `profile_${sourceProfileId}_`;
+        const normalizedSuffix = safeName.startsWith(sourcePrefix)
+          ? safeName.slice(sourcePrefix.length)
+          : safeName.startsWith("profile_")
+            ? safeName.replace(/^profile_[^_]+_/, "")
+            : safeName;
+        const targetName = `profile_${targetProfileId}_${normalizedSuffix}`;
+        const targetPath = await resolve(dbDir, targetName);
+        await writeTextFile(targetPath, item.pgn);
+        accountFilesImported += 1;
+      }
+
+      let variantsImported = 0;
+      const variantsDir = await getVariantsDirectory(targetProfileId);
+      await mkdir(variantsDir, { recursive: true });
+      const variants = Array.isArray(parsed.variants) ? parsed.variants : [];
+      for (const entry of variants) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Partial<ProfilePackageVariantEntry>;
+        const cleanRelativePath =
+          typeof item.relativePath === "string" ? sanitizePackageRelativePath(item.relativePath) : null;
+        if (!cleanRelativePath || typeof item.pgn !== "string") continue;
+
+        const targetPgnPath = await resolve(variantsDir, cleanRelativePath);
+        await mkdir(parentDir(targetPgnPath), { recursive: true });
+        await writeTextFile(targetPgnPath, item.pgn);
+
+        const normalizedInfo = normalizeFileInfoMetadata(item.info, "variants");
+        const targetInfoPath = targetPgnPath.replace(".pgn", ".info");
+        await writeTextFile(targetInfoPath, JSON.stringify(normalizedInfo, null, 2));
+        variantsImported += 1;
+      }
+
+      const analysis = parsed.analysis && typeof parsed.analysis === "object" ? parsed.analysis : null;
+      const analyzedGamesRaw = Array.isArray(analysis?.analyzedGames) ? analysis.analyzedGames : [];
+      const gameStatsRaw = Array.isArray(analysis?.gameStats) ? analysis.gameStats : [];
+
+      let analyzedImported = 0;
+      for (const entry of analyzedGamesRaw) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Partial<ProfilePackageAnalyzedGameEntry>;
+        if (typeof item.gameId !== "string" || typeof item.analyzedPgn !== "string") continue;
+        unwrap(await commands.analysisDbSetAnalyzedGame(item.gameId, item.analyzedPgn, targetProfileId));
+        analyzedImported += 1;
+      }
+
+      let statsImported = 0;
+      for (const entry of gameStatsRaw) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Partial<ProfilePackageGameStatsEntry>;
+        if (typeof item.gameId !== "string") continue;
+        if (typeof item.accuracy !== "number" || typeof item.acpl !== "number") continue;
+
+        unwrap(
+          await commands.analysisDbSetGameStats(
+            item.gameId,
+            {
+              accuracy: item.accuracy,
+              acpl: item.acpl,
+              estimatedElo: toI64NumberOrNull(item.estimatedElo),
+              resistance: item.resistance ?? null,
+              eloEstimatedBalanced: toI64NumberOrNull(item.eloEstimatedBalanced),
+              opponentEstimatedElo: toI64NumberOrNull(item.opponentEstimatedElo),
+              opponentRatingElo: toI64NumberOrNull(item.opponentRatingElo),
+            } as any,
+            targetProfileId,
+          ),
+        );
+        statsImported += 1;
+      }
+
+      setProfiles((prev) => [...prev, importedProfile]);
+      setSessions((prev) => {
+        const next = [...prev];
+        for (const importedSession of normalizedSessions) {
+          const meta = sessionMeta(importedSession);
+          const key = `${targetProfileId}:${meta.platform}:${meta.username}`.toLowerCase();
+          const existingIndex = next.findIndex((candidate) => {
+            const candidateMeta = sessionMeta(candidate);
+            const candidateKey =
+              `${candidate.profileId ?? ""}:${candidateMeta.platform}:${candidateMeta.username}`.toLowerCase();
+            return candidateKey === key;
+          });
+          if (existingIndex >= 0) {
+            next[existingIndex] = importedSession;
+          } else {
+            next.push(importedSession);
+          }
+        }
+        return next;
+      });
+      if (parsed.profileStatsUiState != null) {
+        setProfileStatsUiStateByProfile((prev) => ({
+          ...prev,
+          [targetProfileId]: parsed.profileStatsUiState as any,
+        }));
+      }
+      if (parsed.profilePawnStructuresUiState != null) {
+        setProfilePawnUiStateByProfile((prev) => ({
+          ...prev,
+          [targetProfileId]: parsed.profilePawnStructuresUiState as any,
+        }));
+      }
+      setActiveProfileId(targetProfileId);
+
+      await loadDatabases();
+      invalidateProfilePlayerStats(targetProfileId);
+
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.transfer.importDone", {
+          defaultValue:
+            "Profile imported as {{profile}}. Sessions: {{sessions}}, account files: {{accountFiles}}, variants: {{variants}}, analyzed games: {{analyzed}}, stats: {{stats}}.",
+          profile: targetProfileName,
+          sessions: normalizedSessions.length,
+          accountFiles: accountFilesImported,
+          variants: variantsImported,
+          analyzed: analyzedImported,
+          stats: statsImported,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("profiles.transfer.importFailed", { defaultValue: "Failed to import the profile package." }),
+        color: "red",
+      });
+    } finally {
+      setProfileTransferBusy(false);
+    }
+  }, [
+    invalidateProfilePlayerStats,
+    loadDatabases,
+    profiles,
+    setActiveProfileId,
+    setProfilePawnUiStateByProfile,
+    setProfileStatsUiStateByProfile,
+    setProfiles,
+    setSessions,
+    t,
+  ]);
+
   const refreshPuzzleDatabases = useCallback(async () => {}, []);
 
   return (
@@ -1117,17 +1772,41 @@ export default function ProfilesPage() {
         searchPlaceholder={undefined}
         showViewToggle={false}
         actions={
-          <Button
-            size="xs"
-            variant="default"
-            leftSection={<IconRefresh size="1rem" />}
-            onClick={() => {
-              if (activeProfile) void syncProfileSessions(activeProfile);
-            }}
-            disabled={!activeProfile || activeProfileSyncableCount === 0 || isAccountSyncRunning}
-          >
-            {t("profiles.sync.active", { defaultValue: "Update active profile" })}
-          </Button>
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconFileImport size="1rem" />}
+              onClick={() => void importProfileFromFile()}
+              loading={profileTransferBusy}
+              disabled={profileTransferBusy || isAccountSyncRunning}
+            >
+              {t("profiles.transfer.importFile", { defaultValue: "Import profile file" })}
+            </Button>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconFileExport size="1rem" />}
+              onClick={() => void exportProfileToFile()}
+              loading={profileTransferBusy}
+              disabled={!activeProfile || profileTransferBusy || isAccountSyncRunning}
+            >
+              {t("profiles.transfer.exportFile", { defaultValue: "Export profile file" })}
+            </Button>
+            <Button
+              size="xs"
+              variant="default"
+              leftSection={<IconRefresh size="1rem" />}
+              onClick={() => {
+                if (activeProfile) void syncProfileSessions(activeProfile);
+              }}
+              disabled={
+                !activeProfile || activeProfileSyncableCount === 0 || isAccountSyncRunning || profileTransferBusy
+              }
+            >
+              {t("profiles.sync.active", { defaultValue: "Update active profile" })}
+            </Button>
+          </Group>
         }
       />
 
@@ -1398,6 +2077,7 @@ export default function ProfilesPage() {
                                 onClick={() => {
                                   void deleteProfile(profile);
                                 }}
+                                disabled={isAccountSyncRunning}
                                 title={t("common.delete", { defaultValue: "Delete" })}
                               >
                                 <IconTrash size={16} />
