@@ -3783,7 +3783,7 @@ dependencies = [
 
 [[package]]
 name = "obsidian-chess-studio"
-version = "2.6.25"
+version = "2.6.26"
 dependencies = [
  "axum",
  "base64 0.22.1",

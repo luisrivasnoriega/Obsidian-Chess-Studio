@@ -576,19 +576,19 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
 | 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
-| 🇧🇾 **Беларуская (Belarusian)** | 🟡 65% | [View](./src/locales/be) |
-| 🇩🇪 **Deutsch (German)** | 🟡 65% | [View](./src/locales/de) |
-| 🇬🇧 **English UK** | 🟡 65% | [View](./src/locales/en-GB) |
-| 🇫🇷 **Français (French)** | 🟡 65% | [View](./src/locales/fr) |
-| 🇦🇲 **Հայերեն (Armenian)** | 🟡 65% | [View](./src/locales/hy) |
-| 🇮🇹 **Italiano (Italian)** | 🟡 65% | [View](./src/locales/it) |
-| 🇯🇵 **日本語 (Japanese)** | 🟡 65% | [View](./src/locales/ja) |
-| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 65% | [View](./src/locales/nb) |
-| 🇵🇱 **Polski (Polish)** | 🟡 65% | [View](./src/locales/pl) |
-| 🇵🇹 **Português (Portuguese)** | 🟡 65% | [View](./src/locales/pt) |
-| 🇷🇺 **Русский (Russian)** | 🟡 65% | [View](./src/locales/ru) |
-| 🇺🇦 **Українська (Ukrainian)** | 🟡 65% | [View](./src/locales/uk) |
-| 🇨🇳 **中文 (Chinese)** | 🟡 65% | [View](./src/locales/zh) |
+| 🇧🇾 **Беларуская (Belarusian)** | 🟡 64% | [View](./src/locales/be) |
+| 🇩🇪 **Deutsch (German)** | 🟡 64% | [View](./src/locales/de) |
+| 🇬🇧 **English UK** | 🟡 64% | [View](./src/locales/en-GB) |
+| 🇫🇷 **Français (French)** | 🟡 64% | [View](./src/locales/fr) |
+| 🇦🇲 **Հայերեն (Armenian)** | 🟡 64% | [View](./src/locales/hy) |
+| 🇮🇹 **Italiano (Italian)** | 🟡 64% | [View](./src/locales/it) |
+| 🇯🇵 **日本語 (Japanese)** | 🟡 64% | [View](./src/locales/ja) |
+| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 64% | [View](./src/locales/nb) |
+| 🇵🇱 **Polski (Polish)** | 🟡 64% | [View](./src/locales/pl) |
+| 🇵🇹 **Português (Portuguese)** | 🟡 64% | [View](./src/locales/pt) |
+| 🇷🇺 **Русский (Russian)** | 🟡 64% | [View](./src/locales/ru) |
+| 🇺🇦 **Українська (Ukrainian)** | 🟡 64% | [View](./src/locales/uk) |
+| 🇨🇳 **中文 (Chinese)** | 🟡 64% | [View](./src/locales/zh) |
 | 🇸🇦 **العربية (Arabic)** | 🟡 62% | [View](./src/locales/ar) |
 | 🇹🇷 **Türkçe (Turkish)** | 🔴 49% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
