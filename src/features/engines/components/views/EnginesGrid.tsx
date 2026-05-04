@@ -66,6 +66,7 @@ export function EnginesGrid({ engines, filteredIndices, selected, setSelected, i
             key={`${item.name}-${i}`}
             isSelected={selected === i}
             setSelected={setSelected}
+            premium
             error={undefined}
             content={<EngineCard engine={item} stats={stats} />}
           />

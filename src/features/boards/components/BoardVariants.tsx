@@ -250,7 +250,12 @@ function BoardVariants() {
             .replace(/\.pgn$/, "")
             .split(/[/\\]/)
             .pop() || baseName;
-        const tags = ["puzzle-variants", `variant:${variantName}`, `depth:${selectedDepth}`];
+        const tags = [
+          "puzzle-variants",
+          `variant:${variantName}`,
+          `depth:${selectedDepth}`,
+          `orientation:${puzzleColor}`,
+        ];
 
         const mainlineNodes: TreeNode[] = [];
         let currentNode = root;

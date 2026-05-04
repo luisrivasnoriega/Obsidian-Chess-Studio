@@ -92,7 +92,7 @@ export async function openFile(
   // For variants files, use the file name as the tab name
   const tabName = fileType === "variants" ? fileName : getGameName(firstGameTree?.headers) || "Multiple Games";
 
-  const tabId = await createTab({
+  await createTab({
     tab: {
       name: tabName,
       type: "analysis",
@@ -106,19 +106,6 @@ export async function openFile(
     initialAnalysisSubTab: options?.initialAnalysisSubTab,
     initialNotationView: options?.initialNotationView,
   });
-
-  // Store the first game's state in session storage (for backward compatibility)
-  // The analysis board will handle multiple games through the pgn content
-  if (options?.position) {
-    firstGameTree.position = [...options.position];
-  }
-  sessionStorage.setItem(
-    tabId,
-    JSON.stringify({
-      version: 0,
-      state: firstGameTree,
-    }),
-  );
 }
 
 export async function createFile({

@@ -51,6 +51,7 @@ use crate::analysis_storage::{
 use crate::dashboard_games_history::{
     dashboard_get_analyze_all_counts, dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_rows,
     dashboard_get_games_history_filter_meta,
+    dashboard_get_overview_metrics,
     dashboard_decode_profile_game_blob_moves,
     dashboard_resolve_chesscom_game_url,
     dashboard_resolve_profile_db_game_id,
@@ -314,6 +315,7 @@ pub async fn run() {
             dashboard_get_analyze_all_counts_bulk,
             dashboard_get_games_history_rows,
             dashboard_get_games_history_filter_meta,
+            dashboard_get_overview_metrics,
             dashboard_decode_profile_game_blob_moves,
             dashboard_search_profile_opponents,
             dashboard_resolve_chesscom_game_url,

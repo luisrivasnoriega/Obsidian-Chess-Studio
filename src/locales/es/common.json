@@ -124,7 +124,8 @@
     "failedToSaveFile": "Error al guardar el archivo",
     "puzzlesGeneratedSuccessfully": "{{count}} puzzles generados exitosamente",
     "failedToGeneratePuzzles": "Error al generar puzzles",
-    "generatePuzzles": "Generar Puzzles",
+    "generatePuzzles": "Generar puzzles",
+    "actions": "Acciones",
     "clearAllAnalyzedGames": "Limpiar todos los análisis guardados"
   },
   "chess": {
@@ -722,17 +723,41 @@
       "keyboardShortcuts": "Atajos de teclado",
       "quickPlay": "Jugar rápido",
       "quickAnalyze": "Analizar rápido",
-      "quickPuzzles": "Puzzles rápidos"
+      "quickPuzzles": "Puzzles rápidos",
+      "expand": "Expandir menú lateral",
+      "collapse": "Colapsar menú lateral",
+      "navigation": "Navegación",
+      "play": "Jugar",
+      "workspace": "Herramientas",
+      "system": "Sistema"
     },
     "events": {
       "validation": {
         "nameRequired": "El nombre es obligatorio"
       },
+      "kpis": {
+        "total": "Eventos",
+        "visible": "Visibles"
+      },
       "noProfile": "Selecciona un perfil para administrar eventos.",
       "unnamedEvent": "Evento sin nombre",
       "addGame": {
         "title": "Agregar partida",
-        "createAndOpen": "Crear y abrir"
+        "createAndOpen": "Crear y abrir",
+        "manualMode": "Manual",
+        "pgnMode": "PGN",
+        "profileSide": "El perfil activo juega como",
+        "profileAsWhite": "Blancas",
+        "profileAsBlack": "Negras",
+        "manualPlayers": "Jugadores manuales",
+        "keepPgnPlayers": "Respetar jugadores del PGN",
+        "activeProfilePlayer": "Jugador del perfil activo",
+        "activeProfileNameRequired": "El nombre del perfil activo es obligatorio.",
+        "opponent": "Rival",
+        "opponentPlaceholder": "Nombre del rival",
+        "pgnInput": "PGN",
+        "pgnPlaceholder": "Pega una o varias partidas PGN",
+        "importOnly": "Importar al evento"
       },
       "create": {
         "title": "Crear evento"
@@ -803,7 +828,9 @@
         },
         "validation": {
           "whiteRequired": "El jugador de blancas es obligatorio",
-          "blackRequired": "El jugador de negras es obligatorio"
+          "blackRequired": "El jugador de negras es obligatorio",
+          "opponentRequired": "El rival es obligatorio",
+          "pgnRequired": "El PGN es obligatorio"
         }
       },
       "delete": {
@@ -819,6 +846,8 @@
         "deleteFailedTitle": "No se pudo eliminar el torneo",
         "gamesAddedTitle": "Partidas importadas",
         "gamesAddedMessage": "Se importaron {{count}} partidas.",
+        "noGamesAddedTitle": "No se importaron partidas nuevas",
+        "noGamesAddedMessage": "No se insertaron partidas nuevas. El PGN puede estar duplicado o ser invalido.",
         "addGamesFailedTitle": "No se pudieron importar las partidas",
         "createGameFailedTitle": "No se pudo crear la partida",
         "openGameFailedTitle": "No se pudo abrir la partida"
@@ -1009,6 +1038,15 @@
       "dailyGoals": "Objetivos diarios",
       "dayStreak": "racha de días",
       "thisWeek": "Esta semana",
+      "previousWeek": "Pasada",
+      "kpi": {
+        "acplByTimeControl": "ACPL medio por ritmo",
+        "accuracyByColor": "Precisión promedio por color",
+        "puzzleVariantsByColor": "% puzzles variants (blancas/negras)"
+      },
+      "blunderRateLabel": "Porcentaje de blunders",
+      "blunderRateHintWithPrevious": "Porcentaje de tus jugadas anotadas marcadas como blunder. Semana anterior: {{previous}} ({{delta}})",
+      "blunderRateHintNoData": "Basado en partidas analizadas esta semana: {{count}}",
       "tags": {
         "lessons": "Lecciones",
         "openings": "Aperturas",
@@ -1338,6 +1376,11 @@
         "engine": "Motor",
         "engineMs": "Tiempo del Motor (ms)",
         "variantsCount": "Variantes",
+        "total": "Variantes totales",
+        "filtered": "Variantes filtradas",
+        "rootLines": "Líneas raíz",
+        "linkedVariants": "Variantes vinculadas",
+        "averageDepth": "Profundidad media (lado activo)",
         "links": "Vinculos",
         "parentLink": "Padre",
         "childLinks": "Hijas",
@@ -1375,6 +1418,77 @@
         "repairLinks": "Reparar vinculos",
         "repairLinksDone": "Vinculos reparados. Actualizados: {{updated}}, agregados: {{added}}, eliminados: {{removed}}.",
         "repairLinksFailed": "No se pudieron reparar los vinculos de variantes.",
+        "configureBuild": "Configurar fuente de datos",
+        "configureBuildHint": "Define la base de datos y filtros para esta variante y, si quieres, sus descendientes.",
+        "applyCurrentOnly": "Solo variante actual",
+        "applyWithChildren": "Variante + descendientes",
+        "applyBuildConfig": "Aplicar configuración",
+        "buildConfigApplied": "Configuracion de fuente de datos aplicada a {{count}} variantes.",
+        "buildConfigApplyFailed": "No se pudo aplicar la configuracion de fuente de datos.",
+        "coverageGraph": "Grafo de cobertura",
+        "coverageGraphFailed": "No se pudo construir el grafo de cobertura.",
+        "coverageGraphFailedWithReason": "No se pudo construir el grafo de cobertura: {{reason}}",
+        "coverageGraphMissingDepth": "Elige N jugadas antes de construir el grafo de cobertura.",
+        "coverageGraphMissingToken": "No se encontro token de Lichess en el perfil activo. Agrega un token en Profiles antes de construir el grafo con fuentes de Lichess.",
+        "coverageGraphMissingRootFen": "No se pudo determinar el FEN raiz de la variante seleccionada.",
+        "coverageGraphDepthPlaceholder": "Elige jugadas",
+        "coverageGraphPreparingProgress": "Preparando variantes {{done}} / {{total}}...",
+        "coverageGraphBuildingProgress": "Construyendo grafo: variantes {{done}} / {{total}} | posiciones procesadas {{processed}} | pendientes {{pending}}",
+        "buildCoverageGraph": "Construir grafo",
+        "rebuildCoverageGraph": "Reconstruir grafo",
+        "nMoves": "N jugadas activas",
+        "mainline": "Linea principal <= 60%",
+        "secondary": "Lineas secundarias <= 80%",
+        "alternative": "Lineas alternativas > 80%",
+        "mainlineShort": "LP",
+        "secondaryShort": "Secundaria",
+        "alternativeShort": "Alternativa",
+        "lowSampleBadge": "Muestra baja",
+        "unmappedResponseBadge": "Sin respuesta mapeada",
+        "coverageNodeActions": "Acciones del nodo",
+        "coverageSelectedNode": "Nodo seleccionado",
+        "coverageTierOverrideUnavailable": "Este nodo no se puede editar manualmente.",
+        "coverageTierOverrideNeedsRebuild": "No hay caché de cobertura. Reconstruye el grafo para guardar cambios manuales de nivel.",
+        "coverageTierOverrideApplied": "Nivel manual aplicado.",
+        "coverageTierOverrideFailed": "No se pudo guardar el cambio manual de nivel.",
+        "coverageEditApplied": "Configuracion del nodo actualizada.",
+        "coverageEditFailed": "No se pudo guardar la configuracion del nodo.",
+        "coverageActionTierTab": "Nivel",
+        "coverageActionRenameTab": "Renombrar",
+        "coverageActionEditTab": "Editar",
+        "coverageActionPuzzlesTab": "Puzles",
+        "coverageActionBoardTab": "Tablero",
+        "coverageActionGoToTab": "Ir a variante",
+        "coverageActionViewTab": "Vista",
+        "coverageTierHint": "Define como se prioriza esta respuesta en la cobertura.",
+        "coverageEditHint": "Actualiza la configuracion del nodo y guarda los cambios.",
+        "coverageRenameHint": "Asigna un nombre personalizado que quedara guardado para este nodo.",
+        "coveragePuzzleHint": "Genera puzzles desde este nodo usando el tier seleccionado.",
+        "coverageBoardHint": "Vista del tablero despues de esta jugada con la orientacion del lado activo.",
+        "coverageViewHint": "Colapsa o expande el subarbol completo desde este nodo.",
+        "coverageCollapseNode": "Colapsar subarbol",
+        "coverageExpandNode": "Expandir subarbol",
+        "coverageRenameLabel": "Nombre del nodo",
+        "coverageRenameRequired": "El nombre del nodo es obligatorio.",
+        "coverageRenameApplied": "Nombre del nodo actualizado.",
+        "coverageRenameFailed": "No se pudo guardar el nombre del nodo.",
+        "coveragePuzzleName": "Nombre del archivo de puzles",
+        "coveragePuzzleDepth": "Profundidad",
+        "coveragePuzzleIncludeLowSample": "Incluir nodos de muestra baja (< 5000 partidas)",
+        "coverageGeneratePuzzles": "Generar puzles",
+        "coverageGoToVariant": "Ir a variante",
+        "coverageGoToVariantHint": "Abre la variante correspondiente y salta a este movimiento exacto en el PGN.",
+        "coverageGoToVariantMissing": "No se pudo mapear este nodo a una ruta de movimientos en variantes.",
+        "coverageGoToVariantFailed": "No se pudo abrir la variante para este nodo.",
+        "coverageNodeNotFound": "No se pudo ubicar el nodo seleccionado en el grafo actual.",
+        "coverageNodeMissingFen": "El nodo seleccionado no tiene contexto de posicion (FEN).",
+        "coverageBoardInvalidFen": "No se pudo renderizar el tablero de este nodo porque el FEN es invalido.",
+        "coveragePuzzleEmpty": "No hay ramas disponibles para el tier seleccionado desde este nodo.",
+        "coveragePuzzleDone": "Se generaron {{count}} puzles desde el nodo seleccionado.",
+        "coverageResponseLowFrequency": "Linea rara",
+        "coverageResponseNovelty": "Novedad",
+        "coverageCollapsedBadge": "Colapsado",
+        "prioritySynced": "Prioridad sincronizada (1/2/3)",
         "searchPlaceholder": "Buscar variantes...",
         "deleteConfirm": "¿Estás seguro de que quieres eliminar esta variante?",
         "deleted": "Variante eliminada exitosamente",
@@ -1387,6 +1501,7 @@
         "commentsSaved": "Comentarios guardados exitosamente",
         "commentsSaveError": "Error al guardar los comentarios",
         "nameRequired": "El nombre es obligatorio",
+        "invalidName": "Nombre invalido.",
         "namePlaceholder": "Ingresa el nombre de la variante...",
         "openingPlaceholder": "Ingresa el nombre de la apertura...",
         "priorityPlaceholder": "Define prioridad (1-4)",
@@ -1456,6 +1571,12 @@
     },
     "engines": {
       "title": "Motores",
+      "kpis": {
+        "total": "Motores",
+        "visible": "Visibles",
+        "local": "Locales",
+        "cloud": "Nube"
+      },
       "onlineTournament": {
         "addButton": "Agregar torneo online",
         "title": "Importar torneo online",
@@ -1519,6 +1640,10 @@
     },
     "databases": {
       "title": "Tus bases de datos",
+      "kpis": {
+        "total": "Bases de datos",
+        "visible": "Visibles"
+      },
       "card": {
         "games": "Partidas",
         "players": "Jugadores",
@@ -2255,7 +2380,8 @@
     "copyErrorDetails": "Copiar detalles del error",
     "copied": "Copiado",
     "puzzleDepthTooDeep": "La profundidad no puede exceder la profundidad de puzzles disponible (max {{max}})",
-    "puzzleVariantsNeedSystemMove": "Solo puedes generar variantes de puzzles después de crear la primera variante (se requiere una jugada previa del sistema)."
+    "puzzleVariantsNeedSystemMove": "Solo puedes generar variantes de puzzles después de crear la primera variante (se requiere una jugada previa del sistema).",
+    "fileAlreadyExists": "El archivo ya existe"
   },
   "window": {
     "minimize": "Minimizar ventana",
@@ -2409,6 +2535,12 @@
     "profile": "Perfil",
     "selectProfile": "Seleccionar perfil",
     "accountsCount": "{{count}} cuentas",
+    "kpis": {
+      "totalProfiles": "Perfiles",
+      "linkedAccounts": "Cuentas vinculadas",
+      "activeAccounts": "Cuentas del perfil activo",
+      "profilesWithAccounts": "Perfiles con cuentas"
+    },
     "linkAccountsTitle": "Vincular cuentas",
     "linkAccountsHint": "Asigna cada cuenta a un perfil. Todos los juegos se guardan en la base de datos del perfil.",
     "noAccounts": "No hay cuentas. Primero agrega cuentas en la página de Cuentas.",
@@ -2977,6 +3109,12 @@
   },
   "chessbase": {
     "title": "ChessBase",
+    "kpis": {
+      "connection": "Conexion",
+      "pendingGames": "Partidas descargadas",
+      "quickSearchPool": "Pool de busqueda rapida",
+      "profiles": "Perfiles"
+    },
     "description": "Guarda tus credenciales de ChessBase de forma segura y descarga partidas de la base de datos en línea de ChessBase sin abrir un navegador.",
     "usernameLabel": "Usuario / Email",
     "usernamePlaceholder": "Tu usuario o email de ChessBase",

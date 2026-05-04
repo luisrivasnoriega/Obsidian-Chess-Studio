@@ -5,9 +5,11 @@ export type VariantInfo = {
   opening: string | null;
   fen: string | null;
   depth: number | null;
+  lineDepth?: number | null;
   database: string | null;
   engine: string | null;
   engineMs: number | null;
+  dbType?: "local" | "lch_all" | "lch_master" | null;
   variantsCount: number | null;
   comments: string | null;
   parentLink?: VariantLinkRef | null;

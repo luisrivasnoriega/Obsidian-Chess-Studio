@@ -432,6 +432,7 @@ export async function getLichessGames(
   fen: string,
   options: LichessGamesOptions,
   token?: string,
+  signal?: AbortSignal,
 ): Promise<PositionData> {
   const url = match(options.player)
     .with(P.union(undefined, ""), () => `${explorerURL}/lichess?${getLichessGamesQueryParams(fen, options)}`)
@@ -439,15 +440,22 @@ export async function getLichessGames(
   const res = await fetch(url, {
     method: "GET",
     headers: getExplorerHeaders(token),
+    signal,
   });
   return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess explorer");
 }
 
-export async function getMasterGames(fen: string, options: MasterGamesOptions, token?: string): Promise<PositionData> {
+export async function getMasterGames(
+  fen: string,
+  options: MasterGamesOptions,
+  token?: string,
+  signal?: AbortSignal,
+): Promise<PositionData> {
   const url = `${explorerURL}/masters?${getMasterGamesQueryParams(fen, options)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: getExplorerHeaders(token),
+    signal,
   });
   return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess masters explorer");
 }

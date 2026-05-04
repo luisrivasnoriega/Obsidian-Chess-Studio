@@ -1,10 +1,11 @@
-import { ScrollArea, Stack, Tabs } from "@mantine/core";
+import { Card, ScrollArea, Stack, Tabs } from "@mantine/core";
 import { IconPlayerPlay, IconPlus, IconSearch } from "@tabler/icons-react";
 import { useAtomValue } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
+import { premiumPanelStyle, premiumTabListStyle } from "@/styles/premiumSurface";
 import { CreateTournamentForm } from "./components/CreateTournamentForm";
 import PlayVsLichessBoard from "./components/PlayVsLichessBoard";
 import { TournamentList } from "./components/TournamentList";
@@ -49,37 +50,45 @@ export default function TournamentsPage() {
       <Stack flex={1} style={{ minHeight: 0 }}>
         <ScrollArea h="100%" offsetScrollbars>
           <Stack px="md" pb="xl">
-            <Tabs value={activeTab} onChange={(v) => setActiveTab(v || "play")}>
-              <Tabs.List>
-                <Tabs.Tab value="play" leftSection={<IconPlayerPlay size={16} />}>
-                  {t("features.tournaments.play.title", "Play")}
-                </Tabs.Tab>
-                <Tabs.Tab value="search" leftSection={<IconSearch size={16} />}>
-                  {t("features.tournaments.search", "Search")}
-                </Tabs.Tab>
-                <Tabs.Tab value="create" leftSection={<IconPlus size={16} />}>
-                  {t("features.tournaments.create", "Create")}
-                </Tabs.Tab>
-              </Tabs.List>
+            <Card withBorder radius="lg" p="sm" style={premiumPanelStyle}>
+              <Tabs
+                value={activeTab}
+                onChange={(v) => setActiveTab(v || "play")}
+                styles={{
+                  list: premiumTabListStyle,
+                }}
+              >
+                <Tabs.List>
+                  <Tabs.Tab value="play" leftSection={<IconPlayerPlay size={16} />}>
+                    {t("features.tournaments.play.title", "Play")}
+                  </Tabs.Tab>
+                  <Tabs.Tab value="search" leftSection={<IconSearch size={16} />}>
+                    {t("features.tournaments.search", "Search")}
+                  </Tabs.Tab>
+                  <Tabs.Tab value="create" leftSection={<IconPlus size={16} />}>
+                    {t("features.tournaments.create", "Create")}
+                  </Tabs.Tab>
+                </Tabs.List>
 
-              <Tabs.Panel value="search" pt="md">
-                <TournamentList lichessToken={lichessToken} accountName={accountName} key={refreshKey} />
-              </Tabs.Panel>
+                <Tabs.Panel value="search" pt="md">
+                  <TournamentList lichessToken={lichessToken} accountName={accountName} key={refreshKey} />
+                </Tabs.Panel>
 
-              <Tabs.Panel value="create" pt="md">
-                <CreateTournamentForm
-                  lichessToken={lichessToken}
-                  accountName={accountName}
-                  onTemplateSaved={() => {
-                    setRefreshKey((prev) => prev + 1);
-                  }}
-                />
-              </Tabs.Panel>
+                <Tabs.Panel value="create" pt="md">
+                  <CreateTournamentForm
+                    lichessToken={lichessToken}
+                    accountName={accountName}
+                    onTemplateSaved={() => {
+                      setRefreshKey((prev) => prev + 1);
+                    }}
+                  />
+                </Tabs.Panel>
 
-              <Tabs.Panel value="play" pt="md">
-                <PlayVsLichessBoard />
-              </Tabs.Panel>
-            </Tabs>
+                <Tabs.Panel value="play" pt="md">
+                  <PlayVsLichessBoard />
+                </Tabs.Panel>
+              </Tabs>
+            </Card>
           </Stack>
         </ScrollArea>
       </Stack>

@@ -53,3 +53,16 @@ export const selected = style({
     borderColor: "var(--mantine-primary-color-filled)",
   },
 });
+
+export const premium = style({
+  borderRadius: vars.radius.lg,
+  borderWidth: 1,
+  borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 16%, var(--mantine-color-dark-4))",
+  background:
+    "radial-gradient(110% 165% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 16%, transparent) 0%, transparent 62%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 84%, var(--mantine-color-dark-5) 16%), var(--mantine-color-dark-7))",
+  transition: "border-color 120ms ease, transform 120ms ease",
+  ":hover": {
+    transform: "translateY(-1px)",
+    borderColor: "color-mix(in srgb, var(--mantine-color-blue-7) 28%, var(--mantine-color-dark-4))",
+  },
+});

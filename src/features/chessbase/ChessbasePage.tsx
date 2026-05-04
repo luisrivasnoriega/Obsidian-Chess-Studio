@@ -11,9 +11,11 @@ import {
   PasswordInput,
   ScrollArea,
   Select,
+  SimpleGrid,
   Stack,
   Text,
   TextInput,
+  ThemeIcon,
 } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { notifications } from "@mantine/notifications";
@@ -25,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GenericHeader from "@/components/GenericHeader";
 import { activeProfileIdAtom, profilesAtom } from "@/state/atoms";
+import { premiumActionButtonStyles, premiumKpiCardStyle, premiumPanelStyle } from "@/styles/premiumSurface";
 
 type ChessbaseCredentialsSummary = {
   username: string | null;
@@ -96,6 +99,14 @@ export default function ChessbasePage() {
 
   const hasPassword = credentialsQuery.data?.has_password ?? false;
   const isSessionReady = sessionStatus?.state === "ready";
+  const pendingGamesCount = pendingDownload?.downloadedGames ?? 0;
+  const quickSearchTotal = quickSearchCount?.total ?? 0;
+  const connectedLabel =
+    sessionStatus?.state === "ready"
+      ? t("chessbase.sessionConnected")
+      : sessionStatus?.state === "error"
+        ? t("chessbase.sessionError")
+        : t("chessbase.sessionConnecting");
 
   useEffect(() => {
     const username = credentialsQuery.data?.username ?? "";
@@ -381,13 +392,76 @@ export default function ChessbasePage() {
           <Stack px="md" pb="xl" gap="md">
             <Text c="dimmed">{t("chessbase.description")}</Text>
 
+            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+              <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed">
+                      {t("chessbase.kpis.connection", "Connection")}
+                    </Text>
+                    <Text fw={800} fz="lg">
+                      {connectedLabel}
+                    </Text>
+                  </Stack>
+                  <ThemeIcon radius="md" variant="light" color={isSessionReady ? "teal" : "yellow"}>
+                    <IconKey size={16} />
+                  </ThemeIcon>
+                </Group>
+              </Card>
+              <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed">
+                      {t("chessbase.kpis.pendingGames", "Downloaded games")}
+                    </Text>
+                    <Text fw={800} fz="lg">
+                      {pendingGamesCount}
+                    </Text>
+                  </Stack>
+                  <ThemeIcon radius="md" variant="light" color="blue">
+                    <IconDownload size={16} />
+                  </ThemeIcon>
+                </Group>
+              </Card>
+              <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed">
+                      {t("chessbase.kpis.quickSearchPool", "Quick-search pool")}
+                    </Text>
+                    <Text fw={800} fz="lg">
+                      {quickSearchTotal}
+                    </Text>
+                  </Stack>
+                  <ThemeIcon radius="md" variant="light" color="cyan">
+                    <IconKey size={16} />
+                  </ThemeIcon>
+                </Group>
+              </Card>
+              <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                <Group justify="space-between" wrap="nowrap">
+                  <Stack gap={2}>
+                    <Text size="xs" c="dimmed">
+                      {t("chessbase.kpis.profiles", "Profiles")}
+                    </Text>
+                    <Text fw={800} fz="lg">
+                      {profiles.length}
+                    </Text>
+                  </Stack>
+                  <ThemeIcon radius="md" variant="light" color="grape">
+                    <IconDeviceFloppy size={16} />
+                  </ThemeIcon>
+                </Group>
+              </Card>
+            </SimpleGrid>
+
             {credentialsQuery.isError && (
               <Alert color="red" title={t("common.error")}>
                 {String(credentialsQuery.error)}
               </Alert>
             )}
 
-            <Card withBorder radius="md" p="md">
+            <Card withBorder radius="lg" p="md" style={premiumPanelStyle}>
               <Group justify="space-between" align="flex-end" wrap="wrap">
                 <Stack gap={2}>
                   <Text fw={700}>{t("chessbase.connectionTitle")}</Text>
@@ -436,6 +510,8 @@ export default function ChessbasePage() {
                   <Button
                     leftSection={<IconKey size="1rem" />}
                     size="sm"
+                    radius="xl"
+                    styles={premiumActionButtonStyles}
                     loading={isLoggingIn}
                     onClick={() => void onLoginBackground()}
                   >
@@ -444,15 +520,30 @@ export default function ChessbasePage() {
                 )}
                 {hasPassword && (
                   <>
-                    <Button size="sm" variant="default" loading={isLoggingIn} onClick={() => void onLoginBackground()}>
+                    <Button
+                      size="sm"
+                      radius="xl"
+                      variant="default"
+                      styles={premiumActionButtonStyles}
+                      loading={isLoggingIn}
+                      onClick={() => void onLoginBackground()}
+                    >
                       {t("chessbase.reconnect")}
                     </Button>
-                    <Button size="sm" variant="default" onClick={() => setShowCredentials((v) => !v)}>
+                    <Button
+                      size="sm"
+                      radius="xl"
+                      variant="default"
+                      styles={premiumActionButtonStyles}
+                      onClick={() => setShowCredentials((v) => !v)}
+                    >
                       {showCredentials ? t("chessbase.hideCredentials") : t("chessbase.editCredentials")}
                     </Button>
                     <Button
                       size="sm"
+                      radius="xl"
                       variant="light"
+                      styles={premiumActionButtonStyles}
                       color="red"
                       leftSection={<IconTrash size="1rem" />}
                       onClick={() => void onClear()}
@@ -482,12 +573,20 @@ export default function ChessbasePage() {
                   />
 
                   <Group justify="flex-end" gap="xs" wrap="wrap">
-                    <Button size="sm" leftSection={<IconDeviceFloppy size="1rem" />} onClick={() => void onSave()}>
+                    <Button
+                      size="sm"
+                      radius="xl"
+                      styles={premiumActionButtonStyles}
+                      leftSection={<IconDeviceFloppy size="1rem" />}
+                      onClick={() => void onSave()}
+                    >
                       {t("chessbase.save")}
                     </Button>
                     <Button
                       leftSection={<IconKey size="1rem" />}
                       size="sm"
+                      radius="xl"
+                      styles={premiumActionButtonStyles}
                       loading={isLoggingIn}
                       onClick={() => void onLoginBackground()}
                     >
@@ -498,7 +597,7 @@ export default function ChessbasePage() {
               </Collapse>
             </Card>
 
-            <Card withBorder radius="md" p="md">
+            <Card withBorder radius="lg" p="md" style={premiumPanelStyle}>
               <Group justify="space-between" align="flex-end" wrap="wrap">
                 <Stack gap={2}>
                   <Text fw={700}>{t("chessbase.searchTitle")}</Text>
@@ -542,7 +641,9 @@ export default function ChessbasePage() {
                   />
                   <Button
                     size="sm"
+                    radius="xl"
                     variant="default"
+                    styles={premiumActionButtonStyles}
                     loading={isSearching}
                     disabled={!isSessionReady}
                     onClick={() => void onCheckQuickSearchCount()}
@@ -569,6 +670,8 @@ export default function ChessbasePage() {
                 <Group justify="space-between" wrap="wrap">
                   <Button
                     leftSection={<IconDownload size="1rem" />}
+                    radius="xl"
+                    styles={premiumActionButtonStyles}
                     loading={isDownloading}
                     disabled={!isSessionReady}
                     onClick={() => void onDownloadQuickSearch()}

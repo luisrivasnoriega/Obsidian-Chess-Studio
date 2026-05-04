@@ -109,6 +109,9 @@ export async function getRecentGames(profileId: string | null, limit = 20): Prom
       sortBy: null,
       sortDirection: null,
       profileUsernames: [],
+      includeBasePgn: null,
+      includeAnalyzedPgn: null,
+      includeAnalysisStats: null,
     });
     if (res.status !== "ok") return [];
     return res.data.rows

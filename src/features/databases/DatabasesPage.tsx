@@ -3,6 +3,7 @@ import {
   Badge,
   Box,
   Button,
+  Card,
   Divider,
   Drawer,
   Group,
@@ -17,6 +18,7 @@ import {
   Text,
   Textarea,
   TextInput,
+  ThemeIcon,
   Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue, useToggle } from "@mantine/hooks";
@@ -48,6 +50,7 @@ import GenericHeader, { type SortState } from "@/components/GenericHeader";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, referenceDbAtom, tabsAtom } from "@/state/atoms";
 import { useActiveDatabaseViewStore } from "@/state/store/database";
+import { premiumActionButtonStyles, premiumKpiCardStyle, premiumPanelStyle } from "@/styles/premiumSurface";
 import { type DatabaseSource, getDatabases, type SuccessDatabaseInfo } from "@/utils/db";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -243,7 +246,11 @@ export default function DatabasesPage() {
 
   // Determine title and search placeholder
   const headerTitle = t("features.databases.title");
-  const searchPlaceholder = "Search databases";
+  const searchPlaceholder = t("databases.searchPlaceholder", "Search databases...");
+  const totalDatabases = unifiedDatabases.length;
+  const visibleDatabases = filteredDatabases.length;
+  const localDatabases = availableSources.counts.local;
+  const onlineDatabases = availableSources.counts.online;
 
   return (
     <>
@@ -265,7 +272,9 @@ export default function DatabasesPage() {
               onClick={() => setOpen(true)}
               loading={convertLoading}
               size="xs"
+              radius="xl"
               variant="light"
+              styles={premiumActionButtonStyles}
               leftSection={<IconPlus size="1rem" />}
             >
               {t("common.addNew")}
@@ -274,7 +283,9 @@ export default function DatabasesPage() {
               onClick={() => setOpenOnlineTournament(true)}
               loading={convertLoading}
               size="xs"
+              radius="xl"
               variant="light"
+              styles={premiumActionButtonStyles}
               leftSection={<IconWorld size="1rem" />}
             >
               {t("features.databases.onlineTournament.addButton")}
@@ -282,7 +293,9 @@ export default function DatabasesPage() {
             <Button
               onClick={() => setOpenImportGames(true)}
               size="xs"
+              radius="xl"
               variant="light"
+              styles={premiumActionButtonStyles}
               leftSection={<IconUpload size="1rem" />}
             >
               {t("databases.import.button")}
@@ -320,15 +333,82 @@ export default function DatabasesPage() {
         }
       />
       <Box px="md" pb="md">
-        <DatabaseList
-          isLoading={isLoading}
-          databases={filteredDatabases}
-          selectedDatabase={selectedDatabase}
-          onSelectDatabase={setSelected}
-          onDatabaseDoubleClick={handleDatabaseDoubleClick}
-          referenceDatabase={referenceDatabase}
-          viewMode={viewMode}
-        />
+        <Stack gap="sm">
+          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+            <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    {t("features.databases.kpis.total", "Databases")}
+                  </Text>
+                  <Text fw={800} fz="lg">
+                    {totalDatabases}
+                  </Text>
+                </Stack>
+                <ThemeIcon radius="md" variant="light" color="blue">
+                  <IconDatabase size={16} />
+                </ThemeIcon>
+              </Group>
+            </Card>
+            <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    {t("features.databases.kpis.visible", "Visible")}
+                  </Text>
+                  <Text fw={800} fz="lg">
+                    {visibleDatabases}
+                  </Text>
+                </Stack>
+                <ThemeIcon radius="md" variant="light" color="teal">
+                  <IconArrowRight size={16} />
+                </ThemeIcon>
+              </Group>
+            </Card>
+            <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    {t("features.databases.sourceType.local", "Local")}
+                  </Text>
+                  <Text fw={800} fz="lg">
+                    {localDatabases}
+                  </Text>
+                </Stack>
+                <ThemeIcon radius="md" variant="light" color="cyan">
+                  <IconDatabase size={16} />
+                </ThemeIcon>
+              </Group>
+            </Card>
+            <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+              <Group justify="space-between" wrap="nowrap">
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    {t("features.databases.sourceType.online", "Online")}
+                  </Text>
+                  <Text fw={800} fz="lg">
+                    {onlineDatabases}
+                  </Text>
+                </Stack>
+                <ThemeIcon radius="md" variant="light" color="grape">
+                  <IconWorld size={16} />
+                </ThemeIcon>
+              </Group>
+            </Card>
+          </SimpleGrid>
+
+          <Card withBorder radius="lg" p="sm" style={premiumPanelStyle}>
+            <DatabaseList
+              isLoading={isLoading}
+              databases={filteredDatabases}
+              selectedDatabase={selectedDatabase}
+              onSelectDatabase={setSelected}
+              onDatabaseDoubleClick={handleDatabaseDoubleClick}
+              referenceDatabase={referenceDatabase}
+              viewMode={viewMode}
+            />
+          </Card>
+        </Stack>
         <Drawer
           opened={selectedDatabase !== null}
           onClose={() => setSelected(null)}
@@ -396,7 +476,7 @@ function DatabaseList({
 }: DatabaseListProps) {
   return (
     <Stack>
-      <ScrollArea h="calc(100vh - 240px)" offsetScrollbars aria-busy={isLoading} aria-live="polite">
+      <ScrollArea h="calc(100vh - 325px)" offsetScrollbars aria-busy={isLoading} aria-live="polite">
         {viewMode === "grid" ? (
           <DatabaseGrid
             isLoading={isLoading}
@@ -611,6 +691,7 @@ function DatabaseCard({ database, isSelected, onSelect, onDoubleClick, isReferen
       id={database.file}
       isSelected={isSelected}
       setSelected={onSelect}
+      premium
       error={!isSuccessDatabase(database) ? database.error : ""}
       onDoubleClick={() => onDoubleClick(database)}
       content={

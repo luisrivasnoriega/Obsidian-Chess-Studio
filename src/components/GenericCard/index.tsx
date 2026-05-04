@@ -8,6 +8,7 @@ type Props<T> = {
   isSelected: boolean;
   setSelected: (id: T) => void;
   error?: string;
+  premium?: boolean;
   stats?: {
     label: string;
     value: string;
@@ -16,7 +17,15 @@ type Props<T> = {
   onDoubleClick?: () => void;
 };
 
-export default function GenericCard<T>({ id, isSelected, setSelected, error, content, onDoubleClick }: Props<T>) {
+export default function GenericCard<T>({
+  id,
+  isSelected,
+  setSelected,
+  error,
+  premium = false,
+  content,
+  onDoubleClick,
+}: Props<T>) {
   return (
     <Box
       tabIndex={0}
@@ -26,6 +35,7 @@ export default function GenericCard<T>({ id, isSelected, setSelected, error, con
       className={cx(classes.card, {
         [classes.selected]: isSelected,
         [classes.error]: !!error,
+        [classes.premium]: premium,
       })}
       onClick={() => setSelected(id)}
       onDoubleClick={onDoubleClick}

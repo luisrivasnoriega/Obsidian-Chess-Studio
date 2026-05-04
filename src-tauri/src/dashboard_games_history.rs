@@ -6,14 +6,16 @@ use crate::db::{
 };
 use crate::error::{Error, Result};
 use crate::AppState;
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use shakmaty::{fen::Fen, san::SanPlus, CastlingMode, Chess};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -92,6 +94,9 @@ pub struct GamesHistoryRequest {
     pub sort_by: Option<String>,       // "elo" | "date"
     pub sort_direction: Option<String>, // "asc" | "desc"
     pub profile_usernames: Vec<String>,
+    pub include_base_pgn: Option<bool>,
+    pub include_analyzed_pgn: Option<bool>,
+    pub include_analysis_stats: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -106,6 +111,90 @@ pub struct GamesHistoryFilterMetaRequest {
     pub player_color: Option<String>,
     pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOverviewRequest {
+    pub profile_id: String,
+    pub game_history_limit: i32,
+    pub profile_usernames: Vec<String>,
+    pub sample_size: Option<i32>,
+    pub trend_weeks: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardAcplByTimeControl {
+    pub classical: Option<f64>,
+    pub rapid: Option<f64>,
+    pub blitz: Option<f64>,
+    pub bullet: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardAccuracyByColor {
+    pub white: Option<f64>,
+    pub black: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardPuzzleVariantsColorCoverage {
+    pub white_puzzles: i32,
+    pub black_puzzles: i32,
+    pub total_puzzles: i32,
+    pub white_percent: i32,
+    pub black_percent: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOverviewResponse {
+    pub week_start_ms: i64,
+    pub week_end_ms: i64,
+    pub week_games_count: i32,
+    pub week_wins: i32,
+    pub week_losses: i32,
+    pub week_draws: i32,
+    pub week_outcome_count: i32,
+    pub week_win_rate: i32,
+    pub previous_week_games_count: i32,
+    pub previous_week_wins: i32,
+    pub previous_week_losses: i32,
+    pub previous_week_draws: i32,
+    pub previous_week_outcome_count: i32,
+    pub previous_week_win_rate: i32,
+    pub sample_games_count: i32,
+    pub sample_size: i32,
+    pub sample_avg_estimated_elo: Option<i64>,
+    pub week_avg_estimated_elo: Option<i64>,
+    pub previous_week_avg_estimated_elo: Option<i64>,
+    pub week_blunder_rate: Option<f64>,
+    pub previous_week_blunder_rate: Option<f64>,
+    pub blunder_delta_pp: Option<f64>,
+    pub week_brilliant_rate: Option<f64>,
+    pub previous_week_brilliant_rate: Option<f64>,
+    pub brilliant_delta_pp: Option<f64>,
+    pub week_mistake_rate: Option<f64>,
+    pub previous_week_mistake_rate: Option<f64>,
+    pub mistake_delta_pp: Option<f64>,
+    pub week_inaccuracy_rate: Option<f64>,
+    pub previous_week_inaccuracy_rate: Option<f64>,
+    pub inaccuracy_delta_pp: Option<f64>,
+    pub week_accuracy: Option<f64>,
+    pub previous_week_accuracy: Option<f64>,
+    pub accuracy_delta: Option<f64>,
+    pub week_acpl: Option<f64>,
+    pub previous_week_acpl: Option<f64>,
+    pub acpl_delta: Option<f64>,
+    pub week_analyzed_games: i32,
+    pub previous_week_analyzed_games: i32,
+    pub blunder_rate_trend: Vec<Option<f64>>,
+    pub week_acpl_by_time_control: DashboardAcplByTimeControl,
+    pub week_accuracy_by_color: DashboardAccuracyByColor,
+    pub puzzle_variants_color_coverage: DashboardPuzzleVariantsColorCoverage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -210,6 +299,77 @@ struct LocalGameRecord {
     initial_fen: Option<String>,
     pgn: Option<String>,
     stats: Option<LocalGameStats>,
+}
+
+const DASHBOARD_OVERVIEW_DEFAULT_SAMPLE_SIZE: i32 = 100;
+const DASHBOARD_OVERVIEW_DEFAULT_TREND_WEEKS: i32 = 4;
+const DASHBOARD_OVERVIEW_MAX_LIMIT: i32 = 5000;
+const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+#[derive(Debug, Clone, Default)]
+struct WeeklyQualityBucket {
+    analyzed_games: i64,
+    annotated_moves: i64,
+    brilliants: i64,
+    blunders: i64,
+    mistakes: i64,
+    inaccuracies: i64,
+    accuracy_sum: f64,
+    accuracy_count: i64,
+    acpl_sum: f64,
+    acpl_count: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SumCount {
+    sum: f64,
+    count: i64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AcplByTimeControlAcc {
+    classical: SumCount,
+    rapid: SumCount,
+    blitz: SumCount,
+    bullet: SumCount,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AccuracyByColorAcc {
+    white: SumCount,
+    black: SumCount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PuzzleSide {
+    White,
+    Black,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct DashboardFileInfoMetadata {
+    #[serde(default)]
+    r#type: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AnnotationClass {
+    Brilliant,
+    Blunder,
+    Mistake,
+    Inaccuracy,
+    Positive,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AnnotationSummary {
+    annotated_moves: i64,
+    brilliants: i64,
+    blunders: i64,
+    mistakes: i64,
+    inaccuracies: i64,
 }
 
 fn strip_account_key(value: &str) -> &str {
@@ -682,6 +842,572 @@ fn outcome_from_result(user_color: &str, result: &str) -> String {
     "unknown".to_string()
 }
 
+fn to_one_decimal(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
+}
+
+fn to_rate_percent(value: i64, total: i64) -> Option<f64> {
+    if total <= 0 || value < 0 {
+        return None;
+    }
+    Some(to_one_decimal((value as f64 / total as f64) * 100.0))
+}
+
+fn to_average(sum: f64, count: i64) -> Option<f64> {
+    if count <= 0 {
+        return None;
+    }
+    Some(to_one_decimal(sum / count as f64))
+}
+
+fn to_average_sum_count(value: SumCount) -> Option<f64> {
+    to_average(value.sum, value.count)
+}
+
+fn acpl_by_time_control_from_acc(acc: AcplByTimeControlAcc) -> DashboardAcplByTimeControl {
+    DashboardAcplByTimeControl {
+        classical: to_average_sum_count(acc.classical),
+        rapid: to_average_sum_count(acc.rapid),
+        blitz: to_average_sum_count(acc.blitz),
+        bullet: to_average_sum_count(acc.bullet),
+    }
+}
+
+fn accuracy_by_color_from_acc(acc: AccuracyByColorAcc) -> DashboardAccuracyByColor {
+    DashboardAccuracyByColor {
+        white: to_average_sum_count(acc.white),
+        black: to_average_sum_count(acc.black),
+    }
+}
+
+fn parse_puzzle_side_from_tags(tags: &[String]) -> Option<PuzzleSide> {
+    for raw in tags {
+        let tag = raw.to_ascii_lowercase();
+        for prefix in ["orientation:", "side:", "color:"] {
+            if !tag.starts_with(prefix) {
+                continue;
+            }
+            let value = tag[prefix.len()..].trim();
+            if value == "white" {
+                return Some(PuzzleSide::White);
+            }
+            if value == "black" {
+                return Some(PuzzleSide::Black);
+            }
+        }
+    }
+    None
+}
+
+fn parse_puzzle_side_from_pgn_headers(raw_pgn: &str) -> Option<PuzzleSide> {
+    let mut white_name: Option<String> = None;
+    let mut black_name: Option<String> = None;
+    for line in raw_pgn.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        let Some((key, value)) = parse_pgn_tag_line(trimmed) else {
+            continue;
+        };
+        if key.eq_ignore_ascii_case("Orientation") {
+            let side = value.trim().to_ascii_lowercase();
+            if side == "white" {
+                return Some(PuzzleSide::White);
+            }
+            if side == "black" {
+                return Some(PuzzleSide::Black);
+            }
+        }
+        if key.eq_ignore_ascii_case("White") {
+            white_name = Some(value);
+        } else if key.eq_ignore_ascii_case("Black") {
+            black_name = Some(value);
+        }
+    }
+
+    if let Some(white) = white_name {
+        if white.trim().eq_ignore_ascii_case("Puzzle") {
+            return Some(PuzzleSide::White);
+        }
+    }
+    if let Some(black) = black_name {
+        if black.trim().eq_ignore_ascii_case("Puzzle") {
+            return Some(PuzzleSide::Black);
+        }
+    }
+    None
+}
+
+fn count_puzzles_in_pgn(raw_pgn: &str) -> i64 {
+    let count = raw_pgn.match_indices("[Event ").count() as i64;
+    if count > 0 {
+        count
+    } else if raw_pgn.trim().is_empty() {
+        0
+    } else {
+        1
+    }
+}
+
+fn collect_puzzle_variant_files(root: &Path, out: &mut Vec<(PathBuf, DashboardFileInfoMetadata)>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_puzzle_variant_files(&path, out);
+            continue;
+        }
+        if path.extension().and_then(|v| v.to_str()) != Some("info") {
+            continue;
+        }
+        let Ok(info_raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(info) = serde_json::from_str::<DashboardFileInfoMetadata>(&info_raw) else {
+            continue;
+        };
+        if !info.r#type.eq_ignore_ascii_case("puzzle") {
+            continue;
+        }
+        if !info
+            .tags
+            .iter()
+            .any(|tag| tag.trim().eq_ignore_ascii_case("puzzle-variants"))
+        {
+            continue;
+        }
+        out.push((path.with_extension("pgn"), info));
+    }
+}
+
+fn load_puzzle_variants_color_coverage(app: &AppHandle) -> DashboardPuzzleVariantsColorCoverage {
+    let documents_dir = match app.path().app_data_dir() {
+        Ok(path) => path.join("documents"),
+        Err(_) => {
+            return DashboardPuzzleVariantsColorCoverage {
+                white_puzzles: 0,
+                black_puzzles: 0,
+                total_puzzles: 0,
+                white_percent: 0,
+                black_percent: 0,
+            };
+        }
+    };
+    if !documents_dir.exists() {
+        return DashboardPuzzleVariantsColorCoverage {
+            white_puzzles: 0,
+            black_puzzles: 0,
+            total_puzzles: 0,
+            white_percent: 0,
+            black_percent: 0,
+        };
+    }
+
+    let mut files: Vec<(PathBuf, DashboardFileInfoMetadata)> = Vec::new();
+    collect_puzzle_variant_files(&documents_dir, &mut files);
+
+    let mut white_puzzles = 0i64;
+    let mut black_puzzles = 0i64;
+    for (pgn_path, metadata) in files {
+        let Ok(raw_pgn) = fs::read_to_string(&pgn_path) else {
+            continue;
+        };
+        let side = parse_puzzle_side_from_tags(&metadata.tags).or_else(|| parse_puzzle_side_from_pgn_headers(&raw_pgn));
+        let puzzle_count = count_puzzles_in_pgn(&raw_pgn);
+        if puzzle_count <= 0 {
+            continue;
+        }
+        match side {
+            Some(PuzzleSide::White) => white_puzzles += puzzle_count,
+            Some(PuzzleSide::Black) => black_puzzles += puzzle_count,
+            None => {}
+        }
+    }
+
+    let total_puzzles = white_puzzles + black_puzzles;
+    let (white_percent, black_percent) = if total_puzzles > 0 {
+        (
+            ((white_puzzles as f64 / total_puzzles as f64) * 100.0).round() as i32,
+            ((black_puzzles as f64 / total_puzzles as f64) * 100.0).round() as i32,
+        )
+    } else {
+        (0, 0)
+    };
+
+    DashboardPuzzleVariantsColorCoverage {
+        white_puzzles: i64_to_i32_saturating(white_puzzles),
+        black_puzzles: i64_to_i32_saturating(black_puzzles),
+        total_puzzles: i64_to_i32_saturating(total_puzzles),
+        white_percent,
+        black_percent,
+    }
+}
+
+fn to_delta(current: Option<f64>, previous: Option<f64>) -> Option<f64> {
+    match (current, previous) {
+        (Some(current), Some(previous)) => Some(to_one_decimal(current - previous)),
+        _ => None,
+    }
+}
+
+fn i64_to_i32_saturating(value: i64) -> i32 {
+    if value > i32::MAX as i64 {
+        i32::MAX
+    } else if value < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        value as i32
+    }
+}
+
+fn average_elo(values: &[i64]) -> Option<i64> {
+    if values.is_empty() {
+        return None;
+    }
+    let sum: i64 = values.iter().copied().sum();
+    Some(((sum as f64) / (values.len() as f64)).round() as i64)
+}
+
+fn round_local_midnight_to_ms(local_dt: DateTime<Local>) -> i64 {
+    let midnight = local_dt
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap_or_else(|| local_dt.naive_local());
+    match Local.from_local_datetime(&midnight) {
+        LocalResult::Single(value) => value.timestamp_millis(),
+        LocalResult::Ambiguous(first, second) => {
+            if first <= second {
+                first.timestamp_millis()
+            } else {
+                second.timestamp_millis()
+            }
+        }
+        LocalResult::None => Utc.from_utc_datetime(&midnight).timestamp_millis(),
+    }
+}
+
+fn get_start_of_week_sunday_ms(reference_ms: i64) -> i64 {
+    let utc_dt = match Utc.timestamp_millis_opt(reference_ms).single() {
+        Some(value) => value,
+        None => Utc::now(),
+    };
+    let local_dt = utc_dt.with_timezone(&Local);
+    let weekday_offset = local_dt.weekday().num_days_from_sunday() as i64;
+    let week_start_local = local_dt - Duration::days(weekday_offset);
+    round_local_midnight_to_ms(week_start_local)
+}
+
+fn strip_move_number_prefix(token: &str) -> &str {
+    let bytes = token.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx == 0 {
+        return token;
+    }
+    let mut dot_idx = idx;
+    while dot_idx < bytes.len() && bytes[dot_idx] == b'.' {
+        dot_idx += 1;
+    }
+    if dot_idx > idx {
+        &token[dot_idx..]
+    } else {
+        token
+    }
+}
+
+fn is_result_token(token: &str) -> bool {
+    let normalized = token.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+    matches!(
+        normalized,
+        "1-0" | "0-1" | "1/2-1/2" | "0.5-0.5" | "½-½" | "*"
+    )
+}
+
+fn extract_fen_tag_from_pgn(pgn: &str) -> Option<String> {
+    for line in pgn.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        let Some((key, value)) = parse_pgn_tag_line(trimmed) else {
+            continue;
+        };
+        if key.eq_ignore_ascii_case("FEN") {
+            let v = value.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn get_white_to_move_from_fen(initial_fen: Option<&str>, pgn: &str) -> bool {
+    let fen_candidate = initial_fen
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string())
+        .or_else(|| extract_fen_tag_from_pgn(pgn));
+
+    let Some(fen) = fen_candidate else {
+        return true;
+    };
+    let side = fen.split_whitespace().nth(1).unwrap_or("w");
+    side.eq_ignore_ascii_case("w")
+}
+
+fn strip_pgn_to_movetext(pgn: &str) -> String {
+    let mut without_tags = String::with_capacity(pgn.len());
+    for line in pgn.lines() {
+        if line.trim_start().starts_with('[') {
+            continue;
+        }
+        without_tags.push_str(line);
+        without_tags.push('\n');
+    }
+
+    let mut out = String::with_capacity(without_tags.len());
+    let mut in_line_comment = false;
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
+
+    for ch in without_tags.chars() {
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                out.push(' ');
+            }
+            continue;
+        }
+
+        if brace_depth > 0 {
+            if ch == '{' {
+                brace_depth += 1;
+            } else if ch == '}' {
+                brace_depth = brace_depth.saturating_sub(1);
+                if brace_depth == 0 {
+                    out.push(' ');
+                }
+            }
+            continue;
+        }
+
+        if paren_depth > 0 {
+            if ch == '(' {
+                paren_depth += 1;
+            } else if ch == ')' {
+                paren_depth = paren_depth.saturating_sub(1);
+                if paren_depth == 0 {
+                    out.push(' ');
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            ';' => in_line_comment = true,
+            '{' => brace_depth = 1,
+            '(' => paren_depth = 1,
+            '\r' | '\n' | '\t' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+
+    out
+}
+
+fn classify_annotation(token: &str) -> Option<AnnotationClass> {
+    if token.is_empty() {
+        return None;
+    }
+
+    let mut start_idx = token.len();
+    for (idx, ch) in token.char_indices().rev() {
+        if matches!(ch, '!' | '?' | '+' | '#') {
+            start_idx = idx;
+            continue;
+        }
+        break;
+    }
+    if start_idx >= token.len() {
+        return None;
+    }
+
+    let marks: String = token[start_idx..]
+        .chars()
+        .filter(|ch| *ch == '!' || *ch == '?')
+        .collect();
+    if marks.is_empty() {
+        return None;
+    }
+
+    if marks.ends_with("??") {
+        return Some(AnnotationClass::Blunder);
+    }
+    if marks.ends_with("?!") {
+        return Some(AnnotationClass::Inaccuracy);
+    }
+    if marks.ends_with("!!") {
+        return Some(AnnotationClass::Brilliant);
+    }
+    if marks.ends_with("!?") {
+        return Some(AnnotationClass::Positive);
+    }
+    if marks.ends_with('?') {
+        return Some(AnnotationClass::Mistake);
+    }
+    if marks.ends_with('!') {
+        return Some(AnnotationClass::Positive);
+    }
+    None
+}
+
+fn collect_player_annotation_summary(
+    pgn: &str,
+    initial_fen: Option<&str>,
+    player_color: &str,
+) -> AnnotationSummary {
+    let player_is_white = match player_color {
+        "white" => true,
+        "black" => false,
+        _ => return AnnotationSummary::default(),
+    };
+    let mut white_to_move = get_white_to_move_from_fen(initial_fen, pgn);
+    let movetext = strip_pgn_to_movetext(pgn);
+    let mut summary = AnnotationSummary::default();
+
+    for raw in movetext.split_whitespace() {
+        let mut token = strip_move_number_prefix(raw).trim();
+        if token.is_empty() {
+            continue;
+        }
+
+        token = token.trim_start_matches('.');
+        token = strip_move_number_prefix(token).trim();
+        if token.is_empty() {
+            continue;
+        }
+
+        let sanitized = token.trim_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | ';'));
+        if sanitized.is_empty() {
+            continue;
+        }
+
+        if is_result_token(sanitized) {
+            break;
+        }
+        if sanitized.chars().all(|ch| ch == '.') {
+            continue;
+        }
+        if sanitized.starts_with('$') && sanitized[1..].chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+
+        if white_to_move == player_is_white {
+            if let Some(annotation) = classify_annotation(sanitized) {
+                summary.annotated_moves += 1;
+                match annotation {
+                    AnnotationClass::Brilliant => summary.brilliants += 1,
+                    AnnotationClass::Blunder => summary.blunders += 1,
+                    AnnotationClass::Mistake => summary.mistakes += 1,
+                    AnnotationClass::Inaccuracy => summary.inaccuracies += 1,
+                    AnnotationClass::Positive => {}
+                }
+            }
+        }
+
+        white_to_move = !white_to_move;
+    }
+
+    summary
+}
+
+fn extract_row_estimated_elo(row: &GamesHistoryRow) -> Option<i64> {
+    if let Some(value) = row.elo_estimated_balanced {
+        if value > 0 {
+            return Some(value);
+        }
+    }
+    if let Some(value) = row.estimated_elo {
+        if value > 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn empty_dashboard_overview(now_ms: i64, sample_size: i32, trend_weeks: usize) -> DashboardOverviewResponse {
+    let week_start_ms = get_start_of_week_sunday_ms(now_ms);
+    DashboardOverviewResponse {
+        week_start_ms,
+        week_end_ms: now_ms,
+        week_games_count: 0,
+        week_wins: 0,
+        week_losses: 0,
+        week_draws: 0,
+        week_outcome_count: 0,
+        week_win_rate: 0,
+        previous_week_games_count: 0,
+        previous_week_wins: 0,
+        previous_week_losses: 0,
+        previous_week_draws: 0,
+        previous_week_outcome_count: 0,
+        previous_week_win_rate: 0,
+        sample_games_count: 0,
+        sample_size,
+        sample_avg_estimated_elo: None,
+        week_avg_estimated_elo: None,
+        previous_week_avg_estimated_elo: None,
+        week_blunder_rate: None,
+        previous_week_blunder_rate: None,
+        blunder_delta_pp: None,
+        week_brilliant_rate: None,
+        previous_week_brilliant_rate: None,
+        brilliant_delta_pp: None,
+        week_mistake_rate: None,
+        previous_week_mistake_rate: None,
+        mistake_delta_pp: None,
+        week_inaccuracy_rate: None,
+        previous_week_inaccuracy_rate: None,
+        inaccuracy_delta_pp: None,
+        week_accuracy: None,
+        previous_week_accuracy: None,
+        accuracy_delta: None,
+        week_acpl: None,
+        previous_week_acpl: None,
+        acpl_delta: None,
+        week_analyzed_games: 0,
+        previous_week_analyzed_games: 0,
+        blunder_rate_trend: vec![None; trend_weeks],
+        week_acpl_by_time_control: DashboardAcplByTimeControl {
+            classical: None,
+            rapid: None,
+            blitz: None,
+            bullet: None,
+        },
+        week_accuracy_by_color: DashboardAccuracyByColor {
+            white: None,
+            black: None,
+        },
+        puzzle_variants_color_coverage: DashboardPuzzleVariantsColorCoverage {
+            white_puzzles: 0,
+            black_puzzles: 0,
+            total_puzzles: 0,
+            white_percent: 0,
+            black_percent: 0,
+        },
+    }
+}
+
 /// Local games were previously stored in played_games.json; that file is deprecated.
 /// Games are now stored in the profile DB. This returns an empty list so callers
 /// only see profile DB and online games.
@@ -897,6 +1623,9 @@ pub async fn dashboard_get_games_history_rows(
     state: State<'_, AppState>,
     req: GamesHistoryRequest,
 ) -> Result<GamesHistoryResponse> {
+    let include_base_pgn = req.include_base_pgn.unwrap_or(true);
+    let include_analyzed_pgn = req.include_analyzed_pgn.unwrap_or(true);
+    let include_analysis_stats = req.include_analysis_stats.unwrap_or(true);
     let profile_id = req.profile_id.trim().to_string();
     if profile_id.is_empty() {
         return Ok(GamesHistoryResponse {
@@ -1170,12 +1899,16 @@ pub async fn dashboard_get_games_history_rows(
         };
 
         let raw_moves_text = g.moves.clone();
-        let maybe_decoded_movetext = if has_any_pgn_tag(&raw_moves_text) {
-            None
+        let maybe_decoded_movetext = if include_base_pgn {
+            if has_any_pgn_tag(&raw_moves_text) {
+                None
+            } else {
+                profile_db_conn
+                    .as_ref()
+                    .and_then(|conn| decode_san_movetext_from_blob(conn, g.id, Some(g.fen.as_str())))
+            }
         } else {
-            profile_db_conn
-                .as_ref()
-                .and_then(|conn| decode_san_movetext_from_blob(conn, g.id, Some(g.fen.as_str())))
+            None
         };
         let moves_for_pgn = maybe_decoded_movetext.unwrap_or_else(|| raw_moves_text.clone());
 
@@ -1187,23 +1920,27 @@ pub async fn dashboard_get_games_history_rows(
             opponent: if opponent.trim().is_empty() { "?".to_string() } else { opponent },
             color: user_color.to_string(),
             outcome,
-            pgn: if moves_for_pgn.trim().is_empty() {
-                None
-            } else if needs_minimal_pgn {
-                Some(build_minimal_pgn_from_db_game(
-                    &white_name,
-                    &black_name,
-                    &g.event,
-                    &g.site,
-                    g.date.as_deref(),
-                    g.time.as_deref(),
-                    g.time_control.as_deref(),
-                    Some(g.fen.as_str()),
-                    &result_str,
-                    &moves_for_pgn,
-                ))
+            pgn: if include_base_pgn {
+                if moves_for_pgn.trim().is_empty() {
+                    None
+                } else if needs_minimal_pgn {
+                    Some(build_minimal_pgn_from_db_game(
+                        &white_name,
+                        &black_name,
+                        &g.event,
+                        &g.site,
+                        g.date.as_deref(),
+                        g.time.as_deref(),
+                        g.time_control.as_deref(),
+                        Some(g.fen.as_str()),
+                        &result_str,
+                        &moves_for_pgn,
+                    ))
+                } else {
+                    Some(moves_for_pgn)
+                }
             } else {
-                Some(moves_for_pgn)
+                None
             },
             initial_fen: {
                 let fen = g.fen.trim().to_string();
@@ -1277,49 +2014,59 @@ pub async fn dashboard_get_games_history_rows(
         }
     }
     if !lookup_keys.is_empty() {
-        let analyzed = analysis_db_get_analyzed_games_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?;
-        let stats = analysis_db_get_game_stats_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?;
-
-        let analyzed_map: HashMap<String, String> = analyzed
-            .into_iter()
-            .map(|e| (e.game_id, e.analyzed_pgn))
-            .collect();
-        let stats_map: HashMap<String, (f64, f64, Option<i64>, Option<f64>, Option<i64>)> = stats
-            .into_iter()
-            .map(|e| {
-                (
-                    e.game_id,
-                    (
-                        e.accuracy,
-                        e.acpl,
-                        e.estimated_elo,
-                        e.resistance,
-                        e.elo_estimated_balanced,
-                    ),
-                )
-            })
-            .collect();
+        let analyzed_map: HashMap<String, String> = if include_analyzed_pgn {
+            analysis_db_get_analyzed_games_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?
+                .into_iter()
+                .map(|e| (e.game_id, e.analyzed_pgn))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let stats_map: HashMap<String, (f64, f64, Option<i64>, Option<f64>, Option<i64>)> =
+            if include_analysis_stats {
+                analysis_db_get_game_stats_bulk(app.clone(), lookup_keys.clone(), Some(profile_id.clone()))?
+                    .into_iter()
+                    .map(|e| {
+                        (
+                            e.game_id,
+                            (
+                                e.accuracy,
+                                e.acpl,
+                                e.estimated_elo,
+                                e.resistance,
+                                e.elo_estimated_balanced,
+                            ),
+                        )
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            };
 
         for r in rows.iter_mut() {
-            if let Some(pgn) = analyzed_map
-                .get(&r.analysis_game_id)
-                .or_else(|| analyzed_map.get(&r.game_key))
-            {
-                r.pgn = Some(pgn.clone());
-                r.is_analyzed = true;
+            if include_analyzed_pgn {
+                if let Some(pgn) = analyzed_map
+                    .get(&r.analysis_game_id)
+                    .or_else(|| analyzed_map.get(&r.game_key))
+                {
+                    r.pgn = Some(pgn.clone());
+                    r.is_analyzed = true;
+                }
             }
-            if let Some((acc, acpl, elo, resistance, elo_balanced)) = stats_map
-                .get(&r.analysis_game_id)
-                .or_else(|| stats_map.get(&r.game_key))
-            {
-                r.accuracy = Some(*acc);
-                r.acpl = Some(*acpl);
-                r.estimated_elo = *elo;
-                r.resistance = *resistance;
-                r.elo_estimated_balanced = *elo_balanced;
-                r.is_analyzed = true;
+            if include_analysis_stats {
+                if let Some((acc, acpl, elo, resistance, elo_balanced)) = stats_map
+                    .get(&r.analysis_game_id)
+                    .or_else(|| stats_map.get(&r.game_key))
+                {
+                    r.accuracy = Some(*acc);
+                    r.acpl = Some(*acpl);
+                    r.estimated_elo = *elo;
+                    r.resistance = *resistance;
+                    r.elo_estimated_balanced = *elo_balanced;
+                    r.is_analyzed = true;
+                }
             }
-            if !r.is_analyzed {
+            if include_analyzed_pgn && !r.is_analyzed {
                 if let Some(ref pgn) = r.pgn {
                     if has_analysis_markers(pgn) {
                         r.is_analyzed = true;
@@ -1365,6 +2112,371 @@ pub async fn dashboard_get_games_history_rows(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn dashboard_get_overview_metrics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: DashboardOverviewRequest,
+) -> Result<DashboardOverviewResponse> {
+    let now_ms = Utc::now().timestamp_millis();
+    let sample_size = req
+        .sample_size
+        .unwrap_or(DASHBOARD_OVERVIEW_DEFAULT_SAMPLE_SIZE)
+        .clamp(1, 1000);
+    let trend_weeks = req
+        .trend_weeks
+        .unwrap_or(DASHBOARD_OVERVIEW_DEFAULT_TREND_WEEKS)
+        .clamp(2, 12) as usize;
+
+    let profile_id = req.profile_id.trim();
+    if profile_id.is_empty() {
+        let mut empty = empty_dashboard_overview(now_ms, sample_size, trend_weeks);
+        empty.puzzle_variants_color_coverage = load_puzzle_variants_color_coverage(&app);
+        return Ok(empty);
+    }
+
+    let source_limit = if req.game_history_limit <= 0 {
+        DASHBOARD_OVERVIEW_MAX_LIMIT
+    } else {
+        req.game_history_limit.min(DASHBOARD_OVERVIEW_MAX_LIMIT)
+    };
+    let profile_usernames = req.profile_usernames.clone();
+    let rows_req = GamesHistoryRequest {
+        profile_id: profile_id.to_string(),
+        game_history_limit: source_limit,
+        page: 1,
+        page_size: source_limit,
+        event_filter_id: None,
+        selected_opponent_id: None,
+        opponent_contains: None,
+        time_control_category: None,
+        result_filter: None,
+        player_color: None,
+        min_moves: None,
+        sort_by: Some("date".to_string()),
+        sort_direction: Some("desc".to_string()),
+        profile_usernames: profile_usernames.clone(),
+        include_base_pgn: Some(false),
+        include_analyzed_pgn: Some(false),
+        include_analysis_stats: Some(true),
+    };
+
+    let mut rows = dashboard_get_games_history_rows(app.clone(), state.clone(), rows_req).await?.rows;
+    if rows.is_empty() {
+        let mut empty = empty_dashboard_overview(now_ms, sample_size, trend_weeks);
+        empty.puzzle_variants_color_coverage = load_puzzle_variants_color_coverage(&app);
+        return Ok(empty);
+    }
+
+    rows.retain(|row| row.timestamp_ms > 0);
+    if rows.is_empty() {
+        let mut empty = empty_dashboard_overview(now_ms, sample_size, trend_weeks);
+        empty.puzzle_variants_color_coverage = load_puzzle_variants_color_coverage(&app);
+        return Ok(empty);
+    }
+    rows.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+
+    let week_start_ms = get_start_of_week_sunday_ms(now_ms);
+    let sample_rows = rows
+        .iter()
+        .take(sample_size as usize)
+        .collect::<Vec<&GamesHistoryRow>>();
+    let week_rows = rows
+        .iter()
+        .filter(|row| row.timestamp_ms >= week_start_ms && row.timestamp_ms <= now_ms)
+        .collect::<Vec<&GamesHistoryRow>>();
+    let previous_week_start_ms = week_start_ms - WEEK_MS;
+    let previous_week_end_exclusive_ms = week_start_ms;
+    let previous_week_rows = rows
+        .iter()
+        .filter(|row| {
+            row.timestamp_ms >= previous_week_start_ms && row.timestamp_ms < previous_week_end_exclusive_ms
+        })
+        .collect::<Vec<&GamesHistoryRow>>();
+
+    let mut week_acpl_by_time_control_acc = AcplByTimeControlAcc::default();
+    let mut week_accuracy_by_color_acc = AccuracyByColorAcc::default();
+    for row in week_rows.iter().copied() {
+        if let Some(acpl) = row.acpl {
+            if acpl.is_finite() && acpl > 0.0 {
+                match row
+                    .time_control_category
+                    .as_deref()
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .as_deref()
+                {
+                    Some("classical") => {
+                        week_acpl_by_time_control_acc.classical.sum += acpl;
+                        week_acpl_by_time_control_acc.classical.count += 1;
+                    }
+                    Some("rapid") => {
+                        week_acpl_by_time_control_acc.rapid.sum += acpl;
+                        week_acpl_by_time_control_acc.rapid.count += 1;
+                    }
+                    Some("blitz") => {
+                        week_acpl_by_time_control_acc.blitz.sum += acpl;
+                        week_acpl_by_time_control_acc.blitz.count += 1;
+                    }
+                    Some("bullet") | Some("ultra_bullet") => {
+                        week_acpl_by_time_control_acc.bullet.sum += acpl;
+                        week_acpl_by_time_control_acc.bullet.count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some(accuracy) = row.accuracy {
+            if accuracy.is_finite() && accuracy > 0.0 {
+                match row.color.trim().to_ascii_lowercase().as_str() {
+                    "white" => {
+                        week_accuracy_by_color_acc.white.sum += accuracy;
+                        week_accuracy_by_color_acc.white.count += 1;
+                    }
+                    "black" => {
+                        week_accuracy_by_color_acc.black.sum += accuracy;
+                        week_accuracy_by_color_acc.black.count += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let mut week_wins = 0i64;
+    let mut week_losses = 0i64;
+    let mut week_draws = 0i64;
+    for row in week_rows.iter().copied() {
+        match row.outcome.as_str() {
+            "win" => week_wins += 1,
+            "loss" => week_losses += 1,
+            "draw" => week_draws += 1,
+            _ => {}
+        }
+    }
+    let week_outcome_count = week_wins + week_losses + week_draws;
+    let week_win_rate = if week_outcome_count > 0 {
+        ((week_wins as f64 / week_outcome_count as f64) * 100.0).round() as i32
+    } else {
+        0
+    };
+    let mut previous_week_wins = 0i64;
+    let mut previous_week_losses = 0i64;
+    let mut previous_week_draws = 0i64;
+    for row in previous_week_rows.iter().copied() {
+        match row.outcome.as_str() {
+            "win" => previous_week_wins += 1,
+            "loss" => previous_week_losses += 1,
+            "draw" => previous_week_draws += 1,
+            _ => {}
+        }
+    }
+    let previous_week_outcome_count = previous_week_wins + previous_week_losses + previous_week_draws;
+    let previous_week_win_rate = if previous_week_outcome_count > 0 {
+        ((previous_week_wins as f64 / previous_week_outcome_count as f64) * 100.0).round() as i32
+    } else {
+        0
+    };
+
+    let sample_elo_values = sample_rows
+        .iter()
+        .filter_map(|row| extract_row_estimated_elo(row))
+        .collect::<Vec<i64>>();
+    let week_elo_values = week_rows
+        .iter()
+        .filter_map(|row| extract_row_estimated_elo(row))
+        .collect::<Vec<i64>>();
+    let previous_week_elo_values = previous_week_rows
+        .iter()
+        .filter_map(|row| extract_row_estimated_elo(row))
+        .collect::<Vec<i64>>();
+
+    let tracked_week_starts = (0..trend_weeks)
+        .map(|index| week_start_ms - (index as i64 * WEEK_MS))
+        .collect::<Vec<i64>>();
+    let oldest_tracked_week_start = tracked_week_starts
+        .last()
+        .copied()
+        .unwrap_or(week_start_ms);
+    let needs_annotation_scan = rows
+        .iter()
+        .any(|row| row.is_analyzed && row.timestamp_ms >= oldest_tracked_week_start && row.timestamp_ms <= now_ms);
+    let mut analyzed_pgn_by_key: HashMap<String, (String, Option<String>)> = HashMap::new();
+    if needs_annotation_scan {
+        let analyzed_rows_req = GamesHistoryRequest {
+            profile_id: profile_id.to_string(),
+            game_history_limit: source_limit,
+            page: 1,
+            page_size: source_limit,
+            event_filter_id: None,
+            selected_opponent_id: None,
+            opponent_contains: None,
+            time_control_category: None,
+            result_filter: None,
+            player_color: None,
+            min_moves: None,
+            sort_by: Some("date".to_string()),
+            sort_direction: Some("desc".to_string()),
+            profile_usernames: profile_usernames.clone(),
+            include_base_pgn: Some(true),
+            include_analyzed_pgn: Some(true),
+            include_analysis_stats: Some(false),
+        };
+        let analyzed_rows = dashboard_get_games_history_rows(app.clone(), state, analyzed_rows_req).await?.rows;
+        for row in analyzed_rows {
+            if !row.is_analyzed {
+                continue;
+            }
+            let Some(pgn) = row.pgn else {
+                continue;
+            };
+            analyzed_pgn_by_key.insert(row.analysis_game_id.clone(), (pgn.clone(), row.initial_fen.clone()));
+            if row.game_key != row.analysis_game_id {
+                analyzed_pgn_by_key.insert(row.game_key, (pgn, row.initial_fen));
+            }
+        }
+    }
+    let mut tracked_weeks: HashMap<i64, WeeklyQualityBucket> = tracked_week_starts
+        .iter()
+        .map(|week_start| (*week_start, WeeklyQualityBucket::default()))
+        .collect();
+
+    for row in rows.iter() {
+        if row.timestamp_ms < oldest_tracked_week_start {
+            break;
+        }
+        let bucket_key = get_start_of_week_sunday_ms(row.timestamp_ms);
+        let Some(bucket) = tracked_weeks.get_mut(&bucket_key) else {
+            continue;
+        };
+
+        if let Some(accuracy) = row.accuracy {
+            if accuracy.is_finite() && accuracy > 0.0 {
+                bucket.accuracy_sum += accuracy;
+                bucket.accuracy_count += 1;
+            }
+        }
+        if let Some(acpl) = row.acpl {
+            if acpl.is_finite() && acpl > 0.0 {
+                bucket.acpl_sum += acpl;
+                bucket.acpl_count += 1;
+            }
+        }
+
+        if !row.is_analyzed {
+            continue;
+        }
+        let maybe_pgn_with_fen = analyzed_pgn_by_key
+            .get(&row.analysis_game_id)
+            .or_else(|| analyzed_pgn_by_key.get(&row.game_key));
+        let Some((pgn, initial_fen)) = maybe_pgn_with_fen else {
+            continue;
+        };
+        let pgn = pgn.trim();
+        if pgn.is_empty() {
+            continue;
+        }
+
+        let color = row.color.trim().to_ascii_lowercase();
+        if color != "white" && color != "black" {
+            continue;
+        }
+
+        let annotations = collect_player_annotation_summary(pgn, initial_fen.as_deref(), color.as_str());
+        if annotations.annotated_moves <= 0 {
+            continue;
+        }
+
+        bucket.analyzed_games += 1;
+        bucket.annotated_moves += annotations.annotated_moves;
+        bucket.brilliants += annotations.brilliants;
+        bucket.blunders += annotations.blunders;
+        bucket.mistakes += annotations.mistakes;
+        bucket.inaccuracies += annotations.inaccuracies;
+    }
+
+    let current_bucket = tracked_weeks
+        .get(&week_start_ms)
+        .cloned()
+        .unwrap_or_default();
+    let previous_bucket = tracked_weeks
+        .get(&(week_start_ms - WEEK_MS))
+        .cloned()
+        .unwrap_or_default();
+
+    let week_blunder_rate = to_rate_percent(current_bucket.blunders, current_bucket.annotated_moves);
+    let previous_week_blunder_rate = to_rate_percent(previous_bucket.blunders, previous_bucket.annotated_moves);
+    let week_brilliant_rate = to_rate_percent(current_bucket.brilliants, current_bucket.annotated_moves);
+    let previous_week_brilliant_rate = to_rate_percent(previous_bucket.brilliants, previous_bucket.annotated_moves);
+    let week_mistake_rate = to_rate_percent(current_bucket.mistakes, current_bucket.annotated_moves);
+    let previous_week_mistake_rate = to_rate_percent(previous_bucket.mistakes, previous_bucket.annotated_moves);
+    let week_inaccuracy_rate = to_rate_percent(current_bucket.inaccuracies, current_bucket.annotated_moves);
+    let previous_week_inaccuracy_rate =
+        to_rate_percent(previous_bucket.inaccuracies, previous_bucket.annotated_moves);
+    let week_accuracy = to_average(current_bucket.accuracy_sum, current_bucket.accuracy_count);
+    let previous_week_accuracy = to_average(previous_bucket.accuracy_sum, previous_bucket.accuracy_count);
+    let week_acpl = to_average(current_bucket.acpl_sum, current_bucket.acpl_count);
+    let previous_week_acpl = to_average(previous_bucket.acpl_sum, previous_bucket.acpl_count);
+    let blunder_rate_trend = tracked_week_starts
+        .iter()
+        .map(|week_start| {
+            tracked_weeks
+                .get(week_start)
+                .and_then(|bucket| to_rate_percent(bucket.blunders, bucket.annotated_moves))
+        })
+        .collect::<Vec<Option<f64>>>();
+    let week_acpl_by_time_control = acpl_by_time_control_from_acc(week_acpl_by_time_control_acc);
+    let week_accuracy_by_color = accuracy_by_color_from_acc(week_accuracy_by_color_acc);
+    let puzzle_variants_color_coverage = load_puzzle_variants_color_coverage(&app);
+
+    Ok(DashboardOverviewResponse {
+        week_start_ms,
+        week_end_ms: now_ms,
+        week_games_count: i64_to_i32_saturating(week_rows.len() as i64),
+        week_wins: i64_to_i32_saturating(week_wins),
+        week_losses: i64_to_i32_saturating(week_losses),
+        week_draws: i64_to_i32_saturating(week_draws),
+        week_outcome_count: i64_to_i32_saturating(week_outcome_count),
+        week_win_rate,
+        previous_week_games_count: i64_to_i32_saturating(previous_week_rows.len() as i64),
+        previous_week_wins: i64_to_i32_saturating(previous_week_wins),
+        previous_week_losses: i64_to_i32_saturating(previous_week_losses),
+        previous_week_draws: i64_to_i32_saturating(previous_week_draws),
+        previous_week_outcome_count: i64_to_i32_saturating(previous_week_outcome_count),
+        previous_week_win_rate,
+        sample_games_count: i64_to_i32_saturating(sample_rows.len() as i64),
+        sample_size,
+        sample_avg_estimated_elo: average_elo(&sample_elo_values),
+        week_avg_estimated_elo: average_elo(&week_elo_values),
+        previous_week_avg_estimated_elo: average_elo(&previous_week_elo_values),
+        week_blunder_rate,
+        previous_week_blunder_rate,
+        blunder_delta_pp: to_delta(week_blunder_rate, previous_week_blunder_rate),
+        week_brilliant_rate,
+        previous_week_brilliant_rate,
+        brilliant_delta_pp: to_delta(week_brilliant_rate, previous_week_brilliant_rate),
+        week_mistake_rate,
+        previous_week_mistake_rate,
+        mistake_delta_pp: to_delta(week_mistake_rate, previous_week_mistake_rate),
+        week_inaccuracy_rate,
+        previous_week_inaccuracy_rate,
+        inaccuracy_delta_pp: to_delta(week_inaccuracy_rate, previous_week_inaccuracy_rate),
+        week_accuracy,
+        previous_week_accuracy,
+        accuracy_delta: to_delta(week_accuracy, previous_week_accuracy),
+        week_acpl,
+        previous_week_acpl,
+        acpl_delta: to_delta(week_acpl, previous_week_acpl),
+        week_analyzed_games: i64_to_i32_saturating(current_bucket.analyzed_games),
+        previous_week_analyzed_games: i64_to_i32_saturating(previous_bucket.analyzed_games),
+        blunder_rate_trend,
+        week_acpl_by_time_control,
+        week_accuracy_by_color,
+        puzzle_variants_color_coverage,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn dashboard_get_games_history_filter_meta(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1388,6 +2500,9 @@ pub async fn dashboard_get_games_history_filter_meta(
         sort_by: Some("date".to_string()),
         sort_direction: Some("desc".to_string()),
         profile_usernames: req.profile_usernames,
+        include_base_pgn: None,
+        include_analyzed_pgn: None,
+        include_analysis_stats: None,
     };
 
     let rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
@@ -1500,6 +2615,9 @@ pub async fn dashboard_get_analyze_all_counts_bulk(
         sort_by: Some("date".to_string()),
         sort_direction: Some("desc".to_string()),
         profile_usernames: req.profile_usernames,
+        include_base_pgn: None,
+        include_analyzed_pgn: None,
+        include_analysis_stats: None,
     };
     let mut rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
 

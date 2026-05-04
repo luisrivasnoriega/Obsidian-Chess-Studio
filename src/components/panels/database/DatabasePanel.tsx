@@ -56,6 +56,10 @@ type ChessbaseSessionStatus = {
   state: "ready" | "connecting" | "error" | "disconnected";
   last_error: string | null;
 };
+type ChessbaseCredentialsSummary = {
+  username: string | null;
+  has_password: boolean;
+};
 
 type DBType =
   | { type: "local"; options: LocalOptions }
@@ -160,6 +164,25 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     staleTime: 2000,
   });
   const chessbaseConnected = chessbaseSessionStatus?.connected === true;
+  const chessbaseAutoLoginAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    if (chessbaseAutoLoginAttemptedRef.current) return;
+    chessbaseAutoLoginAttemptedRef.current = true;
+
+    void (async () => {
+      try {
+        const credentials = await invoke<ChessbaseCredentialsSummary>("chessbase_get_credentials");
+        if (!credentials.has_password) return;
+        const status = await invoke<ChessbaseSessionStatus>("chessbase_login_background");
+        queryClient.setQueryData(["chessbase", "session-status", "database-panel"], status);
+      } catch {
+        // Ignore: no stored credentials or background login failed.
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ["chessbase", "session-status", "database-panel"] });
+      }
+    })();
+  }, [queryClient]);
 
   // Get available local databases
   const { data: databases } = useQuery({

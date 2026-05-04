@@ -4,6 +4,8 @@ import type { IconProps } from "@tabler/icons-react";
 import {
   IconCalendarEvent,
   IconChartLine,
+  IconChevronsLeft,
+  IconChevronsRight,
   IconCpu,
   IconDatabase,
   IconGitBranch,
@@ -20,11 +22,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useMatchRoute, useNavigate } from "@tanstack/react-router";
 import cx from "clsx";
 import { useAtom } from "jotai";
-import { type ComponentType, useCallback, useRef } from "react";
+import { type ComponentType, type MouseEvent, type ReactNode, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeProfileIdAtom, activeTabAtom, type Profile, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  type Profile,
+  profilesAtom,
+  sessionsAtom,
+  sidebarExpandedAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import type { Session } from "@/utils/session";
 import { createTab, type Tab } from "@/utils/tabs";
@@ -37,15 +47,17 @@ interface NavbarLinkProps {
   label: string;
   url: string;
   onClick?: () => void;
+  expanded?: boolean;
 }
-
-function NavbarLink({ url, icon: Icon, label, onClick }: NavbarLinkProps) {
+function NavbarLink({ url, icon: Icon, label, onClick, expanded = false }: NavbarLinkProps) {
   const matchesRoute = useMatchRoute();
   const { layout } = useResponsiveLayout();
   const isFooter = layout.sidebar.position === "footer";
   const isActive = matchesRoute({ to: url, fuzzy: url !== "/" });
+  const iconSize = isFooter ? "1.8rem" : "1.5rem";
+
   return (
-    <Tooltip label={label} position={isFooter ? "top" : "right"}>
+    <Tooltip label={label} position={isFooter ? "top" : "right"} disabled={expanded}>
       <button
         type="button"
         onClick={onClick}
@@ -53,9 +65,12 @@ function NavbarLink({ url, icon: Icon, label, onClick }: NavbarLinkProps) {
           [classes.active]: isActive,
         })}
         data-position={isFooter ? "footer" : "navbar"}
-        style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+        data-expanded={expanded}
       >
-        <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
+        <span className={classes.iconWrap}>
+          <Icon size={iconSize} stroke={1.5} />
+        </span>
+        {expanded ? <span className={classes.linkLabel}>{label}</span> : null}
       </button>
     </Tooltip>
   );
@@ -92,24 +107,35 @@ function MayaActionLink({
   icon: Icon,
   label,
   onClick,
+  expanded = false,
+  className,
+  dataRole,
 }: {
   icon: SidebarIcon;
   label: string;
-  onClick: (e?: React.MouseEvent) => void;
+  onClick: (e?: MouseEvent<HTMLButtonElement>) => void;
+  expanded?: boolean;
+  className?: string;
+  dataRole?: string;
 }) {
   const { layout } = useResponsiveLayout();
   const isFooter = layout.sidebar.position === "footer";
+  const iconSize = isFooter ? "1.8rem" : "1.5rem";
 
   return (
-    <Tooltip label={label} position={isFooter ? "top" : "right"}>
+    <Tooltip label={label} position={isFooter ? "top" : "right"} disabled={expanded}>
       <button
         type="button"
         onClick={onClick}
-        className={cx(classes.link)}
+        className={cx(classes.link, className)}
         data-position={isFooter ? "footer" : "navbar"}
-        style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+        data-expanded={expanded}
+        data-role={dataRole}
       >
-        <Icon size={isFooter ? "1.8rem" : "1.5rem"} stroke={1.5} />
+        <span className={classes.iconWrap}>
+          <Icon size={iconSize} stroke={1.5} />
+        </span>
+        {expanded ? <span className={classes.linkLabel}>{label}</span> : null}
       </button>
     </Tooltip>
   );
@@ -147,12 +173,12 @@ const mobileFooterLinks: Array<{ icon: SidebarIcon; labelKey: string; url: strin
 export const linksdata = [...primaryLinks, ...secondaryLinksData, ...tertiaryLinksData];
 
 export function SideBar() {
-  const _matchesRoute = useMatchRoute();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [, setActiveTab] = useAtom(activeTabAtom);
+  const [sidebarExpanded, setSidebarExpanded] = useAtom(sidebarExpandedAtom);
   const [profiles] = useAtom(profilesAtom);
   const [activeProfileId] = useAtom(activeProfileIdAtom);
   const [sessions, setSessions] = useAtom(sessionsAtom);
@@ -434,6 +460,7 @@ export function SideBar() {
           key={link.label}
           icon={link.icon}
           label={t(`features.sidebar.${link.label}`)}
+          expanded={sidebarExpanded}
           onClick={() => void openProfilesPage()}
         />
       );
@@ -443,6 +470,7 @@ export function SideBar() {
         {...link}
         label={t(`features.sidebar.${link.label}`)}
         key={link.label}
+        expanded={sidebarExpanded}
         onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
       />
     );
@@ -453,16 +481,18 @@ export function SideBar() {
       key="profiles-sync"
       icon={IconRefresh}
       label={t("profiles.sync.active", { defaultValue: "Update active profile" })}
+      expanded={sidebarExpanded}
       onClick={syncActiveProfileNow}
     />
   );
 
-  // Acciones principales: Play, Analysis, Puzzles
-  const primaryActionLinks: React.ReactNode[] = [
+  // Primary actions: Play, Analysis, Puzzles
+  const primaryActionLinks: ReactNode[] = [
     <MayaActionLink
       key="play"
       icon={IconPlayerPlay}
       label={t("maya.nav.playVsPc")}
+      expanded={sidebarExpanded}
       onClick={() => {
         void openTabAndNavigate({
           tab: { name: t("features.tabs.playBoard.title"), type: "play" },
@@ -474,6 +504,7 @@ export function SideBar() {
       key="analysis"
       icon={IconChartLine}
       label={t("maya.nav.analysis")}
+      expanded={sidebarExpanded}
       onClick={() => {
         void openTabAndNavigate({
           tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
@@ -488,6 +519,7 @@ export function SideBar() {
       key="puzzles"
       icon={IconPuzzle}
       label={t("maya.nav.puzzles")}
+      expanded={sidebarExpanded}
       onClick={() => {
         void openTabAndNavigate({
           tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
@@ -503,6 +535,7 @@ export function SideBar() {
       {...link}
       label={t(`features.sidebar.${link.label}`)}
       key={link.label}
+      expanded={sidebarExpanded}
       onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
     />
   ));
@@ -513,9 +546,26 @@ export function SideBar() {
       {...link}
       label={t(`features.sidebar.${link.label}`)}
       key={link.label}
+      expanded={sidebarExpanded}
       onClick={() => void openRouteTab(link.url, t(`features.sidebar.${link.label}`))}
     />
   ));
+
+  const toggleSidebarExpanded = useCallback(() => {
+    setSidebarExpanded((prev) => !prev);
+  }, [setSidebarExpanded]);
+
+  const sidebarToggleLink = (
+    <MayaActionLink
+      key="sidebar-toggle"
+      icon={sidebarExpanded ? IconChevronsLeft : IconChevronsRight}
+      label={sidebarExpanded ? t("features.sidebar.collapse") : t("features.sidebar.expand")}
+      expanded={sidebarExpanded}
+      className={classes.toggleLink}
+      dataRole="toggle"
+      onClick={toggleSidebarExpanded}
+    />
+  );
 
   if (isFooterNav) {
     return (
@@ -574,33 +624,40 @@ export function SideBar() {
     );
   }
 
-  // Para compatibilidad con código existente (footer/mobile)
   // Desktop layout
   return (
     <AppShellSection grow>
-      <Stack justify="flex-start" gap={0} pt="xs" h="100%">
-        {/* Sección principal: Dashboard y Profiles */}
+      <Stack className={classes.container} data-expanded={sidebarExpanded} justify="flex-start" gap={0} h="100%">
+        {sidebarToggleLink}
+        {sidebarExpanded ? <div className={classes.sectionDivider} /> : null}
+        {sidebarExpanded ? <div className={classes.sectionTitle}>{t("features.sidebar.navigation")}</div> : null}
         {primaryNavLinks}
         {profileSyncLink}
-        {/* Acciones principales: Play, Analysis, Puzzles */}
+
+        {sidebarExpanded ? <div className={classes.sectionDivider} /> : null}
+        {sidebarExpanded ? <div className={classes.sectionTitle}>{t("features.sidebar.play")}</div> : null}
         {primaryActionLinks}
-        {/* Sección secundaria: Databases, Engines, Files */}
+
+        {sidebarExpanded ? <div className={classes.sectionDivider} /> : null}
+        {sidebarExpanded ? <div className={classes.sectionTitle}>{t("features.sidebar.workspace")}</div> : null}
         {secondaryNavLinks}
-        {/* Sección terciaria: Tournaments */}
         {tertiaryNavLinks}
 
-        {/* Sección final: Keyboard Shortcuts y Settings */}
         <Stack justify="flex-end" gap={0} mt="auto" visibleFrom="sm">
+          {sidebarExpanded ? <div className={classes.sectionDivider} /> : null}
+          {sidebarExpanded ? <div className={classes.sectionTitle}>{t("features.sidebar.system")}</div> : null}
           <NavbarLink
             url="/settings/keyboard-shortcuts"
             icon={IconKeyboard}
             label={t("features.sidebar.keyboardShortcuts")}
+            expanded={sidebarExpanded}
             onClick={() => void openRouteTab("/settings/keyboard-shortcuts", t("features.sidebar.keyboardShortcuts"))}
           />
           <NavbarLink
             url="/settings"
             icon={IconSettings}
             label={t("features.sidebar.settings")}
+            expanded={sidebarExpanded}
             onClick={() => void openRouteTab("/settings", t("features.sidebar.settings"))}
           />
         </Stack>

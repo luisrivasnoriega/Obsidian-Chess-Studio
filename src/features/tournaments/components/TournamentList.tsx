@@ -3,6 +3,7 @@ import { notifications } from "@mantine/notifications";
 import { IconCalendar, IconTrash } from "@tabler/icons-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
 import { deleteTournamentTemplate, getTournamentTemplates, type TournamentTemplate } from "@/utils/tournamentTemplates";
 import { ScheduleTournamentModal } from "./ScheduleTournamentModal";
 
@@ -93,7 +94,7 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
 
   if (loading && templates.length === 0) {
     return (
-      <Card withBorder p="md">
+      <Card withBorder p="md" radius="lg" style={premiumMutedPanelStyle}>
         <Text c="dimmed">{t("common.loading", "Loading...")}</Text>
       </Card>
     );
@@ -101,7 +102,7 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
 
   if (templates.length === 0) {
     return (
-      <Card withBorder p="md">
+      <Card withBorder p="md" radius="lg" style={premiumMutedPanelStyle}>
         <Text c="dimmed">{t("features.tournaments.browse.noTemplates", "No tournament templates found")}</Text>
       </Card>
     );
@@ -111,7 +112,7 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
     <>
       <Stack gap="md">
         {templates.map((template) => (
-          <Card key={template.id} withBorder p="md">
+          <Card key={template.id} withBorder p="md" radius="lg" style={premiumMutedPanelStyle}>
             <Group justify="space-between" align="flex-start">
               <Stack gap="xs" style={{ flex: 1 }}>
                 <Group gap="xs" align="center">
@@ -137,6 +138,8 @@ export function TournamentList({ lichessToken, accountName, onRefresh }: Tournam
                   onClick={() => handleSchedule(template)}
                   disabled={!lichessToken}
                   variant="light"
+                  radius="xl"
+                  styles={premiumActionButtonStyles}
                 >
                   {t("features.tournaments.browse.schedule", "Schedule")}
                 </Button>

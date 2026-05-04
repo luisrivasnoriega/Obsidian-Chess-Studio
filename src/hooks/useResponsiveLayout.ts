@@ -2,7 +2,9 @@ import type { AppShellProps } from "@mantine/core";
 import { DEFAULT_THEME } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { type } from "@tauri-apps/plugin-os";
+import { useAtomValue } from "jotai";
 import { useMemo } from "react";
+import { sidebarExpandedAtom } from "@/state/atoms";
 
 // Platform types
 export type Platform = "desktop" | "mobile" | "web";
@@ -89,6 +91,7 @@ export const useResponsiveLayout: () => {
   mainContentHeight: string;
   performanceMetrics: PerformanceMetrics;
 } = () => {
+  const sidebarExpanded = useAtomValue(sidebarExpandedAtom);
   const platform = getPlatform();
   const smallScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.sm})`);
   const mediumScreenMax = useMediaQuery(`(width < ${DEFAULT_THEME.breakpoints.md})`);
@@ -143,7 +146,7 @@ export const useResponsiveLayout: () => {
       !isHeaderCollapsed && isTabletLayout && hasCoarsePointer
         ? `calc(${baseHeaderHeight} + ${safeTop})`
         : baseHeaderHeight;
-    const navbarWidth = isNavbarCollapsed ? "0rem" : "3rem";
+    const navbarWidth = isNavbarCollapsed ? "0rem" : sidebarExpanded ? "14.5rem" : "3.4rem";
     const footerHeight = isFooterCollapsed ? "0rem" : isPhoneLayout ? "3.75rem" : "3.25rem";
     const marginTop = isHeaderCollapsed && isPhoneLayout ? "3rem" : "0rem";
 
@@ -235,5 +238,13 @@ export const useResponsiveLayout: () => {
       mainContentHeight,
       performanceMetrics,
     };
-  }, [platform, smallScreenMax, mediumScreenMax, extraLargeScreenMax, largeScreenMax, hasCoarsePointer]);
+  }, [
+    platform,
+    sidebarExpanded,
+    smallScreenMax,
+    mediumScreenMax,
+    extraLargeScreenMax,
+    largeScreenMax,
+    hasCoarsePointer,
+  ]);
 };

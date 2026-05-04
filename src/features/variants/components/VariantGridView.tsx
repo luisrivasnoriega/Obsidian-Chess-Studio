@@ -1,4 +1,4 @@
-import { Alert, Center, SimpleGrid, Skeleton, Stack } from "@mantine/core";
+﻿import { Alert, Center, SimpleGrid, Skeleton, Stack } from "@mantine/core";
 import { IconGitBranch } from "@tabler/icons-react";
 import { useTranslation } from "react-i18next";
 import type { VariantInfo } from "../types";
@@ -10,6 +10,8 @@ interface VariantGridViewProps {
   onEdit: (variant: VariantInfo) => void;
   onDelete: (variant: VariantInfo) => void;
   onEditComments: (variant: VariantInfo) => void;
+  onConfigure: (variant: VariantInfo) => void;
+  onCoverageGraph: (variant: VariantInfo) => void;
   gridCols: number | { base: number; md?: number; lg?: number };
 }
 
@@ -19,6 +21,8 @@ export function VariantGridView({
   onEdit,
   onDelete,
   onEditComments,
+  onConfigure,
+  onCoverageGraph,
   gridCols,
 }: VariantGridViewProps) {
   const { t } = useTranslation();
@@ -55,7 +59,7 @@ export function VariantGridView({
           variant="light"
           icon={<IconGitBranch size={20} />}
         >
-          {t("features.variants.empty", {
+          {t("features.board.variants.empty", {
             defaultValue: "No variants found. Create a new variant to get started.",
           })}
         </Alert>
@@ -72,6 +76,8 @@ export function VariantGridView({
           onEdit={onEdit}
           onDelete={onDelete}
           onEditComments={onEditComments}
+          onConfigure={onConfigure}
+          onCoverageGraph={onCoverageGraph}
         />
       ))}
     </SimpleGrid>

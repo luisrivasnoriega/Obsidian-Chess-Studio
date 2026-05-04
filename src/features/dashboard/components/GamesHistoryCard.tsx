@@ -173,13 +173,16 @@ export function GamesHistoryCard({
       ref={cardRef}
       withBorder
       p="lg"
-      radius="md"
+      radius="lg"
       style={{
         height: `${height}px`,
         ...(isMobile && { minHeight: `${MOBILE_MIN_HEIGHT}px` }),
         position: "relative",
         display: "flex",
         flexDirection: "column",
+        background:
+          "radial-gradient(120% 170% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 14%, transparent) 0%, transparent 62%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-5) 10%), var(--mantine-color-dark-7))",
+        borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 18%, var(--mantine-color-dark-4))",
       }}
     >
       {/* Resize handle at the top */}
@@ -204,6 +207,37 @@ export function GamesHistoryCard({
       <Tabs
         value={activeTab}
         onChange={onTabChange}
+        variant="pills"
+        styles={{
+          list: {
+            gap: 6,
+            padding: 4,
+            borderRadius: 12,
+            border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+            background:
+              "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 90%, var(--mantine-color-dark-5) 10%), var(--mantine-color-dark-6))",
+          },
+          tab: {
+            borderRadius: 8,
+            paddingInline: 14,
+            minHeight: 34,
+            fontWeight: 600,
+            transition: "all 180ms ease",
+            color: "var(--mantine-color-gray-4)",
+            border: "1px solid transparent",
+            "&:hover": {
+              color: "var(--mantine-color-gray-1)",
+              backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-5) 88%, var(--mantine-color-dark-4) 12%)",
+            },
+            "&[data-active]": {
+              color: "var(--mantine-color-gray-0)",
+              border: "1px solid color-mix(in srgb, var(--mantine-color-blue-7) 30%, var(--mantine-color-dark-4))",
+              background:
+                "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-9) 26%, var(--mantine-color-dark-5) 74%), color-mix(in srgb, var(--mantine-color-cyan-9) 18%, var(--mantine-color-dark-5) 82%))",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+            },
+          },
+        }}
         style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}
       >
         <Group justify="space-between" align="center" style={{ marginTop: "4px" }}>
@@ -227,6 +261,18 @@ export function GamesHistoryCard({
                 { value: "500", label: "500" },
                 { value: "1000", label: "1000" },
               ]}
+              styles={{
+                input: {
+                  borderRadius: 10,
+                  backgroundColor:
+                    "color-mix(in srgb, var(--mantine-color-dark-6) 84%, var(--mantine-color-dark-4) 16%)",
+                  borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+                },
+                dropdown: {
+                  backgroundColor: "var(--mantine-color-dark-7)",
+                  borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+                },
+              }}
             />
           </Group>
         </Group>

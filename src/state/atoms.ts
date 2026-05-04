@@ -114,6 +114,9 @@ export const pieceSetAtom = atomWithStorage<string>("piece-set", "staunty");
 export const boardImageAtom = atomWithStorage<string>("board-image", "gray.svg");
 export const blindfoldAtom = atomWithStorage<boolean>("blindfold-mode", false);
 export const welcomeCardImageAtom = atomWithStorage<string | null>("welcome-card-image", null);
+export const sidebarExpandedAtom = atomWithStorage<boolean>("sidebar-expanded", false, undefined, {
+  getOnInit: true,
+});
 // Legacy primary color atom for backward compatibility
 export const primaryColorAtom = atomWithStorage<MantineColor>("mantine-primary-color", "blue");
 export const sessionsAtom = atomWithStorage<Session[]>("sessions", []);

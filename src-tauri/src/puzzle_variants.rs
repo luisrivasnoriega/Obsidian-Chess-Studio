@@ -87,6 +87,14 @@ fn normalize_san_token(san: &str) -> String {
     san.trim_start_matches('.').trim().to_string()
 }
 
+fn build_allowed_start_key(fen: &str, forced_system_move: &str) -> String {
+    format!(
+        "{}|{}",
+        fen_identity_key(fen),
+        normalize_san_token(forced_system_move)
+    )
+}
+
 fn build_solution_text(start_fen: &str, sans: &[String]) -> Result<String> {
     let start_turn = fen_turn(start_fen)?;
     let mut move_number = fen_fullmove_number(start_fen);
@@ -241,6 +249,7 @@ fn generate_puzzle_variants_from_tree_impl(
     root: &TreeNodeDto,
     puzzle_side: Side,
     selected_depth: u32,
+    allowed_start_keys: Option<&std::collections::HashSet<String>>,
 ) -> Result<GeneratePuzzleVariantsResponse> {
     if selected_depth < 1 {
         return Ok(GeneratePuzzleVariantsResponse {
@@ -259,6 +268,7 @@ fn generate_puzzle_variants_from_tree_impl(
         parent: Option<&TreeNodeDto>,
         puzzle_side: Side,
         selected_depth: u32,
+        allowed_start_keys: Option<&std::collections::HashSet<String>>,
         counter: &mut usize,
         dedupe: &mut std::collections::HashSet<String>,
         out: &mut String,
@@ -270,6 +280,7 @@ fn generate_puzzle_variants_from_tree_impl(
             parent: Option<&TreeNodeDto>,
             puzzle_side: Side,
             selected_depth: u32,
+            allowed_start_keys: Option<&std::collections::HashSet<String>>,
             depth: u32,
             counter: &mut usize,
             dedupe: &mut std::collections::HashSet<String>,
@@ -301,55 +312,62 @@ fn generate_puzzle_variants_from_tree_impl(
                     // Parent must be the opponent to move; the move leading here is the forced system move.
                     if parent_turn != puzzle_side {
                         if let Some(forced_system_move) = forced_system_move {
-                            let lines = collect_lines_from_position(node, puzzle_side, selected_depth)?;
-                            for line in lines {
-                                let mut sans: Vec<String> = Vec::with_capacity(line.len() + 1);
-                                sans.push(normalize_san_token(forced_system_move));
-                                sans.extend(line);
+                            let forced_key = build_allowed_start_key(&parent.fen, forced_system_move);
+                            let allowed = allowed_start_keys
+                                .map(|set| set.contains(&forced_key))
+                                .unwrap_or(true);
 
-                                let solution = build_solution_text(&parent.fen, &sans)?;
-                                if solution.is_empty() {
-                                    continue;
+                            if allowed {
+                                let lines = collect_lines_from_position(node, puzzle_side, selected_depth)?;
+                                for line in lines {
+                                    let mut sans: Vec<String> = Vec::with_capacity(line.len() + 1);
+                                    sans.push(normalize_san_token(forced_system_move));
+                                    sans.extend(line);
+
+                                    let solution = build_solution_text(&parent.fen, &sans)?;
+                                    if solution.is_empty() {
+                                        continue;
+                                    }
+                                    let canonical = canonicalize_solution(&solution);
+                                    let start_key = fen_identity_key(&parent.fen);
+                                    let dedupe_key = format!("{start_key}|{canonical}");
+                                    if dedupe.contains(&dedupe_key) {
+                                        continue;
+                                    }
+                                    dedupe.insert(dedupe_key);
+
+                                    *counter += 1;
+                                    let current_date = chrono::Local::now().format("%Y.%m.%d").to_string();
+                                    let (white_name, black_name) = match puzzle_side {
+                                        Side::White => ("Puzzle", "?"),
+                                        Side::Black => ("?", "Puzzle"),
+                                    };
+
+                                    out.push_str(&format!(r#"[Event "Mini puzzle {n}"]"#, n = *counter));
+                                    out.push('\n');
+                                    out.push_str(r#"[Site "Local"]"#);
+                                    out.push('\n');
+                                    out.push_str(&format!(r#"[Date "{current_date}"]"#));
+                                    out.push('\n');
+                                    out.push_str(r#"[Round "-"]"#);
+                                    out.push('\n');
+                                    out.push_str(&format!(r#"[White "{white_name}"]"#));
+                                    out.push('\n');
+                                    out.push_str(&format!(r#"[Black "{black_name}"]"#));
+                                    out.push('\n');
+                                    out.push_str(r#"[Result "*"]"#);
+                                    out.push('\n');
+                                    out.push_str(r#"[SetUp "1"]"#);
+                                    out.push('\n');
+                                    out.push_str(&format!(r#"[FEN "{fen}"]"#, fen = parent.fen));
+                                    out.push('\n');
+                                    out.push_str(&format!(r#"[Solution "{solution}"]"#));
+                                    out.push('\n');
+                                    out.push('\n');
+                                    out.push_str(&solution);
+                                    out.push('\n');
+                                    out.push('\n');
                                 }
-                                let canonical = canonicalize_solution(&solution);
-                                let start_key = fen_identity_key(&parent.fen);
-                                let dedupe_key = format!("{start_key}|{canonical}");
-                                if dedupe.contains(&dedupe_key) {
-                                    continue;
-                                }
-                                dedupe.insert(dedupe_key);
-
-                                *counter += 1;
-                                let current_date = chrono::Local::now().format("%Y.%m.%d").to_string();
-                                let (white_name, black_name) = match puzzle_side {
-                                    Side::White => ("Puzzle", "?"),
-                                    Side::Black => ("?", "Puzzle"),
-                                };
-
-                                out.push_str(&format!(r#"[Event "Mini puzzle {n}"]"#, n = *counter));
-                                out.push('\n');
-                                out.push_str(r#"[Site "Local"]"#);
-                                out.push('\n');
-                                out.push_str(&format!(r#"[Date "{current_date}"]"#));
-                                out.push('\n');
-                                out.push_str(r#"[Round "-"]"#);
-                                out.push('\n');
-                                out.push_str(&format!(r#"[White "{white_name}"]"#));
-                                out.push('\n');
-                                out.push_str(&format!(r#"[Black "{black_name}"]"#));
-                                out.push('\n');
-                                out.push_str(r#"[Result "*"]"#);
-                                out.push('\n');
-                                out.push_str(r#"[SetUp "1"]"#);
-                                out.push('\n');
-                                out.push_str(&format!(r#"[FEN "{fen}"]"#, fen = parent.fen));
-                                out.push('\n');
-                                out.push_str(&format!(r#"[Solution "{solution}"]"#));
-                                out.push('\n');
-                                out.push('\n');
-                                out.push_str(&solution);
-                                out.push('\n');
-                                out.push('\n');
                             }
                         }
                     }
@@ -362,6 +380,7 @@ fn generate_puzzle_variants_from_tree_impl(
                     Some(node),
                     puzzle_side,
                     selected_depth,
+                    allowed_start_keys,
                     depth + 1,
                     counter,
                     dedupe,
@@ -377,6 +396,7 @@ fn generate_puzzle_variants_from_tree_impl(
             parent,
             puzzle_side,
             selected_depth,
+            allowed_start_keys,
             0,
             counter,
             dedupe,
@@ -388,7 +408,16 @@ fn generate_puzzle_variants_from_tree_impl(
     let mut counter: usize = 0;
     let mut dedupe: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    traverse_and_collect(root, None, puzzle_side, selected_depth, &mut counter, &mut dedupe, &mut out)?;
+    traverse_and_collect(
+        root,
+        None,
+        puzzle_side,
+        selected_depth,
+        allowed_start_keys,
+        &mut counter,
+        &mut dedupe,
+        &mut out,
+    )?;
 
     Ok(GeneratePuzzleVariantsResponse { pgn: out, count: counter })
 }
@@ -399,9 +428,17 @@ pub fn generate_puzzle_variants_from_tree(
     root: TreeNodeDto,
     orientation: String,
     selected_depth: u32,
+    allowed_start_keys: Option<Vec<String>>,
 ) -> Result<GeneratePuzzleVariantsResponse> {
     let puzzle_side = Side::from_orientation(&orientation)?;
-    generate_puzzle_variants_from_tree_impl(&root, puzzle_side, selected_depth)
+    let allowed_set = allowed_start_keys.map(|items| {
+        items
+            .into_iter()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+            .collect::<std::collections::HashSet<String>>()
+    });
+    generate_puzzle_variants_from_tree_impl(&root, puzzle_side, selected_depth, allowed_set.as_ref())
 }
 
 #[cfg(test)]
@@ -434,7 +471,7 @@ mod tests {
             ],
         );
 
-        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1).unwrap();
+        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1, None).unwrap();
         assert_eq!(res.count, 2, "Two alternative white replies should produce two puzzles at depth=1");
         assert!(
             res.pgn.contains(r#"[FEN "8/8/8/8/8/8/8/8 b - - 0 1"]"#),
@@ -460,7 +497,7 @@ mod tests {
             )],
         );
 
-        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1).unwrap();
+        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1, None).unwrap();
         assert_eq!(res.count, 1, "A single forced reply should still generate a puzzle");
         assert!(
             res.pgn.contains(r#"[Solution "1... e5 2. Nf3"]"#),
@@ -480,7 +517,7 @@ mod tests {
             ],
         );
 
-        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1).unwrap();
+        let res = generate_puzzle_variants_from_tree_impl(&tree, Side::White, 1, None).unwrap();
         assert_eq!(res.count, 0);
     }
 }

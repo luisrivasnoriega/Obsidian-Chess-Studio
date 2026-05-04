@@ -8,10 +8,14 @@ import {
   Loader,
   Modal,
   ScrollArea,
+  SegmentedControl,
   Select,
+  SimpleGrid,
   Stack,
   Text,
+  Textarea,
   TextInput,
+  ThemeIcon,
 } from "@mantine/core";
 import { DateInput } from "@mantine/dates";
 import { useForm } from "@mantine/form";
@@ -27,10 +31,17 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type GameQuery, type NormalizedGame } from "@/bindings";
 import GenericHeader from "@/components/GenericHeader";
-import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, activeTabAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  premiumActionButtonStyles,
+  premiumKpiCardStyle,
+  premiumMutedPanelStyle,
+  premiumPanelStyle,
+} from "@/styles/premiumSurface";
 import { query_games } from "@/utils/db";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import {
+  addEventGamesFromPgn,
   createEventGame,
   deleteManagedEvent,
   listManagedEvents,
@@ -52,12 +63,32 @@ type CreateFormValues = {
 };
 
 type CreateGameFormValues = {
+  entryMode: "manual" | "pgn";
+  profileSide: "manual" | "white" | "black";
+  opponent: string;
   white: string;
   black: string;
   date: Date | null;
   round: string;
   result: "1-0" | "0-1" | "1/2-1/2" | "*";
+  pgnText: string;
 };
+
+function escapePgnHeaderValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function overridePgnPlayerBySide(pgn: string, side: "manual" | "white" | "black", activePlayerName: string): string {
+  if (side === "manual") return pgn;
+  const trimmedName = activePlayerName.trim();
+  if (!trimmedName) return pgn;
+
+  const escaped = escapePgnHeaderValue(trimmedName);
+  if (side === "white") {
+    return pgn.replace(/^\[White\s+"([^"]*)"\]\s*$/gm, `[White "${escaped}"]`);
+  }
+  return pgn.replace(/^\[Black\s+"([^"]*)"\]\s*$/gm, `[Black "${escaped}"]`);
+}
 
 export default function EventsPage() {
   const { t } = useTranslation();
@@ -68,6 +99,7 @@ export default function EventsPage() {
   const setActiveTab = useSetAtom(activeTabAtom);
 
   const profiles = useAtomValue(profilesAtom);
+  const sessions = useAtomValue(sessionsAtom);
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
@@ -100,19 +132,48 @@ export default function EventsPage() {
 
   const gameForm = useForm<CreateGameFormValues>({
     initialValues: {
+      entryMode: "manual",
+      profileSide: "white",
+      opponent: "",
       white: "",
       black: "",
       date: null,
       round: "",
       result: "*",
+      pgnText: "",
     },
     validate: {
-      white: (value) =>
-        value.trim().length === 0 ? t("features.events.games.validation.whiteRequired", "White is required") : null,
-      black: (value) =>
-        value.trim().length === 0 ? t("features.events.games.validation.blackRequired", "Black is required") : null,
+      white: (value, values) =>
+        values.entryMode === "manual" && values.profileSide === "manual" && value.trim().length === 0
+          ? t("features.events.games.validation.whiteRequired", "White is required")
+          : null,
+      black: (value, values) =>
+        values.entryMode === "manual" && values.profileSide === "manual" && value.trim().length === 0
+          ? t("features.events.games.validation.blackRequired", "Black is required")
+          : null,
+      opponent: (value, values) =>
+        values.entryMode === "manual" && values.profileSide !== "manual" && value.trim().length === 0
+          ? t("features.events.games.validation.opponentRequired", "Opponent is required")
+          : null,
+      pgnText: (value, values) =>
+        values.entryMode === "pgn" && value.trim().length === 0
+          ? t("features.events.games.validation.pgnRequired", "PGN is required")
+          : null,
     },
   });
+
+  const activeProfilePlayerName = useMemo(() => {
+    if (!activeProfile) return "";
+    const profileName = activeProfile.displayName?.trim() || activeProfile.name?.trim() || "";
+    const profileSessions = sessions.filter((session) => session.profileId === activeProfile.id);
+    const sessionPlayerNames = profileSessions
+      .map(
+        (session) =>
+          session.player?.trim() || session.lichess?.username?.trim() || session.chessCom?.username?.trim() || "",
+      )
+      .filter((name) => name.length > 0);
+    return sessionPlayerNames[0] ?? profileName;
+  }, [activeProfile, sessions]);
 
   const { data: dbPath, isLoading: isLoadingDbPath } = useQuery<string | null>({
     queryKey: ["profileDbPath", activeProfileId],
@@ -210,50 +271,112 @@ export default function EventsPage() {
 
   const handleCreateGame = async (values: CreateGameFormValues) => {
     if (!dbPath || !activeEvent) return;
-    const white = values.white.trim();
-    const black = values.black.trim();
-    if (!white || !black) return;
 
     setIsCreatingGame(true);
     try {
-      const date = formatDateToPGN(values.date) ?? null;
-      const round = values.round.trim() || null;
-      const result = values.result;
+      if (values.entryMode === "pgn") {
+        let pgnText = values.pgnText.trim();
+        if (values.profileSide !== "manual") {
+          const profileName = activeProfilePlayerName.trim();
+          if (!profileName) {
+            notifications.show({
+              title: t("common.error"),
+              message: t("features.events.addGame.activeProfileNameRequired", "Active profile name is required."),
+              color: "red",
+            });
+            return;
+          }
+          pgnText = overridePgnPlayerBySide(pgnText, values.profileSide, profileName);
+        }
 
-      const gameId = await createEventGame(dbPath, activeEvent.id, {
-        white,
-        black,
-        date,
-        round,
-        result,
-      });
+        const inserted = await addEventGamesFromPgn(dbPath, activeEvent.id, pgnText);
+        if (inserted > 0) {
+          notifications.show({
+            title: t("features.events.notifications.gamesAddedTitle", "Games imported"),
+            message: t("features.events.notifications.gamesAddedMessage", "Imported {{count}} games.", {
+              count: inserted,
+            }),
+            color: "green",
+          });
+        } else {
+          notifications.show({
+            title: t("features.events.notifications.noGamesAddedTitle", "No new games imported"),
+            message: t(
+              "features.events.notifications.noGamesAddedMessage",
+              "No new games were inserted. The PGN may be duplicated or invalid.",
+            ),
+            color: "yellow",
+          });
+        }
+      } else {
+        let white = values.white.trim();
+        let black = values.black.trim();
+        if (values.profileSide !== "manual") {
+          const profileName = activeProfilePlayerName.trim();
+          const opponent = values.opponent.trim();
+          if (!profileName || !opponent) {
+            if (!profileName) {
+              notifications.show({
+                title: t("common.error"),
+                message: t("features.events.addGame.activeProfileNameRequired", "Active profile name is required."),
+                color: "red",
+              });
+            }
+            return;
+          }
+          if (values.profileSide === "white") {
+            white = profileName;
+            black = opponent;
+          } else {
+            white = opponent;
+            black = profileName;
+          }
+        }
+        if (!white || !black) return;
 
-      const eventName = (activeEvent.name ?? "").trim() || t("features.events.unnamedEvent", "Unnamed event");
-      const eventType = (activeEvent.event_type ?? "otb_tournament") as ManagedEventType;
-      const site = eventType === "online_tournament" ? "Online" : eventType === "league" ? "League" : "OTB";
-      const timeControl = (activeEvent.time_control ?? "").trim();
-      const tcHeader = timeControl ? `\n[TimeControl "${timeControl}"]` : "";
-      const pgn = `[Event "${eventName}"]\n[Site "${site}"]${tcHeader}\n[Date "${date ?? "????.??.??"}"]\n[Round "${
-        round ?? "?"
-      }"]\n[White "${white}"]\n[Black "${black}"]\n[Result "${result}"]\n\n${result}`;
+        const date = formatDateToPGN(values.date) ?? null;
+        const round = values.round.trim() || null;
+        const result = values.result;
 
-      createTab({
-        tab: { name: `${white} - ${black}`, type: "analysis" },
-        setTabs,
-        setActiveTab,
-        pgn,
-        srcInfo: { type: "db", db: dbPath, id: gameId },
-        initialAnalysisTab: "analysis",
-        initialAnalysisSubTab: "report",
-        initialNotationView: "report",
-      });
-      navigate({ to: "/analysis" });
+        const gameId = await createEventGame(dbPath, activeEvent.id, {
+          white,
+          black,
+          date,
+          round,
+          result,
+        });
 
+        const eventName = (activeEvent.name ?? "").trim() || t("features.events.unnamedEvent", "Unnamed event");
+        const eventType = (activeEvent.event_type ?? "otb_tournament") as ManagedEventType;
+        const site = eventType === "online_tournament" ? "Online" : eventType === "league" ? "League" : "OTB";
+        const timeControl = (activeEvent.time_control ?? "").trim();
+        const tcHeader = timeControl ? `\n[TimeControl "${timeControl}"]` : "";
+        const pgn = `[Event "${eventName}"]\n[Site "${site}"]${tcHeader}\n[Date "${date ?? "????.??.??"}"]\n[Round "${
+          round ?? "?"
+        }"]\n[White "${white}"]\n[Black "${black}"]\n[Result "${result}"]\n\n${result}`;
+
+        createTab({
+          tab: { name: `${white} - ${black}`, type: "analysis" },
+          setTabs,
+          setActiveTab,
+          pgn,
+          srcInfo: { type: "db", db: dbPath, id: gameId },
+          initialAnalysisTab: "analysis",
+          initialAnalysisSubTab: "report",
+          initialNotationView: "report",
+        });
+        navigate({ to: "/analysis" });
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["managedEventGames", dbPath, activeEvent.id] });
       setAddGameModalOpened(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       notifications.show({
-        title: t("features.events.notifications.createGameFailedTitle", "Could not create game"),
+        title:
+          values.entryMode === "pgn"
+            ? t("features.events.notifications.addGamesFailedTitle", "Could not import games")
+            : t("features.events.notifications.createGameFailedTitle", "Could not create game"),
         message,
         color: "red",
       });
@@ -317,6 +440,17 @@ export default function EventsPage() {
     return events;
   }, [eventSortStatus, eventTypeLabel, managedEvents]);
 
+  const totalEvents = managedEvents?.length ?? 0;
+  const onlineEvents = useMemo(
+    () => (managedEvents ?? []).filter((event) => event.event_type === "online_tournament").length,
+    [managedEvents],
+  );
+  const leagueEvents = useMemo(
+    () => (managedEvents ?? []).filter((event) => event.event_type === "league").length,
+    [managedEvents],
+  );
+  const visibleEvents = sortedEvents.length;
+
   return (
     <>
       <GenericHeader title={t("features.sidebar.events", "Events")} pageKey="events" showViewToggle={false} />
@@ -325,7 +459,7 @@ export default function EventsPage() {
         <ScrollArea h="100%" offsetScrollbars>
           <Stack px="md" pb="xl">
             {!activeProfile ? (
-              <Card withBorder>
+              <Card withBorder radius="lg" style={premiumMutedPanelStyle}>
                 <Text>{t("features.events.noProfile", "Select a profile to manage events.")}</Text>
               </Card>
             ) : isLoadingDbPath ? (
@@ -334,7 +468,70 @@ export default function EventsPage() {
               </Group>
             ) : (
               <Stack gap="md">
-                <Card withBorder>
+                <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+                  <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={2}>
+                        <Text size="xs" c="dimmed">
+                          {t("features.events.kpis.total", "Events")}
+                        </Text>
+                        <Text fw={800} fz="lg">
+                          {totalEvents}
+                        </Text>
+                      </Stack>
+                      <ThemeIcon radius="md" variant="light" color="blue">
+                        <IconPlus size={16} />
+                      </ThemeIcon>
+                    </Group>
+                  </Card>
+                  <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={2}>
+                        <Text size="xs" c="dimmed">
+                          {t("features.events.kpis.visible", "Visible")}
+                        </Text>
+                        <Text fw={800} fz="lg">
+                          {visibleEvents}
+                        </Text>
+                      </Stack>
+                      <ThemeIcon radius="md" variant="light" color="teal">
+                        <IconPlus size={16} />
+                      </ThemeIcon>
+                    </Group>
+                  </Card>
+                  <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={2}>
+                        <Text size="xs" c="dimmed">
+                          {t("features.events.eventTypes.onlineTournament", "Online Tournament")}
+                        </Text>
+                        <Text fw={800} fz="lg">
+                          {onlineEvents}
+                        </Text>
+                      </Stack>
+                      <ThemeIcon radius="md" variant="light" color="cyan">
+                        <IconPlus size={16} />
+                      </ThemeIcon>
+                    </Group>
+                  </Card>
+                  <Card withBorder radius="lg" p="sm" style={premiumKpiCardStyle}>
+                    <Group justify="space-between" wrap="nowrap">
+                      <Stack gap={2}>
+                        <Text size="xs" c="dimmed">
+                          {t("features.events.eventTypes.league", "League")}
+                        </Text>
+                        <Text fw={800} fz="lg">
+                          {leagueEvents}
+                        </Text>
+                      </Stack>
+                      <ThemeIcon radius="md" variant="light" color="grape">
+                        <IconPlus size={16} />
+                      </ThemeIcon>
+                    </Group>
+                  </Card>
+                </SimpleGrid>
+
+                <Card withBorder radius="lg" style={premiumPanelStyle}>
                   <form onSubmit={form.onSubmit(handleCreate)}>
                     <Stack gap="sm">
                       <Text fw={600}>{t("features.events.create.title", "Create event")}</Text>
@@ -390,7 +587,13 @@ export default function EventsPage() {
                         />
                       </Group>
                       <Group justify="flex-end">
-                        <Button type="submit" leftSection={<IconPlus size={16} />}>
+                        <Button
+                          type="submit"
+                          size="xs"
+                          radius="xl"
+                          styles={premiumActionButtonStyles}
+                          leftSection={<IconPlus size={16} />}
+                        >
                           {t("common.create", "Create")}
                         </Button>
                       </Group>
@@ -400,7 +603,7 @@ export default function EventsPage() {
 
                 <Divider />
 
-                <Card withBorder radius="md" p="md">
+                <Card withBorder radius="lg" p="md" style={premiumMutedPanelStyle}>
                   <Group justify="space-between" mb="xs">
                     <Text fw={600}>{t("features.events.list.title", "Registered tournaments")}</Text>
                     <Text c="dimmed" size="sm">
@@ -495,7 +698,13 @@ export default function EventsPage() {
                             textAlign: "right",
                             render: (event) => (
                               <Group gap="xs" justify="flex-end" wrap="nowrap">
-                                <Button size="xs" variant="default" onClick={() => openAddGamesModal(event)}>
+                                <Button
+                                  size="xs"
+                                  radius="xl"
+                                  variant="light"
+                                  styles={premiumActionButtonStyles}
+                                  onClick={() => openAddGamesModal(event)}
+                                >
                                   {t("features.events.actions.addGame", "Add game")}
                                 </Button>
                                 <ActionIcon
@@ -532,18 +741,87 @@ export default function EventsPage() {
               {activeEvent?.name ? `${activeEvent.name}` : ""}
             </Text>
 
-            <TextInput
-              label={t("features.events.games.white", "White")}
-              placeholder={t("features.events.games.whitePlaceholder", "White player name")}
-              required
-              {...gameForm.getInputProps("white")}
+            <SegmentedControl
+              value={gameForm.values.entryMode}
+              onChange={(value) =>
+                gameForm.setFieldValue("entryMode", (value as CreateGameFormValues["entryMode"]) ?? "manual")
+              }
+              data={[
+                { label: t("features.events.addGame.manualMode", "Manual"), value: "manual" },
+                { label: t("features.events.addGame.pgnMode", "PGN"), value: "pgn" },
+              ]}
+              fullWidth
             />
-            <TextInput
-              label={t("features.events.games.black", "Black")}
-              placeholder={t("features.events.games.blackPlaceholder", "Black player name")}
-              required
-              {...gameForm.getInputProps("black")}
+
+            <Select
+              label={t("features.events.addGame.profileSide", "Active profile plays as")}
+              value={gameForm.values.profileSide}
+              onChange={(value) =>
+                gameForm.setFieldValue("profileSide", (value as CreateGameFormValues["profileSide"]) ?? "manual")
+              }
+              data={[
+                { value: "white", label: t("features.events.addGame.profileAsWhite", "White") },
+                { value: "black", label: t("features.events.addGame.profileAsBlack", "Black") },
+                {
+                  value: "manual",
+                  label:
+                    gameForm.values.entryMode === "pgn"
+                      ? t("features.events.addGame.keepPgnPlayers", "Keep PGN players")
+                      : t("features.events.addGame.manualPlayers", "Manual players"),
+                },
+              ]}
             />
+
+            {gameForm.values.entryMode === "manual" ? (
+              gameForm.values.profileSide === "manual" ? (
+                <>
+                  <TextInput
+                    label={t("features.events.games.white", "White")}
+                    placeholder={t("features.events.games.whitePlaceholder", "White player name")}
+                    required
+                    {...gameForm.getInputProps("white")}
+                  />
+                  <TextInput
+                    label={t("features.events.games.black", "Black")}
+                    placeholder={t("features.events.games.blackPlaceholder", "Black player name")}
+                    required
+                    {...gameForm.getInputProps("black")}
+                  />
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    label={t("features.events.addGame.activeProfilePlayer", "Active profile player")}
+                    value={activeProfilePlayerName}
+                    readOnly
+                  />
+                  <TextInput
+                    label={t("features.events.addGame.opponent", "Opponent")}
+                    placeholder={t("features.events.addGame.opponentPlaceholder", "Opponent name")}
+                    required
+                    {...gameForm.getInputProps("opponent")}
+                  />
+                </>
+              )
+            ) : (
+              <>
+                {gameForm.values.profileSide !== "manual" ? (
+                  <TextInput
+                    label={t("features.events.addGame.activeProfilePlayer", "Active profile player")}
+                    value={activeProfilePlayerName}
+                    readOnly
+                  />
+                ) : null}
+                <Textarea
+                  label={t("features.events.addGame.pgnInput", "PGN")}
+                  placeholder={t("features.events.addGame.pgnPlaceholder", "Paste one or multiple PGN games")}
+                  minRows={8}
+                  autosize
+                  required
+                  {...gameForm.getInputProps("pgnText")}
+                />
+              </>
+            )}
 
             <Group grow>
               <DateInput
@@ -552,11 +830,13 @@ export default function EventsPage() {
                 clearable
                 value={gameForm.values.date}
                 onChange={(v) => gameForm.setFieldValue("date", parseDate(v) ?? null)}
+                disabled={gameForm.values.entryMode === "pgn"}
               />
               <TextInput
                 label={t("features.events.games.round", "Round")}
                 placeholder={t("features.events.games.roundPlaceholder", "Round")}
                 {...gameForm.getInputProps("round")}
+                disabled={gameForm.values.entryMode === "pgn"}
               />
             </Group>
 
@@ -570,6 +850,7 @@ export default function EventsPage() {
                 { value: "0-1", label: t("chess.outcome.blackWins", "Black wins") },
                 { value: "1/2-1/2", label: t("chess.outcome.draw", "Draw") },
               ]}
+              disabled={gameForm.values.entryMode === "pgn"}
             />
 
             <Group justify="flex-end">
@@ -577,7 +858,9 @@ export default function EventsPage() {
                 {t("common.cancel", "Cancel")}
               </Button>
               <Button type="submit" loading={isCreatingGame}>
-                {t("features.events.addGame.createAndOpen", "Create & open")}
+                {gameForm.values.entryMode === "pgn"
+                  ? t("features.events.addGame.importOnly", "Import to event")
+                  : t("features.events.addGame.createAndOpen", "Create & open")}
               </Button>
             </Group>
           </Stack>

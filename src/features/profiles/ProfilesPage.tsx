@@ -69,6 +69,12 @@ import {
   referenceDbAtom,
   sessionsAtom,
 } from "@/state/atoms";
+import {
+  premiumActionButtonStyles,
+  premiumMutedPanelStyle,
+  premiumPanelStyle,
+  premiumTabListStyle,
+} from "@/styles/premiumSurface";
 import { getAccountKey } from "@/utils/accountKeys";
 import { getAccountPgnPath } from "@/utils/accountPgnPaths";
 import { getAccountSyncState } from "@/utils/accountSyncState";
@@ -1336,6 +1342,9 @@ export default function ProfilesPage() {
           minMoves: null,
           sortBy: "date",
           sortDirection: "desc",
+          includeBasePgn: null,
+          includeAnalyzedPgn: null,
+          includeAnalysisStats: null,
         }),
       );
       const rows = res.rows ?? [];
@@ -1775,7 +1784,9 @@ export default function ProfilesPage() {
           <Group gap="xs">
             <Button
               size="xs"
-              variant="default"
+              radius="xl"
+              variant="light"
+              styles={premiumActionButtonStyles}
               leftSection={<IconFileImport size="1rem" />}
               onClick={() => void importProfileFromFile()}
               loading={profileTransferBusy}
@@ -1785,7 +1796,9 @@ export default function ProfilesPage() {
             </Button>
             <Button
               size="xs"
-              variant="default"
+              radius="xl"
+              variant="light"
+              styles={premiumActionButtonStyles}
               leftSection={<IconFileExport size="1rem" />}
               onClick={() => void exportProfileToFile()}
               loading={profileTransferBusy}
@@ -1795,7 +1808,9 @@ export default function ProfilesPage() {
             </Button>
             <Button
               size="xs"
+              radius="xl"
               variant="default"
+              styles={premiumActionButtonStyles}
               leftSection={<IconRefresh size="1rem" />}
               onClick={() => {
                 if (activeProfile) void syncProfileSessions(activeProfile);
@@ -1813,7 +1828,7 @@ export default function ProfilesPage() {
       <Stack flex={1} style={{ minHeight: 0 }}>
         <ScrollArea h="100%" offsetScrollbars>
           <Stack px="md" pb="xl">
-            <Card withBorder radius="md" p="md">
+            <Card withBorder radius="lg" p="md" style={premiumPanelStyle}>
               <Flex gap="sm" justify="space-between" align="flex-end" wrap="wrap">
                 <Stack gap={2}>
                   <Group gap="xs" wrap="nowrap">
@@ -1832,14 +1847,22 @@ export default function ProfilesPage() {
                 <Group gap="xs" wrap="nowrap">
                   <Button
                     size="xs"
-                    variant="default"
+                    radius="xl"
+                    variant="light"
+                    styles={premiumActionButtonStyles}
                     leftSection={<IconPlus size="1rem" />}
                     onClick={openAddAccountModal}
                     disabled={isAccountSyncRunning}
                   >
                     {t("accounts.addAccount", { defaultValue: "Add Account" })}
                   </Button>
-                  <Button size="xs" leftSection={<IconPlus size="1rem" />} onClick={openCreateModal}>
+                  <Button
+                    size="xs"
+                    radius="xl"
+                    styles={premiumActionButtonStyles}
+                    leftSection={<IconPlus size="1rem" />}
+                    onClick={openCreateModal}
+                  >
                     {t("profiles.add", { defaultValue: "Add Profile" })}
                   </Button>
                 </Group>
@@ -2097,7 +2120,7 @@ export default function ProfilesPage() {
               )}
             </Card>
 
-            <Card withBorder radius="md" p="md">
+            <Card withBorder radius="lg" p="md" style={premiumMutedPanelStyle}>
               {useTabDropdown && (
                 <Select
                   label={t("profiles.tabs.selectSection", { defaultValue: "Section" })}
@@ -2112,6 +2135,9 @@ export default function ProfilesPage() {
                 value={detailsTab}
                 onChange={(v) => setDetailsTab((v as typeof detailsTab) ?? "database")}
                 keepMounted={false}
+                styles={{
+                  list: premiumTabListStyle,
+                }}
               >
                 {!useTabDropdown && (
                   <Tabs.List>
@@ -2213,6 +2239,7 @@ export default function ProfilesPage() {
                     p="md"
                     withBorder
                     style={{
+                      ...premiumMutedPanelStyle,
                       overflow: useTabDropdown ? "visible" : "hidden",
                       display: "flex",
                       flexDirection: "column",

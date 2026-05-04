@@ -4,6 +4,7 @@ import { notifications } from "@mantine/notifications";
 import { IconPlus } from "@tabler/icons-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
 import { saveTournamentTemplate } from "@/utils/tournamentTemplates";
 
 interface CreateTournamentFormProps {
@@ -128,7 +129,7 @@ export function CreateTournamentForm({ lichessToken, accountName, onTemplateSave
   };
 
   return (
-    <Card withBorder radius="md" p="md">
+    <Card withBorder radius="lg" p="md" style={premiumMutedPanelStyle}>
       <Stack gap="md">
         <Text size="lg" fw={600}>
           {t("features.tournaments.createTab.title", "Create Tournament Template")}
@@ -379,6 +380,8 @@ export function CreateTournamentForm({ lichessToken, accountName, onTemplateSave
 
         <Button
           leftSection={<IconPlus size={16} />}
+          radius="xl"
+          styles={premiumActionButtonStyles}
           onClick={handleSubmit}
           loading={loading}
           disabled={!formData.name.trim()}

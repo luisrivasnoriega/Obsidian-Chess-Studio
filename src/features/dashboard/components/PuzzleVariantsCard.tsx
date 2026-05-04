@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Group, Loader, ScrollArea, Stack, Text } from "@mantine/core";
+import { Badge, Box, Button, Card, Group, Loader, Progress, ScrollArea, Stack, Text, ThemeIcon } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconPuzzle } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -210,14 +210,55 @@ export function PuzzleVariantsCard() {
   );
 
   return (
-    <Card withBorder p="lg" radius="md" h="100%">
-      <Group justify="space-between" mb="sm">
-        <Text fw={700}>{t("features.dashboard.puzzleVariants.title", { defaultValue: "Puzzle variants" })}</Text>
+    <Card
+      withBorder
+      p="lg"
+      radius="lg"
+      h="100%"
+      style={{
+        background:
+          "radial-gradient(120% 180% at 100% 0%, color-mix(in srgb, var(--mantine-color-cyan-9) 9%, transparent) 0%, transparent 52%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-5) 10%), var(--mantine-color-dark-7))",
+        borderColor: "color-mix(in srgb, var(--mantine-color-cyan-8) 18%, var(--mantine-color-dark-4))",
+      }}
+    >
+      <Group justify="space-between" mb="md">
         <Group gap="xs">
-          <Button size="xs" variant="default" disabled={rows.length === 0} onClick={resetProgress}>
+          <ThemeIcon
+            radius="md"
+            variant="light"
+            color="cyan"
+            style={{ border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-7) 30%, transparent)" }}
+          >
+            <IconPuzzle size={16} />
+          </ThemeIcon>
+          <Text fw={700}>{t("features.dashboard.puzzleVariants.title", { defaultValue: "Puzzle variants" })}</Text>
+        </Group>
+        <Group gap="xs">
+          <Button
+            size="xs"
+            radius="md"
+            variant="default"
+            disabled={rows.length === 0}
+            onClick={resetProgress}
+            style={{
+              borderColor: "color-mix(in srgb, var(--mantine-color-cyan-8) 20%, var(--mantine-color-dark-4))",
+              backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 90%, var(--mantine-color-cyan-9) 10%)",
+            }}
+          >
             {t("features.dashboard.puzzleVariants.resetProgress", { defaultValue: "Reset progress" })}
           </Button>
-          <Button size="xs" variant="light" onClick={() => openPuzzles()} leftSection={<IconPuzzle size={16} />}>
+          <Button
+            size="xs"
+            radius="md"
+            variant="light"
+            onClick={() => openPuzzles()}
+            leftSection={<IconPuzzle size={16} />}
+            style={{
+              border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 20%, transparent)",
+              background:
+                "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-8) 84%, var(--mantine-color-blue-7) 16%), color-mix(in srgb, var(--mantine-color-blue-7) 90%, var(--mantine-color-blue-6) 10%))",
+            }}
+          >
             {t("features.tabs.puzzle.button")}
           </Button>
         </Group>
@@ -233,63 +274,97 @@ export function PuzzleVariantsCard() {
           })}
         </Text>
       ) : (
-        <ScrollArea h={220} offsetScrollbars>
+        <ScrollArea
+          h={260}
+          offsetScrollbars
+          style={{
+            borderRadius: 12,
+            border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 14%, var(--mantine-color-dark-4))",
+            background:
+              "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 94%, var(--mantine-color-cyan-9) 6%), var(--mantine-color-dark-6))",
+            padding: 8,
+          }}
+        >
           <Stack gap="sm">
             {rows.map((row) => (
-              <Group
+              <Box
                 key={row.path}
-                justify="space-between"
-                wrap="nowrap"
                 onClick={() => openPuzzles(row.path)}
-                style={{ cursor: "pointer" }}
+                style={{
+                  cursor: "pointer",
+                  borderRadius: 11,
+                  border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 14%, var(--mantine-color-dark-4))",
+                  background:
+                    "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-7) 84%, var(--mantine-color-dark-5) 16%), color-mix(in srgb, var(--mantine-color-dark-7) 92%, var(--mantine-color-dark-6) 8%))",
+                  padding: "10px 12px",
+                }}
               >
-                <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                  <Group gap="xs" wrap="nowrap">
-                    <Text size="sm" fw={600} truncate>
-                      {row.variantName ?? row.title}
-                    </Text>
-                    {row.depth != null && (
-                      <Badge size="xs" variant="light">
-                        d{row.depth}
-                      </Badge>
-                    )}
-                  </Group>
-                  {row.mainline ? (
-                    <Text size="xs" c="dimmed" truncate>
-                      {row.mainline}
-                    </Text>
-                  ) : null}
-                </Stack>
+                <Group justify="space-between" wrap="nowrap" align="flex-start">
+                  <Stack gap={5} style={{ flex: 1, minWidth: 0 }}>
+                    <Group gap="xs" wrap="nowrap">
+                      <Text size="sm" fw={600} truncate>
+                        {row.variantName ?? row.title}
+                      </Text>
+                      {row.depth != null && (
+                        <Badge size="xs" variant="light" radius="md">
+                          d{row.depth}
+                        </Badge>
+                      )}
+                    </Group>
+                    {row.mainline ? (
+                      <Text size="xs" c="dimmed" truncate>
+                        {row.mainline}
+                      </Text>
+                    ) : null}
+                    <Progress
+                      value={row.coverage}
+                      size="xs"
+                      radius="xl"
+                      color="cyan"
+                      style={{
+                        backgroundColor:
+                          "color-mix(in srgb, var(--mantine-color-dark-5) 86%, var(--mantine-color-dark-4) 14%)",
+                      }}
+                    />
+                  </Stack>
 
-                <Stack gap={0} align="flex-end" style={{ flexShrink: 0 }}>
-                  <Text size="sm" fw={700}>
-                    {row.coverage}%
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {row.solvedCount}/{row.puzzleCount}
-                  </Text>
-                  <Button
-                    size="compact-xs"
-                    variant="subtle"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      resetSingleProgress(row);
-                    }}
-                  >
-                    {t("features.dashboard.puzzleVariants.resetOne", { defaultValue: "Reset" })}
-                  </Button>
-                  <Button
-                    size="compact-xs"
-                    variant="light"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openPuzzles(row.path, true);
-                    }}
-                  >
-                    {t("features.dashboard.puzzleVariants.solveUnsolved", { defaultValue: "Solve Unsolved" })}
-                  </Button>
-                </Stack>
-              </Group>
+                  <Stack gap={3} align="flex-end" style={{ flexShrink: 0 }}>
+                    <Text size="sm" fw={700}>
+                      {row.coverage}%
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {row.solvedCount}/{row.puzzleCount}
+                    </Text>
+                    <Button
+                      size="compact-xs"
+                      radius="md"
+                      variant="subtle"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        resetSingleProgress(row);
+                      }}
+                    >
+                      {t("features.dashboard.puzzleVariants.resetOne", { defaultValue: "Reset" })}
+                    </Button>
+                    <Button
+                      size="compact-xs"
+                      radius="md"
+                      variant="light"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openPuzzles(row.path, true);
+                      }}
+                      style={{
+                        border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 20%, transparent)",
+                        backgroundColor:
+                          "color-mix(in srgb, var(--mantine-color-cyan-9) 28%, var(--mantine-color-dark-6) 72%)",
+                      }}
+                    >
+                      {t("features.dashboard.puzzleVariants.solveUnsolved", { defaultValue: "Solve Unsolved" })}
+                    </Button>
+                  </Stack>
+                </Group>
+              </Box>
             ))}
           </Stack>
         </ScrollArea>

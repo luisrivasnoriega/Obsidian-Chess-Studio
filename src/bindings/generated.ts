@@ -783,9 +783,9 @@ async searchPosition(file: string, query: GameQueryJs, tabId: string) : Promise<
 }
 },
 /**
- * Pre-cache openings from TSV files
- * This function reads all opening TSV files, converts PGN to FEN,
- * searches for each position in the database, and caches the results
+ * Pre-cache openings from the embedded ECO opening book.
+ * This function reads all ECO opening positions (derived from eco.json),
+ * searches for each position in the database, and caches the results.
  */
 async precacheOpenings(databasePath: string) : Promise<Result<null, string>> {
     try {
@@ -1085,9 +1085,9 @@ async upsertVariantPosition(fen: string, engine: string, recommendedMove: string
     else return { status: "error", error: e  as any };
 }
 },
-async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: string, selectedDepth: number) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
+async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: string, selectedDepth: number, allowedStartKeys: string[] | null) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth }) };
+    return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth, allowedStartKeys }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1208,6 +1208,14 @@ async dashboardGetGamesHistoryRows(req: GamesHistoryRequest) : Promise<Result<Ga
 async dashboardGetGamesHistoryFilterMeta(req: GamesHistoryFilterMetaRequest) : Promise<Result<GamesHistoryFilterMetaResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_get_games_history_filter_meta", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dashboardGetOverviewMetrics(req: DashboardOverviewRequest) : Promise<Result<DashboardOverviewResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_overview_metrics", { req }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1726,8 +1734,13 @@ export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
+export type DashboardAccuracyByColor = { white: number | null; black: number | null }
+export type DashboardAcplByTimeControl = { classical: number | null; rapid: number | null; blitz: number | null; bullet: number | null }
 export type DashboardAnalyzeAllJobInput = { jobId: string; fen: string | null; moves: string[] | null; pgn: string | null }
 export type DashboardAnalyzeAllRunRequest = { runId: string; engine: string; goMode: GoMode; uciOptions: EngineOption[]; jobs: DashboardAnalyzeAllJobInput[] }
+export type DashboardOverviewRequest = { profileId: string; gameHistoryLimit: number; profileUsernames: string[]; sampleSize: number | null; trendWeeks: number | null }
+export type DashboardOverviewResponse = { weekStartMs: bigint; weekEndMs: bigint; weekGamesCount: number; weekWins: number; weekLosses: number; weekDraws: number; weekOutcomeCount: number; weekWinRate: number; previousWeekGamesCount: number; previousWeekWins: number; previousWeekLosses: number; previousWeekDraws: number; previousWeekOutcomeCount: number; previousWeekWinRate: number; sampleGamesCount: number; sampleSize: number; sampleAvgEstimatedElo: bigint | null; weekAvgEstimatedElo: bigint | null; previousWeekAvgEstimatedElo: bigint | null; weekBlunderRate: number | null; previousWeekBlunderRate: number | null; blunderDeltaPp: number | null; weekBrilliantRate: number | null; previousWeekBrilliantRate: number | null; brilliantDeltaPp: number | null; weekMistakeRate: number | null; previousWeekMistakeRate: number | null; mistakeDeltaPp: number | null; weekInaccuracyRate: number | null; previousWeekInaccuracyRate: number | null; inaccuracyDeltaPp: number | null; weekAccuracy: number | null; previousWeekAccuracy: number | null; accuracyDelta: number | null; weekAcpl: number | null; previousWeekAcpl: number | null; acplDelta: number | null; weekAnalyzedGames: number; previousWeekAnalyzedGames: number; blunderRateTrend: (number | null)[]; weekAcplByTimeControl: DashboardAcplByTimeControl; weekAccuracyByColor: DashboardAccuracyByColor; puzzleVariantsColorCoverage: DashboardPuzzleVariantsColorCoverage }
+export type DashboardPuzzleVariantsColorCoverage = { whitePuzzles: number; blackPuzzles: number; totalPuzzles: number; whitePercent: number; blackPercent: number }
 export type DatabaseInfo = { title: string; description: string; player_count: number; event_count: number; game_count: number; storage_size: bigint; filename: string; indexed: boolean }
 export type DatabaseProgress = { id: string; progress: number }
 export type DateRange = "SevenDays" | "ThirtyDays" | "NinetyDays" | "OneYear" | "All"
@@ -1782,7 +1795,7 @@ export type GameStatsEntry = { profileId: string; gameId: string; accuracy: numb
 export type GamesHistoryFilterMetaRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
 export type GamesHistoryFilterMetaResponse = { availableTimeControlCategories: string[] }
 export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
-export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[] }
+export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[]; includeBasePgn: boolean | null; includeAnalyzedPgn: boolean | null; includeAnalysisStats: boolean | null }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
 export type GamesHistoryRow = { kind: GamesHistoryKind; 
 /**

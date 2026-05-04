@@ -1,5 +1,4 @@
-import { Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from "@mantine/core";
-import { IconChess } from "@tabler/icons-react";
+import { Badge, Box, Card, Group, Image, SimpleGrid, Stack, Text, Title } from "@mantine/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -7,9 +6,15 @@ import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 interface WelcomeCardProps {
   isFirstOpen: boolean;
-  onPlayChess: () => void;
+  onPlayChess?: () => void;
   playerFirstName?: string;
   playerGender?: "male" | "female";
+  compact?: boolean;
+  weekGames?: number;
+  weekWinRate?: number;
+  weekBlunderRate?: number | null;
+  weekAccuracy?: number | null;
+  weekPuzzleSolved?: number;
   fideInfo?: {
     title?: string;
     standardRating?: number;
@@ -22,14 +27,27 @@ interface WelcomeCardProps {
   };
 }
 
-export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerGender, fideInfo }: WelcomeCardProps) {
+export function WelcomeCard({
+  isFirstOpen,
+  onPlayChess: _onPlayChess,
+  playerFirstName,
+  playerGender,
+  compact = false,
+  weekGames: _weekGames = 0,
+  weekWinRate: _weekWinRate = 0,
+  weekBlunderRate: _weekBlunderRate = null,
+  weekAccuracy: _weekAccuracy = null,
+  weekPuzzleSolved: _weekPuzzleSolved = 0,
+  fideInfo,
+}: WelcomeCardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
   const [photoUrl, setPhotoUrl] = useState<string | undefined>(undefined);
   const [heroImageSrc, setHeroImageSrc] = useState("/logo.png");
-  const isCompact = layout.settings.layoutType === "mobile";
-  const photoSize = isCompact ? 96 : 140;
-  const heroImageSize = isCompact ? 180 : 280;
+  const isMobile = layout.settings.layoutType === "mobile";
+  const isCompact = compact || isMobile;
+  const photoSize = isCompact ? 76 : 140;
+  const heroImageSize = isCompact ? 120 : 280;
 
   // Convert file path to URL if needed (for local files)
   // If it's already a URL (http/https) or tauri://, use it directly
@@ -67,6 +85,16 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
     }
   };
 
+  const hasFideCompactHighlights = Boolean(
+    fideInfo &&
+      (fideInfo.title ||
+        fideInfo.age ||
+        fideInfo.worldRank ||
+        fideInfo.nationalRank ||
+        fideInfo.standardRating ||
+        fideInfo.rapidRating ||
+        fideInfo.blitzRating),
+  );
   // Determine welcome message based on first open, player name, title, and gender
   let welcomeMessage: string;
 
@@ -90,16 +118,27 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
   }
 
   return (
-    <Card shadow="sm" p={isCompact ? "md" : "lg"} radius="md" withBorder>
-      <Stack gap={isCompact ? "md" : "lg"}>
+    <Card
+      shadow="sm"
+      p={isCompact ? "md" : "lg"}
+      radius="lg"
+      h="100%"
+      withBorder
+      style={{
+        background:
+          "radial-gradient(90% 140% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 18%, transparent) 0%, transparent 62%), linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-5) 12%), var(--mantine-color-dark-7))",
+        borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 22%, var(--mantine-color-dark-4))",
+      }}
+    >
+      <Stack gap={isCompact ? "sm" : "lg"} h="100%" justify="space-between">
         <Group
-          align={isCompact ? "flex-start" : "center"}
+          align={isMobile ? "flex-start" : "center"}
           justify="flex-start"
-          wrap={isCompact ? "wrap" : "nowrap"}
-          gap={isCompact ? "md" : "xl"}
+          wrap={isMobile ? "wrap" : "nowrap"}
+          gap={isCompact ? "sm" : "xl"}
         >
           {/* Left column: FIDE profile photo - only show if it exists */}
-          {photoUrl ? (
+          {photoUrl && !compact ? (
             <Box
               style={{
                 position: "relative",
@@ -124,9 +163,9 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
           ) : null}
 
           {/* Central column: Information and actions */}
-          <Stack gap="md" style={{ flex: 1, minWidth: 0 }}>
+          <Stack gap={isCompact ? "sm" : "md"} style={{ flex: 1, minWidth: 0 }}>
             <Stack gap={4}>
-              <Title order={1} fw={800}>
+              <Title order={isCompact ? 2 : 1} fw={800}>
                 {welcomeMessage}
               </Title>
               <Text size="sm" c="dimmed">
@@ -135,33 +174,35 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
             </Stack>
 
             {/* FIDE Information */}
-            {fideInfo && (fideInfo.title || fideInfo.age || fideInfo.worldRank || fideInfo.nationalRank) && (
-              <Group gap="md" wrap="wrap">
-                {fideInfo.title && (
-                  <Badge size="lg" color="yellow" variant="light">
-                    {fideInfo.title}
-                  </Badge>
-                )}
-                {fideInfo.age && (
-                  <Badge size="lg" color="blue" variant="light">
-                    {fideInfo.age} {t("common.years")}
-                  </Badge>
-                )}
-                {fideInfo.worldRank && (
-                  <Badge size="lg" color="grape" variant="light">
-                    World #{fideInfo.worldRank}
-                  </Badge>
-                )}
-                {fideInfo.nationalRank && (
-                  <Badge size="lg" color="teal" variant="light">
-                    National #{fideInfo.nationalRank}
-                  </Badge>
-                )}
-              </Group>
-            )}
+            {!compact &&
+              fideInfo &&
+              (fideInfo.title || fideInfo.age || fideInfo.worldRank || fideInfo.nationalRank) && (
+                <Group gap="md" wrap="wrap">
+                  {fideInfo.title && (
+                    <Badge size="lg" color="yellow" variant="light">
+                      {fideInfo.title}
+                    </Badge>
+                  )}
+                  {fideInfo.age && (
+                    <Badge size="lg" color="blue" variant="light">
+                      {fideInfo.age} {t("common.years")}
+                    </Badge>
+                  )}
+                  {fideInfo.worldRank && (
+                    <Badge size="lg" color="grape" variant="light">
+                      World #{fideInfo.worldRank}
+                    </Badge>
+                  )}
+                  {fideInfo.nationalRank && (
+                    <Badge size="lg" color="teal" variant="light">
+                      National #{fideInfo.nationalRank}
+                    </Badge>
+                  )}
+                </Group>
+              )}
 
             {/* Ratings FIDE */}
-            {fideInfo && (fideInfo.standardRating || fideInfo.rapidRating || fideInfo.blitzRating) && (
+            {!compact && fideInfo && (fideInfo.standardRating || fideInfo.rapidRating || fideInfo.blitzRating) && (
               <Group gap="xl" align="flex-start" wrap="wrap">
                 {fideInfo.standardRating && (
                   <Stack gap={2} align="center">
@@ -195,31 +236,103 @@ export function WelcomeCard({ isFirstOpen, onPlayChess, playerFirstName, playerG
                 )}
               </Group>
             )}
-
-            {/* Action buttons */}
-            <Group gap="xs" mt="xs" wrap={isCompact ? "wrap" : "nowrap"}>
-              <Button radius="md" onClick={onPlayChess} leftSection={<IconChess size={18} />} fullWidth={isCompact}>
-                {t("features.dashboard.cards.playChess.button")}
-              </Button>
-            </Group>
           </Stack>
 
-          {!isCompact && (
+          {!isMobile && (
             <Box style={{ flexShrink: 0, marginLeft: "auto" }}>
               <Image
                 src={heroImageSrc}
                 alt={backgroundImageAlt}
                 radius="lg"
                 onError={handleImageError}
-                width={heroImageSize}
-                height={heroImageSize}
+                width={isCompact ? 92 : heroImageSize}
+                height={isCompact ? 92 : heroImageSize}
                 fit="contain"
+                style={{
+                  opacity: isCompact ? 0.9 : 1,
+                  filter: isCompact ? "drop-shadow(0 8px 16px rgba(0, 0, 0, 0.35))" : undefined,
+                }}
               />
             </Box>
           )}
         </Group>
 
         {isCompact && (
+          <Box
+            style={{
+              borderRadius: 12,
+              border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 16%, var(--mantine-color-dark-4))",
+              background:
+                "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-4) 8%), var(--mantine-color-dark-6))",
+              padding: 12,
+            }}
+          >
+            {hasFideCompactHighlights ? (
+              <Stack gap={8}>
+                <Group gap={6} wrap="wrap">
+                  {fideInfo?.title && (
+                    <Badge color="yellow" variant="light" radius="xl">
+                      {fideInfo.title}
+                    </Badge>
+                  )}
+                  {fideInfo?.age && (
+                    <Badge color="blue" variant="light" radius="xl">
+                      {fideInfo.age} {t("common.years")}
+                    </Badge>
+                  )}
+                  {fideInfo?.worldRank && (
+                    <Badge color="grape" variant="light" radius="xl">
+                      #{fideInfo.worldRank} {t("features.dashboard.welcome.worldRank")}
+                    </Badge>
+                  )}
+                  {fideInfo?.nationalRank && (
+                    <Badge color="teal" variant="light" radius="xl">
+                      #{fideInfo.nationalRank} {t("features.dashboard.welcome.nationalRank")}
+                    </Badge>
+                  )}
+                </Group>
+
+                <SimpleGrid cols={3} spacing={8}>
+                  <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed">
+                      {t("features.dashboard.editProfile.standard")}
+                    </Text>
+                    <Text fw={800} c="teal.4">
+                      {fideInfo?.standardRating ?? "--"}
+                    </Text>
+                  </Stack>
+                  <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed">
+                      {t("features.dashboard.editProfile.rapid")}
+                    </Text>
+                    <Text fw={800} c="cyan.4">
+                      {fideInfo?.rapidRating ?? "--"}
+                    </Text>
+                  </Stack>
+                  <Stack gap={0} align="center">
+                    <Text size="xs" c="dimmed">
+                      {t("features.dashboard.editProfile.blitz")}
+                    </Text>
+                    <Text fw={800} c="yellow.5">
+                      {fideInfo?.blitzRating ?? "--"}
+                    </Text>
+                  </Stack>
+                </SimpleGrid>
+              </Stack>
+            ) : (
+              <Stack gap={4}>
+                <Text size="sm" fw={600}>
+                  {t("features.dashboard.dailyGoals")}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {t("features.dashboard.keepStreak")}
+                </Text>
+              </Stack>
+            )}
+          </Box>
+        )}
+
+        {isMobile && (
           <Box style={{ width: "100%" }}>
             <Image
               src={heroImageSrc}

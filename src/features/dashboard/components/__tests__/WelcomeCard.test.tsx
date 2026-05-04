@@ -1,4 +1,3 @@
-import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { WelcomeCard } from "../../components/WelcomeCard";
 import { render, screen } from "./test-utils";
@@ -48,12 +47,9 @@ describe("WelcomeCard", () => {
     expect(document.body).toBeTruthy();
   });
 
-  test("calls onPlayChess when play button is clicked", async () => {
-    const user = userEvent.setup();
+  test("does not render play button in compact dashboard card", () => {
     render(<WelcomeCard isFirstOpen={false} onPlayChess={mockOnPlayChess} />);
-    const playButton = screen.getByRole("button", { name: /play/i });
-    await user.click(playButton);
-    expect(mockOnPlayChess).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /play/i })).not.toBeInTheDocument();
   });
 
   test("displays player first name when provided", () => {

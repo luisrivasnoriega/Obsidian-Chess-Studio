@@ -535,8 +535,9 @@ export function ProfileGamesTab({
       position: "sticky" as const,
       bottom: 0,
       zIndex: 3,
-      background: "var(--mantine-color-body)",
-      borderTop: "1px solid var(--mantine-color-default-border)",
+      background:
+        "linear-gradient(180deg, color-mix(in srgb, var(--mantine-color-dark-7) 94%, var(--mantine-color-blue-9) 6%), color-mix(in srgb, var(--mantine-color-dark-8) 96%, var(--mantine-color-blue-8) 4%))",
+      borderTop: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 22%, var(--mantine-color-dark-4))",
     }),
     [],
   );
@@ -546,6 +547,56 @@ export function ProfileGamesTab({
       zIndex: 4,
     }),
     [stickyFooterCellStyle],
+  );
+  const premiumControlStyles = useMemo(
+    () => ({
+      input: {
+        borderRadius: 10,
+        backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 84%, var(--mantine-color-dark-4) 16%)",
+        borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+      },
+      dropdown: {
+        backgroundColor: "var(--mantine-color-dark-7)",
+        borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+      },
+      option: {
+        borderRadius: 8,
+      },
+    }),
+    [],
+  );
+  const tableHeaderCellBaseStyle = useMemo(
+    () => ({
+      background:
+        "linear-gradient(180deg, color-mix(in srgb, var(--mantine-color-dark-8) 88%, var(--mantine-color-blue-9) 12%), color-mix(in srgb, var(--mantine-color-dark-8) 95%, var(--mantine-color-blue-8) 5%))",
+      borderBottom: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 22%, var(--mantine-color-dark-4))",
+      fontWeight: 700,
+      fontSize: "0.8rem",
+      whiteSpace: "nowrap" as const,
+    }),
+    [],
+  );
+  const tableBodyCellBaseStyle = useMemo(
+    () => ({
+      borderTop: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 8%, var(--mantine-color-dark-4))",
+      fontSize: "0.86rem",
+      verticalAlign: "middle" as const,
+    }),
+    [],
+  );
+  const tableRowBaseStyle = useMemo(
+    () => ({
+      transition: "background-color 140ms ease, box-shadow 140ms ease",
+    }),
+    [],
+  );
+  const actionIconBaseStyle = useMemo(
+    () => ({
+      borderRadius: 9,
+      border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 12%, var(--mantine-color-dark-4))",
+      backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 84%, var(--mantine-color-dark-4) 16%)",
+    }),
+    [],
   );
   const averageStats = useMemo(() => {
     const accuracyValues = rows
@@ -858,7 +909,16 @@ export function ProfileGamesTab({
         ...(isMobile && { minHeight: "650px" }),
       }}
     >
-      <Group gap="xs">
+      <Group
+        gap="xs"
+        p="xs"
+        style={{
+          borderRadius: 12,
+          background:
+            "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-5) 10%), var(--mantine-color-dark-7))",
+          border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+        }}
+      >
         <Select
           placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
           value={eventFilterId != null ? String(eventFilterId) : undefined}
@@ -899,6 +959,7 @@ export function ProfileGamesTab({
           searchValue={eventSearchValue}
           onSearchChange={onEventSearchChange}
           style={{ minWidth: 200, maxWidth: 280 }}
+          styles={premiumControlStyles}
         />
         <Autocomplete
           placeholder={t("features.dashboard.filterByOpponent", "Filter by opponent")}
@@ -949,6 +1010,7 @@ export function ProfileGamesTab({
           rightSection={isLoadingOpponentOptions ? <Loader size="xs" /> : undefined}
           style={{ flex: 1 }}
           size="sm"
+          styles={premiumControlStyles}
         />
         <Select
           placeholder={t("features.dashboard.filterByResult", "Filter by result")}
@@ -962,6 +1024,7 @@ export function ProfileGamesTab({
           clearable
           size="sm"
           style={{ width: 150 }}
+          styles={premiumControlStyles}
         />
         <Select
           placeholder={t("features.dashboard.filterByColor", "Filter by color")}
@@ -974,6 +1037,7 @@ export function ProfileGamesTab({
           clearable
           size="sm"
           style={{ width: 150 }}
+          styles={premiumControlStyles}
         />
         <Select
           placeholder={t("features.dashboard.filterByMinMoves", "Min moves")}
@@ -998,6 +1062,7 @@ export function ProfileGamesTab({
           clearable
           size="sm"
           style={{ width: 130 }}
+          styles={premiumControlStyles}
         />
         <Select
           placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
@@ -1011,59 +1076,91 @@ export function ProfileGamesTab({
           searchable
           size="sm"
           style={{ width: 180 }}
+          styles={premiumControlStyles}
         />
       </Group>
       <ScrollArea
         style={{
           flex: 1,
           minHeight: 0,
+          borderRadius: 12,
+          border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+          background:
+            "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-7) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-7))",
+          boxShadow: "inset 0 1px 0 color-mix(in srgb, var(--mantine-color-gray-0) 5%, transparent)",
           ...(isMobile && { minHeight: "550px" }),
         }}
         type="auto"
       >
-        <Table stickyHeader striped highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
+        <Table stickyHeader highlightOnHover style={{ tableLayout: "fixed", width: "100%" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th style={{ width: 105 }}>{t("features.dashboard.source", { defaultValue: "Source" })}</Table.Th>
-              <Table.Th style={{ width: 180 }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 105 }}>
+                {t("features.dashboard.source", { defaultValue: "Source" })}
+              </Table.Th>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 180 }}>
                 {t("dashboard.tableHeaders.opponent", { defaultValue: "Opponent" })}
               </Table.Th>
-              <Table.Th style={{ width: 70 }}>{t("dashboard.tableHeaders.color", { defaultValue: "Color" })}</Table.Th>
-              <Table.Th style={{ width: 85 }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 70 }}>
+                {t("dashboard.tableHeaders.color", { defaultValue: "Color" })}
+              </Table.Th>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 85 }}>
                 {t("dashboard.tableHeaders.result", { defaultValue: "Result" })}
               </Table.Th>
-              <Table.Th style={{ width: 90 }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 90 }}>
                 {t("dashboard.tableHeaders.accuracy", { defaultValue: "Accuracy" })}
               </Table.Th>
-              <Table.Th style={{ width: 80 }}>ACPL</Table.Th>
-              <Table.Th style={{ width: 110, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("elo")}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 80 }}>ACPL</Table.Th>
+              <Table.Th
+                style={{ ...tableHeaderCellBaseStyle, width: 110, cursor: "pointer", userSelect: "none" }}
+                onClick={() => handleSort("elo")}
+              >
                 <Group gap="xs" wrap="nowrap">
                   {t("dashboard.estimatedElo")}
                   {sortBy === "elo" &&
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
               </Table.Th>
-              <Table.Th style={{ width: 95 }}>{t("dashboard.resistance", { defaultValue: "Resistance" })}</Table.Th>
-              <Table.Th style={{ width: 120 }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 95 }}>
+                {t("dashboard.resistance", { defaultValue: "Resistance" })}
+              </Table.Th>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 120 }}>
                 {t("dashboard.eloEstimatedBalanced", { defaultValue: "Elo Balanced" })}
               </Table.Th>
-              <Table.Th style={{ width: 75 }}>{t("dashboard.tableHeaders.moves", { defaultValue: "Moves" })}</Table.Th>
-              <Table.Th style={{ width: 95 }}>{t("dashboard.tableHeaders.timeControl")}</Table.Th>
-              <Table.Th style={{ width: 95, cursor: "pointer", userSelect: "none" }} onClick={() => handleSort("date")}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 75 }}>
+                {t("dashboard.tableHeaders.moves", { defaultValue: "Moves" })}
+              </Table.Th>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 95 }}>
+                {t("dashboard.tableHeaders.timeControl")}
+              </Table.Th>
+              <Table.Th
+                style={{ ...tableHeaderCellBaseStyle, width: 95, cursor: "pointer", userSelect: "none" }}
+                onClick={() => handleSort("date")}
+              >
                 <Group gap="xs" wrap="nowrap">
                   {t("dashboard.tableHeaders.date", { defaultValue: "Date" })}
                   {sortBy === "date" &&
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
               </Table.Th>
-              <Table.Th style={{ width: 85 }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 85 }}>
                 {t("features.dashboard.favorite", { defaultValue: "Favorite" })}
               </Table.Th>
-              <Table.Th style={{ width: 200, textAlign: "left" }}>
+              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 200, textAlign: "left" }}>
                 {onAnalyzeAll && (
                   <Menu position="bottom-start" withinPortal>
                     <Menu.Target>
-                      <Button size="xs" variant="light" rightSection={<IconChevronDown size={14} />}>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        radius="md"
+                        rightSection={<IconChevronDown size={14} />}
+                        style={{
+                          border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 20%, transparent)",
+                          background:
+                            "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-8) 84%, var(--mantine-color-blue-7) 16%), color-mix(in srgb, var(--mantine-color-blue-7) 90%, var(--mantine-color-blue-6) 10%))",
+                        }}
+                      >
                         {t("features.dashboard.analyzeAll", { defaultValue: "Analyze All" })}
                       </Button>
                     </Menu.Target>
@@ -1103,10 +1200,14 @@ export function ProfileGamesTab({
                 </Table.Td>
               </Table.Tr>
             ) : (
-              rows.map((row) => {
+              rows.map((row, rowIndex) => {
                 const pgn = row.pgn ?? null;
                 const dateStr = formatRelativeTimeAgo(row.timestampMs, now, t);
                 const gameUrl = _resolveRowGameUrl(row);
+                const rowBackground =
+                  rowIndex % 2 === 0
+                    ? "color-mix(in srgb, var(--mantine-color-dark-7) 84%, var(--mantine-color-dark-5) 16%)"
+                    : "color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-6) 10%)";
                 const canResolveChessComUrl =
                   row.kind === "chesscom" &&
                   !!profileId &&
@@ -1124,9 +1225,21 @@ export function ProfileGamesTab({
                 const fav = favoriteSource ? isFavorite(favoriteGames, favoriteSource, row.gameKey) : false;
 
                 return (
-                  <Table.Tr key={`${row.kind}:${row.gameKey}`}>
-                    <Table.Td>
-                      <Badge variant="filled" style={getSourceBadgeStyles(row.kind)}>
+                  <Table.Tr
+                    key={`${row.kind}:${row.gameKey}`}
+                    style={{ ...tableRowBaseStyle, background: rowBackground }}
+                  >
+                    <Table.Td style={tableBodyCellBaseStyle}>
+                      <Badge
+                        variant="filled"
+                        radius="xl"
+                        style={{
+                          ...getSourceBadgeStyles(row.kind),
+                          fontWeight: 700,
+                          letterSpacing: 0.2,
+                          border: "1px solid color-mix(in srgb, var(--mantine-color-gray-0) 10%, transparent)",
+                        }}
+                      >
                         {row.kind === "local"
                           ? t("features.dashboard.sourceLocal", { defaultValue: "Local" })
                           : row.kind === "chesscom"
@@ -1136,9 +1249,18 @@ export function ProfileGamesTab({
                               : t("features.dashboard.sourceLichess", { defaultValue: "Lichess" })}
                       </Badge>
                     </Table.Td>
-                    <Table.Td style={{ width: 180 }}>
+                    <Table.Td style={{ ...tableBodyCellBaseStyle, width: 180 }}>
                       <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                        <Avatar size={24} radius="xl">
+                        <Avatar
+                          size={24}
+                          radius="xl"
+                          style={{
+                            border:
+                              "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 12%, var(--mantine-color-dark-4))",
+                            background:
+                              "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-5) 92%, var(--mantine-color-blue-9) 8%), var(--mantine-color-dark-5))",
+                          }}
+                        >
                           {(row.opponent || "?")[0]?.toUpperCase()}
                         </Avatar>
                         <Text truncate style={{ minWidth: 0 }}>
@@ -1146,7 +1268,7 @@ export function ProfileGamesTab({
                         </Text>
                       </Group>
                     </Table.Td>
-                    <Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
                       <Box
                         aria-label={row.color}
                         style={{
@@ -1155,11 +1277,15 @@ export function ProfileGamesTab({
                           borderRadius: 999,
                           backgroundColor: row.color === "white" ? "#ffffff" : "#000000",
                           border: row.color === "white" ? "1px solid #666666" : "1px solid #000000",
+                          boxShadow:
+                            row.color === "white"
+                              ? "0 0 0 2px color-mix(in srgb, var(--mantine-color-gray-0) 8%, transparent)"
+                              : "0 0 0 2px color-mix(in srgb, var(--mantine-color-dark-3) 45%, transparent)",
                           marginLeft: 4,
                         }}
                       />
                     </Table.Td>
-                    <Table.Td style={{ width: 85 }}>
+                    <Table.Td style={{ ...tableBodyCellBaseStyle, width: 85 }}>
                       {(() => {
                         const label =
                           row.outcome === "win"
@@ -1169,21 +1295,29 @@ export function ProfileGamesTab({
                               : row.outcome === "draw"
                                 ? t("chess.draw", { defaultValue: "Draw" })
                                 : "-";
-                        const color = row.outcome === "win" ? "blue" : row.outcome === "loss" ? "red" : "gray";
+                        const color = row.outcome === "win" ? "teal" : row.outcome === "loss" ? "red" : "gray";
                         return (
-                          <Badge variant="light" color={color}>
+                          <Badge variant="light" color={color} radius="md">
                             {label}
                           </Badge>
                         );
                       })()}
                     </Table.Td>
-                    <Table.Td>{row.accuracy != null ? `${Math.round(row.accuracy)}%` : "-"}</Table.Td>
-                    <Table.Td>{row.acpl != null ? Math.round(row.acpl) : "-"}</Table.Td>
-                    <Table.Td>{row.estimatedElo != null ? Math.round(row.estimatedElo) : "-"}</Table.Td>
-                    <Table.Td>{row.resistance != null ? Math.round(row.resistance) : "-"}</Table.Td>
-                    <Table.Td>{row.eloEstimatedBalanced != null ? Math.round(row.eloEstimatedBalanced) : "-"}</Table.Td>
-                    <Table.Td>{row.moves || "-"}</Table.Td>
-                    <Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
+                      {row.accuracy != null ? `${Math.round(row.accuracy)}%` : "-"}
+                    </Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>{row.acpl != null ? Math.round(row.acpl) : "-"}</Table.Td>
+                    <Table.Td style={{ ...tableBodyCellBaseStyle, fontWeight: 600 }}>
+                      {row.estimatedElo != null ? Math.round(row.estimatedElo) : "-"}
+                    </Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
+                      {row.resistance != null ? Math.round(row.resistance) : "-"}
+                    </Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
+                      {row.eloEstimatedBalanced != null ? Math.round(row.eloEstimatedBalanced) : "-"}
+                    </Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>{row.moves || "-"}</Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
                       {row.timeControl?.trim()
                         ? (() => {
                             const category = row.timeControlCategory ?? null;
@@ -1191,10 +1325,13 @@ export function ProfileGamesTab({
                           })()
                         : "-"}
                     </Table.Td>
-                    <Table.Td>{dateStr}</Table.Td>
-                    <Table.Td>
+                    <Table.Td style={{ ...tableBodyCellBaseStyle, whiteSpace: "nowrap" }}>{dateStr}</Table.Td>
+                    <Table.Td style={tableBodyCellBaseStyle}>
                       <ActionIcon
                         variant="subtle"
+                        radius="md"
+                        style={actionIconBaseStyle}
+                        color={fav ? "yellow" : "gray"}
                         onClick={async () => {
                           if (row.kind === "local" && onToggleFavoriteLocal)
                             return await onToggleFavoriteLocal(row.gameKey);
@@ -1213,10 +1350,16 @@ export function ProfileGamesTab({
                         {fav ? <IconStarFilled size={16} /> : <IconStar size={16} />}
                       </ActionIcon>
                     </Table.Td>
-                    <Table.Td style={{ textAlign: "left" }}>
+                    <Table.Td style={{ ...tableBodyCellBaseStyle, textAlign: "left" }}>
                       <Group gap="xs" wrap="nowrap" justify="flex-start">
                         {row.kind === "local" && onDeleteLocalGame && (
-                          <ActionIcon variant="subtle" color="red" onClick={() => onDeleteLocalGame(row.gameKey)}>
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            radius="md"
+                            style={actionIconBaseStyle}
+                            onClick={() => onDeleteLocalGame(row.gameKey)}
+                          >
                             <IconTrash size={16} />
                           </ActionIcon>
                         )}
@@ -1224,7 +1367,13 @@ export function ProfileGamesTab({
                           <AnalysisPreview pgn={pgn}>
                             <Button
                               size="xs"
-                              variant="default"
+                              variant="light"
+                              radius="md"
+                              style={{
+                                borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 18%, transparent)",
+                                backgroundColor:
+                                  "color-mix(in srgb, var(--mantine-color-blue-9) 34%, var(--mantine-color-dark-7) 66%)",
+                              }}
                               leftSection={<IconChess size={16} />}
                               onClick={async () => {
                                 await handleAnalyzeRow(row, pgn);
@@ -1236,7 +1385,13 @@ export function ProfileGamesTab({
                         ) : (
                           <Button
                             size="xs"
-                            variant="default"
+                            variant="light"
+                            radius="md"
+                            style={{
+                              borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 18%, transparent)",
+                              backgroundColor:
+                                "color-mix(in srgb, var(--mantine-color-blue-9) 34%, var(--mantine-color-dark-7) 66%)",
+                            }}
                             leftSection={<IconChess size={16} />}
                             onClick={async () => {
                               await handleAnalyzeRow(row, pgn);
@@ -1249,6 +1404,8 @@ export function ProfileGamesTab({
                           <Tooltip label={t("features.dashboard.openGame", "Open game")}>
                             <ActionIcon
                               variant="subtle"
+                              radius="md"
+                              style={actionIconBaseStyle}
                               onClick={async () => {
                                 let finalUrl = gameUrl;
                                 if (!finalUrl && canResolveChessComUrl) {
@@ -1303,7 +1460,19 @@ export function ProfileGamesTab({
 
       {totalPages > 1 && (
         <Group justify="center" mt="xs">
-          <Pagination value={page} onChange={setPage} total={totalPages} size="sm" />
+          <Pagination
+            value={page}
+            onChange={setPage}
+            total={totalPages}
+            size="sm"
+            styles={{
+              control: {
+                borderRadius: 10,
+                backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 86%, var(--mantine-color-dark-4) 14%)",
+                borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+              },
+            }}
+          />
         </Group>
       )}
     </Stack>

@@ -124,7 +124,8 @@
     "failedToSaveFile": "Failed to save file",
     "puzzlesGeneratedSuccessfully": "{{count}} puzzles generated successfully",
     "failedToGeneratePuzzles": "Failed to generate puzzles",
-    "generatePuzzles": "Generate Puzzles"
+    "generatePuzzles": "Generate Puzzles",
+    "actions": "Actions"
   },
   "chess": {
     "checkmate": "Checkmate",
@@ -442,6 +443,12 @@
     "profile": "Profile",
     "selectProfile": "Select profile",
     "accountsCount": "{{count}} accounts",
+    "kpis": {
+      "totalProfiles": "Profiles",
+      "linkedAccounts": "Linked accounts",
+      "activeAccounts": "Active profile accounts",
+      "profilesWithAccounts": "Profiles with accounts"
+    },
     "linkAccountsTitle": "Link accounts",
     "linkAccountsHint": "Assign each account to a profile. All games will be stored in the profile database.",
     "noAccounts": "No accounts found. Add accounts first in the Accounts page.",
@@ -1297,17 +1304,41 @@
       "keyboardShortcuts": "Keyboard Shortcuts",
       "quickPlay": "Quick Play",
       "quickAnalyze": "Quick Analyze",
-      "quickPuzzles": "Quick Puzzles"
+      "quickPuzzles": "Quick Puzzles",
+      "expand": "Expand sidebar",
+      "collapse": "Collapse sidebar",
+      "navigation": "Navigation",
+      "play": "Play",
+      "workspace": "Workspace",
+      "system": "System"
     },
     "events": {
       "validation": {
         "nameRequired": "Name is required"
       },
+      "kpis": {
+        "total": "Events",
+        "visible": "Visible"
+      },
       "noProfile": "Select a profile to manage events.",
       "unnamedEvent": "Unnamed event",
       "addGame": {
         "title": "Add game",
-        "createAndOpen": "Create & open"
+        "createAndOpen": "Create & open",
+        "manualMode": "Manual",
+        "pgnMode": "PGN",
+        "profileSide": "Active profile plays as",
+        "profileAsWhite": "White",
+        "profileAsBlack": "Black",
+        "manualPlayers": "Manual players",
+        "keepPgnPlayers": "Keep PGN players",
+        "activeProfilePlayer": "Active profile player",
+        "activeProfileNameRequired": "Active profile name is required.",
+        "opponent": "Opponent",
+        "opponentPlaceholder": "Opponent name",
+        "pgnInput": "PGN",
+        "pgnPlaceholder": "Paste one or multiple PGN games",
+        "importOnly": "Import to event"
       },
       "create": {
         "title": "Create event"
@@ -1378,7 +1409,9 @@
         },
         "validation": {
           "whiteRequired": "White is required",
-          "blackRequired": "Black is required"
+          "blackRequired": "Black is required",
+          "opponentRequired": "Opponent is required",
+          "pgnRequired": "PGN is required"
         }
       },
       "delete": {
@@ -1394,6 +1427,8 @@
         "deleteFailedTitle": "Could not delete tournament",
         "gamesAddedTitle": "Games imported",
         "gamesAddedMessage": "Imported {{count}} games.",
+        "noGamesAddedTitle": "No new games imported",
+        "noGamesAddedMessage": "No new games were inserted. The PGN may be duplicated or invalid.",
         "addGamesFailedTitle": "Could not import games",
         "createGameFailedTitle": "Could not create game",
         "openGameFailedTitle": "Could not open game"
@@ -1740,6 +1775,15 @@
       "dailyGoals": "Daily goals",
       "dayStreak": "day streak",
       "thisWeek": "This week",
+      "previousWeek": "Previous",
+      "kpi": {
+        "acplByTimeControl": "Average ACPL by time control",
+        "accuracyByColor": "Average accuracy by color",
+        "puzzleVariantsByColor": "% puzzle variants (white/black)"
+      },
+      "blunderRateLabel": "Blunder rate",
+      "blunderRateHintWithPrevious": "Share of your annotated moves marked as blunders. Previous: {{previous}} ({{delta}})",
+      "blunderRateHintNoData": "Based on analyzed games this week: {{count}}",
       "tags": {
         "lessons": "Lessons",
         "openings": "Openings",
@@ -2064,6 +2108,11 @@
         "engine": "Engine",
         "engineMs": "Engine Time (ms)",
         "variantsCount": "Variants",
+        "total": "Total variants",
+        "filtered": "Filtered variants",
+        "rootLines": "Root lines",
+        "linkedVariants": "Linked variants",
+        "averageDepth": "Average active depth",
         "links": "Links",
         "parentLink": "Parent",
         "childLinks": "Children",
@@ -2101,6 +2150,77 @@
         "repairLinks": "Repair links",
         "repairLinksDone": "Links repaired. Updated: {{updated}}, added: {{added}}, removed: {{removed}}.",
         "repairLinksFailed": "Failed to repair variant links.",
+        "configureBuild": "Configure data source",
+        "configureBuildHint": "Set the database source and filters for this variant and optionally its descendants.",
+        "applyCurrentOnly": "Current variant",
+        "applyWithChildren": "Variant + descendants",
+        "applyBuildConfig": "Apply configuration",
+        "buildConfigApplied": "Database source settings applied to {{count}} variants.",
+        "buildConfigApplyFailed": "Failed to apply database source settings.",
+        "coverageGraph": "Coverage graph",
+        "coverageGraphFailed": "Failed to build coverage graph.",
+        "coverageGraphFailedWithReason": "Failed to build coverage graph: {{reason}}",
+        "coverageGraphMissingDepth": "Choose N moves before building the coverage graph.",
+        "coverageGraphMissingToken": "Lichess token not found for the active profile. Add a token in Profiles before building a graph with Lichess sources.",
+        "coverageGraphMissingRootFen": "Could not determine root FEN for the selected variant.",
+        "coverageGraphDepthPlaceholder": "Choose moves",
+        "coverageGraphPreparingProgress": "Preparing variants {{done}} / {{total}}...",
+        "coverageGraphBuildingProgress": "Building graph: variants {{done}} / {{total}} | positions processed {{processed}} | pending {{pending}}",
+        "buildCoverageGraph": "Build graph",
+        "rebuildCoverageGraph": "Rebuild graph",
+        "nMoves": "N active moves",
+        "mainline": "Main line <= 60%",
+        "secondary": "Secondary <= 80%",
+        "alternative": "Alternative > 80%",
+        "mainlineShort": "ML",
+        "secondaryShort": "Secondary",
+        "alternativeShort": "Alternative",
+        "lowSampleBadge": "Low Sample",
+        "unmappedResponseBadge": "No response mapped",
+        "coverageNodeActions": "Node actions",
+        "coverageSelectedNode": "Selected node",
+        "coverageTierOverrideUnavailable": "This node cannot be edited manually.",
+        "coverageTierOverrideNeedsRebuild": "No coverage cache found. Rebuild graph to persist manual tier changes.",
+        "coverageTierOverrideApplied": "Manual tier applied.",
+        "coverageTierOverrideFailed": "Failed to save manual tier change.",
+        "coverageEditApplied": "Node settings updated.",
+        "coverageEditFailed": "Failed to save node settings.",
+        "coverageActionTierTab": "Tier",
+        "coverageActionRenameTab": "Rename",
+        "coverageActionEditTab": "Edit",
+        "coverageActionPuzzlesTab": "Puzzles",
+        "coverageActionBoardTab": "Board",
+        "coverageActionGoToTab": "Go to variant",
+        "coverageActionViewTab": "View",
+        "coverageTierHint": "Set how this response should be prioritized in coverage.",
+        "coverageEditHint": "Update node settings and save changes.",
+        "coverageRenameHint": "Assign a custom label that will persist for this node.",
+        "coveragePuzzleHint": "Generate puzzles from this node using the selected tier.",
+        "coverageBoardHint": "Board preview after this move using active side orientation.",
+        "coverageViewHint": "Collapse or expand the entire subtree from this node.",
+        "coverageCollapseNode": "Collapse subtree",
+        "coverageExpandNode": "Expand subtree",
+        "coverageRenameLabel": "Node name",
+        "coverageRenameRequired": "Node name is required.",
+        "coverageRenameApplied": "Node name updated.",
+        "coverageRenameFailed": "Failed to save node name.",
+        "coveragePuzzleName": "Puzzle file name",
+        "coveragePuzzleDepth": "Depth",
+        "coveragePuzzleIncludeLowSample": "Include low sample nodes (< 5000 games)",
+        "coverageGeneratePuzzles": "Generate puzzles",
+        "coverageGoToVariant": "Go to variant",
+        "coverageGoToVariantHint": "Open the matching variant and jump to this exact move in PGN.",
+        "coverageGoToVariantMissing": "Could not map this node to a variant move path.",
+        "coverageGoToVariantFailed": "Failed to open variant for this node.",
+        "coverageNodeNotFound": "Could not locate the selected node in the current graph.",
+        "coverageNodeMissingFen": "Selected node has no position context (FEN).",
+        "coverageBoardInvalidFen": "Could not render this node board because the FEN is invalid.",
+        "coveragePuzzleEmpty": "No branches available for the selected tier from this node.",
+        "coveragePuzzleDone": "Generated {{count}} puzzles from selected node.",
+        "coverageResponseLowFrequency": "Rare Line",
+        "coverageResponseNovelty": "Novelty",
+        "coverageCollapsedBadge": "Collapsed",
+        "prioritySynced": "Priority synced (1/2/3)",
         "searchPlaceholder": "Search variants...",
         "deleteConfirm": "Are you sure you want to delete this variant?",
         "deleted": "Variant deleted successfully",
@@ -2113,6 +2233,7 @@
         "commentsSaved": "Comments saved successfully",
         "commentsSaveError": "Failed to save comments",
         "nameRequired": "Name is required",
+        "invalidName": "Invalid name.",
         "namePlaceholder": "Enter variant name...",
         "openingPlaceholder": "Enter opening name...",
         "priorityPlaceholder": "Set priority (1-4)",
@@ -2185,6 +2306,12 @@
       "searchPlaceholder": "Search engines...",
       "noEnginesFound": "No engines found",
       "noEnginesFoundMessage": "Try adjusting your search or add a new engine.",
+      "kpis": {
+        "total": "Engines",
+        "visible": "Visible",
+        "local": "Local",
+        "cloud": "Cloud"
+      },
       "unknownEngine": "Unknown Engine",
       "selectImage": "Select image",
       "invalidConfiguration": "Invalid Configuration",
@@ -2234,6 +2361,10 @@
     },
     "databases": {
       "title": "Databases",
+      "kpis": {
+        "total": "Databases",
+        "visible": "Visible"
+      },
       "card": {
         "games": "Games",
         "players": "Players",
@@ -2810,7 +2941,8 @@
     "copyErrorDetails": "Copy error details",
     "copied": "Copied",
     "puzzleDepthTooDeep": "Depth cannot exceed the available puzzle depth (max {{max}})",
-    "puzzleVariantsNeedSystemMove": "You can generate puzzle variants only after the first variation is created (a prior system move is required)."
+    "puzzleVariantsNeedSystemMove": "You can generate puzzle variants only after the first variation is created (a prior system move is required).",
+    "fileAlreadyExists": "File already exists"
   },
   "window": {
     "minimize": "Minimize Window",
@@ -2975,6 +3107,12 @@
   },
   "chessbase": {
     "title": "ChessBase",
+    "kpis": {
+      "connection": "Connection",
+      "pendingGames": "Downloaded games",
+      "quickSearchPool": "Quick-search pool",
+      "profiles": "Profiles"
+    },
     "description": "Store your ChessBase credentials securely and download games from the ChessBase Online Database without opening a browser.",
     "usernameLabel": "Username / Email",
     "usernamePlaceholder": "Your ChessBase username or email",

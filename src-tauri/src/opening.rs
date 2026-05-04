@@ -1,6 +1,7 @@
 use log::info;
 use serde::{Deserialize, Serialize};
 use shakmaty::{fen::Fen, san::San, CastlingMode, Chess, EnPassantMode, Position, Setup};
+use std::collections::{BTreeMap, HashSet};
 
 use lazy_static::lazy_static;
 use specta::Type;
@@ -31,18 +32,19 @@ pub struct OpeningInfo {
 }
 
 #[derive(Deserialize)]
-struct OpeningRecord {
+struct EcoOpeningRecord {
     eco: String,
     name: String,
-    pgn: String,
+    moves: Option<String>,
 }
 
-pub const TSV_DATA: [&[u8]; 5] = [
-    include_bytes!("../data/a.tsv"),
-    include_bytes!("../data/b.tsv"),
-    include_bytes!("../data/c.tsv"),
-    include_bytes!("../data/d.tsv"),
-    include_bytes!("../data/e.tsv"),
+pub const ECO_JSON_DATA: [&[u8]; 6] = [
+    include_bytes!("../data/ecoA.json"),
+    include_bytes!("../data/ecoB.json"),
+    include_bytes!("../data/ecoC.json"),
+    include_bytes!("../data/ecoD.json"),
+    include_bytes!("../data/ecoE.json"),
+    include_bytes!("../data/eco_interpolated.json"),
 ];
 
 const FISCHER_RANDOM_DATA: &[u8] = include_bytes!("../data/frc.tsv");
@@ -93,6 +95,23 @@ fn normalize_fen_to_setup(fen: &str) -> Result<Setup, Error> {
     // so the matching is based on resulting position, not move order.
     let chess: Chess = fen.into_position(CastlingMode::Standard)?;
     Ok(chess.into_setup(EnPassantMode::Legal))
+}
+
+fn setup_from_move_text(move_text: &str, opening_name: &str) -> Setup {
+    let mut pos = Chess::default();
+    for token in move_text.split_whitespace() {
+        if let Ok(san) = token.parse::<San>() {
+            if let Ok(mv) = san.to_move(&pos) {
+                pos.play_unchecked(&mv);
+            } else {
+                info!(
+                    "Skipping invalid SAN token in opening {}: {}",
+                    opening_name, token
+                );
+            }
+        }
+    }
+    pos.into_setup(EnPassantMode::Legal)
 }
 
 fn get_opening_from_fen_in(fen: &str, openings: &[Opening]) -> Result<String, Error> {
@@ -203,6 +222,26 @@ fn search_opening_name_in(query: &str, openings: &[Opening]) -> Vec<OutOpening> 
         .collect()
 }
 
+pub fn opening_fens_for_precache() -> Vec<(String, String)> {
+    let mut seen_fens = HashSet::new();
+    let mut out = Vec::new();
+
+    for opening in OPENINGS.iter() {
+        // Keep compatibility with previous behavior: precache only standard openings,
+        // excluding synthetic entries and Fischer Random.
+        if opening.eco == "Extra" || opening.eco == "FRC" {
+            continue;
+        }
+
+        let fen = Fen::from_setup(opening.setup.clone()).to_string();
+        if seen_fens.insert(fen.clone()) {
+            out.push((opening.name.clone(), fen));
+        }
+    }
+
+    out
+}
+
 // ============================================================================
 // Global opening database (loaded once)
 // ============================================================================
@@ -224,53 +263,50 @@ lazy_static! {
             },
         ];
 
-        // Load standard openings from TSV chunks (a-e.tsv)
+        // Load standard openings from eco.json chunks (A-E + interpolated)
         let mut total_loaded = 0usize;
-        for (tsv_idx, tsv) in TSV_DATA.iter().enumerate() {
-            let mut rdr = csv::ReaderBuilder::new().delimiter(b'\t').from_reader(*tsv);
+        for (json_idx, json_data) in ECO_JSON_DATA.iter().enumerate() {
+            let parsed: Result<BTreeMap<String, EcoOpeningRecord>, serde_json::Error> =
+                serde_json::from_slice(json_data);
+            let eco_map = match parsed {
+                Ok(map) => map,
+                Err(e) => {
+                    info!("Failed to parse eco json chunk {}: {}", json_idx, e);
+                    continue;
+                }
+            };
             let mut file_count = 0usize;
 
-            for result in rdr.deserialize() {
-                match result {
-                    Ok(record) => {
-                        let record: OpeningRecord = record;
-                        let mut pos = Chess::default();
-
-                        for token in record.pgn.split_whitespace() {
-                            if let Ok(san) = token.parse::<San>() {
-                                if let Ok(mv) = san.to_move(&pos) {
-                                    pos.play_unchecked(&mv);
-                                } else {
-                                    info!(
-                                        "Skipping invalid move in opening {}: {}",
-                                        record.name, token
-                                    );
-                                }
-                            }
-                        }
-
-                        positions.push(Opening {
-                            eco: record.eco.clone(),
-                            name: record.name.clone(),
-                            setup: pos.into_setup(EnPassantMode::Legal),
-                            pgn: Some(record.pgn),
-                        });
-
-                        file_count += 1;
-                        total_loaded += 1;
+            for (fen_key, record) in eco_map {
+                let setup = match normalize_fen_to_setup(&fen_key) {
+                    Ok(setup) => setup,
+                    Err(_) => {
+                        let Some(moves) = record.moves.as_deref() else {
+                            info!("Skipping opening with invalid FEN and no moves: {}", record.name);
+                            continue;
+                        };
+                        setup_from_move_text(moves, &record.name)
                     }
-                    Err(e) => {
-                        info!("Failed to deserialize opening: {}", e);
-                    }
-                }
+                };
+
+                positions.push(Opening {
+                    eco: record.eco.clone(),
+                    name: record.name.clone(),
+                    setup,
+                    pgn: record.moves.clone(),
+                });
+
+                file_count += 1;
+                total_loaded += 1;
             }
 
-            let file_name = match tsv_idx {
-                0 => "a.tsv",
-                1 => "b.tsv",
-                2 => "c.tsv",
-                3 => "d.tsv",
-                4 => "e.tsv",
+            let file_name = match json_idx {
+                0 => "ecoA.json",
+                1 => "ecoB.json",
+                2 => "ecoC.json",
+                3 => "ecoD.json",
+                4 => "ecoE.json",
+                5 => "eco_interpolated.json",
                 _ => "unknown",
             };
             info!("Loaded {} openings from file {}", file_count, file_name);

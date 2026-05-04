@@ -155,9 +155,12 @@ export async function createTab({
       if (explicitOrientation) {
         tree.headers.orientation = explicitOrientation;
       }
-      if (position) {
-        tree.position = position;
-      }
+    }
+
+    // Apply requested board position regardless of header merge path.
+    // This is required for deep-link navigation (e.g. coverage graph -> go to variant).
+    if (position) {
+      tree.position = [...position];
     }
     setTabState(id, JSON.stringify({ version: 0, state: tree }));
   }

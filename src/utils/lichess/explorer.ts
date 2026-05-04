@@ -86,14 +86,15 @@ export function getLichessGamesQueryParams(fen: string, options: LichessGamesOpt
 export function getMasterGamesQueryParams(fen: string, options: MasterGamesOptions | undefined): string {
   const getDateQueryString = (date: Date) => date.getFullYear().toString();
 
-  const queryParams: string[] = [];
-  if (options) {
-    queryParams.push(`fen=${fen}`);
-    if (options.since) queryParams.push(`since=${getDateQueryString(options.since)}`);
-    if (options.until) queryParams.push(`until=${getDateQueryString(options.until)}`);
-    if (options.moves !== undefined && 0 <= options.moves) queryParams.push(`moves=${options.moves}`);
-    if (options.topGames !== undefined && 0 <= options.topGames && options.topGames <= 15)
-      queryParams.push(`topGames=${options.topGames}`);
+  const params = new URLSearchParams();
+  params.append("fen", fen);
+  if (!options) return params.toString();
+
+  if (options.since) params.append("since", getDateQueryString(options.since));
+  if (options.until) params.append("until", getDateQueryString(options.until));
+  if (options.moves !== undefined && 0 <= options.moves) params.append("moves", options.moves.toString());
+  if (options.topGames !== undefined && 0 <= options.topGames && options.topGames <= 15) {
+    params.append("topGames", options.topGames.toString());
   }
-  return queryParams.join("&");
+  return params.toString();
 }

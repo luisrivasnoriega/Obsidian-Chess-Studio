@@ -15,11 +15,13 @@ export async function generatePuzzleVariantsFromTree(params: {
   root: PuzzleTreeNodeDto;
   orientation: "white" | "black";
   selectedDepth: number;
+  allowedStartKeys?: string[];
 }): Promise<GeneratePuzzleVariantsResponse> {
-  const { root, orientation, selectedDepth } = params;
+  const { root, orientation, selectedDepth, allowedStartKeys } = params;
   return await invoke<GeneratePuzzleVariantsResponse>("generate_puzzle_variants_from_tree", {
     root,
     orientation,
     selectedDepth,
+    allowedStartKeys,
   });
 }

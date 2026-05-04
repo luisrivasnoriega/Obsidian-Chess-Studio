@@ -304,24 +304,37 @@ pub fn insert_to_db_with_event_override(
 ) -> Result<bool> {
     let pawn_home = get_pawn_home(game.position.board());
 
-    let white_id = if let Some(name) = &game.white_name {
-        create_player(db, name)?.id
-    } else {
-        0
+    let white_id = match game
+        .white_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "?")
+    {
+        Some(name) => create_player(db, name)?.id,
+        None => create_player(db, "Unknown")?.id,
     };
 
-    let black_id = if let Some(name) = &game.black_name {
-        create_player(db, name)?.id
-    } else {
-        0
+    let black_id = match game
+        .black_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "?")
+    {
+        Some(name) => create_player(db, name)?.id,
+        None => create_player(db, "Unknown")?.id,
     };
 
     let event_id = if event_id_override > 0 {
         event_id_override
-    } else if let Some(name) = &game.event_name {
+    } else if let Some(name) = game
+        .event_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "?")
+    {
         create_event(db, name)?.id
     } else {
-        0
+        create_event(db, "Unknown")?.id
     };
 
     let site_id = if let Some(name) = &game.site_name {
@@ -363,6 +376,58 @@ pub fn insert_to_db_with_event_override(
     };
 
     core::add_game(db, new_game)
+}
+
+fn normalize_pgn_for_import(pgn: &str) -> String {
+    let mut normalized = pgn.replace("\r\n", "\n").replace('\r', "\n");
+
+    // Normalize non-standard result headers used by some apps.
+    let result_header_re = Regex::new(r#"(?m)^\[Result\s+"(?:\?|\s*)"\s*\]\s*$"#)
+        .expect("valid result-header regex");
+    normalized = result_header_re
+        .replace_all(&normalized, r#"[Result "*"]"#)
+        .into_owned();
+
+    // Split into game-like chunks by [Event ...] boundaries when present.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in normalized.lines() {
+        if line.starts_with("[Event ") && !current.trim().is_empty() {
+            chunks.push(current.trim().to_string());
+            current.clear();
+        }
+
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+
+    if chunks.is_empty() {
+        chunks.push(normalized.trim().to_string());
+    }
+
+    // Ensure each game has a termination marker in movetext.
+    let termination_re = Regex::new(r#"(?:1-0|0-1|1/2-1/2|\*)\s*$"#)
+        .expect("valid pgn-termination regex");
+
+    let normalized_chunks = chunks
+        .into_iter()
+        .map(|mut chunk| {
+            if !termination_re.is_match(chunk.trim_end()) {
+                if !chunk.ends_with('\n') {
+                    chunk.push('\n');
+                }
+                chunk.push('*');
+            }
+            chunk
+        })
+        .collect::<Vec<_>>();
+
+    normalized_chunks.join("\n\n")
 }
 
 fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
@@ -3431,23 +3496,53 @@ pub async fn add_event_games_from_pgn(
     if trimmed.is_empty() {
         return Err(Error::InvalidInput("PGN cannot be empty".to_string()));
     }
+    let normalized_pgn = normalize_pgn_for_import(trimmed);
 
     let mut importer = Importer::new(None);
     let mut inserted_total: i32 = 0;
+    let mut parsed_total: i32 = 0;
+    let mut parse_errors: i32 = 0;
+    let mut first_parse_error: Option<String> = None;
 
     db.transaction::<_, Error, _>(|db| {
-        for game in BufferedReader::new_cursor(trimmed.as_bytes())
-            .into_iter(&mut importer)
-            .flatten()
-            .flatten()
-        {
-            let inserted = insert_to_db_with_event_override(db, &game, event_id)?;
-            if inserted {
-                inserted_total += 1;
+        for parsed in BufferedReader::new_cursor(normalized_pgn.as_bytes()).into_iter(&mut importer) {
+            match parsed {
+                Ok(Some(game)) => {
+                    parsed_total += 1;
+                    let inserted = insert_to_db_with_event_override(db, &game, event_id)?;
+                    if inserted {
+                        inserted_total += 1;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    parse_errors += 1;
+                    if first_parse_error.is_none() {
+                        first_parse_error = Some(e.to_string());
+                    }
+                }
             }
         }
         Ok(())
     })?;
+
+    if parsed_total == 0 {
+        let detail = first_parse_error
+            .map(|e| format!(": {e}"))
+            .unwrap_or_default();
+        return Err(Error::InvalidInput(format!(
+            "No PGN games could be parsed{detail}"
+        )));
+    }
+
+    if inserted_total == 0 && parse_errors > 0 {
+        let detail = first_parse_error
+            .map(|e| format!(": {e}"))
+            .unwrap_or_default();
+        return Err(Error::InvalidInput(format!(
+            "PGN parsing failed for all candidate games{detail}"
+        )));
+    }
 
     Ok(inserted_total)
 }
@@ -4885,9 +4980,9 @@ pub fn clear_games(state: tauri::State<'_, AppState>) -> Result<()> {
 }
 
 
-/// Pre-cache openings from TSV files
-/// This function reads all opening TSV files, converts PGN to FEN,
-/// searches for each position in the database, and caches the results
+/// Pre-cache openings from the embedded ECO opening book.
+/// This function reads all ECO opening positions (derived from eco.json),
+/// searches for each position in the database, and caches the results.
 #[tauri::command]
 #[specta::specta]
 pub async fn precache_openings(
@@ -4895,46 +4990,12 @@ pub async fn precache_openings(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
-    use crate::opening::TSV_DATA;
-    use csv::ReaderBuilder;
-    use shakmaty::{fen::Fen, san::San, Chess, EnPassantMode};
     use std::sync::{Arc, Mutex};
     use tauri::Emitter;
     use tokio::sync::Semaphore;
 
-    #[derive(serde::Deserialize)]
-    struct OpeningRecord {
-        #[allow(dead_code)]
-        eco: String,
-        name: String,
-        pgn: String,
-    }
-
-    // Load all openings from TSV files
-    let mut openings: Vec<(String, String)> = Vec::new(); // (name, fen)
-
-    for tsv_data in TSV_DATA {
-        let mut rdr = ReaderBuilder::new().delimiter(b'\t').from_reader(tsv_data);
-        for result in rdr.deserialize() {
-            match result {
-                Ok(record) => {
-                    let record: OpeningRecord = record;
-                    // Convert PGN to FEN
-                    let mut pos = Chess::default();
-                    for token in record.pgn.split_whitespace() {
-                        if let Ok(san) = token.parse::<San>() {
-                            if let Ok(mv) = san.to_move(&pos) {
-                                pos.play_unchecked(&mv);
-                            }
-                        }
-                    }
-                    let fen = Fen::from_setup(pos.into_setup(EnPassantMode::Legal));
-                    openings.push((record.name, fen.to_string()));
-                }
-                Err(_) => continue,
-            }
-        }
-    }
+    // Load all openings from the ECO JSON source as (name, fen)
+    let openings = crate::opening::opening_fens_for_precache();
 
     let total = openings.len();
     let processed = Arc::new(Mutex::new(0usize));
