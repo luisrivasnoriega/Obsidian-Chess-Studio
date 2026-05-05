@@ -30,7 +30,7 @@ use diesel::{
     prelude::*,
     r2d2::{ConnectionManager, Pool},
     sql_query,
-    sql_types::Text,
+    sql_types::{Integer, Text},
 };
 use pgn::{GameTree, Importer, TempGame};
 use pgn_reader::BufferedReader;
@@ -167,6 +167,21 @@ fn ensure_games_columns(conn: &mut SqliteConnection) -> std::result::Result<(), 
     Ok(())
 }
 
+fn sqlite_table_exists(conn: &mut SqliteConnection, table_name: &str) -> std::result::Result<bool, diesel::result::Error> {
+    #[derive(QueryableByName)]
+    struct ExistsRow {
+        #[diesel(sql_type = Integer, column_name = "exists_flag")]
+        exists_flag: i32,
+    }
+
+    let escaped = table_name.replace('\'', "''");
+    let sql = format!(
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='{escaped}') THEN 1 ELSE 0 END AS exists_flag"
+    );
+    let exists = sql_query(sql).get_result::<ExistsRow>(conn)?.exists_flag != 0;
+    Ok(exists)
+}
+
 const WHITE_PAWN: Piece = Piece {
     color: shakmaty::Color::White,
     role: shakmaty::Role::Pawn,
@@ -301,6 +316,8 @@ pub fn insert_to_db_with_event_override(
     db: &mut SqliteConnection,
     game: &TempGame,
     event_id_override: i32,
+    preferred_site_name: Option<&str>,
+    preferred_time_control: Option<&str>,
 ) -> Result<bool> {
     let pawn_home = get_pawn_home(game.position.board());
 
@@ -337,7 +354,9 @@ pub fn insert_to_db_with_event_override(
         create_event(db, "Unknown")?.id
     };
 
-    let site_id = if let Some(name) = &game.site_name {
+    let site_id = if let Some(name) = preferred_site_name.map(str::trim).filter(|value| !value.is_empty()) {
+        create_site(db, name)?.id
+    } else if let Some(name) = &game.site_name {
         let trimmed = name.trim();
         if trimmed.is_empty() || trimmed == "?" {
             create_site(db, "OTB")?.id
@@ -353,23 +372,51 @@ pub fn insert_to_db_with_event_override(
     let minimal_white_material = game.material_count.white.min(final_material.white) as i32;
     let minimal_black_material = game.material_count.black.min(final_material.black) as i32;
 
+    let date = game
+        .date
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "?" && !value.contains('?'));
+    let round = game
+        .round
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "?");
+    let result = match game.result.as_deref().map(str::trim) {
+        Some("1-0") => Some("1-0"),
+        Some("0-1") => Some("0-1"),
+        Some("1/2-1/2") => Some("1/2-1/2"),
+        Some("*") | Some("?") | Some("") | None => Some("*"),
+        // Normalize any unknown/non-standard marker to PGN unknown result.
+        Some(_) => Some("*"),
+    };
+    let time_control = preferred_time_control
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "?")
+        .or_else(|| {
+            game.time_control
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && *value != "?")
+        });
+
     let new_game = NewGame {
         white_id,
         black_id,
         ply_count,
         eco: game.eco.as_deref(),
-        round: game.round.as_deref(),
+        round,
         white_elo: game.white_elo,
         black_elo: game.black_elo,
         white_material: minimal_white_material,
         black_material: minimal_black_material,
-        date: game.date.as_deref(),
+        date,
         time: game.time.as_deref(),
-        time_control: game.time_control.as_deref(),
+        time_control,
         site_id,
         event_id,
         fen: game.fen.as_deref(),
-        result: game.result.as_deref(),
+        result,
         termination: game.termination.as_deref(),
         moves: game.moves.as_slice(),
         pawn_home: pawn_home as i32,
@@ -3445,16 +3492,14 @@ pub async fn delete_managed_event(
     ensure_db_initialized(db)?;
 
     let deleted = db.transaction::<_, Error, _>(|db| {
-        // Only allow deleting managed events.
-        let managed_exists = events::table
+        let event_exists = events::table
             .filter(events::id.eq(event_id))
-            .filter(events::event_type.is_not_null())
             .select(events::id)
             .first::<i32>(db)
             .optional()?
             .is_some();
 
-        if !managed_exists {
+        if !event_exists {
             return Ok(false);
         }
 
@@ -3463,7 +3508,7 @@ pub async fn delete_managed_event(
             .select(games::id)
             .load::<i32>(db)?;
 
-        if !game_ids.is_empty() {
+        if !game_ids.is_empty() && sqlite_table_exists(db, "Comments")? {
             diesel::delete(comments::table.filter(comments::game_id.eq_any(&game_ids)))
                 .execute(db)?;
         }
@@ -3477,14 +3522,28 @@ pub async fn delete_managed_event(
     Ok(deleted)
 }
 
+#[derive(Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AddEventGamesFromPgnOptions {
+    #[specta(optional)]
+    pub date: Option<String>,
+    #[specta(optional)]
+    pub round: Option<String>,
+    #[specta(optional)]
+    pub result: Option<String>,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn add_event_games_from_pgn(
     file: PathBuf,
     event_id: i32,
     pgn: String,
+    options: Option<AddEventGamesFromPgnOptions>,
     state: tauri::State<'_, AppState>,
 ) -> Result<i32> {
+    use crate::db::schema::events;
+
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
     ensure_db_initialized(db)?;
 
@@ -3498,6 +3557,41 @@ pub async fn add_event_games_from_pgn(
     }
     let normalized_pgn = normalize_pgn_for_import(trimmed);
 
+    let (event_type, event_time_control) = events::table
+        .filter(events::id.eq(event_id))
+        .select((events::event_type, events::time_control))
+        .first::<(Option<String>, Option<String>)>(db)
+        .optional()?
+        .ok_or_else(|| Error::InvalidInput("Event not found".to_string()))?;
+    let preferred_site_name = match event_type.as_deref() {
+        Some("online_tournament") => Some("Online"),
+        Some("league") => Some("League"),
+        _ => Some("OTB"),
+    };
+    let forced_date = options
+        .as_ref()
+        .and_then(|value| value.date.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "?" && !value.contains('?'))
+        .map(|value| value.to_string());
+    let forced_round = options
+        .as_ref()
+        .and_then(|value| value.round.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "?")
+        .map(|value| value.to_string());
+    let forced_result = match options
+        .as_ref()
+        .and_then(|value| value.result.as_deref())
+        .map(str::trim)
+    {
+        Some("1-0") => Some("1-0".to_string()),
+        Some("0-1") => Some("0-1".to_string()),
+        Some("1/2-1/2") => Some("1/2-1/2".to_string()),
+        Some("*") => Some("*".to_string()),
+        _ => None,
+    };
+
     let mut importer = Importer::new(None);
     let mut inserted_total: i32 = 0;
     let mut parsed_total: i32 = 0;
@@ -3509,7 +3603,23 @@ pub async fn add_event_games_from_pgn(
             match parsed {
                 Ok(Some(game)) => {
                     parsed_total += 1;
-                    let inserted = insert_to_db_with_event_override(db, &game, event_id)?;
+                    let mut game = game;
+                    if let Some(date) = forced_date.as_ref() {
+                        game.date = Some(date.clone());
+                    }
+                    if let Some(round) = forced_round.as_ref() {
+                        game.round = Some(round.clone());
+                    }
+                    if let Some(result) = forced_result.as_ref() {
+                        game.result = Some(result.clone());
+                    }
+                    let inserted = insert_to_db_with_event_override(
+                        db,
+                        &game,
+                        event_id,
+                        preferred_site_name,
+                        event_time_control.as_deref(),
+                    )?;
                     if inserted {
                         inserted_total += 1;
                     }
@@ -3636,7 +3746,7 @@ pub async fn add_profile_games_from_pgn(
                 }
             }
 
-            let inserted = insert_to_db_with_event_override(db, &game, 0)?;
+            let inserted = insert_to_db_with_event_override(db, &game, 0, None, None)?;
             if inserted {
                 inserted_total += 1;
             }
@@ -6187,7 +6297,8 @@ pub async fn merge_profile_event_from_db_player(
                 .flatten()
                 .flatten()
             {
-                let inserted = insert_to_db_with_event_override(profile_db, &temp, event_id)?;
+                let inserted =
+                    insert_to_db_with_event_override(profile_db, &temp, event_id, None, None)?;
                 if inserted {
                     inserted_total += 1;
                 }

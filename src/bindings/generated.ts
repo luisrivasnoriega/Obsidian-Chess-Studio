@@ -1643,9 +1643,9 @@ async deleteManagedEvent(file: string, eventId: number) : Promise<Result<boolean
     else return { status: "error", error: e  as any };
 }
 },
-async addEventGamesFromPgn(file: string, eventId: number, pgn: string) : Promise<Result<number, string>> {
+async addEventGamesFromPgn(file: string, eventId: number, pgn: string, options: AddEventGamesFromPgnOptions | null) : Promise<Result<number, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("add_event_games_from_pgn", { file, eventId, pgn }) };
+    return { status: "ok", data: await TAURI_INVOKE("add_event_games_from_pgn", { file, eventId, pgn, options }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1701,13 +1701,14 @@ export type AccountSyncResult = {
  */
 imported_games: bigint }
 export type AccountSyncState = { account_key: string; platform: string; cursor_until_ms: bigint | null; since_ms?: bigint | null; mode?: string; total_batches: bigint; completed_batches: bigint; running: boolean; updated_at_ms: bigint }
+export type AddEventGamesFromPgnOptions = { date?: string | null; round?: string | null; result?: string | null }
 /**
  * Options for full-game analysis (FEN, moves, novelty annotation, etc).
  */
 export type AnalysisOptions = { fen: string; moves: string[]; annotateNovelties: boolean; referenceDb: string | null; reversed: boolean }
-export type AnalyzeAllCountsBulkRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
+export type AnalyzeAllCountsBulkRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
 export type AnalyzeAllCountsBulkResponse = { all: AnalyzeAllCountsResponse; local: AnalyzeAllCountsResponse; chesscom: AnalyzeAllCountsResponse; lichess: AnalyzeAllCountsResponse; chessbase: AnalyzeAllCountsResponse }
-export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; timeControlCategory: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[]; target: AnalyzeAllTarget }
+export type AnalyzeAllCountsRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[]; target: AnalyzeAllTarget }
 export type AnalyzeAllCountsResponse = { total: number; analyzed: number; unanalyzed: number }
 export type AnalyzeAllTarget = "local" | "chesscom" | "lichess" | "chessbase" | "all"
 export type AnalyzedGameEntry = { profile_id: string; game_id: string; analyzed_pgn: string }
@@ -1792,10 +1793,10 @@ time_control_category?: string | null }
 export type GameSort = "id" | "date" | "whiteElo" | "blackElo" | "averageElo" | "ply_count"
 export type GameStats = { total: bigint; won: bigint; draw: bigint; lost: bigint; data_per_month: MonthData[]; unknown_count: bigint }
 export type GameStatsEntry = { profileId: string; gameId: string; accuracy: number; acpl: number; estimatedElo: bigint | null; resistance: number | null; eloEstimatedBalanced: bigint | null }
-export type GamesHistoryFilterMetaRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
-export type GamesHistoryFilterMetaResponse = { availableTimeControlCategories: string[] }
+export type GamesHistoryFilterMetaRequest = { profileId: string; gameHistoryLimit: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; resultFilter: string | null; sourceFilter: string | null; playerColor: string | null; minMoves: number | null; profileUsernames: string[] }
+export type GamesHistoryFilterMetaResponse = { availableTimeControlCategories: string[]; availableSources: string[] }
 export type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase"
-export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[]; includeBasePgn: boolean | null; includeAnalyzedPgn: boolean | null; includeAnalysisStats: boolean | null }
+export type GamesHistoryRequest = { profileId: string; gameHistoryLimit: number; page: number; pageSize: number; eventFilterId: number | null; selectedOpponentId: number | null; opponentContains: string | null; timeControlCategory: string | null; resultFilter: string | null; sourceFilter: string | null; playerColor: string | null; minMoves: number | null; sortBy: string | null; sortDirection: string | null; profileUsernames: string[]; includeBasePgn: boolean | null; includeAnalyzedPgn: boolean | null; includeAnalysisStats: boolean | null }
 export type GamesHistoryResponse = { rows: GamesHistoryRow[]; totalCount: number }
 export type GamesHistoryRow = { kind: GamesHistoryKind; 
 /**

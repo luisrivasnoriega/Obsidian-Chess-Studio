@@ -27,7 +27,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type GameQuery, type NormalizedGame } from "@/bindings";
 import GenericHeader from "@/components/GenericHeader";
@@ -84,10 +84,48 @@ function overridePgnPlayerBySide(pgn: string, side: "manual" | "white" | "black"
   if (!trimmedName) return pgn;
 
   const escaped = escapePgnHeaderValue(trimmedName);
-  if (side === "white") {
-    return pgn.replace(/^\[White\s+"([^"]*)"\]\s*$/gm, `[White "${escaped}"]`);
-  }
-  return pgn.replace(/^\[Black\s+"([^"]*)"\]\s*$/gm, `[Black "${escaped}"]`);
+  const targetHeader = side === "white" ? "White" : "Black";
+  const headerRegex = side === "white" ? /^\[White\s+"([^"]*)"\]\s*$/gm : /^\[Black\s+"([^"]*)"\]\s*$/gm;
+  const replaced = pgn.replace(headerRegex, `[${targetHeader} "${escaped}"]`);
+
+  return applyPgnHeaderOverrideForAllGames(replaced, targetHeader, trimmedName);
+}
+
+function overridePgnOpponentBySide(pgn: string, side: "manual" | "white" | "black", opponentName: string): string {
+  if (side === "manual") return pgn;
+  const trimmedName = opponentName.trim();
+  if (!trimmedName) return pgn;
+
+  const targetHeader = side === "white" ? "Black" : "White";
+  return applyPgnHeaderOverrideForAllGames(pgn, targetHeader, trimmedName);
+}
+
+function applyPgnHeaderOverrideForAllGames(pgn: string, header: string, value: string): string {
+  const normalized = pgn.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const chunks = normalized.match(/(?:^\[Event\s+"[\s\S]*?)(?=^\[Event\s+"|\s*$)/gm) ?? [normalized];
+  const headerLine = `[${header} "${escapePgnHeaderValue(value)}"]`;
+  const headerRegex = new RegExp(`^\\[${header}\\s+"[^"]*"\\]\\s*$`, "m");
+
+  const patched = chunks.map((rawChunk) => {
+    const chunk = rawChunk.trim();
+    if (!chunk) return chunk;
+    if (headerRegex.test(chunk)) {
+      return chunk.replace(headerRegex, headerLine);
+    }
+
+    const firstBlankIndex = chunk.indexOf("\n\n");
+    if (firstBlankIndex >= 0) {
+      return `${chunk.slice(0, firstBlankIndex)}\n${headerLine}${chunk.slice(firstBlankIndex)}`;
+    }
+
+    if (chunk.startsWith("[")) {
+      return `${chunk}\n${headerLine}`;
+    }
+
+    return `${headerLine}\n\n${chunk}`;
+  });
+
+  return patched.filter((chunk) => chunk.trim().length > 0).join("\n\n");
 }
 
 export default function EventsPage() {
@@ -109,7 +147,7 @@ export default function EventsPage() {
   const [addGameModalOpened, setAddGameModalOpened] = useState(false);
   const [activeEvent, setActiveEvent] = useState<ManagedEvent | null>(null);
   const [isCreatingGame, setIsCreatingGame] = useState(false);
-  const [expandedEventIds, setExpandedEventIds] = useState<number[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [eventSortStatus, setEventSortStatus] = useState<DataTableSortStatus<ManagedEvent>>({
     columnAccessor: "id",
     direction: "asc",
@@ -169,7 +207,7 @@ export default function EventsPage() {
     const sessionPlayerNames = profileSessions
       .map(
         (session) =>
-          session.player?.trim() || session.lichess?.username?.trim() || session.chessCom?.username?.trim() || "",
+          session.lichess?.username?.trim() || session.chessCom?.username?.trim() || session.player?.trim() || "",
       )
       .filter((name) => name.length > 0);
     return sessionPlayerNames[0] ?? profileName;
@@ -231,6 +269,7 @@ export default function EventsPage() {
 
   const openAddGamesModal = (event: ManagedEvent) => {
     setActiveEvent(event);
+    setSelectedEventId(event.id);
     gameForm.reset();
     setAddGameModalOpened(true);
   };
@@ -250,13 +289,24 @@ export default function EventsPage() {
       onConfirm: async () => {
         try {
           const deleted = await deleteManagedEvent(dbPath, event.id);
-          if (!deleted) return;
+          if (!deleted) {
+            notifications.show({
+              title: t("features.events.notifications.deleteFailedTitle", "Could not delete tournament"),
+              message: t("features.events.notifications.deleteMissing", "Tournament not found in database."),
+              color: "yellow",
+            });
+            return;
+          }
           notifications.show({
             title: t("features.events.notifications.deletedTitle", "Tournament deleted"),
             message: t("features.events.notifications.deletedMessage", "Tournament removed successfully."),
             color: "green",
           });
+          setSelectedEventId((prev) => (prev === event.id ? null : prev));
           await queryClient.invalidateQueries({ queryKey: ["managedEvents", dbPath] });
+          await queryClient.invalidateQueries({ queryKey: ["managedEventGameCounts", dbPath] });
+          window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+          window.dispatchEvent(new Event("games:updated"));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           notifications.show({
@@ -287,9 +337,28 @@ export default function EventsPage() {
             return;
           }
           pgnText = overridePgnPlayerBySide(pgnText, values.profileSide, profileName);
+          const pgnOpponent = values.opponent.trim();
+          if (pgnOpponent) {
+            pgnText = overridePgnOpponentBySide(pgnText, values.profileSide, pgnOpponent);
+          }
+        }
+        const overrideDate = formatDateToPGN(values.date);
+        if (overrideDate) {
+          pgnText = applyPgnHeaderOverrideForAllGames(pgnText, "Date", overrideDate);
+        }
+        const overrideRound = values.round.trim();
+        if (overrideRound.length > 0) {
+          pgnText = applyPgnHeaderOverrideForAllGames(pgnText, "Round", overrideRound);
+        }
+        if (values.result !== "*") {
+          pgnText = applyPgnHeaderOverrideForAllGames(pgnText, "Result", values.result);
         }
 
-        const inserted = await addEventGamesFromPgn(dbPath, activeEvent.id, pgnText);
+        const inserted = await addEventGamesFromPgn(dbPath, activeEvent.id, pgnText, {
+          date: formatDateToPGN(values.date) ?? null,
+          round: values.round.trim() || null,
+          result: values.result,
+        });
         if (inserted > 0) {
           notifications.show({
             title: t("features.events.notifications.gamesAddedTitle", "Games imported"),
@@ -368,7 +437,12 @@ export default function EventsPage() {
         navigate({ to: "/analysis" });
       }
 
+      setSelectedEventId(activeEvent.id);
       await queryClient.invalidateQueries({ queryKey: ["managedEventGames", dbPath, activeEvent.id] });
+      await queryClient.invalidateQueries({ queryKey: ["managedEventGameCounts", dbPath] });
+      await queryClient.refetchQueries({ queryKey: ["managedEventGames", dbPath, activeEvent.id], type: "active" });
+      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+      window.dispatchEvent(new Event("games:updated"));
       setAddGameModalOpened(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -440,6 +514,39 @@ export default function EventsPage() {
     return events;
   }, [eventSortStatus, eventTypeLabel, managedEvents]);
 
+  const managedEventIdsKey = useMemo(
+    () =>
+      (managedEvents ?? [])
+        .map((event) => event.id)
+        .sort((a, b) => a - b)
+        .join(","),
+    [managedEvents],
+  );
+
+  const { data: eventGameCounts = {} } = useQuery<Record<number, number>>({
+    queryKey: ["managedEventGameCounts", dbPath, managedEventIdsKey],
+    queryFn: async () => {
+      if (!dbPath || !managedEvents || managedEvents.length === 0) return {};
+      const pairs = await Promise.all(
+        managedEvents.map(async (event) => {
+          const response = await query_games(dbPath, {
+            tournament_id: event.id,
+            options: {
+              skipCount: false,
+              pageSize: 1,
+              sort: "id",
+              direction: "desc",
+            },
+          } satisfies GameQuery);
+          return [event.id, response.count ?? response.data.length] as const;
+        }),
+      );
+      return Object.fromEntries(pairs);
+    },
+    enabled: !!dbPath && !!managedEvents && managedEvents.length > 0,
+    staleTime: 10_000,
+  });
+
   const totalEvents = managedEvents?.length ?? 0;
   const onlineEvents = useMemo(
     () => (managedEvents ?? []).filter((event) => event.event_type === "online_tournament").length,
@@ -450,6 +557,17 @@ export default function EventsPage() {
     [managedEvents],
   );
   const visibleEvents = sortedEvents.length;
+  const selectedEvent = useMemo(
+    () => sortedEvents.find((event) => event.id === selectedEventId) ?? null,
+    [sortedEvents, selectedEventId],
+  );
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    if (!sortedEvents.some((event) => event.id === selectedEventId)) {
+      setSelectedEventId(null);
+    }
+  }, [sortedEvents, selectedEventId]);
 
   return (
     <>
@@ -627,21 +745,18 @@ export default function EventsPage() {
                         highlightOnHover
                         idAccessor="id"
                         records={sortedEvents}
+                        onRowClick={({ record }) =>
+                          setSelectedEventId((prev) => (prev === record.id ? null : record.id))
+                        }
+                        rowStyle={(record) => ({
+                          cursor: "pointer",
+                          background:
+                            selectedEventId === record.id
+                              ? "linear-gradient(90deg, rgba(24, 67, 112, 0.22), rgba(24, 67, 112, 0.08))"
+                              : undefined,
+                        })}
                         sortStatus={eventSortStatus}
                         onSortStatusChange={setEventSortStatus}
-                        rowExpansion={{
-                          allowMultiple: true,
-                          expanded: {
-                            recordIds: expandedEventIds,
-                            onRecordIdsChange: setExpandedEventIds,
-                          },
-                          content: ({ record }) =>
-                            dbPath && (
-                              <Box p="sm">
-                                <EventGamesTable dbPath={dbPath} eventId={record.id} onAnalyze={handleAnalyzeDbGame} />
-                              </Box>
-                            ),
-                        }}
                         columns={[
                           {
                             accessor: "id",
@@ -692,6 +807,14 @@ export default function EventsPage() {
                             render: (event) => (event.end_date ? String(event.end_date).replace(/\./g, "-") : "-"),
                           },
                           {
+                            accessor: "games_count",
+                            title: t("features.events.table.games", "Games"),
+                            width: 96,
+                            sortable: false,
+                            textAlign: "right",
+                            render: (event) => eventGameCounts[event.id] ?? 0,
+                          },
+                          {
                             accessor: "actions",
                             title: t("features.events.table.actions", "Actions"),
                             width: 180,
@@ -703,7 +826,10 @@ export default function EventsPage() {
                                   radius="xl"
                                   variant="light"
                                   styles={premiumActionButtonStyles}
-                                  onClick={() => openAddGamesModal(event)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openAddGamesModal(event);
+                                  }}
                                 >
                                   {t("features.events.actions.addGame", "Add game")}
                                 </Button>
@@ -711,7 +837,10 @@ export default function EventsPage() {
                                   size="lg"
                                   variant="subtle"
                                   color="red"
-                                  onClick={() => handleDeleteEvent(event)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteEvent(event);
+                                  }}
                                 >
                                   <IconTrash size={16} />
                                 </ActionIcon>
@@ -720,6 +849,23 @@ export default function EventsPage() {
                           },
                         ]}
                       />
+                      {dbPath && selectedEvent ? (
+                        <Box mt="md">
+                          <Card withBorder radius="md" p="sm" style={premiumPanelStyle}>
+                            <Group justify="space-between" mb="xs">
+                              <Text fw={600}>{selectedEvent.name || `#${selectedEvent.id}`}</Text>
+                              <Text c="dimmed" size="sm">
+                                {t("features.events.table.games", "Games")}: {eventGameCounts[selectedEvent.id] ?? 0}
+                              </Text>
+                            </Group>
+                            <EventGamesTable
+                              dbPath={dbPath}
+                              eventId={selectedEvent.id}
+                              onAnalyze={handleAnalyzeDbGame}
+                            />
+                          </Card>
+                        </Box>
+                      ) : null}
                     </Box>
                   )}
                 </Card>
@@ -812,6 +958,16 @@ export default function EventsPage() {
                     readOnly
                   />
                 ) : null}
+                {gameForm.values.profileSide !== "manual" ? (
+                  <TextInput
+                    label={t("features.events.addGame.pgnOpponentOptional", "Opponent (optional)")}
+                    placeholder={t(
+                      "features.events.addGame.pgnOpponentOptionalPlaceholder",
+                      "Override opponent name for all imported games",
+                    )}
+                    {...gameForm.getInputProps("opponent")}
+                  />
+                ) : null}
                 <Textarea
                   label={t("features.events.addGame.pgnInput", "PGN")}
                   placeholder={t("features.events.addGame.pgnPlaceholder", "Paste one or multiple PGN games")}
@@ -830,13 +986,11 @@ export default function EventsPage() {
                 clearable
                 value={gameForm.values.date}
                 onChange={(v) => gameForm.setFieldValue("date", parseDate(v) ?? null)}
-                disabled={gameForm.values.entryMode === "pgn"}
               />
               <TextInput
                 label={t("features.events.games.round", "Round")}
                 placeholder={t("features.events.games.roundPlaceholder", "Round")}
                 {...gameForm.getInputProps("round")}
-                disabled={gameForm.values.entryMode === "pgn"}
               />
             </Group>
 
@@ -850,7 +1004,6 @@ export default function EventsPage() {
                 { value: "0-1", label: t("chess.outcome.blackWins", "Black wins") },
                 { value: "1/2-1/2", label: t("chess.outcome.draw", "Draw") },
               ]}
-              disabled={gameForm.values.entryMode === "pgn"}
             />
 
             <Group justify="flex-end">

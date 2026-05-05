@@ -44,8 +44,28 @@ export async function deleteManagedEvent(file: string, eventId: number): Promise
   return await invoke<boolean>("delete_managed_event", { file, eventId });
 }
 
-export async function addEventGamesFromPgn(file: string, eventId: number, pgn: string): Promise<number> {
-  return await invoke<number>("add_event_games_from_pgn", { file, eventId, pgn });
+export async function addEventGamesFromPgn(
+  file: string,
+  eventId: number,
+  pgn: string,
+  options?: {
+    date?: string | null;
+    round?: string | null;
+    result?: "1-0" | "0-1" | "1/2-1/2" | "*" | null;
+  },
+): Promise<number> {
+  return await invoke<number>("add_event_games_from_pgn", {
+    file,
+    eventId,
+    pgn,
+    options: options
+      ? {
+          date: options.date ?? null,
+          round: options.round ?? null,
+          result: options.result ?? null,
+        }
+      : null,
+  });
 }
 
 export async function createEventGame(

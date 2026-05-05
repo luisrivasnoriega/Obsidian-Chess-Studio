@@ -755,6 +755,8 @@
         "activeProfileNameRequired": "El nombre del perfil activo es obligatorio.",
         "opponent": "Rival",
         "opponentPlaceholder": "Nombre del rival",
+        "pgnOpponentOptional": "Rival (opcional)",
+        "pgnOpponentOptionalPlaceholder": "Sobrescribir nombre del rival en todas las partidas importadas",
         "pgnInput": "PGN",
         "pgnPlaceholder": "Pega una o varias partidas PGN",
         "importOnly": "Importar al evento"
@@ -789,6 +791,7 @@
         "timeControl": "Control de tiempo",
         "startDate": "Inicio",
         "endDate": "Fin",
+        "games": "Partidas",
         "actions": "Acciones"
       },
       "actions": {
@@ -844,6 +847,7 @@
         "deletedTitle": "Torneo eliminado",
         "deletedMessage": "El torneo se eliminó correctamente.",
         "deleteFailedTitle": "No se pudo eliminar el torneo",
+        "deleteMissing": "No se encontro el torneo en la base de datos.",
         "gamesAddedTitle": "Partidas importadas",
         "gamesAddedMessage": "Se importaron {{count}} partidas.",
         "noGamesAddedTitle": "No se importaron partidas nuevas",
@@ -948,6 +952,7 @@
       "source": "Fuente",
       "favorite": "Favorito",
       "filterByEvent": "Filtrar por evento",
+      "filterBySource": "Filtrar por fuente",
       "noEventsMatch": "Ningún evento coincide",
       "unnamedEvent": "Evento sin nombre",
       "defaultLocalEvent": "Partida local",
@@ -956,6 +961,8 @@
       "sourceLocal": "Local",
       "sourceChessCom": "Chess.com",
       "sourceLichess": "Lichess",
+      "sourceFide": "FIDE",
+      "sourceLocalTournament": "Torneo local",
       "sourceChessBase": "ChessBase",
       "analyzeAll": "Analizar todo",
       "dragToResize": "Arrastra para redimensionar",
@@ -1039,6 +1046,8 @@
       "dayStreak": "racha de días",
       "thisWeek": "Esta semana",
       "previousWeek": "Pasada",
+      "ratingGamesCount_one": "{{count}} partida",
+      "ratingGamesCount_other": "{{count}} partidas",
       "kpi": {
         "acplByTimeControl": "ACPL medio por ritmo",
         "accuracyByColor": "Precisión promedio por color",

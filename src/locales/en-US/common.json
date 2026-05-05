@@ -1336,6 +1336,8 @@
         "activeProfileNameRequired": "Active profile name is required.",
         "opponent": "Opponent",
         "opponentPlaceholder": "Opponent name",
+        "pgnOpponentOptional": "Opponent (optional)",
+        "pgnOpponentOptionalPlaceholder": "Override opponent name for all imported games",
         "pgnInput": "PGN",
         "pgnPlaceholder": "Paste one or multiple PGN games",
         "importOnly": "Import to event"
@@ -1370,6 +1372,7 @@
         "timeControl": "Time control",
         "startDate": "Start",
         "endDate": "End",
+        "games": "Games",
         "actions": "Actions"
       },
       "actions": {
@@ -1425,6 +1428,7 @@
         "deletedTitle": "Tournament deleted",
         "deletedMessage": "Tournament removed successfully.",
         "deleteFailedTitle": "Could not delete tournament",
+        "deleteMissing": "Tournament not found in database.",
         "gamesAddedTitle": "Games imported",
         "gamesAddedMessage": "Imported {{count}} games.",
         "noGamesAddedTitle": "No new games imported",
@@ -1690,6 +1694,7 @@
       "source": "Source",
       "favorite": "Favorite",
       "filterByEvent": "Filter by event",
+      "filterBySource": "Filter by source",
       "noEventsMatch": "No events match",
       "unnamedEvent": "Unnamed event",
       "defaultLocalEvent": "Local Game",
@@ -1698,6 +1703,8 @@
       "sourceLocal": "Local",
       "sourceChessCom": "Chess.com",
       "sourceLichess": "Lichess",
+      "sourceFide": "FIDE",
+      "sourceLocalTournament": "Local Tournament",
       "sourceChessBase": "ChessBase",
       "analyzeAll": "Analyze All",
       "dragToResize": "Drag to resize",
@@ -1776,6 +1783,8 @@
       "dayStreak": "day streak",
       "thisWeek": "This week",
       "previousWeek": "Previous",
+      "ratingGamesCount_one": "{{count}} game",
+      "ratingGamesCount_other": "{{count}} games",
       "kpi": {
         "acplByTimeControl": "Average ACPL by time control",
         "accuracyByColor": "Average accuracy by color",

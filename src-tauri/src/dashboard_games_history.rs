@@ -75,6 +75,7 @@ pub struct GamesHistoryResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GamesHistoryFilterMetaResponse {
     pub available_time_control_categories: Vec<String>,
+    pub available_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -89,6 +90,7 @@ pub struct GamesHistoryRequest {
     pub opponent_contains: Option<String>,
     pub time_control_category: Option<String>,
     pub result_filter: Option<String>, // win/loss/draw
+    pub source_filter: Option<String>, // local/chesscom/lichess/chessbase
     pub player_color: Option<String>,  // white/black
     pub min_moves: Option<i32>,        // minimum full moves
     pub sort_by: Option<String>,       // "elo" | "date"
@@ -108,6 +110,7 @@ pub struct GamesHistoryFilterMetaRequest {
     pub selected_opponent_id: Option<i32>,
     pub opponent_contains: Option<String>,
     pub result_filter: Option<String>,
+    pub source_filter: Option<String>,
     pub player_color: Option<String>,
     pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
@@ -214,7 +217,9 @@ pub struct AnalyzeAllCountsRequest {
     pub game_history_limit: i32,
     pub event_filter_id: Option<i32>,
     pub selected_opponent_id: Option<i32>,
+    pub opponent_contains: Option<String>,
     pub time_control_category: Option<String>,
+    pub result_filter: Option<String>,
     pub player_color: Option<String>,
     pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
@@ -228,7 +233,9 @@ pub struct AnalyzeAllCountsBulkRequest {
     pub game_history_limit: i32,
     pub event_filter_id: Option<i32>,
     pub selected_opponent_id: Option<i32>,
+    pub opponent_contains: Option<String>,
     pub time_control_category: Option<String>,
+    pub result_filter: Option<String>,
     pub player_color: Option<String>,
     pub min_moves: Option<i32>,
     pub profile_usernames: Vec<String>,
@@ -395,6 +402,24 @@ fn usernames_lower_set(usernames: &[String]) -> HashSet<String> {
         }
     }
     set
+}
+
+fn managed_event_ids_set(conn: &Connection) -> HashSet<i32> {
+    let mut ids = HashSet::new();
+    let mut stmt = match conn.prepare("SELECT ID FROM Events WHERE EventType IS NOT NULL AND trim(EventType) <> ''") {
+        Ok(stmt) => stmt,
+        Err(_) => return ids,
+    };
+    let rows = match stmt.query_map([], |row| row.get::<_, i32>(0)) {
+        Ok(rows) => rows,
+        Err(_) => return ids,
+    };
+    for row in rows {
+        if let Ok(id) = row {
+            ids.insert(id);
+        }
+    }
+    ids
 }
 
 fn parse_site_tag(moves: &str) -> Option<String> {
@@ -817,6 +842,19 @@ fn seconds_to_category(total_seconds: i64) -> String {
     } else {
         "classical".to_string()
     }
+}
+
+fn source_key_from_kind(kind: &GamesHistoryKind) -> &'static str {
+    match kind {
+        GamesHistoryKind::Local => "local",
+        GamesHistoryKind::Chesscom => "chesscom",
+        GamesHistoryKind::Lichess => "lichess",
+        GamesHistoryKind::Chessbase => "chessbase",
+    }
+}
+
+fn row_matches_source_filter(row: &GamesHistoryRow, wanted_source: &str) -> bool {
+    source_key_from_kind(&row.kind) == wanted_source
 }
 
 fn outcome_from_result(user_color: &str, result: &str) -> String {
@@ -1616,6 +1654,25 @@ fn find_profile_player_ids_by_usernames(conn: &Connection, usernames_lower: &Has
     scored.into_iter().map(|(pid, _)| pid).collect()
 }
 
+fn resolve_profile_player_ids(
+    conn: &Connection,
+    usernames_lower: &HashSet<String>,
+) -> (HashSet<i32>, Option<i32>) {
+    let mut resolved: HashSet<i32> = find_profile_player_ids_by_usernames(conn, usernames_lower)
+        .into_iter()
+        .collect();
+    let inferred_profile_player_id = ensure_profile_player_id(conn);
+
+    // Keep the explicit profile player id in scope even when online account usernames
+    // are present. This avoids dropping imported OTB/ChessBase games that belong to
+    // the same profile but are stored under the canonical player name id.
+    if let Some(pid) = inferred_profile_player_id {
+        resolved.insert(pid);
+    }
+
+    (resolved, inferred_profile_player_id)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn dashboard_get_games_history_rows(
@@ -1642,11 +1699,18 @@ pub async fn dashboard_get_games_history_rows(
         .as_ref()
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false);
-    // When filtering by opponent, widen the source scan window so matches are not
-    // lost just because they are older than the visible dashboard limit.
+    let has_source_filter = req
+        .source_filter
+        .as_ref()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    // When filtering by source/opponent, widen the source scan window so matches are
+    // not lost just because they are older than the visible dashboard page slice.
     // Keep an upper bound to avoid expensive full-history scans on every keystroke.
     let source_limit = if base_limit <= 0 {
         0
+    } else if has_source_filter {
+        base_limit.max(5000).min(5000)
     } else if req.selected_opponent_id.is_some() || has_opponent_text_filter {
         base_limit.max(1000).min(5000)
     } else {
@@ -1659,21 +1723,14 @@ pub async fn dashboard_get_games_history_rows(
 
     // 2) Load online games (single query; later we split by platform).
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let profile_player_ids: HashSet<i32> = match Connection::open(&db_path) {
+    let (profile_player_ids, managed_event_ids, inferred_profile_player_id): (HashSet<i32>, HashSet<i32>, Option<i32>) =
+        match Connection::open(&db_path) {
         Ok(conn) => {
-            let from_usernames = find_profile_player_ids_by_usernames(&conn, &usernames_lower);
-            let resolved = if !usernames_lower.is_empty() {
-                // If profile usernames are known, never fallback to inferred ProfilePlayerId.
-                // A stale/inaccurate inferred id can include games from a different player and inflate counts.
-                from_usernames
-            } else if from_usernames.is_empty() {
-                ensure_profile_player_id(&conn).map(|pid| vec![pid]).unwrap_or_default()
-            } else {
-                from_usernames
-            };
-            resolved.into_iter().collect()
+            let (player_ids, inferred_profile_player_id) = resolve_profile_player_ids(&conn, &usernames_lower);
+            let managed_ids = managed_event_ids_set(&conn);
+            (player_ids, managed_ids, inferred_profile_player_id)
         }
-        Err(_) => HashSet::new(),
+        Err(_) => (HashSet::new(), HashSet::new(), None),
     };
     let profile_player_id_single = if profile_player_ids.len() == 1 {
         profile_player_ids.iter().copied().next()
@@ -1843,7 +1900,7 @@ pub async fn dashboard_get_games_history_rows(
         let black_raw = g.black.clone();
         let white_name = strip_account_key(&white_raw).to_string();
         let black_name = strip_account_key(&black_raw).to_string();
-        let (user_is_white, is_profile_game) = if !profile_player_ids.is_empty() {
+        let (mut user_is_white, mut is_profile_game) = if !profile_player_ids.is_empty() {
             let white_matches = profile_player_ids.contains(&g.white_id);
             let black_matches = profile_player_ids.contains(&g.black_id);
             if white_matches && !black_matches {
@@ -1879,11 +1936,51 @@ pub async fn dashboard_get_games_history_rows(
                 (false, false)
             }
         };
+
+        // Fallback for profiles with imported ChessBase games where username/account
+        // matching cannot determine ownership (for example, profile display name does
+        // not match PGN player names or no linked accounts exist yet).
+        if !is_profile_game && matches!(kind, GamesHistoryKind::Chessbase) && profile_player_ids.is_empty() {
+            is_profile_game = true;
+            let white_matches = inferred_profile_player_id.map(|pid| pid == g.white_id).unwrap_or(false);
+            let black_matches = inferred_profile_player_id.map(|pid| pid == g.black_id).unwrap_or(false);
+            if white_matches && !black_matches {
+                user_is_white = true;
+            } else if black_matches && !white_matches {
+                user_is_white = false;
+            } else {
+                // If we cannot infer side, default to white for display consistency.
+                user_is_white = true;
+            }
+        }
+
+        if !is_profile_game && managed_event_ids.contains(&g.event_id) {
+            is_profile_game = true;
+            let is_user_white = usernames_lower.contains(&white_raw.to_lowercase())
+                || usernames_lower.contains(&white_name.to_lowercase());
+            let is_user_black = usernames_lower.contains(&black_raw.to_lowercase())
+                || usernames_lower.contains(&black_name.to_lowercase());
+            if is_user_white && !is_user_black {
+                user_is_white = true;
+            } else if is_user_black && !is_user_white {
+                user_is_white = false;
+            } else {
+                // Legacy managed-event imports can miss player mapping.
+                // Default to white side so the game still appears for the active profile.
+                user_is_white = true;
+            }
+        }
+
         if !is_profile_game {
             continue;
         }
         let user_color = if user_is_white { "white" } else { "black" };
-        let opponent = if user_is_white { black_name.clone() } else { white_name.clone() };
+        let opponent_raw = if user_is_white { black_name.clone() } else { white_name.clone() };
+        let opponent = if opponent_raw.trim().is_empty() || opponent_raw.trim() == "?" {
+            "?".to_string()
+        } else {
+            opponent_raw
+        };
         let needs_minimal_pgn = matches!(kind, GamesHistoryKind::Chessbase | GamesHistoryKind::Local);
 
         let result_str = g.result.to_string();
@@ -1979,6 +2076,12 @@ pub async fn dashboard_get_games_history_rows(
         let want = want.trim().to_lowercase();
         if want == "win" || want == "loss" || want == "draw" {
             rows.retain(|r| r.outcome == want);
+        }
+    }
+    if let Some(ref want_source) = req.source_filter {
+        let want_source = want_source.trim().to_lowercase();
+        if !want_source.is_empty() {
+            rows.retain(|r| row_matches_source_filter(r, &want_source));
         }
     }
     if let Some(ref want_tc) = req.time_control_category {
@@ -2150,6 +2253,7 @@ pub async fn dashboard_get_overview_metrics(
         opponent_contains: None,
         time_control_category: None,
         result_filter: None,
+        source_filter: None,
         player_color: None,
         min_moves: None,
         sort_by: Some("date".to_string()),
@@ -2312,6 +2416,7 @@ pub async fn dashboard_get_overview_metrics(
             opponent_contains: None,
             time_control_category: None,
             result_filter: None,
+            source_filter: None,
             player_color: None,
             min_moves: None,
             sort_by: Some("date".to_string()),
@@ -2482,6 +2587,7 @@ pub async fn dashboard_get_games_history_filter_meta(
     state: State<'_, AppState>,
     req: GamesHistoryFilterMetaRequest,
 ) -> Result<GamesHistoryFilterMetaResponse> {
+    let requested_source_filter = req.source_filter.clone();
     let rows_req = GamesHistoryRequest {
         profile_id: req.profile_id,
         // Scan a broader window than the visible table page so filter options are not
@@ -2495,23 +2601,42 @@ pub async fn dashboard_get_games_history_filter_meta(
         // Important: this metadata query should not self-filter by time control.
         time_control_category: None,
         result_filter: req.result_filter,
+        source_filter: None,
         player_color: req.player_color,
         min_moves: req.min_moves,
         sort_by: Some("date".to_string()),
         sort_direction: Some("desc".to_string()),
         profile_usernames: req.profile_usernames,
-        include_base_pgn: None,
-        include_analyzed_pgn: None,
-        include_analysis_stats: None,
+        include_base_pgn: Some(false),
+        include_analyzed_pgn: Some(false),
+        include_analysis_stats: Some(false),
     };
 
     let rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen_sources: HashSet<String> = HashSet::new();
     for row in rows.iter() {
+        seen_sources.insert(source_key_from_kind(&row.kind).to_string());
+    }
+
+    let source_filtered_rows: Vec<&GamesHistoryRow> = if let Some(wanted_source) = requested_source_filter.as_ref() {
+        let wanted_source = wanted_source.trim().to_lowercase();
+        if wanted_source.is_empty() {
+            rows.iter().collect()
+        } else {
+            rows.iter()
+                .filter(|row| row_matches_source_filter(row, &wanted_source))
+                .collect()
+        }
+    } else {
+        rows.iter().collect()
+    };
+
+    let mut seen_time_controls: HashSet<String> = HashSet::new();
+    for row in source_filtered_rows {
         if let Some(cat) = row.time_control_category.as_deref() {
             let trimmed = cat.trim().to_lowercase();
             if !trimmed.is_empty() {
-                seen.insert(trimmed);
+                seen_time_controls.insert(trimmed);
             }
         }
     }
@@ -2528,7 +2653,19 @@ pub async fn dashboard_get_games_history_filter_meta(
     let available_time_control_categories = ordered
         .iter()
         .filter_map(|value| {
-            if seen.contains(*value) {
+            if seen_time_controls.contains(*value) {
+                Some((*value).to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let ordered_sources = ["local", "chesscom", "lichess", "chessbase"];
+    let available_sources = ordered_sources
+        .iter()
+        .filter_map(|value| {
+            if seen_sources.contains(*value) {
                 Some((*value).to_string())
             } else {
                 None
@@ -2538,6 +2675,7 @@ pub async fn dashboard_get_games_history_filter_meta(
 
     Ok(GamesHistoryFilterMetaResponse {
         available_time_control_categories,
+        available_sources,
     })
 }
 
@@ -2600,24 +2738,26 @@ pub async fn dashboard_get_analyze_all_counts_bulk(
     }
 
     // Keep counts aligned with the same source used by the dashboard table.
+    let scoped_limit = req.game_history_limit.max(5000);
     let rows_req = GamesHistoryRequest {
         profile_id,
-        game_history_limit: req.game_history_limit,
+        game_history_limit: scoped_limit,
         page: 1,
-        page_size: req.game_history_limit,
+        page_size: scoped_limit,
         event_filter_id: req.event_filter_id,
         selected_opponent_id: req.selected_opponent_id,
-        opponent_contains: None,
+        opponent_contains: req.opponent_contains,
         time_control_category: req.time_control_category,
-        result_filter: None,
+        result_filter: req.result_filter,
+        source_filter: None,
         player_color: req.player_color,
         min_moves: req.min_moves,
         sort_by: Some("date".to_string()),
         sort_direction: Some("desc".to_string()),
         profile_usernames: req.profile_usernames,
-        include_base_pgn: None,
-        include_analyzed_pgn: None,
-        include_analysis_stats: None,
+        include_base_pgn: Some(false),
+        include_analyzed_pgn: Some(false),
+        include_analysis_stats: Some(false),
     };
     let mut rows = dashboard_get_games_history_rows(app, state, rows_req).await?.rows;
 
@@ -2649,7 +2789,9 @@ pub async fn dashboard_get_analyze_all_counts(
             game_history_limit: req.game_history_limit,
             event_filter_id: req.event_filter_id,
             selected_opponent_id: req.selected_opponent_id,
+            opponent_contains: req.opponent_contains,
             time_control_category: req.time_control_category,
+            result_filter: req.result_filter,
             player_color: req.player_color,
             min_moves: req.min_moves,
             profile_usernames: req.profile_usernames,
@@ -2686,14 +2828,10 @@ pub async fn dashboard_search_profile_opponents(
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let profile_player_ids: Vec<i32> = match Connection::open(&db_path) {
         Ok(conn) => {
-            let from_usernames = find_profile_player_ids_by_usernames(&conn, &usernames_lower);
-            if !usernames_lower.is_empty() {
-                from_usernames
-            } else if from_usernames.is_empty() {
-                ensure_profile_player_id(&conn).map(|pid| vec![pid]).unwrap_or_default()
-            } else {
-                from_usernames
-            }
+            let (resolved_ids, _) = resolve_profile_player_ids(&conn, &usernames_lower);
+            let mut ids: Vec<i32> = resolved_ids.into_iter().collect();
+            ids.sort_unstable();
+            ids
         }
         Err(_) => Vec::new(),
     };

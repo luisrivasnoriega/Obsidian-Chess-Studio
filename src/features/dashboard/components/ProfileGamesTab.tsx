@@ -73,6 +73,7 @@ type GamesHistoryResponse = {
 
 type GamesHistoryFilterMetaResponse = {
   availableTimeControlCategories: TimeControlCategory[];
+  availableSources: GamesHistoryKind[];
 };
 
 type AnalyzeAllCountsResponse = {
@@ -274,6 +275,7 @@ export function ProfileGamesTab({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [opponentFilter, setOpponentFilter] = useState("");
   const [resultFilter, setResultFilter] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<GamesHistoryKind | null>(null);
   const [playerColorFilter, setPlayerColorFilter] = useState<"white" | "black" | null>(null);
   const [minMovesFilter, setMinMovesFilter] = useState<number | null>(null);
   const [opponentOptions, setOpponentOptions] = useState<string[]>([]);
@@ -288,6 +290,7 @@ export function ProfileGamesTab({
     chessbase: number;
   } | null>(null);
   const [availableTimeControlCategories, setAvailableTimeControlCategories] = useState<TimeControlCategory[]>([]);
+  const [availableSources, setAvailableSources] = useState<GamesHistoryKind[]>([]);
 
   useEffect(() => {
     const query = debouncedOpponentFilter.trim();
@@ -340,12 +343,7 @@ export function ProfileGamesTab({
   }, []);
 
   useEffect(() => {
-    // If the visible limit changes, restart from page 1 so the table reflects the new amount immediately.
-    setPage(1);
-  }, []);
-
-  useEffect(() => {
-    // Filters can shrink the result set; keep pagination on a valid page.
+    // If the visible limit or profile changes, restart from page 1.
     setPage(1);
   }, []);
 
@@ -369,10 +367,14 @@ export function ProfileGamesTab({
           opponentContains: debouncedOpponentFilter.trim() || null,
           timeControlCategory,
           resultFilter,
+          sourceFilter,
           playerColor: playerColorFilter,
           minMoves: minMovesFilter,
           sortBy: sortBy ?? "date",
           sortDirection,
+          includeBasePgn: true,
+          includeAnalyzedPgn: false,
+          includeAnalysisStats: true,
         },
       })) ?? { rows: [], totalCount: 0 };
 
@@ -398,6 +400,7 @@ export function ProfileGamesTab({
     debouncedOpponentFilter,
     timeControlCategory,
     resultFilter,
+    sourceFilter,
     playerColorFilter,
     minMovesFilter,
     sortBy,
@@ -409,6 +412,7 @@ export function ProfileGamesTab({
   useEffect(() => {
     if (!profileId) {
       setAvailableTimeControlCategories([]);
+      setAvailableSources([]);
       return;
     }
 
@@ -423,22 +427,32 @@ export function ProfileGamesTab({
           selectedOpponentId,
           opponentContains: debouncedOpponentFilter.trim() || null,
           resultFilter,
+          sourceFilter,
           playerColor: playerColorFilter,
           minMoves: minMovesFilter,
         },
-      })) ?? { availableTimeControlCategories: [] };
+      })) ?? { availableTimeControlCategories: [], availableSources: [] };
 
       if (cancelled) return;
       const categories = Array.isArray(res.availableTimeControlCategories) ? res.availableTimeControlCategories : [];
+      const sources = (Array.isArray(res.availableSources) ? res.availableSources : []).filter(
+        (value): value is GamesHistoryKind =>
+          value === "local" || value === "chesscom" || value === "lichess" || value === "chessbase",
+      );
       setAvailableTimeControlCategories(categories);
+      setAvailableSources(sources);
       if (timeControlCategory && !categories.includes(timeControlCategory)) {
         onTimeControlCategoryChange(null);
+      }
+      if (sourceFilter && !sources.includes(sourceFilter)) {
+        setSourceFilter(null);
       }
     };
 
     void run().catch(() => {
       if (!cancelled) {
         setAvailableTimeControlCategories([]);
+        setAvailableSources([]);
       }
     });
 
@@ -453,6 +467,7 @@ export function ProfileGamesTab({
     selectedOpponentId,
     debouncedOpponentFilter,
     resultFilter,
+    sourceFilter,
     playerColorFilter,
     minMovesFilter,
     timeControlCategory,
@@ -475,7 +490,9 @@ export function ProfileGamesTab({
             gameHistoryLimit,
             eventFilterId,
             selectedOpponentId,
+            opponentContains: debouncedOpponentFilter.trim() || null,
             timeControlCategory,
+            resultFilter,
             playerColor: playerColorFilter,
             minMoves: minMovesFilter,
           },
@@ -506,7 +523,9 @@ export function ProfileGamesTab({
     gameHistoryLimit,
     eventFilterId,
     selectedOpponentId,
+    debouncedOpponentFilter,
     timeControlCategory,
+    resultFilter,
     playerColorFilter,
     minMovesFilter,
   ]);
@@ -526,6 +545,7 @@ export function ProfileGamesTab({
     selectedOpponentId != null ||
     opponentFilter.trim().length > 0 ||
     resultFilter != null ||
+    sourceFilter != null ||
     timeControlCategory != null ||
     playerColorFilter != null ||
     minMovesFilter != null;
@@ -598,21 +618,42 @@ export function ProfileGamesTab({
     }),
     [],
   );
+  const sourceOptions = useMemo(() => {
+    const fallbackKinds = Array.from(new Set(rows.map((row) => row.kind)));
+    const kindsToShow = availableSources.length > 0 ? availableSources : fallbackKinds;
+    const order: GamesHistoryKind[] = ["local", "chesscom", "lichess", "chessbase"];
+    const set = new Set<GamesHistoryKind>(kindsToShow);
+    return order
+      .filter((kind) => set.has(kind))
+      .map((kind) => ({
+        value: kind,
+        label:
+          kind === "local"
+            ? t("features.dashboard.sourceLocal", { defaultValue: "Local" })
+            : kind === "chesscom"
+              ? t("features.dashboard.sourceChessCom", { defaultValue: "Chess.com" })
+              : kind === "lichess"
+                ? t("features.dashboard.sourceLichess", { defaultValue: "Lichess" })
+                : t("features.dashboard.sourceChessBase", { defaultValue: "ChessBase" }),
+      }));
+  }, [availableSources, rows, t]);
+  const visibleRows = rows;
+  useEffect(() => {
+    if (!sourceFilter) return;
+    if (sourceOptions.length === 0) return;
+    if (!sourceOptions.some((option) => option.value === sourceFilter)) {
+      setSourceFilter(null);
+    }
+  }, [sourceFilter, sourceOptions]);
   const averageStats = useMemo(() => {
-    const accuracyValues = rows
+    const accuracyValues = visibleRows
       .map((row) => row.accuracy)
       .filter((value): value is number => typeof value === "number" && value > 0);
-    const acplValues = rows
+    const acplValues = visibleRows
       .map((row) => row.acpl)
       .filter((value): value is number => typeof value === "number" && value > 0);
-    const estimatedEloValues = rows
+    const estimatedEloValues = visibleRows
       .map((row) => row.estimatedElo)
-      .filter((value): value is number => typeof value === "number" && value > 0);
-    const resistanceValues = rows
-      .map((row) => row.resistance)
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-    const eloEstimatedBalancedValues = rows
-      .map((row) => row.eloEstimatedBalanced)
       .filter((value): value is number => typeof value === "number" && value > 0);
 
     const average = (values: number[]) => {
@@ -624,10 +665,8 @@ export function ProfileGamesTab({
       accuracy: average(accuracyValues),
       acpl: average(acplValues),
       estimatedElo: average(estimatedEloValues),
-      resistance: average(resistanceValues),
-      eloEstimatedBalanced: average(eloEstimatedBalancedValues),
     };
-  }, [rows]);
+  }, [visibleRows.map]);
   const analyzeAllOptions = useMemo(() => {
     const total = analyzeAllTypeCounts?.all ?? localGames.length + chessComGames.length + lichessGames.length;
     const localCount = analyzeAllTypeCounts?.local ?? localGames.length;
@@ -922,7 +961,10 @@ export function ProfileGamesTab({
         <Select
           placeholder={t("features.dashboard.filterByEvent", "Filter by event")}
           value={eventFilterId != null ? String(eventFilterId) : undefined}
-          onChange={(value) => onEventFilterChange(value ? Number(value) : null)}
+          onChange={(value) => {
+            setPage(1);
+            onEventFilterChange(value ? Number(value) : null);
+          }}
           data={[...eventOptions]
             .sort((a, b) => {
               // Sort by date (most recent first)
@@ -965,6 +1007,7 @@ export function ProfileGamesTab({
           placeholder={t("features.dashboard.filterByOpponent", "Filter by opponent")}
           value={opponentFilter}
           onChange={(value) => {
+            setPage(1);
             setOpponentFilter(value);
             const trimmed = value.trim();
             if (!trimmed) {
@@ -1015,7 +1058,10 @@ export function ProfileGamesTab({
         <Select
           placeholder={t("features.dashboard.filterByResult", "Filter by result")}
           value={resultFilter}
-          onChange={setResultFilter}
+          onChange={(value) => {
+            setPage(1);
+            setResultFilter(value);
+          }}
           data={[
             { value: "win", label: t("features.dashboard.win", "Win") },
             { value: "loss", label: t("features.dashboard.loss", "Loss") },
@@ -1027,9 +1073,25 @@ export function ProfileGamesTab({
           styles={premiumControlStyles}
         />
         <Select
+          placeholder={t("features.dashboard.filterBySource", "Filter by source")}
+          value={sourceFilter ?? undefined}
+          onChange={(value) => {
+            setSourceFilter((value as GamesHistoryKind | null) ?? null);
+            setPage(1);
+          }}
+          data={sourceOptions}
+          clearable
+          size="sm"
+          style={{ width: 190 }}
+          styles={premiumControlStyles}
+        />
+        <Select
           placeholder={t("features.dashboard.filterByColor", "Filter by color")}
           value={playerColorFilter ?? undefined}
-          onChange={(value) => setPlayerColorFilter((value as "white" | "black" | null) ?? null)}
+          onChange={(value) => {
+            setPage(1);
+            setPlayerColorFilter((value as "white" | "black" | null) ?? null);
+          }}
           data={[
             { value: "white", label: t("features.dashboard.white", "White") },
             { value: "black", label: t("features.dashboard.black", "Black") },
@@ -1043,6 +1105,7 @@ export function ProfileGamesTab({
           placeholder={t("features.dashboard.filterByMinMoves", "Min moves")}
           value={minMovesFilter != null ? String(minMovesFilter) : undefined}
           onChange={(value) => {
+            setPage(1);
             if (!value) {
               setMinMovesFilter(null);
               return;
@@ -1067,7 +1130,10 @@ export function ProfileGamesTab({
         <Select
           placeholder={t("features.dashboard.filterByTimeControl", "Filter by time control")}
           value={timeControlCategory ?? undefined}
-          onChange={(value) => onTimeControlCategoryChange((value as TimeControlCategory) ?? null)}
+          onChange={(value) => {
+            setPage(1);
+            onTimeControlCategoryChange((value as TimeControlCategory) ?? null);
+          }}
           data={availableTimeControlCategories.map((value) => ({
             value,
             label: getTimeControlLabel(t, value),
@@ -1120,12 +1186,6 @@ export function ProfileGamesTab({
                   {sortBy === "elo" &&
                     (sortDirection === "asc" ? <IconSortAscending size={16} /> : <IconSortDescending size={16} />)}
                 </Group>
-              </Table.Th>
-              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 95 }}>
-                {t("dashboard.resistance", { defaultValue: "Resistance" })}
-              </Table.Th>
-              <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 120 }}>
-                {t("dashboard.eloEstimatedBalanced", { defaultValue: "Elo Balanced" })}
               </Table.Th>
               <Table.Th style={{ ...tableHeaderCellBaseStyle, width: 75 }}>
                 {t("dashboard.tableHeaders.moves", { defaultValue: "Moves" })}
@@ -1189,9 +1249,9 @@ export function ProfileGamesTab({
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {rows.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <Table.Tr>
-                <Table.Td colSpan={14} style={{ textAlign: "center", padding: "2rem" }}>
+                <Table.Td colSpan={12} style={{ textAlign: "center", padding: "2rem" }}>
                   <Text c="dimmed">
                     {hasActiveFilters
                       ? t("features.dashboard.noGamesMatchFilters", "No games match the filters")
@@ -1200,7 +1260,7 @@ export function ProfileGamesTab({
                 </Table.Td>
               </Table.Tr>
             ) : (
-              rows.map((row, rowIndex) => {
+              visibleRows.map((row, rowIndex) => {
                 const pgn = row.pgn ?? null;
                 const dateStr = formatRelativeTimeAgo(row.timestampMs, now, t);
                 const gameUrl = _resolveRowGameUrl(row);
@@ -1310,12 +1370,6 @@ export function ProfileGamesTab({
                     <Table.Td style={{ ...tableBodyCellBaseStyle, fontWeight: 600 }}>
                       {row.estimatedElo != null ? Math.round(row.estimatedElo) : "-"}
                     </Table.Td>
-                    <Table.Td style={tableBodyCellBaseStyle}>
-                      {row.resistance != null ? Math.round(row.resistance) : "-"}
-                    </Table.Td>
-                    <Table.Td style={tableBodyCellBaseStyle}>
-                      {row.eloEstimatedBalanced != null ? Math.round(row.eloEstimatedBalanced) : "-"}
-                    </Table.Td>
                     <Table.Td style={tableBodyCellBaseStyle}>{row.moves || "-"}</Table.Td>
                     <Table.Td style={tableBodyCellBaseStyle}>
                       {row.timeControl?.trim()
@@ -1364,7 +1418,7 @@ export function ProfileGamesTab({
                           </ActionIcon>
                         )}
                         {row.isAnalyzed && pgn ? (
-                          <AnalysisPreview pgn={pgn}>
+                          <AnalysisPreview pgn={pgn} analysisGameId={row.analysisGameId} profileId={profileId}>
                             <Button
                               size="xs"
                               variant="light"
@@ -1445,12 +1499,6 @@ export function ProfileGamesTab({
               </Table.Td>
               <Table.Td style={stickyFooterCellStyle}>
                 {averageStats.estimatedElo != null ? Math.round(averageStats.estimatedElo) : "-"}
-              </Table.Td>
-              <Table.Td style={stickyFooterCellStyle}>
-                {averageStats.resistance != null ? Math.round(averageStats.resistance) : "-"}
-              </Table.Td>
-              <Table.Td style={stickyFooterCellStyle}>
-                {averageStats.eloEstimatedBalanced != null ? Math.round(averageStats.eloEstimatedBalanced) : "-"}
               </Table.Td>
               <Table.Td colSpan={5} style={stickyFooterCellStyle} />
             </Table.Tr>

@@ -1338,6 +1338,7 @@ export default function ProfilesPage() {
           opponentContains: null,
           timeControlCategory: null,
           resultFilter: null,
+          sourceFilter: null,
           playerColor: null,
           minMoves: null,
           sortBy: "date",

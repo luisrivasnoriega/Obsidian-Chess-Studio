@@ -232,6 +232,23 @@ type DashboardQualityInsights = {
   blunderRateTrend: Array<number | null>;
 };
 
+type DashboardRatingKey = "classical" | "rapid" | "blitz" | "bullet";
+
+type DashboardRatingSource = "lichess" | "chesscom" | "fide";
+
+type DashboardRatingHistory = {
+  classical?: number;
+  rapid?: number;
+  blitz?: number;
+  bullet?: number;
+};
+
+type DashboardRatingSourceMeta = {
+  source: DashboardRatingSource;
+  games: number;
+  username?: string;
+};
+
 const DEFAULT_QUALITY_INSIGHTS: DashboardQualityInsights = {
   weekBlunderRate: null,
   previousWeekBlunderRate: null,
@@ -613,19 +630,32 @@ export default function DashboardPage() {
     () => [...new Set(activeProfileSessions.map((s) => s.chessCom?.username).filter(Boolean) as string[])],
     [activeProfileSessions],
   );
+  const profileSessionPlayerNames = useMemo(
+    () => [...new Set(activeProfileSessions.map((s) => s.player?.trim()).filter(Boolean) as string[])],
+    [activeProfileSessions],
+  );
   const profileUsernames = useMemo(() => {
     const lichessKeys = profileLichessUsernames.map((username) => getAccountKey("lichess", username));
     const chessComKeys = profileChessComUsernames.map((username) => getAccountKey("chesscom", username));
     const displayName = (activeProfile?.displayName ?? "").trim();
+    const profileName = (activeProfile?.name ?? "").trim();
     const names = [
       ...profileLichessUsernames,
       ...profileChessComUsernames,
+      ...profileSessionPlayerNames,
       ...lichessKeys,
       ...chessComKeys,
       ...(displayName ? [displayName] : []),
+      ...(profileName ? [profileName] : []),
     ];
     return [...new Set(names)];
-  }, [profileLichessUsernames, profileChessComUsernames, activeProfile?.displayName]);
+  }, [
+    profileLichessUsernames,
+    profileChessComUsernames,
+    profileSessionPlayerNames,
+    activeProfile?.displayName,
+    activeProfile?.name,
+  ]);
   const engines = useAtomValue(enginesAtom);
   const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
   const defaultEngine = localEngines.find((e) => e.enabled) ?? (localEngines.length > 0 ? localEngines[0] : null);
@@ -751,6 +781,12 @@ export default function DashboardPage() {
     return total;
   }, []);
 
+  const getChessComRecordGames = useCallback(
+    (record?: { win?: number; loss?: number; draw?: number } | null) =>
+      (record?.win ?? 0) + (record?.loss ?? 0) + (record?.draw ?? 0),
+    [],
+  );
+
   const getSessionGameCount = useCallback(
     (session: Session | undefined) => {
       if (!session) return 0;
@@ -760,9 +796,9 @@ export default function DashboardPage() {
 
       const chessComStats = session.chessCom?.stats;
       if (chessComStats) {
-        const addPerf = (perf?: { record?: { win: number; loss: number; draw: number } }) => {
+        const addPerf = (perf?: { record?: { win?: number; loss?: number; draw?: number } }) => {
           if (!perf?.record) return;
-          total += (perf.record.win ?? 0) + (perf.record.loss ?? 0) + (perf.record.draw ?? 0);
+          total += getChessComRecordGames(perf.record);
         };
         addPerf(chessComStats.chess_daily);
         addPerf(chessComStats.chess_rapid);
@@ -772,7 +808,7 @@ export default function DashboardPage() {
 
       return total;
     },
-    [sumLichessPerfGames],
+    [getChessComRecordGames, sumLichessPerfGames],
   );
 
   // Find the main session - prioritize exact username matches over player name matches
@@ -787,42 +823,154 @@ export default function DashboardPage() {
     return sorted[0];
   }, [activeProfileSessions, getSessionGameCount]);
 
-  // Calculate average online rating based on time controls with more than 10 games
-  const averageOnlineRating = calculateOnlineRating(mainSession);
+  const ratingSelection = useMemo(() => {
+    type Candidate = {
+      key: DashboardRatingKey;
+      source: "lichess" | "chesscom";
+      username: string;
+      rating: number;
+      games: number;
+      updatedAt: number;
+    };
+
+    const candidates: Record<DashboardRatingKey, Candidate[]> = {
+      classical: [],
+      rapid: [],
+      blitz: [],
+      bullet: [],
+    };
+
+    const pushCandidate = (
+      key: DashboardRatingKey,
+      source: "lichess" | "chesscom",
+      username: string,
+      rating: number | undefined,
+      games: number | undefined,
+      updatedAt: number,
+    ) => {
+      if (typeof rating !== "number" || !Number.isFinite(rating)) return;
+      candidates[key].push({
+        key,
+        source,
+        username,
+        rating,
+        games: Math.max(0, games ?? 0),
+        updatedAt,
+      });
+    };
+
+    for (const session of activeProfileSessions) {
+      const updatedAt = session.updatedAt ?? 0;
+      if (session.lichess?.account) {
+        const username = session.lichess.username || session.lichess.account.username;
+        const perfs = session.lichess.account.perfs;
+        pushCandidate("classical", "lichess", username, perfs?.classical?.rating, perfs?.classical?.games, updatedAt);
+        pushCandidate("rapid", "lichess", username, perfs?.rapid?.rating, perfs?.rapid?.games, updatedAt);
+        pushCandidate("blitz", "lichess", username, perfs?.blitz?.rating, perfs?.blitz?.games, updatedAt);
+        pushCandidate("bullet", "lichess", username, perfs?.bullet?.rating, perfs?.bullet?.games, updatedAt);
+      }
+
+      if (session.chessCom?.stats) {
+        const username = session.chessCom.username;
+        const stats = session.chessCom.stats;
+        pushCandidate(
+          "rapid",
+          "chesscom",
+          username,
+          stats.chess_rapid?.last?.rating,
+          getChessComRecordGames(stats.chess_rapid?.record),
+          updatedAt,
+        );
+        pushCandidate(
+          "blitz",
+          "chesscom",
+          username,
+          stats.chess_blitz?.last?.rating,
+          getChessComRecordGames(stats.chess_blitz?.record),
+          updatedAt,
+        );
+        pushCandidate(
+          "bullet",
+          "chesscom",
+          username,
+          stats.chess_bullet?.last?.rating,
+          getChessComRecordGames(stats.chess_bullet?.record),
+          updatedAt,
+        );
+      }
+    }
+
+    const ratingHistory: DashboardRatingHistory = {};
+    const ratingSources: Partial<Record<DashboardRatingKey, DashboardRatingSourceMeta>> = {};
+    const controls: DashboardRatingKey[] = ["classical", "rapid", "blitz", "bullet"];
+
+    for (const key of controls) {
+      const sorted = [...candidates[key]].sort((a, b) => {
+        if (b.games !== a.games) return b.games - a.games;
+        return b.updatedAt - a.updatedAt;
+      });
+      const selected = sorted.find((candidate) => candidate.games > 0);
+      if (!selected) continue;
+      ratingHistory[key] = selected.rating;
+      ratingSources[key] = {
+        source: selected.source,
+        games: selected.games,
+        username: selected.username,
+      };
+    }
+
+    return {
+      ratingHistory,
+      ratingSources,
+    };
+  }, [activeProfileSessions, getChessComRecordGames]);
+
+  const ratingHistory = ratingSelection.ratingHistory;
+  const ratingSources = ratingSelection.ratingSources;
+
+  // Keep title/rank behavior stable when there are no rhythm ratings available.
+  const averageOnlineRating = useMemo(() => {
+    const values = Object.values(ratingHistory).filter((value): value is number => typeof value === "number");
+    if (values.length === 0) return calculateOnlineRating(mainSession);
+    return Math.round(values.reduce((acc, value) => acc + value, 0) / values.length);
+  }, [mainSession, ratingHistory]);
 
   let user = {
     name: activeProfile?.name ?? t("dashboard.noMainAccount"),
     handle: "",
     rating: averageOnlineRating,
   };
-  let ratingHistory: { classical?: number; rapid?: number; blitz?: number; bullet?: number } = {};
   let platform: "lichess" | "chesscom" | null = null;
   if (mainSession?.lichess?.account) {
     platform = "lichess";
-    const acc = mainSession.lichess.account;
     user = {
-      name: acc.username,
-      handle: `@${acc.username}`,
+      name: mainSession.lichess.account.username,
+      handle: `@${mainSession.lichess.account.username}`,
       rating: averageOnlineRating,
     };
-    const classical = acc.perfs?.classical?.rating;
-    const rapid = acc.perfs?.rapid?.rating;
-    const blitz = acc.perfs?.blitz?.rating;
-    const bullet = acc.perfs?.bullet?.rating;
-    ratingHistory = { classical, rapid, blitz, bullet };
   } else if (mainSession?.chessCom?.stats) {
     platform = "chesscom";
-    const stats = mainSession.chessCom.stats;
     user = {
       name: mainSession.chessCom.username,
       handle: `@${mainSession.chessCom.username}`,
       rating: averageOnlineRating,
     };
-    const rapid = stats.chess_rapid?.last?.rating;
-    const blitz = stats.chess_blitz?.last?.rating;
-    const bullet = stats.chess_bullet?.last?.rating;
-    ratingHistory = { rapid, blitz, bullet };
   }
+
+  const linkedOnlineAccounts = useMemo(() => {
+    const unique = new Map<string, { platform: "lichess" | "chesscom"; username: string }>();
+    for (const session of activeProfileSessions) {
+      if (session.lichess?.username) {
+        const username = session.lichess.username;
+        unique.set(`lichess:${username.toLowerCase()}`, { platform: "lichess", username });
+      }
+      if (session.chessCom?.username) {
+        const username = session.chessCom.username;
+        unique.set(`chesscom:${username.toLowerCase()}`, { platform: "chesscom", username });
+      }
+    }
+    return [...unique.values()];
+  }, [activeProfileSessions]);
 
   // Memoize fideInfo to ensure WelcomeCard updates when fidePlayer changes
   const fideInfo = useMemo(() => {
@@ -2071,8 +2219,10 @@ export default function DashboardPage() {
                     handle={user.handle}
                     title={fidePlayer?.title || getChessTitle(user.rating)}
                     ratingHistory={ratingHistory}
+                    ratingSources={ratingSources}
                     customName={displayName}
                     platform={platform}
+                    linkedAccounts={linkedOnlineAccounts}
                     onFideUpdate={handleProfileCardUpdate}
                     fidePlayer={fidePlayer}
                     currentFideId={activeProfile?.fideId || undefined}

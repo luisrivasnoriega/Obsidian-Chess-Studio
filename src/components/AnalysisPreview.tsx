@@ -5,12 +5,15 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import EvalChart from "@/components/EvalChart";
 import { TreeStateProvider } from "@/components/TreeStateContext";
+import { getAnalyzedGame } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, parsePGN } from "@/utils/chess";
 import type { GameHeaders } from "@/utils/treeReducer";
 
 interface AnalysisPreviewProps {
   pgn: string | null;
+  analysisGameId?: string | null;
+  profileId?: string | null;
   children: React.ReactNode;
 }
 
@@ -322,11 +325,27 @@ function AnalysisPreviewContent({ pgn }: { pgn: string }) {
   );
 }
 
-export function AnalysisPreview({ pgn, children }: AnalysisPreviewProps) {
+export function AnalysisPreview({ pgn, analysisGameId = null, profileId = null, children }: AnalysisPreviewProps) {
   const [opened, { open, close }] = useDisclosure(false);
   const isMobile = useMediaQuery("(max-width: 48em)");
+  const { data: analyzedPgn } = useQuery({
+    queryKey: ["analysis-preview-analyzed-pgn", profileId ?? null, analysisGameId ?? null],
+    queryFn: async () => {
+      if (!analysisGameId) return null;
+      return await getAnalyzedGame(analysisGameId, profileId ?? null);
+    },
+    enabled: opened && !!analysisGameId,
+    staleTime: 5 * 60 * 1000,
+  });
 
-  if (!pgn) {
+  const previewPgn = useMemo(() => {
+    const analyzed = analyzedPgn?.trim() ?? "";
+    if (analyzed) return analyzed;
+    const base = pgn?.trim() ?? "";
+    return base || null;
+  }, [analyzedPgn, pgn]);
+
+  if (!previewPgn) {
     return <>{children}</>;
   }
 
@@ -343,7 +362,7 @@ export function AnalysisPreview({ pgn, children }: AnalysisPreviewProps) {
         </Box>
       </Popover.Target>
       <Popover.Dropdown>
-        <AnalysisPreviewContent pgn={pgn} />
+        <AnalysisPreviewContent pgn={previewPgn} />
       </Popover.Dropdown>
     </Popover>
   );

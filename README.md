@@ -59,8 +59,8 @@
 <br />
 <br />
 
-<a href="./screenshots/banner.png" target="_blank">
-<img src="./screenshots/banner.png" alt="Obsidian Chess Studio GUI screenshot showcasing the main interface" width="85%" />
+<a href="./screenshots/dashboard-current.png" target="_blank">
+<img src="./screenshots/dashboard-current.png" alt="Obsidian Chess Studio dashboard screenshot with the current interface" width="85%" />
 </a>
 <p>
 <em>Experience professional chess analysis with an intuitive, modern interface</em>
@@ -423,10 +423,10 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 21.91% |
-| **Branches** | 14.95% |
-| **Functions** | 17.21% |
-| **Lines** | 23.08% |
+| **Statements** | 22.03% |
+| **Branches** | 14.98% |
+| **Functions** | 17.28% |
+| **Lines** | 23.21% |
 
 **Test Statistics:**
 - ✅ **180 test files** passing

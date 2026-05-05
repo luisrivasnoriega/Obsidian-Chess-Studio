@@ -13,8 +13,17 @@ import {
   Text,
   ThemeIcon,
 } from "@mantine/core";
-import { IconAlertTriangle, IconEdit, IconGauge, IconTargetArrow } from "@tabler/icons-react";
-import { useMemo, useState } from "react";
+import {
+  IconAlertTriangle,
+  IconChevronRight,
+  IconClockHour4,
+  IconEdit,
+  IconFlame,
+  IconGauge,
+  IconHourglassHigh,
+  IconTargetArrow,
+} from "@tabler/icons-react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import LichessLogo from "@/features/profiles/components/LichessLogo";
 import { EditProfileModal } from "./EditProfileModal";
@@ -24,6 +33,15 @@ interface RatingHistory {
   rapid?: number;
   blitz?: number;
   bullet?: number;
+}
+
+type RatingKey = keyof RatingHistory;
+type RatingSource = "lichess" | "chesscom" | "fide";
+
+interface RatingSourceMeta {
+  source: RatingSource;
+  games: number;
+  username?: string;
 }
 
 interface FidePlayerData {
@@ -46,6 +64,7 @@ interface UserProfileCardProps {
   handle: string;
   title: string;
   ratingHistory: RatingHistory;
+  ratingSources?: Partial<Record<RatingKey, RatingSourceMeta>>;
   onFideUpdate?: (
     fideId: string,
     fidePlayer: FidePlayerData | null,
@@ -56,6 +75,7 @@ interface UserProfileCardProps {
   fidePlayer?: FidePlayerData | null;
   customName?: string; // Custom name to display
   platform?: "lichess" | "chesscom" | null; // Platform of the main account
+  linkedAccounts?: Array<{ platform: "lichess" | "chesscom"; username: string }>;
   currentLichessToken?: string;
   weekBlunderRate?: number | null;
   previousWeekBlunderRate?: number | null;
@@ -65,16 +85,26 @@ interface UserProfileCardProps {
   previousWeekAcpl?: number | null;
 }
 
+interface RatingEntry {
+  key: RatingKey;
+  label: string;
+  color: string;
+  value: number | null;
+  icon: ReactNode;
+}
+
 export function UserProfileCard({
   name,
   handle,
   title,
   ratingHistory,
+  ratingSources,
   onFideUpdate,
   currentFideId,
   fidePlayer,
   customName,
   platform,
+  linkedAccounts = [],
   currentLichessToken,
   weekBlunderRate = null,
   previousWeekBlunderRate = null,
@@ -103,49 +133,80 @@ export function UserProfileCard({
   // Determine which title to display (FIDE title has priority if it exists)
   const displayTitle = fidePlayer?.title || title;
 
-  // Determine which ratings to display
-  // Priority: Online account ratings (Chess.com/Lichess) > FIDE ratings
-  // This ensures that when the main account is from Chess.com or Lichess,
-  // we show the actual online ratings, not FIDE ratings
-  // Only show classical if platform is Lichess (Chess.com doesn't have classical)
   const displayRatings = {
-    classical: platform === "lichess" ? ratingHistory.classical || fidePlayer?.standardRating : undefined,
-    rapid: ratingHistory.rapid || fidePlayer?.rapidRating,
-    blitz: ratingHistory.blitz || fidePlayer?.blitzRating,
+    classical: ratingHistory.classical,
+    rapid: ratingHistory.rapid,
+    blitz: ratingHistory.blitz,
     bullet: ratingHistory.bullet,
   };
-  const ratings = useMemo(
-    () =>
-      [
-        {
-          key: "classical",
-          label: t("chess.timeControl.classical", { defaultValue: "Classical" }),
-          color: "teal.5",
-          value: displayRatings.classical ?? null,
-        },
-        {
-          key: "rapid",
-          label: t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
-          color: "cyan.5",
-          value: displayRatings.rapid ?? null,
-        },
-        {
-          key: "blitz",
-          label: t("chess.timeControl.blitz", { defaultValue: "Blitz" }),
-          color: "yellow.6",
-          value: displayRatings.blitz ?? null,
-        },
-        {
-          key: "bullet",
-          label: t("chess.timeControl.bullet", { defaultValue: "Bullet" }),
-          color: "blue.5",
-          value: displayRatings.bullet ?? null,
-        },
-      ].filter(
-        (item): item is { key: string; label: string; color: string; value: number } => typeof item.value === "number",
-      ),
-    [displayRatings.blitz, displayRatings.bullet, displayRatings.classical, displayRatings.rapid, t],
-  );
+
+  const accountChips = useMemo(() => {
+    const chips = [...linkedAccounts];
+    if (chips.length > 0) return chips;
+    if (platform && handle.startsWith("@") && handle.length > 1) {
+      return [{ platform, username: handle.slice(1) }];
+    }
+    return [];
+  }, [handle, linkedAccounts, platform]);
+
+  const renderPlatformIcon = (value: "lichess" | "chesscom", size = 14) =>
+    value === "lichess" ? (
+      <Box
+        style={{
+          width: rem(size),
+          height: rem(size),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <LichessLogo />
+      </Box>
+    ) : (
+      <Image w={rem(size)} h={rem(size)} src="/chesscom.png" alt="chess.com" style={{ flexShrink: 0 }} />
+    );
+
+  const getSourceLabel = (source: RatingSource): string => {
+    if (source === "lichess") return t("features.dashboard.sourceLichess", { defaultValue: "Lichess" });
+    if (source === "chesscom") return t("features.dashboard.sourceChessCom", { defaultValue: "Chess.com" });
+    return t("features.dashboard.sourceFide", { defaultValue: "FIDE" });
+  };
+
+  const ratings = useMemo(() => {
+    const entries: RatingEntry[] = [
+      {
+        key: "classical",
+        label: t("chess.timeControl.classical", { defaultValue: "Classical" }),
+        color: "teal.5",
+        value: displayRatings.classical ?? null,
+        icon: <IconClockHour4 size={12} />,
+      },
+      {
+        key: "rapid",
+        label: t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+        color: "cyan.5",
+        value: displayRatings.rapid ?? null,
+        icon: <IconHourglassHigh size={12} />,
+      },
+      {
+        key: "blitz",
+        label: t("chess.timeControl.blitz", { defaultValue: "Blitz" }),
+        color: "yellow.6",
+        value: displayRatings.blitz ?? null,
+        icon: <IconFlame size={12} />,
+      },
+      {
+        key: "bullet",
+        label: t("chess.timeControl.bullet", { defaultValue: "Bullet" }),
+        color: "blue.5",
+        value: displayRatings.bullet ?? null,
+        icon: <IconChevronRight size={12} />,
+      },
+    ];
+
+    return entries.flatMap((entry) => (typeof entry.value === "number" ? [{ ...entry, value: entry.value }] : []));
+  }, [displayRatings.blitz, displayRatings.bullet, displayRatings.classical, displayRatings.rapid, t]);
 
   const topRating = ratings.length > 0 ? Math.max(...ratings.map((entry) => entry.value)) : 0;
   const ratingColsBase = ratings.length <= 1 ? 1 : 2;
@@ -206,32 +267,37 @@ export function UserProfileCard({
       >
         <Box>
           <Group gap={6} justify="space-between" wrap="nowrap">
-            <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
-              {platform && (
-                <Box
-                  style={{
-                    width: rem(24),
-                    height: rem(24),
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {platform === "lichess" ? (
-                    <LichessLogo />
-                  ) : (
-                    <Image w={rem(24)} h={rem(24)} src="/chesscom.png" alt="chess.com" />
-                  )}
-                </Box>
-              )}
+            <Group gap={6} wrap="nowrap" style={{ flex: 1, minWidth: 0, alignItems: "flex-start" }}>
               <Stack gap={1} style={{ flex: 1, minWidth: 0 }}>
                 <Text fw={800} fz="lg" truncate>
                   {displayName}
                 </Text>
-                <Text size="sm" c="dimmed" truncate>
-                  {handle}
-                </Text>
+                {accountChips.length > 0 && (
+                  <Group gap={6} wrap="wrap">
+                    {accountChips.map((account) => (
+                      <Group
+                        key={`${account.platform}:${account.username.toLowerCase()}`}
+                        gap={4}
+                        wrap="nowrap"
+                        px={6}
+                        py={2}
+                        style={{
+                          borderRadius: 999,
+                          border:
+                            "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 18%, var(--mantine-color-dark-4))",
+                          background:
+                            "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-6))",
+                          maxWidth: "100%",
+                        }}
+                      >
+                        {renderPlatformIcon(account.platform, 12)}
+                        <Text size="xs" c="dimmed" truncate>
+                          @{account.username}
+                        </Text>
+                      </Group>
+                    ))}
+                  </Group>
+                )}
               </Stack>
             </Group>
             <Group gap="xs" wrap="nowrap">
@@ -296,6 +362,21 @@ export function UserProfileCard({
             <SimpleGrid cols={{ base: ratingColsBase, sm: ratingColsSm }} spacing="xs">
               {ratings.map((rating) => {
                 const ratio = topRating > 0 ? Math.round((rating.value / topRating) * 100) : 0;
+                const sourceMeta = ratingSources?.[rating.key];
+                const sourceLabel = sourceMeta ? getSourceLabel(sourceMeta.source) : null;
+                const sourceDescription =
+                  sourceMeta == null
+                    ? null
+                    : sourceMeta.source === "fide"
+                      ? sourceLabel
+                      : `${sourceLabel}${sourceMeta.username ? ` · @${sourceMeta.username}` : ""}${
+                          sourceMeta.games > 0
+                            ? ` · ${t("features.dashboard.ratingGamesCount", {
+                                count: sourceMeta.games,
+                                defaultValue: "{{count}} games",
+                              })}`
+                            : ""
+                        }`;
                 return (
                   <Stack
                     key={rating.key}
@@ -309,12 +390,25 @@ export function UserProfileCard({
                         "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-6))",
                     }}
                   >
-                    <Text size="xs" c={rating.color}>
-                      {rating.label}
-                    </Text>
+                    <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
+                      <Group gap={4} wrap="nowrap">
+                        <ThemeIcon size={16} radius="xl" variant="light" color={rating.color}>
+                          {rating.icon}
+                        </ThemeIcon>
+                        <Text size="xs" c={rating.color} truncate>
+                          {rating.label}
+                        </Text>
+                      </Group>
+                      {sourceMeta && sourceMeta.source !== "fide" && renderPlatformIcon(sourceMeta.source, 12)}
+                    </Group>
                     <Text fw={800} fz="lg" lh={1.1}>
                       {rating.value}
                     </Text>
+                    {sourceDescription && (
+                      <Text size="xs" c="dimmed" lineClamp={1}>
+                        {sourceDescription}
+                      </Text>
+                    )}
                     <Progress
                       value={ratio}
                       size="xs"
