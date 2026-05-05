@@ -43,6 +43,7 @@ type LoadedRatingRange = {
 };
 
 const PuzzleDbFromPgnCache = new Map<string, PuzzleCacheEntry>();
+const PgnPuzzleMetaCache = new Map<string, { isPuzzleVariants: boolean }>();
 const _DB3_PREFETCH_BATCH_SIZE = 80;
 const DB3_PREFETCH_MIN_BUFFER = 30;
 const DB3_PREFETCH_TARGET_SIZE = 120;
@@ -124,6 +125,40 @@ function removeDb3PrefetchEntries(dbPath: string) {
   keys.forEach((key) => {
     Db3PrefetchCache.delete(key);
   });
+}
+
+async function getPgnPuzzleMeta(dbPath: string): Promise<{ isPuzzleVariants: boolean }> {
+  const cached = PgnPuzzleMetaCache.get(dbPath);
+  if (cached) {
+    return cached;
+  }
+  if (!dbPath.toLowerCase().endsWith(".pgn")) {
+    const plain = { isPuzzleVariants: false };
+    PgnPuzzleMetaCache.set(dbPath, plain);
+    return plain;
+  }
+
+  try {
+    const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
+    const metadataPath = dbPath.replace(/\.pgn$/i, ".info");
+    if (!(await exists(metadataPath))) {
+      const plain = { isPuzzleVariants: false };
+      PgnPuzzleMetaCache.set(dbPath, plain);
+      return plain;
+    }
+    const raw = await readTextFile(metadataPath);
+    const metadata = JSON.parse(raw) as { type?: string; tags?: unknown };
+    const tags = Array.isArray(metadata.tags)
+      ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
+    const value = { isPuzzleVariants: metadata.type === "puzzle" && tags.includes("puzzle-variants") };
+    PgnPuzzleMetaCache.set(dbPath, value);
+    return value;
+  } catch {
+    const plain = { isPuzzleVariants: false };
+    PgnPuzzleMetaCache.set(dbPath, plain);
+    return plain;
+  }
 }
 
 function takePuzzleInRange(entry: Db3PrefetchEntry, minRating: number, maxRating: number): Puzzle | null {
@@ -376,32 +411,18 @@ export const usePuzzleDatabase = () => {
       throw new Error("Puzzle database not found in cache");
     }
 
+    const { isPuzzleVariants } = await getPgnPuzzleMeta(db);
+
     // Check if this is a puzzle variants file and if we should filter unsolved puzzles
-    let isPuzzleVariants = false;
     let shouldFilterUnattempted = false;
     const unsolvedOnly = puzzleUnsolvedOnlyDb === db;
 
-    if (random && db.endsWith(".pgn")) {
+    if (isPuzzleVariants && random) {
       try {
-        const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
-        const metadataPath = db.replace(/\.pgn$/i, ".info");
-        if (await exists(metadataPath)) {
-          const raw = await readTextFile(metadataPath);
-          const metadata = JSON.parse(raw) as { type?: string; tags?: unknown };
-          if (metadata.type === "puzzle") {
-            const tags = Array.isArray(metadata.tags)
-              ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
-              : [];
-            isPuzzleVariants = tags.includes("puzzle-variants");
-
-            if (isPuzzleVariants) {
-              // Check if not 100% attempted (for puzzle variants we don't want repeats until all are attempted)
-              const totalPuzzles = unwrap(await commands.countPgnGames(db));
-              const attemptedCount = getAttemptedPgnPuzzleCount(db);
-              shouldFilterUnattempted = attemptedCount < totalPuzzles;
-            }
-          }
-        }
+        // Check if not 100% attempted (for puzzle variants we don't want repeats until all are attempted)
+        const totalPuzzles = unwrap(await commands.countPgnGames(db));
+        const attemptedCount = getAttemptedPgnPuzzleCount(db);
+        shouldFilterUnattempted = attemptedCount < totalPuzzles;
       } catch (_error) {
         // Continue with normal logic if metadata check fails
       }
@@ -420,7 +441,7 @@ export const usePuzzleDatabase = () => {
       const normalizedSide = sideToMove === "white" ? "b" : sideToMove === "black" ? "w" : null;
       let puzzle_indexes = localPuzzleDb.puzzles
         .map((p, i) => {
-          const inRange = p.rating >= minRating && p.rating <= maxRating;
+          const inRange = isPuzzleVariants ? true : p.rating >= minRating && p.rating <= maxRating;
           const sideMatches = normalizedSide ? p.sideToMove === normalizedSide : true;
           return inRange && sideMatches ? i : -1;
         })
@@ -777,6 +798,7 @@ export const usePuzzleDatabase = () => {
 
   const clearPuzzleCache = (dbPath: string) => {
     removeDb3PrefetchEntries(dbPath);
+    PgnPuzzleMetaCache.delete(dbPath);
     const cachedDb = PuzzleDbFromPgnCache.get(dbPath);
     if (cachedDb) {
       cachedDb.generated = {

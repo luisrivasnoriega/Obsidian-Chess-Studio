@@ -23,13 +23,15 @@ function PuzzleBoard({
   puzzles,
   currentPuzzle,
   changeCompletion,
+  applyRating,
   generatePuzzle,
   db,
   jumpToNext,
 }: {
   puzzles: Puzzle[];
   currentPuzzle: number;
-  changeCompletion: (completion: Completion) => void;
+  changeCompletion: (completion: Completion, options?: { affectRating?: boolean }) => void;
+  applyRating: boolean;
   generatePuzzle: (db: string) => void;
   db: string | null;
   jumpToNext: "off" | "success" | "success-and-failure";
@@ -141,10 +143,9 @@ function PuzzleBoard({
 
       if (expectedMove === uci || newPos.isCheckmate()) {
         if (currentMove === puzzle.moves.length - 1) {
-          // Puzzles are "one attempt": if you ever got it wrong, it stays incorrect.
-          // So we only mark as correct if it was never marked incorrect before.
-          if (puzzle.completion === "incomplete") {
-            changeCompletion("correct");
+          // If the puzzle is finally solved, keep it as solved in the session history.
+          if (puzzle.completion !== "correct") {
+            changeCompletion("correct", { affectRating: applyRating });
             recordPuzzleSolved();
             if (puzzle.source?.type === "pgn") {
               recordPgnPuzzleSolved(puzzle.source.path, puzzle.source.index);
@@ -173,7 +174,7 @@ function PuzzleBoard({
       // - mark completion as incorrect (only once)
       // - snap back to initial puzzle position and allow retry
       if (puzzle.completion === "incomplete") {
-        changeCompletion("incorrect");
+        changeCompletion("incorrect", { affectRating: applyRating });
       }
       setHasMistake(true);
       setPendingMove(null);

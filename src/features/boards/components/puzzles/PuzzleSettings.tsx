@@ -38,6 +38,7 @@ interface PuzzleSettingsProps {
   onOpeningTagsChange: (value: string[]) => void;
   sideToMove: "any" | "white" | "black";
   onSideToMoveChange: (value: "any" | "white" | "black") => void;
+  isPuzzleVariantsMode?: boolean;
 }
 
 export const PuzzleSettings = ({
@@ -64,6 +65,7 @@ export const PuzzleSettings = ({
   onOpeningTagsChange,
   sideToMove,
   onSideToMoveChange,
+  isPuzzleVariantsMode = false,
 }: PuzzleSettingsProps) => {
   const { t } = useTranslation();
 
@@ -155,24 +157,31 @@ export const PuzzleSettings = ({
               allowDeselect={false}
               flex={1}
             />
-            <NumberInput
-              label={t("features.puzzle.adaptiveOffset")}
-              value={adaptiveOffset}
-              onChange={(value) =>
-                onAdaptiveOffsetChange(typeof value === "number" && Number.isFinite(value) ? value : 0)
-              }
-              min={-1000}
-              max={1000}
-              step={25}
-              clampBehavior="strict"
-              allowDecimal={false}
-              flex={1}
-            />
-            <Input.Wrapper label={t("features.puzzle.hideRating")}>
-              <Center>
-                <Checkbox checked={hideRating} onChange={(event) => onHideRatingChange(event.currentTarget.checked)} />
-              </Center>
-            </Input.Wrapper>
+            {!isPuzzleVariantsMode ? (
+              <>
+                <NumberInput
+                  label={t("features.puzzle.adaptiveOffset")}
+                  value={adaptiveOffset}
+                  onChange={(value) =>
+                    onAdaptiveOffsetChange(typeof value === "number" && Number.isFinite(value) ? value : 0)
+                  }
+                  min={-1000}
+                  max={1000}
+                  step={25}
+                  clampBehavior="strict"
+                  allowDecimal={false}
+                  flex={1}
+                />
+                <Input.Wrapper label={t("features.puzzle.hideRating")}>
+                  <Center>
+                    <Checkbox
+                      checked={hideRating}
+                      onChange={(event) => onHideRatingChange(event.currentTarget.checked)}
+                    />
+                  </Center>
+                </Input.Wrapper>
+              </>
+            ) : null}
             <Input.Wrapper label={t("features.puzzle.inOrder")}>
               <Center>
                 <Checkbox checked={inOrder} onChange={(event) => onInOrderChange(event.currentTarget.checked)} />

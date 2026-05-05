@@ -646,15 +646,23 @@ export function ProfileGamesTab({
     }
   }, [sourceFilter, sourceOptions]);
   const averageStats = useMemo(() => {
-    const accuracyValues = visibleRows
-      .map((row) => row.accuracy)
-      .filter((value): value is number => typeof value === "number" && value > 0);
-    const acplValues = visibleRows
-      .map((row) => row.acpl)
-      .filter((value): value is number => typeof value === "number" && value > 0);
-    const estimatedEloValues = visibleRows
-      .map((row) => row.estimatedElo)
-      .filter((value): value is number => typeof value === "number" && value > 0);
+    const toPositiveNumber = (value: unknown): number | null => {
+      const numeric = typeof value === "number" ? value : Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    };
+
+    const accuracyValues = visibleRows.flatMap((row) => {
+      const value = toPositiveNumber(row.accuracy);
+      return value == null ? [] : [value];
+    });
+    const acplValues = visibleRows.flatMap((row) => {
+      const value = toPositiveNumber(row.acpl);
+      return value == null ? [] : [value];
+    });
+    const estimatedEloValues = visibleRows.flatMap((row) => {
+      const value = toPositiveNumber(row.estimatedElo);
+      return value == null ? [] : [value];
+    });
 
     const average = (values: number[]) => {
       if (values.length === 0) return null;
@@ -666,7 +674,7 @@ export function ProfileGamesTab({
       acpl: average(acplValues),
       estimatedElo: average(estimatedEloValues),
     };
-  }, [visibleRows.map]);
+  }, [visibleRows]);
   const analyzeAllOptions = useMemo(() => {
     const total = analyzeAllTypeCounts?.all ?? localGames.length + chessComGames.length + lichessGames.length;
     const localCount = analyzeAllTypeCounts?.local ?? localGames.length;
@@ -1488,7 +1496,7 @@ export function ProfileGamesTab({
             <Table.Tr>
               <Table.Td colSpan={4} style={stickyFooterLabelCellStyle}>
                 <Text fw={600} size="sm">
-                  {t("dashboard.tableFooterAverageVisible", "Average (visible)")}
+                  {t("dashboard.tableFooterAverageVisible", "Average")}
                 </Text>
               </Table.Td>
               <Table.Td style={stickyFooterCellStyle}>

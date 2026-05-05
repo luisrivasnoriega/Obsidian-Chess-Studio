@@ -12,6 +12,7 @@ import { match, P } from "ts-pattern";
 import { type BestMoves, commands, type EngineOptions, type GoMode, type NormalizedGame } from "@/bindings";
 import { parsePGN, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
+import { buildCoverageSourceSignature, setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
 import {
   getLichessGamesQueryParams,
   getMasterGamesQueryParams,
@@ -434,6 +435,15 @@ export async function getLichessGames(
   token?: string,
   signal?: AbortSignal,
 ): Promise<PositionData> {
+  const sourceSignature = buildCoverageSourceSignature({
+    dbType: "lch_all",
+    lichessSpeeds: options.speeds ?? [],
+    lichessRatings: options.ratings ?? [],
+    lichessSince: options.since ?? null,
+    lichessUntil: options.until ?? null,
+    lichessPlayer: options.player ?? "",
+    lichessColor: options.color ?? "white",
+  });
   const url = match(options.player)
     .with(P.union(undefined, ""), () => `${explorerURL}/lichess?${getLichessGamesQueryParams(fen, options)}`)
     .otherwise(() => `${explorerURL}/player?${getLichessGamesQueryParams(fen, options)}`);
@@ -442,7 +452,20 @@ export async function getLichessGames(
     headers: getExplorerHeaders(token),
     signal,
   });
-  return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess explorer");
+  const payload = await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess explorer");
+  try {
+    await setCoverageExplorerCache(
+      sourceSignature,
+      fen,
+      (payload.moves ?? []).map((move) => ({
+        san: move.san,
+        games: move.white + move.black + move.draws,
+      })),
+    );
+  } catch {
+    // Coverage cache is best effort and should not block explorer usage.
+  }
+  return payload;
 }
 
 export async function getMasterGames(
@@ -451,13 +474,31 @@ export async function getMasterGames(
   token?: string,
   signal?: AbortSignal,
 ): Promise<PositionData> {
+  const sourceSignature = buildCoverageSourceSignature({
+    dbType: "lch_master",
+    masterSince: options.since ?? null,
+    masterUntil: options.until ?? null,
+  });
   const url = `${explorerURL}/masters?${getMasterGamesQueryParams(fen, options)}`;
   const res = await fetch(url, {
     method: "GET",
     headers: getExplorerHeaders(token),
     signal,
   });
-  return await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess masters explorer");
+  const payload = await parseJsonResponse<PositionData>(res as unknown as Response, "Lichess masters explorer");
+  try {
+    await setCoverageExplorerCache(
+      sourceSignature,
+      fen,
+      (payload.moves ?? []).map((move) => ({
+        san: move.san,
+        games: move.white + move.black + move.draws,
+      })),
+    );
+  } catch {
+    // Coverage cache is best effort and should not block explorer usage.
+  }
+  return payload;
 }
 
 export async function getPlayerGames(fen: string, player: string, color: Color, token?: string) {

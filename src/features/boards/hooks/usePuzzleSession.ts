@@ -36,7 +36,8 @@ export const usePuzzleSession = (id: string) => {
     }
   };
 
-  const changeCompletion = (completion: Completion) => {
+  const changeCompletion = (completion: Completion, options?: { affectRating?: boolean }) => {
+    const affectRating = options?.affectRating ?? true;
     setPuzzles((puzzles) => {
       const puzzle = puzzles[currentPuzzle];
       if (!puzzle) return puzzles;
@@ -45,7 +46,7 @@ export const usePuzzleSession = (id: string) => {
       const nextPuzzles = puzzles.map((item, index) => (index === currentPuzzle ? updatedPuzzle : item));
 
       // Update player rating using Elo system
-      if (updatedPuzzle.rating) {
+      if (affectRating && updatedPuzzle.rating) {
         const newRating = updateElo(playerRating, updatedPuzzle.rating, completion === "correct");
         setPlayerRating(newRating);
       }

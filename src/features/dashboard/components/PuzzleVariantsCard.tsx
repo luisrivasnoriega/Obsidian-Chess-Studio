@@ -22,12 +22,16 @@ type PuzzleVariantFile = {
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
+  coverageNode: string | null;
+  coverageTier: "mainline" | "secondary" | "alternative" | null;
 };
 
 function parsePuzzleVariantTags(tags: string[]): {
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
+  coverageNode: string | null;
+  coverageTier: "mainline" | "secondary" | "alternative" | null;
 } {
   const variantName =
     tags
@@ -45,12 +49,64 @@ function parsePuzzleVariantTags(tags: string[]): {
       .find((tag) => tag.startsWith("mainline:"))
       ?.slice("mainline:".length)
       .trim() || null;
+  const coverageNode =
+    tags
+      .find((tag) => tag.startsWith("coverageNode:"))
+      ?.slice("coverageNode:".length)
+      .trim() || null;
+  const coverageTierRaw =
+    tags
+      .find((tag) => tag.startsWith("coverageTier:"))
+      ?.slice("coverageTier:".length)
+      .trim()
+      .toLowerCase() || null;
+  const coverageTier =
+    coverageTierRaw === "mainline" || coverageTierRaw === "secondary" || coverageTierRaw === "alternative"
+      ? coverageTierRaw
+      : null;
 
   return {
     variantName,
     depth: depthRaw && Number.isFinite(depth) ? depth : null,
     mainline,
+    coverageNode,
+    coverageTier,
   };
+}
+
+function humanizePuzzleTitle(title: string): string {
+  const withoutGeneratedSuffix = title.replace(/-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}$/i, "");
+  return withoutGeneratedSuffix.replace(/[-_]+/g, " ").trim();
+}
+
+function getTierPriority(tier: PuzzleVariantFile["coverageTier"]): number {
+  switch (tier) {
+    case "mainline":
+      return 1;
+    case "secondary":
+      return 2;
+    case "alternative":
+      return 3;
+    default:
+      return 9;
+  }
+}
+
+function getPuzzleDisplayName(file: PuzzleVariantFile): string {
+  const title = humanizePuzzleTitle(file.title);
+  if (title.length > 0 && title.toLowerCase() !== (file.variantName ?? "").toLowerCase()) {
+    return title;
+  }
+  if (file.coverageNode && file.coverageNode.trim().length > 0) {
+    return file.coverageNode;
+  }
+  if (file.variantName && file.variantName.trim().length > 0) {
+    return file.variantName;
+  }
+  if (title.length > 0) {
+    return title;
+  }
+  return file.title;
 }
 
 const PUZZLE_VARIANTS_UPDATED_EVENT = "puzzle-variants:updated";
@@ -102,7 +158,9 @@ export function PuzzleVariantsCard() {
         .filter((file) => file.metadata.type === "puzzle")
         .filter((file) => file.metadata.tags.includes("puzzle-variants"))
         .map((file) => {
-          const { variantName, depth, mainline } = parsePuzzleVariantTags(file.metadata.tags);
+          const { variantName, depth, mainline, coverageNode, coverageTier } = parsePuzzleVariantTags(
+            file.metadata.tags,
+          );
           return {
             title: file.name,
             path: file.path,
@@ -110,9 +168,10 @@ export function PuzzleVariantsCard() {
             variantName,
             depth,
             mainline,
+            coverageNode,
+            coverageTier,
           };
-        })
-        .sort((a, b) => a.title.localeCompare(b.title));
+        });
 
       setFiles(variantFiles);
     } catch {
@@ -143,13 +202,22 @@ export function PuzzleVariantsCard() {
   }, [reloadFiles]);
 
   const rows = useMemo(() => {
-    return files.map((file) => {
-      const solvedCount = getSolvedPgnPuzzleCount(file.path);
-      const safeTotal = Math.max(0, file.puzzleCount);
-      const clampedSolved = Math.min(solvedCount, safeTotal);
-      const coverage = safeTotal > 0 ? Math.round((clampedSolved / safeTotal) * 100) : 0;
-      return { ...file, solvedCount: clampedSolved, coverage };
-    });
+    return files
+      .map((file) => {
+        const solvedCount = getSolvedPgnPuzzleCount(file.path);
+        const safeTotal = Math.max(0, file.puzzleCount);
+        const clampedSolved = Math.min(solvedCount, safeTotal);
+        const coverage = safeTotal > 0 ? Math.round((clampedSolved / safeTotal) * 100) : 0;
+        const displayName = getPuzzleDisplayName(file);
+        return { ...file, solvedCount: clampedSolved, coverage, displayName };
+      })
+      .sort((a, b) => {
+        const tierPriorityDiff = getTierPriority(a.coverageTier) - getTierPriority(b.coverageTier);
+        if (tierPriorityDiff !== 0) {
+          return tierPriorityDiff;
+        }
+        return a.displayName.localeCompare(b.displayName);
+      });
   }, [files]);
 
   const resetProgress = useCallback(() => {
@@ -175,7 +243,7 @@ export function PuzzleVariantsCard() {
   }, [files, t]);
 
   const resetSingleProgress = useCallback(
-    (row: { path: string; variantName: string | null; title: string }) => {
+    (row: { path: string; variantName: string | null; title: string; displayName?: string }) => {
       try {
         const changed = resetPgnPuzzleProgressForPaths([row.path]);
         if (changed === 0) {
@@ -192,7 +260,7 @@ export function PuzzleVariantsCard() {
           title: t("common.success", { defaultValue: "Success" }),
           message: t("features.dashboard.puzzleVariants.resetOneDone", {
             defaultValue: "Progress reset for {{name}}.",
-            name: row.variantName ?? row.title,
+            name: row.displayName ?? row.variantName ?? row.title,
           }),
           color: "green",
         });
@@ -303,13 +371,21 @@ export function PuzzleVariantsCard() {
                   <Stack gap={5} style={{ flex: 1, minWidth: 0 }}>
                     <Group gap="xs" wrap="nowrap">
                       <Text size="sm" fw={600} truncate>
-                        {row.variantName ?? row.title}
+                        {row.displayName}
                       </Text>
-                      {row.depth != null && (
-                        <Badge size="xs" variant="light" radius="md">
-                          d{row.depth}
+                      {row.coverageTier === "mainline" ? (
+                        <Badge size="xs" variant="filled" radius="md" color="blue">
+                          {t("features.board.variants.mainlineShort", { defaultValue: "ML" })}
                         </Badge>
-                      )}
+                      ) : row.coverageTier === "secondary" ? (
+                        <Badge size="xs" variant="filled" radius="md" color="green">
+                          {t("features.board.variants.secondaryShort", { defaultValue: "Secondary" })}
+                        </Badge>
+                      ) : row.coverageTier === "alternative" ? (
+                        <Badge size="xs" variant="filled" radius="md" color="red">
+                          {t("features.board.variants.alternativeShort", { defaultValue: "Alternative" })}
+                        </Badge>
+                      ) : null}
                     </Group>
                     {row.mainline ? (
                       <Text size="xs" c="dimmed" truncate>

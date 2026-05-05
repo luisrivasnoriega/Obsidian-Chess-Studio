@@ -320,6 +320,22 @@ async getEngineConfig(path: string) : Promise<Result<EngineConfig, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async coverageCacheGet(sourceSignature: string, fen: string) : Promise<Result<CoverageCacheEntryDto | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("coverage_cache_get", { sourceSignature, fen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async coverageCacheSet(sourceSignature: string, fen: string, moves: CoverageCacheMoveDto[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("coverage_cache_set", { sourceSignature, fen, moves }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async fileExists(path: string) : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("file_exists", { path }) };
@@ -1733,6 +1749,8 @@ export type ChessbasePositionSearchResult = { stats: PositionStats[]; games: Nor
 export type ChessbasePreparedDownload = { query: string; maxGames: number; downloadedGames: number }
 export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
+export type CoverageCacheEntryDto = { source_signature: string; fen: string; total_games: bigint; moves: CoverageCacheMoveDto[]; fetched_at_ms: bigint; expires_at_ms: bigint }
+export type CoverageCacheMoveDto = { san: string; games: bigint }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
 export type DashboardAccuracyByColor = { white: number | null; black: number | null }

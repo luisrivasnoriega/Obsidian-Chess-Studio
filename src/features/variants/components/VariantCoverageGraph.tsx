@@ -14,6 +14,7 @@ export type CoverageGraphNode = {
   id: string;
   label: string;
   openingName?: string | null;
+  transpositionLabels?: string[];
   tier: CoverageTier;
   percent?: number;
   responsePercent?: number;
@@ -47,6 +48,17 @@ const DIMS = {
 };
 
 type NodeWithMeta = HierarchyPointNode<CoverageGraphNode> & { nodeId: string };
+type RenderedNode = {
+  mergeKey: string;
+  hierarchyNode: NodeWithMeta;
+  transpositionLabels: string[];
+  x: number;
+  y: number;
+};
+type RenderedLink = {
+  source: RenderedNode;
+  target: RenderedNode;
+};
 
 type VariantCoverageGraphProps = {
   root: CoverageGraphNode | null;
@@ -61,9 +73,9 @@ function getNodeTextColor(tier: CoverageTier, lowSample?: boolean, unmappedRespo
   return "#0f172a";
 }
 
-function edgeColor(link: HierarchyPointLink<CoverageGraphNode>): string {
-  if (link.target.data.unmappedResponse) return COVERAGE_UNMAPPED_COLOR;
-  return COVERAGE_TIER_COLORS[link.target.data.tier] ?? "#64748b";
+function edgeColor(target: CoverageGraphNode): string {
+  if (target.unmappedResponse) return COVERAGE_UNMAPPED_COLOR;
+  return COVERAGE_TIER_COLORS[target.tier] ?? "#64748b";
 }
 
 function mergeCoverageAndForcedLabel(coverageLabel: string, forcedLabel: string): string {
@@ -93,6 +105,99 @@ function formatOpeningSubtitle(openingName?: string | null): string {
   const maxLen = 38;
   if (text.length <= maxLen) return text;
   return `${text.slice(0, maxLen - 3)}...`;
+}
+
+function normalizeFenForMergeKey(fen?: string | null): string | null {
+  const text = `${fen ?? ""}`.trim();
+  if (!text) return null;
+  const parts = text.split(/\s+/);
+  const board = (parts[0] ?? "").trim().toLowerCase();
+  if (!board) return null;
+  const turn = (parts[1] ?? "w").trim().toLowerCase();
+  const castling = (parts[2] ?? "-").trim().toLowerCase();
+  const ep = (parts[3] ?? "-").trim().toLowerCase();
+  return `${board} ${turn} ${castling} ${ep}`;
+}
+
+function buildMergeKey(node: CoverageGraphNode): string {
+  const fenKey = normalizeFenForMergeKey(node.fen);
+  if (fenKey) return `fen:${fenKey}`;
+  const override = `${node.overrideKey ?? ""}`.trim();
+  if (override) return `override:${override.toLowerCase()}`;
+  return `id:${node.id}`;
+}
+
+function extractTranspositionLabel(label: string): string | null {
+  const text = `${label ?? ""}`.trim();
+  if (!text) return null;
+  const left = (text.split("|")[0] ?? text).trim();
+  if (!left) return null;
+  const withoutVariantSuffix = (left.split(" - ")[0] ?? left).trim();
+  return withoutVariantSuffix || null;
+}
+
+function buildRenderedDag(root: HierarchyPointNode<CoverageGraphNode>): {
+  nodes: RenderedNode[];
+  links: RenderedLink[];
+  outgoingCount: Map<string, number>;
+} {
+  const descendants = root.descendants() as NodeWithMeta[];
+  const treeLinks = root.links() as Array<HierarchyPointLink<CoverageGraphNode>>;
+  const canonicalByKey = new Map<string, NodeWithMeta>();
+  const keyByNodeId = new Map<string, string>();
+  const transpositionSetsByKey = new Map<string, Set<string>>();
+
+  for (const node of descendants) {
+    const mergeKey = buildMergeKey(node.data);
+    keyByNodeId.set(node.data.id, mergeKey);
+    if (!canonicalByKey.has(mergeKey)) {
+      canonicalByKey.set(mergeKey, node);
+    }
+
+    const transition = extractTranspositionLabel(node.data.label);
+    if (transition && node.data.tier !== "root") {
+      const set = transpositionSetsByKey.get(mergeKey) ?? new Set<string>();
+      set.add(transition);
+      transpositionSetsByKey.set(mergeKey, set);
+    }
+  }
+
+  const renderedByKey = new Map<string, RenderedNode>();
+  for (const [mergeKey, hierarchyNode] of canonicalByKey.entries()) {
+    const transpositionLabels = Array.from(transpositionSetsByKey.get(mergeKey) ?? []);
+    hierarchyNode.data.transpositionLabels = transpositionLabels;
+    renderedByKey.set(mergeKey, {
+      mergeKey,
+      hierarchyNode,
+      transpositionLabels,
+      x: hierarchyNode.x,
+      y: hierarchyNode.y,
+    });
+  }
+
+  const links: RenderedLink[] = [];
+  const linkKeySet = new Set<string>();
+  const outgoingCount = new Map<string, number>();
+  for (const link of treeLinks) {
+    const sourceKey = keyByNodeId.get(link.source.data.id);
+    const targetKey = keyByNodeId.get(link.target.data.id);
+    if (!sourceKey || !targetKey || sourceKey === targetKey) continue;
+    const dedupeKey = `${sourceKey}->${targetKey}`;
+    if (linkKeySet.has(dedupeKey)) continue;
+    linkKeySet.add(dedupeKey);
+
+    const source = renderedByKey.get(sourceKey);
+    const target = renderedByKey.get(targetKey);
+    if (!source || !target) continue;
+    links.push({ source, target });
+    outgoingCount.set(sourceKey, (outgoingCount.get(sourceKey) ?? 0) + 1);
+  }
+
+  return {
+    nodes: Array.from(renderedByKey.values()),
+    links,
+    outgoingCount,
+  };
 }
 
 function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | null {
@@ -190,6 +295,7 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     const hierarchyRoot = hierarchy(visualRoot, (d) => d.children);
     const treeRoot = tree<CoverageGraphNode>().nodeSize(DIMS.nodeSpacing)(hierarchyRoot);
     hierarchyRef.current = treeRoot;
+    const renderedDag = buildRenderedDag(treeRoot);
 
     const zoomBehavior = zoom<SVGSVGElement, unknown>()
       .filter((event) => {
@@ -213,16 +319,30 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
       svg.transition().duration(DIMS.transitionDuration).call(zoomBehavior.transform, initialTransform);
     }
 
-    const linkGenerator = linkHorizontal<HierarchyPointLink<CoverageGraphNode>, HierarchyPointNode<CoverageGraphNode>>()
+    const linkGenerator = linkHorizontal<RenderedLink, RenderedNode>()
       .x((d) => d.y)
       .y((d) => d.x);
 
     g.append("g")
       .selectAll("path")
-      .data(treeRoot.links())
+      .data(
+        renderedDag.links.map((link) => ({
+          ...link,
+          source: {
+            ...link.source,
+            x: link.source.hierarchyNode.x,
+            y: link.source.hierarchyNode.y,
+          },
+          target: {
+            ...link.target,
+            x: link.target.hierarchyNode.x,
+            y: link.target.hierarchyNode.y,
+          },
+        })),
+      )
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) => edgeColor(d))
+      .attr("stroke", (d) => edgeColor(d.target.hierarchyNode.data))
       .attr("stroke-width", DIMS.strokeWidth.link)
       .attr("opacity", 0.9)
       .attr("d", linkGenerator as any);
@@ -230,17 +350,18 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     const nodes = g
       .append("g")
       .selectAll("g")
-      .data(treeRoot.descendants() as NodeWithMeta[])
+      .data(renderedDag.nodes)
       .join("g")
-      .attr("transform", (d) => `translate(${d.y},${d.x})`)
+      .attr("transform", (d) => `translate(${d.hierarchyNode.y},${d.hierarchyNode.x})`)
       .attr("data-node", "true")
-      .style("cursor", (d) => (d.data.tier === "root" || !onNodeClick ? "default" : "pointer"));
+      .style("cursor", (d) => (d.hierarchyNode.data.tier === "root" || !onNodeClick ? "default" : "pointer"));
 
     const collapsibleNodes = nodes.filter((d) => {
-      if (d.data.tier === "root") return false;
-      const visibleChildren = d.data.children.length;
-      const hiddenChildren = d.data.hiddenChildrenCount ?? 0;
-      return visibleChildren > 0 || hiddenChildren > 0 || d.data.collapsed === true;
+      const nodeData = d.hierarchyNode.data;
+      if (nodeData.tier === "root") return false;
+      const visibleChildren = renderedDag.outgoingCount.get(d.mergeKey) ?? 0;
+      const hiddenChildren = nodeData.hiddenChildrenCount ?? 0;
+      return visibleChildren > 0 || hiddenChildren > 0 || nodeData.collapsed === true;
     });
 
     nodes
@@ -250,10 +371,14 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
       .attr("x", -DIMS.nodeWidth / 2)
       .attr("y", -DIMS.nodeHeight / 2)
       .attr("rx", DIMS.borderRadius)
-      .attr("fill", (d) => (d.data.unmappedResponse ? COVERAGE_UNMAPPED_COLOR : COVERAGE_TIER_COLORS[d.data.tier]));
+      .attr("fill", (d) =>
+        d.hierarchyNode.data.unmappedResponse
+          ? COVERAGE_UNMAPPED_COLOR
+          : COVERAGE_TIER_COLORS[d.hierarchyNode.data.tier],
+      );
 
     nodes
-      .filter((d) => d.data.lowSample === true && d.data.unmappedResponse !== true)
+      .filter((d) => d.hierarchyNode.data.lowSample === true && d.hierarchyNode.data.unmappedResponse !== true)
       .append("rect")
       .attr("width", DIMS.nodeWidth)
       .attr("height", DIMS.nodeHeight)
@@ -277,7 +402,13 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     const textGroup = nodes
       .append("text")
       .attr("text-anchor", "middle")
-      .attr("fill", (d) => getNodeTextColor(d.data.tier, d.data.lowSample, d.data.unmappedResponse))
+      .attr("fill", (d) =>
+        getNodeTextColor(
+          d.hierarchyNode.data.tier,
+          d.hierarchyNode.data.lowSample,
+          d.hierarchyNode.data.unmappedResponse,
+        ),
+      )
       .style("font-size", "11px")
       .style("font-weight", 700)
       .style("pointer-events", "none");
@@ -285,23 +416,41 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     textGroup
       .append("tspan")
       .attr("x", 0)
-      .attr("dy", (d) => (d.data.openingName || d.data.lowSample || d.data.unmappedResponse ? "-0.1em" : "0.31em"))
-      .text((d) => d.data.label);
+      .attr("dy", (d) =>
+        d.hierarchyNode.data.openingName || d.hierarchyNode.data.lowSample || d.hierarchyNode.data.unmappedResponse
+          ? "-0.1em"
+          : "0.31em",
+      )
+      .text((d) => d.hierarchyNode.data.label);
 
     textGroup
-      .filter((d) => Boolean(d.data.openingName))
+      .filter((d) => Boolean(d.hierarchyNode.data.openingName))
       .append("tspan")
       .attr("x", 0)
       .attr("dy", "1.15em")
       .style("font-size", "9.5px")
       .style("font-weight", 600)
-      .text((d) => formatOpeningSubtitle(d.data.openingName));
+      .text((d) => formatOpeningSubtitle(d.hierarchyNode.data.openingName));
 
     textGroup
-      .filter((d) => d.data.tier !== "root" && d.data.collapsed === true)
+      .filter((d) => (d.transpositionLabels?.length ?? 0) > 1)
       .append("tspan")
       .attr("x", 0)
-      .attr("dy", (d) => (d.data.openingName ? "1.0em" : "1.15em"))
+      .attr("dy", (d) => (d.hierarchyNode.data.openingName ? "1.0em" : "1.15em"))
+      .style("font-size", "9.5px")
+      .style("font-weight", 600)
+      .text((d) => {
+        const labels = d.transpositionLabels.slice(0, 3);
+        const remaining = Math.max(0, d.transpositionLabels.length - labels.length);
+        const suffix = remaining > 0 ? ` +${remaining}` : "";
+        return `${labels.join(" · ")}${suffix}`;
+      });
+
+    textGroup
+      .filter((d) => d.hierarchyNode.data.tier !== "root" && d.hierarchyNode.data.collapsed === true)
+      .append("tspan")
+      .attr("x", 0)
+      .attr("dy", (d) => (d.hierarchyNode.data.openingName ? "1.0em" : "1.15em"))
       .style("font-size", "10px")
       .style("font-weight", 700)
       .text(() => t("features.board.variants.coverageCollapsedBadge", { defaultValue: "Collapsed" }));
@@ -309,15 +458,15 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     textGroup
       .filter(
         (d) =>
-          d.data.tier !== "root" &&
-          d.data.lowSample === true &&
-          d.data.unmappedResponse !== true &&
-          !d.data.responseRarity &&
-          d.data.collapsed !== true,
+          d.hierarchyNode.data.tier !== "root" &&
+          d.hierarchyNode.data.lowSample === true &&
+          d.hierarchyNode.data.unmappedResponse !== true &&
+          !d.hierarchyNode.data.responseRarity &&
+          d.hierarchyNode.data.collapsed !== true,
       )
       .append("tspan")
       .attr("x", 0)
-      .attr("dy", (d) => (d.data.openingName ? "1.0em" : "1.15em"))
+      .attr("dy", (d) => (d.hierarchyNode.data.openingName ? "1.0em" : "1.15em"))
       .style("font-size", "10px")
       .style("font-weight", 600)
       .text(() => t("features.board.variants.lowSampleBadge", { defaultValue: "Low Sample" }));
@@ -325,18 +474,18 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
     textGroup
       .filter(
         (d) =>
-          d.data.tier !== "root" &&
-          Boolean(d.data.responseRarity) &&
-          d.data.unmappedResponse !== true &&
-          d.data.collapsed !== true,
+          d.hierarchyNode.data.tier !== "root" &&
+          Boolean(d.hierarchyNode.data.responseRarity) &&
+          d.hierarchyNode.data.unmappedResponse !== true &&
+          d.hierarchyNode.data.collapsed !== true,
       )
       .append("tspan")
       .attr("x", 0)
-      .attr("dy", (d) => (d.data.openingName ? "1.0em" : "1.15em"))
+      .attr("dy", (d) => (d.hierarchyNode.data.openingName ? "1.0em" : "1.15em"))
       .style("font-size", "10px")
       .style("font-weight", 700)
       .text((d) =>
-        d.data.responseRarity === "novelty"
+        d.hierarchyNode.data.responseRarity === "novelty"
           ? t("features.board.variants.coverageResponseNovelty", {
               defaultValue: "Novelty",
             })
@@ -346,36 +495,41 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
       );
 
     textGroup
-      .filter((d) => d.data.tier !== "root" && d.data.unmappedResponse === true && d.data.collapsed !== true)
+      .filter(
+        (d) =>
+          d.hierarchyNode.data.tier !== "root" &&
+          d.hierarchyNode.data.unmappedResponse === true &&
+          d.hierarchyNode.data.collapsed !== true,
+      )
       .append("tspan")
       .attr("x", 0)
-      .attr("dy", (d) => (d.data.openingName ? "1.0em" : "1.15em"))
+      .attr("dy", (d) => (d.hierarchyNode.data.openingName ? "1.0em" : "1.15em"))
       .style("font-size", "10px")
       .style("font-weight", 700)
       .text(() => t("features.board.variants.unmappedResponseBadge", { defaultValue: "No response mapped" }));
 
     if (onNodeClick) {
       nodes.on("click", (_event, d) => {
-        if (d.data.tier === "root") return;
+        if (d.hierarchyNode.data.tier === "root") return;
         if (clickTimeoutRef.current) {
           clearTimeout(clickTimeoutRef.current);
         }
         clickTimeoutRef.current = setTimeout(() => {
-          onNodeClick(d.data);
+          onNodeClick(d.hierarchyNode.data);
         }, 180);
       });
     }
 
     if (onNodeToggleCollapse) {
       nodes.on("dblclick", (event, d) => {
-        if (d.data.tier === "root") return;
+        if (d.hierarchyNode.data.tier === "root") return;
         event.preventDefault();
         event.stopPropagation();
         if (clickTimeoutRef.current) {
           clearTimeout(clickTimeoutRef.current);
           clickTimeoutRef.current = null;
         }
-        onNodeToggleCollapse(d.data);
+        onNodeToggleCollapse(d.hierarchyNode.data);
       });
 
       const toggleButton = collapsibleNodes
@@ -398,7 +552,7 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
         .style("font-weight", 900)
         .style("fill", "#f8fafc")
         .style("pointer-events", "none")
-        .text((d) => (d.data.collapsed ? "+" : "âˆ’"));
+        .text((d) => (d.hierarchyNode.data.collapsed ? "+" : "-"));
 
       toggleButton.on("click", (event, d) => {
         event.preventDefault();
@@ -407,7 +561,7 @@ export function VariantCoverageGraph({ root, onNodeClick, onNodeToggleCollapse }
           clearTimeout(clickTimeoutRef.current);
           clickTimeoutRef.current = null;
         }
-        onNodeToggleCollapse(d.data);
+        onNodeToggleCollapse(d.hierarchyNode.data);
       });
     }
   }, [onNodeClick, onNodeToggleCollapse, t, visualRoot]);

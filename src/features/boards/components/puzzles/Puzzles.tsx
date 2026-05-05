@@ -74,6 +74,7 @@ function Puzzles({ id }: { id: string }) {
   const isShowingSolutionRef = useRef<boolean>(false);
   const [isGeneratingPuzzle, setIsGeneratingPuzzle] = useState(false);
   const [isLoadingFilterOptions, setIsLoadingFilterOptions] = useState(false);
+  const [selectedDbIsPuzzleVariants, setSelectedDbIsPuzzleVariants] = useState(false);
 
   // Filter states
   const [hasThemes, setHasThemes] = useState(false);
@@ -96,6 +97,51 @@ function Puzzles({ id }: { id: string }) {
     if (!currentPuzzleData?.fen) return null;
     return positionFromFen(currentPuzzleData.fen)[0]?.turn ?? null;
   }, [currentPuzzleData?.fen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPuzzleVariantFlag = async () => {
+      if (!selectedDb?.toLowerCase().endsWith(".pgn")) {
+        setSelectedDbIsPuzzleVariants(false);
+        return;
+      }
+      try {
+        const { exists, readTextFile } = await import("@tauri-apps/plugin-fs");
+        const metadataPath = selectedDb.replace(/\.pgn$/i, ".info");
+        if (!(await exists(metadataPath))) {
+          if (!cancelled) setSelectedDbIsPuzzleVariants(false);
+          return;
+        }
+        const raw = await readTextFile(metadataPath);
+        const metadata = JSON.parse(raw) as { type?: string; tags?: unknown };
+        const tags = Array.isArray(metadata.tags)
+          ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
+          : [];
+        if (!cancelled) {
+          setSelectedDbIsPuzzleVariants(metadata.type === "puzzle" && tags.includes("puzzle-variants"));
+        }
+      } catch {
+        if (!cancelled) setSelectedDbIsPuzzleVariants(false);
+      }
+    };
+    void loadPuzzleVariantFlag();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDb]);
+
+  const challengeItems = useMemo(
+    () =>
+      puzzles
+        .map((p, index) => ({
+          ...p,
+          index,
+          label: selectedDbIsPuzzleVariants ? undefined : p.rating.toString(),
+        }))
+        .filter((p) => p.completion !== "incomplete")
+        .slice(-10),
+    [puzzles, selectedDbIsPuzzleVariants],
+  );
 
   // Event handlers
   const handleGeneratePuzzle = async () => {
@@ -450,6 +496,7 @@ function Puzzles({ id }: { id: string }) {
               puzzles={puzzles}
               currentPuzzle={currentPuzzle}
               changeCompletion={changeCompletion}
+              applyRating={!selectedDbIsPuzzleVariants}
               generatePuzzle={handleGeneratePuzzle}
               db={selectedDb}
               jumpToNext={jumpToNext}
@@ -480,6 +527,7 @@ function Puzzles({ id }: { id: string }) {
                 onOpeningTagsChange={setOpeningTags}
                 sideToMove={puzzleSideToMove}
                 onSideToMoveChange={handleSideToMoveChange}
+                isPuzzleVariantsMode={selectedDbIsPuzzleVariants}
               />
               <Divider my="sm" />
 
@@ -489,6 +537,7 @@ function Puzzles({ id }: { id: string }) {
                 generatingPuzzle={isGeneratingPuzzle}
                 onClearSession={handleClearSession}
                 changeCompletion={changeCompletion}
+                applyRating={!selectedDbIsPuzzleVariants}
                 currentPuzzle={currentPuzzleData}
                 puzzles={puzzles}
                 jumpToNext={jumpToNext}
@@ -500,20 +549,18 @@ function Puzzles({ id }: { id: string }) {
               />
               <Divider my="sm" />
 
-              <PuzzleStatistics currentPuzzle={currentPuzzleData} />
+              {!selectedDbIsPuzzleVariants ? <PuzzleStatistics currentPuzzle={currentPuzzleData} /> : null}
             </Paper>
 
             <Paper withBorder p="md">
-              <PuzzleVariantsPanel selectedDb={selectedDb} />
+              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} />
               <Divider my="sm" />
 
               <ChallengeHistory
-                challenges={puzzles.map((p) => ({
-                  ...p,
-                  label: p.rating.toString(),
-                }))}
+                challenges={challengeItems}
                 current={currentPuzzle}
                 select={handleSelectPuzzle}
+                maxItems={10}
               />
               <Divider my="sm" />
 
@@ -563,6 +610,7 @@ function Puzzles({ id }: { id: string }) {
                 onOpeningTagsChange={setOpeningTags}
                 sideToMove={puzzleSideToMove}
                 onSideToMoveChange={handleSideToMoveChange}
+                isPuzzleVariantsMode={selectedDbIsPuzzleVariants}
               />
               <Divider my="sm" />
 
@@ -572,6 +620,7 @@ function Puzzles({ id }: { id: string }) {
                 generatingPuzzle={isGeneratingPuzzle}
                 onClearSession={handleClearSession}
                 changeCompletion={changeCompletion}
+                applyRating={!selectedDbIsPuzzleVariants}
                 currentPuzzle={currentPuzzleData}
                 puzzles={puzzles}
                 jumpToNext={jumpToNext}
@@ -583,7 +632,7 @@ function Puzzles({ id }: { id: string }) {
               />
               <Divider my="sm" />
 
-              <PuzzleStatistics currentPuzzle={currentPuzzleData} />
+              {!selectedDbIsPuzzleVariants ? <PuzzleStatistics currentPuzzle={currentPuzzleData} /> : null}
             </ScrollArea>
           </Paper>
         </Grid.Col>
@@ -597,6 +646,7 @@ function Puzzles({ id }: { id: string }) {
             puzzles={puzzles}
             currentPuzzle={currentPuzzle}
             changeCompletion={changeCompletion}
+            applyRating={!selectedDbIsPuzzleVariants}
             generatePuzzle={handleGeneratePuzzle}
             db={selectedDb}
             jumpToNext={jumpToNext}
@@ -606,16 +656,14 @@ function Puzzles({ id }: { id: string }) {
         <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
           <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
             <ScrollArea h="100%" offsetScrollbars>
-              <PuzzleVariantsPanel selectedDb={selectedDb} />
+              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} />
               <Divider my="sm" />
 
               <ChallengeHistory
-                challenges={puzzles.map((p) => ({
-                  ...p,
-                  label: p.rating.toString(),
-                }))}
+                challenges={challengeItems}
                 current={currentPuzzle}
                 select={handleSelectPuzzle}
+                maxItems={10}
               />
               <Divider my="sm" />
 

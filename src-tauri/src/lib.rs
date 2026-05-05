@@ -6,6 +6,7 @@
 mod analysis_storage;
 mod app;
 mod chess;
+mod coverage_explorer_cache;
 mod dashboard_games_history;
 pub mod db;
 mod error;
@@ -48,6 +49,7 @@ use crate::analysis_storage::{
     analysis_db_get_analyzed_game, analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
     analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
 };
+use crate::coverage_explorer_cache::{coverage_cache_get, coverage_cache_set};
 use crate::dashboard_games_history::{
     dashboard_get_analyze_all_counts, dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_rows,
     dashboard_get_games_history_filter_meta,
@@ -223,6 +225,8 @@ pub async fn run() {
             get_profile_game_stats,
             get_profile_rating_timeline,
             get_engine_config,
+            coverage_cache_get,
+            coverage_cache_set,
             file_exists,
             get_file_metadata,
             save_welcome_card_image,

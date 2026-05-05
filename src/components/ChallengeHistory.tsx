@@ -8,30 +8,35 @@ import type { Completion } from "@/utils/puzzles";
 type Challenge = {
   completion: Completion;
   label?: string;
+  index?: number;
 };
 
 function ChallengeHistory({
   challenges,
   select,
   current,
+  maxItems,
 }: {
   challenges: Challenge[];
   select: (i: number) => void;
   current: number;
+  maxItems?: number;
 }) {
   const hideRating = useAtomValue(hidePuzzleRatingAtom);
+  const visibleChallenges = maxItems && maxItems > 0 ? challenges.slice(-maxItems) : challenges;
 
   return (
     <Group>
-      {challenges.map((p, i) => {
-        const isCurrent = i === current;
-        const uniqueKey = `${i}-${p.label ?? ""}-${p.completion}`;
+      {visibleChallenges.map((p, i) => {
+        const challengeIndex = typeof p.index === "number" ? p.index : i;
+        const isCurrent = challengeIndex === current;
+        const uniqueKey = `${challengeIndex}-${p.label ?? ""}-${p.completion}`;
         return match(p.completion)
           .with("correct", () => (
             <Stack key={uniqueKey} gap={0}>
               <ActionIcon
                 onClick={() => {
-                  select(i);
+                  select(challengeIndex);
                 }}
                 variant="light"
                 color="green"
@@ -39,39 +44,45 @@ function ChallengeHistory({
               >
                 <IconCheck color="green" />
               </ActionIcon>
-              <Text ta="center" fz="xs" c="green">
-                {p.label}
-              </Text>
+              {p.label ? (
+                <Text ta="center" fz="xs" c="green">
+                  {p.label}
+                </Text>
+              ) : null}
             </Stack>
           ))
           .with("incorrect", () => (
             <Stack key={uniqueKey} gap={0}>
               <ActionIcon
-                onClick={() => select(i)}
+                onClick={() => select(challengeIndex)}
                 variant="light"
                 color="red"
                 style={{ border: isCurrent ? "2px solid red" : "none" }}
               >
                 <IconX color="red" />
               </ActionIcon>
-              <Text ta="center" fz="xs" c="red">
-                {p.label}
-              </Text>
+              {p.label ? (
+                <Text ta="center" fz="xs" c="red">
+                  {p.label}
+                </Text>
+              ) : null}
             </Stack>
           ))
           .with("incomplete", () => (
             <Stack key={uniqueKey} gap={0}>
               <ActionIcon
-                onClick={() => select(i)}
+                onClick={() => select(challengeIndex)}
                 variant="light"
                 color="yellow"
                 style={{ border: isCurrent ? "2px solid yellow" : "none" }}
               >
                 <IconDots color="yellow" />
               </ActionIcon>
-              <Text ta="center" fz="xs" c="yellow">
-                {hideRating ? "?" : p.label}
-              </Text>
+              {p.label ? (
+                <Text ta="center" fz="xs" c="yellow">
+                  {hideRating ? "?" : p.label}
+                </Text>
+              ) : null}
             </Stack>
           ))
           .exhaustive();

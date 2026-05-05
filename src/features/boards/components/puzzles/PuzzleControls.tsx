@@ -17,7 +17,8 @@ interface PuzzleControlsProps {
   onGeneratePuzzle: () => void;
   generatingPuzzle: boolean;
   onClearSession: () => void;
-  changeCompletion: (completion: Completion) => void;
+  changeCompletion: (completion: Completion, options?: { affectRating?: boolean }) => void;
+  applyRating: boolean;
   currentPuzzle?: Puzzle;
   puzzles: Puzzle[];
   jumpToNext: "off" | "success" | "success-and-failure";
@@ -34,6 +35,7 @@ export const PuzzleControls = ({
   generatingPuzzle,
   onClearSession,
   changeCompletion,
+  applyRating,
   currentPuzzle,
   puzzles,
   jumpToNext,
@@ -75,7 +77,7 @@ export const PuzzleControls = ({
 
   const handleViewSolution = async () => {
     if (!currentPuzzle) return;
-    changeCompletion("incorrect");
+    changeCompletion("incorrect", { affectRating: applyRating });
 
     updateShowingSolution(true);
     goToStart();

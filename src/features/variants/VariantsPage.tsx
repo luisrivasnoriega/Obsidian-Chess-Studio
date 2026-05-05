@@ -66,6 +66,11 @@ import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
 import { defaultPGN, getMoveText, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
+import {
+  buildCoverageSourceSignature,
+  getCoverageExplorerCache,
+  setCoverageExplorerCache,
+} from "@/utils/coverageExplorerCache";
 import { getDatabases, type Opening, searchPosition } from "@/utils/db";
 import { getDocumentDir } from "@/utils/documentDir";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
@@ -197,10 +202,11 @@ type CoverageBuildProgress = {
 };
 
 const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
-const COVERAGE_TIER_RULE_VERSION = 3;
 const COVERAGE_GRAPH_CACHE_VERSION = 4;
 const COVERAGE_GRAPH_CACHE_DIR = ".coverage-graphs";
 const COVERAGE_LOW_SAMPLE_MIN_GAMES = 5000;
+const COVERAGE_BUILD_FETCH_CONCURRENCY = 4;
+const COVERAGE_BUILD_OPENING_LOOKUP_CONCURRENCY = 8;
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").toLowerCase();
@@ -349,19 +355,27 @@ function parseVariantBuildConfigFromTags(tags: string[]): Partial<VariantBuildCo
 }
 
 function buildSourceSignature(config: VariantBuildConfig): string {
-  return JSON.stringify({
-    coverageTierRuleVersion: COVERAGE_TIER_RULE_VERSION,
-    lowSampleMinGames: COVERAGE_LOW_SAMPLE_MIN_GAMES,
-    dbType: config.dbType,
-    localDatabasePath: config.localDatabasePath,
-    lichessSpeeds: [...config.lichessSpeeds].sort(),
-    lichessRatings: [...config.lichessRatings].sort((a, b) => a - b),
-    lichessSince: formatMonthTag(config.lichessSince),
-    lichessUntil: formatMonthTag(config.lichessUntil),
-    lichessPlayer: config.lichessPlayer.trim().toLowerCase(),
+  if (config.dbType === "local") {
+    return buildCoverageSourceSignature({
+      dbType: "local",
+      localDatabasePath: config.localDatabasePath,
+    });
+  }
+  if (config.dbType === "lch_master") {
+    return buildCoverageSourceSignature({
+      dbType: "lch_master",
+      masterSince: config.masterSince,
+      masterUntil: config.masterUntil,
+    });
+  }
+  return buildCoverageSourceSignature({
+    dbType: "lch_all",
+    lichessSpeeds: config.lichessSpeeds,
+    lichessRatings: config.lichessRatings,
+    lichessSince: config.lichessSince,
+    lichessUntil: config.lichessUntil,
+    lichessPlayer: config.lichessPlayer,
     lichessColor: config.lichessColor,
-    masterSince: formatMonthTag(config.masterSince),
-    masterUntil: formatMonthTag(config.masterUntil),
   });
 }
 
@@ -822,6 +836,31 @@ async function withCoverageRequestTimeout<T>(run: (signal: AbortSignal) => Promi
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+function createAsyncLimiter(maxConcurrent: number) {
+  const limit = Math.max(1, Math.floor(maxConcurrent));
+  let active = 0;
+  const queue: Array<() => void> = [];
+
+  const scheduleNext = () => {
+    active = Math.max(0, active - 1);
+    const next = queue.shift();
+    if (next) next();
+  };
+
+  return async <T,>(task: () => Promise<T>): Promise<T> =>
+    await new Promise<T>((resolve, reject) => {
+      const runTask = () => {
+        active += 1;
+        void Promise.resolve().then(task).then(resolve).catch(reject).finally(scheduleNext);
+      };
+      if (active < limit) {
+        runTask();
+      } else {
+        queue.push(runTask);
+      }
+    });
 }
 
 function fenTurnColor(fen: string): "white" | "black" {
@@ -2191,7 +2230,30 @@ export default function VariantsPage() {
         const existingCache = await readCoverageGraphCache(cacheFilePath);
         const legacyCache = existingCache ? null : parseLegacyCoverageCacheFromMetadata(targetMetadata);
         const { commands } = await import("@/bindings");
+        const runCoverageFetch = createAsyncLimiter(COVERAGE_BUILD_FETCH_CONCURRENCY);
+        const runOpeningLookup = createAsyncLimiter(COVERAGE_BUILD_OPENING_LOOKUP_CONCURRENCY);
         const openingNameByFenKey = new Map<string, string | null>();
+        const openingNameInFlightByFenKey = new Map<string, Promise<string | null>>();
+        const seedOpeningNamesFromGraph = (node?: CoverageGraphNode | null) => {
+          if (!node) return;
+          const stack: CoverageGraphNode[] = [node];
+          while (stack.length > 0) {
+            const current = stack.pop();
+            if (!current) continue;
+            const currentFen = `${current.fen ?? ""}`.trim();
+            const currentFenKey = currentFen ? normalizeFenKey(currentFen) : null;
+            if (currentFenKey && typeof current.openingName === "string") {
+              openingNameByFenKey.set(currentFenKey, current.openingName);
+            }
+            for (const child of current.children) {
+              stack.push(child);
+            }
+          }
+        };
+        if (existingCache?.sourceSignature === sourceSignature) {
+          seedOpeningNamesFromGraph(existingCache.graphRoot);
+        }
+
         const getOpeningNameByFen = async (fen?: string | null): Promise<string | null> => {
           const normalizedFen = `${fen ?? ""}`.trim();
           if (!normalizedFen) return null;
@@ -2199,18 +2261,31 @@ export default function VariantsPage() {
           if (openingNameByFenKey.has(fenKey)) {
             return openingNameByFenKey.get(fenKey) ?? null;
           }
-          try {
-            const result = await commands.getOpeningInfoFromFen(normalizedFen);
-            if (result.status !== "ok") {
+          const pending = openingNameInFlightByFenKey.get(fenKey);
+          if (pending) {
+            return await pending;
+          }
+
+          const request = runOpeningLookup(async () => {
+            try {
+              const result = await commands.getOpeningInfoFromFen(normalizedFen);
+              if (result.status !== "ok") {
+                openingNameByFenKey.set(fenKey, null);
+                return null;
+              }
+              const openingName = formatOpeningNameForCoverageNode(result.data) ?? null;
+              openingNameByFenKey.set(fenKey, openingName);
+              return openingName;
+            } catch {
               openingNameByFenKey.set(fenKey, null);
               return null;
             }
-            const openingName = formatOpeningNameForCoverageNode(result.data) ?? null;
-            openingNameByFenKey.set(fenKey, openingName);
-            return openingName;
-          } catch {
-            openingNameByFenKey.set(fenKey, null);
-            return null;
+          });
+          openingNameInFlightByFenKey.set(fenKey, request);
+          try {
+            return await request;
+          } finally {
+            openingNameInFlightByFenKey.delete(fenKey);
           }
         };
         const enrichCoverageGraphNodeOpenings = async (node: CoverageGraphNode): Promise<CoverageGraphNode> => {
@@ -2294,6 +2369,7 @@ export default function VariantsPage() {
             positionCache.set(fenKey, entry);
           }
         }
+        const positionEntryInFlightByFenKey = new Map<string, Promise<CoveragePositionCacheEntry>>();
 
         const getPositionEntry = async (fen: string): Promise<CoveragePositionCacheEntry> => {
           const fenKey = normalizeFenKey(fen);
@@ -2312,34 +2388,87 @@ export default function VariantsPage() {
             positionCache.set(fenKey, hydrated);
             return hydrated;
           }
+          const existingInFlight = positionEntryInFlightByFenKey.get(fenKey);
+          if (existingInFlight) {
+            return await existingInFlight;
+          }
 
-          const openings = await withCoverageRetry(
-            async () =>
-              await withCoverageRequestTimeout(
-                async (signal) => await fetchCoverageOpenings(fen, resolvedConfig, signal),
-                12_000,
-              ),
-          );
-          const totalGames = openings.reduce((acc, row) => acc + row.games, 0);
-          const lowSample = totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
-          const tiers = classifyMoveTier(openings);
-          const moves: CoverageMoveEntry[] = openings.map((row, index) => {
-            const overrideKey = buildCoverageTierOverrideKey(fen, row.san);
-            const overrideTier = tierOverrides.get(overrideKey);
-            const computedTier = tiers[index] ?? "alternative";
-            return {
-              san: row.san,
-              games: row.games,
-              percent: totalGames > 0 ? Number(((row.games / totalGames) * 100).toFixed(1)) : 0,
-              tier: overrideTier ?? computedTier,
-              lowSample,
-              nextFen: getNextFenFromSan(fen, row.san),
-            };
+          const request = runCoverageFetch(async () => {
+            let persistedCache: Awaited<ReturnType<typeof getCoverageExplorerCache>> = null;
+            try {
+              persistedCache = await getCoverageExplorerCache(sourceSignature, fen);
+            } catch {
+              persistedCache = null;
+            }
+            if (persistedCache) {
+              const openingsFromCache = persistedCache.moves
+                .map((move) => ({
+                  san: `${move.san ?? ""}`.trim(),
+                  games: Number.isFinite(move.games) ? Math.max(0, Math.floor(move.games)) : 0,
+                }))
+                .filter((move) => move.san.length > 0);
+              const totalGames = openingsFromCache.reduce((acc, row) => acc + row.games, 0);
+              const lowSample = totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
+              const tiers = classifyMoveTier(openingsFromCache);
+              const moves: CoverageMoveEntry[] = openingsFromCache.map((row, index) => {
+                const overrideKey = buildCoverageTierOverrideKey(fen, row.san);
+                const overrideTier = tierOverrides.get(overrideKey);
+                const computedTier = tiers[index] ?? "alternative";
+                return {
+                  san: row.san,
+                  games: row.games,
+                  percent: totalGames > 0 ? Number(((row.games / totalGames) * 100).toFixed(1)) : 0,
+                  tier: overrideTier ?? computedTier,
+                  lowSample,
+                  nextFen: getNextFenFromSan(fen, row.san),
+                };
+              });
+
+              const entry: CoveragePositionCacheEntry = { fen, totalGames, moves };
+              positionCache.set(fenKey, entry);
+              return entry;
+            }
+
+            const openings = await withCoverageRetry(
+              async () =>
+                await withCoverageRequestTimeout(
+                  async (signal) => await fetchCoverageOpenings(fen, resolvedConfig, signal),
+                  12_000,
+                ),
+            );
+            try {
+              await setCoverageExplorerCache(sourceSignature, fen, openings);
+            } catch {
+              // Cache write is best effort; the build should continue even if persistence fails.
+            }
+            const totalGames = openings.reduce((acc, row) => acc + row.games, 0);
+            const lowSample = totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
+            const tiers = classifyMoveTier(openings);
+            const moves: CoverageMoveEntry[] = openings.map((row, index) => {
+              const overrideKey = buildCoverageTierOverrideKey(fen, row.san);
+              const overrideTier = tierOverrides.get(overrideKey);
+              const computedTier = tiers[index] ?? "alternative";
+              return {
+                san: row.san,
+                games: row.games,
+                percent: totalGames > 0 ? Number(((row.games / totalGames) * 100).toFixed(1)) : 0,
+                tier: overrideTier ?? computedTier,
+                lowSample,
+                nextFen: getNextFenFromSan(fen, row.san),
+              };
+            });
+
+            const entry: CoveragePositionCacheEntry = { fen, totalGames, moves };
+            positionCache.set(fenKey, entry);
+            return entry;
           });
 
-          const entry: CoveragePositionCacheEntry = { fen, totalGames, moves };
-          positionCache.set(fenKey, entry);
-          return entry;
+          positionEntryInFlightByFenKey.set(fenKey, request);
+          try {
+            return await request;
+          } finally {
+            positionEntryInFlightByFenKey.delete(fenKey);
+          }
         };
 
         const variantRootFenByKey = new Map<string, string>();
@@ -2605,12 +2734,18 @@ export default function VariantsPage() {
 
           const sideToMove = fenTurnColor(fen);
           if (sideToMove === repertoireColor) {
+            const orientationMoves = Array.from(orientationMovesByFen.get(normalizeFenKey(fen)) ?? []);
+            if (orientationMoves.length === 0) {
+              // No mapped repertoire response from this position: stop branch early without extra API calls.
+              return;
+            }
+
             const entry = await getPositionEntry(fen);
             const percentBySan = new Map<string, number>();
             for (const move of entry.moves) {
               percentBySan.set(move.san, move.percent);
             }
-            const orientationMoves = Array.from(orientationMovesByFen.get(normalizeFenKey(fen)) ?? []);
+            const childExpansions: Array<Promise<void>> = [];
             for (const san of orientationMoves) {
               const nextFen = getNextFenFromSan(fen, san);
               const destinationVariantNames = nextFen ? variantNamesByFen.get(normalizeFenKey(nextFen)) : undefined;
@@ -2629,14 +2764,26 @@ export default function VariantsPage() {
               if (nextFen && remainingMoves >= 1) {
                 positionsPending += 1;
                 pushProgress("building");
-                await expandNode(nextFen, childNode, remainingMoves - 1, activeMovesUsed + 1);
+                childExpansions.push(expandNode(nextFen, childNode, remainingMoves - 1, activeMovesUsed + 1));
               }
+            }
+            if (childExpansions.length > 0) {
+              await Promise.all(childExpansions);
             }
             return;
           }
 
           const entry = await getPositionEntry(fen);
+          const childExpansions: Array<Promise<void>> = [];
           for (const move of entry.moves) {
+            const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
+            const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
+
+            // Hidden rule: alternative nodes without mapped response are not rendered; skip them entirely.
+            if (move.tier === "alternative" && !hasMappedResponse) {
+              continue;
+            }
+
             const destinationVariantNames = move.nextFen
               ? variantNamesByFen.get(normalizeFenKey(move.nextFen))
               : undefined;
@@ -2655,11 +2802,14 @@ export default function VariantsPage() {
               children: [],
             };
             parentNode.children.push(childNode);
-            if (move.nextFen && remainingMoves >= 1) {
+            if (move.nextFen && remainingMoves >= 1 && hasMappedResponse) {
               positionsPending += 1;
               pushProgress("building");
-              await expandNode(move.nextFen, childNode, remainingMoves, activeMovesUsed);
+              childExpansions.push(expandNode(move.nextFen, childNode, remainingMoves, activeMovesUsed));
             }
+          }
+          if (childExpansions.length > 0) {
+            await Promise.all(childExpansions);
           }
         };
 
@@ -3126,6 +3276,28 @@ export default function VariantsPage() {
         });
         return;
       }
+      const startFenKey = normalizeFenKey(startFen);
+
+      const resolvePuzzleSourceNode = (node: CoverageGraphNode): CoverageGraphNode =>
+        node.children.length === 1 && node.children[0].tier === "root" ? node.children[0] : node;
+
+      const transpositionSourceNodes: CoverageGraphNode[] = [];
+      const seenSourceIds = new Set<string>();
+      const collectTranspositionSourceNodes = (node: CoverageGraphNode) => {
+        const resolved = resolvePuzzleSourceNode(node);
+        const resolvedFen = `${resolved.fen ?? ""}`.trim();
+        if (resolvedFen.length > 0 && normalizeFenKey(resolvedFen) === startFenKey && !seenSourceIds.has(resolved.id)) {
+          seenSourceIds.add(resolved.id);
+          transpositionSourceNodes.push(resolved);
+        }
+        for (const child of node.children) {
+          collectTranspositionSourceNodes(child);
+        }
+      };
+      collectTranspositionSourceNodes(coverageGraphRoot);
+      if (transpositionSourceNodes.length === 0) {
+        transpositionSourceNodes.push(sourceNode);
+      }
 
       const hasTierInSubtree = (node: CoverageGraphNode, selectedTier: Exclude<CoverageTier, "root">): boolean => {
         const isEligibleBySample = coveragePuzzleIncludeLowSample || !node.lowSample;
@@ -3180,12 +3352,19 @@ export default function VariantsPage() {
           collectAllowedStartKeys(child);
         }
       };
-      collectAllowedStartKeys(sourceNode);
+      for (const transpositionSourceNode of transpositionSourceNodes) {
+        collectAllowedStartKeys(transpositionSourceNode);
+      }
+
+      const mergedPuzzleChildren: PuzzleTreeNodeDto[] = [];
+      for (const transpositionSourceNode of transpositionSourceNodes) {
+        mergedPuzzleChildren.push(...toFilteredPuzzleChildren(transpositionSourceNode));
+      }
 
       const puzzleRoot: PuzzleTreeNodeDto = {
         fen: startFen,
         san: null,
-        children: toFilteredPuzzleChildren(sourceNode),
+        children: mergedPuzzleChildren,
       };
 
       if (puzzleRoot.children.length === 0) {

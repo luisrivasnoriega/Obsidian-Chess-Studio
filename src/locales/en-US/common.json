@@ -1110,7 +1110,7 @@
     "filterByOpponent": "Filter by opponent",
     "filterByResult": "Filter by result",
     "filterByTimeControl": "Filter by time control",
-    "tableFooterAverageVisible": "Average (visible)",
+    "tableFooterAverageVisible": "Average",
     "openGameFailedTitle": "Could not open game",
     "openGameFailedMessage": "Failed to open the game link. Please try again.",
     "noGamesMatchFilters": "No games match the filters"
@@ -2564,6 +2564,11 @@
       "selectThemes": "Select themes",
       "openingTags": "Opening Tags",
       "selectOpeningTags": "Select opening tags",
+      "coveredSubvariants": "Covered sub-variants",
+      "coveredSubvariantsEmpty": "No recent incorrect sub-variants.",
+      "coveredSubvariantsMore": "+{{count}} more",
+      "variantsSolved": "Solved {{solved}}/{{total}}",
+      "variantsAccuracy": "Accuracy {{accuracy}}%",
       "add": {
         "title": "Add Puzzle"
       }

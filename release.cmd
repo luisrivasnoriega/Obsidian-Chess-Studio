@@ -59,12 +59,12 @@ if "%MAJOR%"=="" (
 
 REM ----------------------------
 REM Determine next version
-REM - Default is a MAJOR bump (e.g. 2.6.29 -> 3.0.0)
+REM - Default is a PATCH bump (e.g. 3.0.0 -> 3.0.1)
 REM - Override with:
 REM   - RELEASE_VERSION=2.1.0 (exact)
 REM   - RELEASE_BUMP=patch|minor|major
 REM ----------------------------
-if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=major"
+if "%RELEASE_BUMP%"=="" set "RELEASE_BUMP=patch"
 
 REM Normalize RELEASE_VERSION (allow "v2.1.0") and guard against stale overrides
 if defined RELEASE_VERSION (

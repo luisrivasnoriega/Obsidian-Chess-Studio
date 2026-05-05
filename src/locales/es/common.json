@@ -548,7 +548,7 @@
     "filterByOpponent": "Filtrar por oponente",
     "filterByResult": "Filtrar por resultado",
     "filterByTimeControl": "Filtrar por control de tiempo",
-    "tableFooterAverageVisible": "Promedio (visible)",
+    "tableFooterAverageVisible": "Promedio",
     "noGamesMatchFilters": "No hay partidas que coincidan con los filtros"
   },
   "databaseOptions": {
@@ -1832,6 +1832,11 @@
       "selectThemes": "Seleccionar temas",
       "openingTags": "Etiquetas de Apertura",
       "selectOpeningTags": "Seleccionar etiquetas de apertura",
+      "coveredSubvariants": "Subvariantes cubiertas",
+      "coveredSubvariantsEmpty": "Sin subvariantes incorrectas recientes.",
+      "coveredSubvariantsMore": "+{{count}} más",
+      "variantsSolved": "Resueltos {{solved}}/{{total}}",
+      "variantsAccuracy": "Acierto {{accuracy}}%",
       "add": {
         "title": "Añadir Puzzle"
       }

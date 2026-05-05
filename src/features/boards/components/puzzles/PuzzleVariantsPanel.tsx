@@ -3,16 +3,20 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import {
+  getAttemptedPgnPuzzleCount,
   getSolvedPgnPuzzleCount,
-  getSolvedPgnPuzzleIndexes,
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
 } from "@/utils/pgnPuzzleProgress";
+import type { Puzzle } from "@/utils/puzzles";
 import { unwrap } from "@/utils/unwrap";
 
 type PuzzleVariantsInfo = {
+  displayName: string;
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
+  coverageNode: string | null;
+  coverageTier: "mainline" | "secondary" | "alternative" | null;
   puzzleCount: number;
 };
 
@@ -44,6 +48,8 @@ function parsePuzzleVariantTags(tags: string[]): {
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
+  coverageNode: string | null;
+  coverageTier: "mainline" | "secondary" | "alternative" | null;
 } {
   const variantName =
     tags
@@ -61,11 +67,58 @@ function parsePuzzleVariantTags(tags: string[]): {
       .find((tag) => tag.startsWith("mainline:"))
       ?.slice("mainline:".length)
       .trim() || null;
+  const coverageNode =
+    tags
+      .find((tag) => tag.startsWith("coverageNode:"))
+      ?.slice("coverageNode:".length)
+      .trim() || null;
+  const coverageTierRaw =
+    tags
+      .find((tag) => tag.startsWith("coverageTier:"))
+      ?.slice("coverageTier:".length)
+      .trim()
+      .toLowerCase() || null;
+  const coverageTier =
+    coverageTierRaw === "mainline" || coverageTierRaw === "secondary" || coverageTierRaw === "alternative"
+      ? coverageTierRaw
+      : null;
   return {
     variantName,
     depth: depthRaw && Number.isFinite(depth) ? depth : null,
     mainline,
+    coverageNode,
+    coverageTier,
   };
+}
+
+function normalizePath(path: string): string {
+  return path.trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function getFileStem(path: string): string {
+  const normalized = path.trim().replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const filename = lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+  return filename.replace(/\.pgn$/i, "");
+}
+
+function humanizePuzzleTitle(title: string): string {
+  const withoutGeneratedSuffix = title.replace(/-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}$/i, "");
+  return withoutGeneratedSuffix.replace(/[-_]+/g, " ").trim();
+}
+
+function getPuzzleDisplayName(stem: string, parsed: ReturnType<typeof parsePuzzleVariantTags>): string {
+  const humanizedStem = humanizePuzzleTitle(stem);
+  if (humanizedStem.length > 0 && humanizedStem.toLowerCase() !== (parsed.variantName ?? "").toLowerCase()) {
+    return humanizedStem;
+  }
+  if (parsed.coverageNode && parsed.coverageNode.trim().length > 0) {
+    return parsed.coverageNode;
+  }
+  if (parsed.variantName && parsed.variantName.trim().length > 0) {
+    return parsed.variantName;
+  }
+  return stem;
 }
 
 function extractSolutionHeader(pgn: string): string | null {
@@ -73,12 +126,18 @@ function extractSolutionHeader(pgn: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
-export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null }) {
+export function PuzzleVariantsPanel({
+  selectedDb,
+  sessionPuzzles = [],
+}: {
+  selectedDb: string | null;
+  sessionPuzzles?: Puzzle[];
+}) {
   const { t } = useTranslation();
   const [info, setInfo] = useState<PuzzleVariantsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [_progressVersion, setProgressVersion] = useState(0);
-  const [solvedLines, setSolvedLines] = useState<string[]>([]);
+  const [solutionHeaders, setSolutionHeaders] = useState<string[]>([]);
 
   const isPgn = selectedDb?.toLowerCase().endsWith(".pgn") ?? false;
 
@@ -100,7 +159,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
     const loadInfo = async () => {
       if (!selectedDb || !isPgn) {
         setInfo(null);
-        setSolvedLines([]);
+        setSolutionHeaders([]);
         return;
       }
 
@@ -110,7 +169,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
         const metadataPath = selectedDb.replace(/\.pgn$/i, ".info");
         if (!(await exists(metadataPath))) {
           setInfo(null);
-          setSolvedLines([]);
+          setSolutionHeaders([]);
           return;
         }
 
@@ -118,7 +177,7 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
         const metadata = JSON.parse(raw) as { type?: string; tags?: unknown };
         if (metadata.type !== "puzzle") {
           setInfo(null);
-          setSolvedLines([]);
+          setSolutionHeaders([]);
           return;
         }
 
@@ -127,19 +186,29 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
           : [];
         if (!tags.includes("puzzle-variants")) {
           setInfo(null);
-          setSolvedLines([]);
+          setSolutionHeaders([]);
           return;
         }
 
-        const { variantName, depth, mainline } = parsePuzzleVariantTags(tags);
+        const parsed = parsePuzzleVariantTags(tags);
         const puzzleCount = unwrap(await commands.countPgnGames(selectedDb));
+        const stem = getFileStem(selectedDb);
+        const displayName = getPuzzleDisplayName(stem, parsed);
 
         if (cancelled) return;
-        setInfo({ variantName, depth, mainline, puzzleCount });
+        setInfo({
+          displayName,
+          variantName: parsed.variantName,
+          depth: parsed.depth,
+          mainline: parsed.mainline,
+          coverageNode: parsed.coverageNode,
+          coverageTier: parsed.coverageTier,
+          puzzleCount,
+        });
       } catch {
         if (!cancelled) {
           setInfo(null);
-          setSolvedLines([]);
+          setSolutionHeaders([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -155,24 +224,15 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
   useEffect(() => {
     let cancelled = false;
 
-    const loadSolvedLines = async () => {
+    const loadSolutionHeaders = async () => {
       if (!selectedDb || !info) {
-        setSolvedLines([]);
-        return;
-      }
-
-      const solvedIndexes = getSolvedPgnPuzzleIndexes(selectedDb);
-      if (solvedIndexes.length === 0) {
-        setSolvedLines([]);
+        setSolutionHeaders([]);
         return;
       }
 
       const cached = getCachedSolutions(selectedDb);
       if (cached) {
-        const lines = solvedIndexes
-          .map((idx) => cached[idx])
-          .filter((line): line is string => typeof line === "string" && line.length > 0);
-        setSolvedLines(lines);
+        setSolutionHeaders(cached);
         return;
       }
 
@@ -182,22 +242,23 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
         setCachedSolutions(selectedDb, solutions);
 
         if (cancelled) return;
-        const lines = solvedIndexes
-          .map((idx) => solutions[idx])
-          .filter((line): line is string => typeof line === "string" && line.length > 0);
-        setSolvedLines(lines);
+        setSolutionHeaders(solutions);
       } catch {
-        if (!cancelled) setSolvedLines([]);
+        if (!cancelled) setSolutionHeaders([]);
       }
     };
 
-    void loadSolvedLines();
+    void loadSolutionHeaders();
     return () => {
       cancelled = true;
     };
   }, [info, selectedDb]);
 
   const solvedCount = useMemo(() => (selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0), [info, selectedDb]);
+  const attemptedCount = useMemo(
+    () => (selectedDb && info ? getAttemptedPgnPuzzleCount(selectedDb) : 0),
+    [info, selectedDb],
+  );
   const clampedSolvedCount = useMemo(() => {
     if (!info) return 0;
     return Math.min(solvedCount, Math.max(0, info.puzzleCount));
@@ -208,6 +269,32 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
     const solved = clampedSolvedCount;
     return total > 0 ? Math.round((solved / total) * 100) : 0;
   }, [clampedSolvedCount, info]);
+  const accuracy = useMemo(() => {
+    if (!info) return 0;
+    if (attemptedCount <= 0) return 0;
+    return Math.round((clampedSolvedCount / attemptedCount) * 100);
+  }, [attemptedCount, clampedSolvedCount, info]);
+  const recentIncorrectSubvariants = useMemo(() => {
+    if (!selectedDb || !info || solutionHeaders.length === 0) return [];
+    const activePath = normalizePath(selectedDb);
+    const seen = new Set<string>();
+    const lines: string[] = [];
+    for (let i = sessionPuzzles.length - 1; i >= 0; i -= 1) {
+      const puzzle = sessionPuzzles[i];
+      if (puzzle.completion !== "incorrect") continue;
+      if (puzzle.source?.type !== "pgn") continue;
+      if (normalizePath(puzzle.source.path) !== activePath) continue;
+      const idx = puzzle.source.index;
+      if (!Number.isFinite(idx) || idx < 0) continue;
+      const line = solutionHeaders[idx];
+      if (!line || line.trim().length === 0) continue;
+      if (seen.has(line)) continue;
+      seen.add(line);
+      lines.push(line);
+      if (lines.length >= 10) break;
+    }
+    return lines;
+  }, [info, selectedDb, sessionPuzzles, solutionHeaders]);
 
   return (
     <Stack gap={6}>
@@ -228,18 +315,34 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
         <>
           <Stack gap={2}>
             <Group gap="xs" wrap="wrap">
-              {info.variantName ? (
-                <Badge size="sm" variant="light">
-                  {info.variantName}
+              <Badge size="sm" variant="light">
+                {info.displayName}
+              </Badge>
+              {info.coverageTier === "mainline" ? (
+                <Badge size="sm" variant="filled" color="blue">
+                  {t("features.board.variants.mainlineShort", { defaultValue: "ML" })}
                 </Badge>
-              ) : null}
-              {info.depth != null ? (
-                <Badge size="sm" variant="light">
-                  d{info.depth}
+              ) : info.coverageTier === "secondary" ? (
+                <Badge size="sm" variant="filled" color="green">
+                  {t("features.board.variants.secondaryShort", { defaultValue: "Secondary" })}
+                </Badge>
+              ) : info.coverageTier === "alternative" ? (
+                <Badge size="sm" variant="filled" color="red">
+                  {t("features.board.variants.alternativeShort", { defaultValue: "Alternative" })}
                 </Badge>
               ) : null}
               <Badge size="sm" variant="light">
-                {clampedSolvedCount}/{info.puzzleCount}
+                {t("features.puzzle.variantsSolved", {
+                  defaultValue: "Solved {{solved}}/{{total}}",
+                  solved: clampedSolvedCount,
+                  total: info.puzzleCount,
+                })}
+              </Badge>
+              <Badge size="sm" variant="light">
+                {t("features.puzzle.variantsAccuracy", {
+                  defaultValue: "Accuracy {{accuracy}}%",
+                  accuracy,
+                })}
               </Badge>
             </Group>
             {info.mainline ? (
@@ -255,25 +358,19 @@ export function PuzzleVariantsPanel({ selectedDb }: { selectedDb: string | null 
             <Text size="sm" fw={600}>
               {t("features.puzzle.coveredSubvariants", { defaultValue: "Covered sub-variants" })}
             </Text>
-            {solvedLines.length === 0 ? (
+            {recentIncorrectSubvariants.length === 0 ? (
               <Text size="sm" c="dimmed">
-                {t("features.puzzle.coveredSubvariantsEmpty", { defaultValue: "No solved sub-variants yet." })}
+                {t("features.puzzle.coveredSubvariantsEmpty", {
+                  defaultValue: "No recent incorrect sub-variants.",
+                })}
               </Text>
             ) : (
               <Stack gap={2}>
-                {solvedLines.slice(0, 10).map((line, index) => (
+                {recentIncorrectSubvariants.map((line, index) => (
                   <Text key={`${index}:${line}`} size="xs" c="dimmed" lineClamp={1}>
                     {line}
                   </Text>
                 ))}
-                {solvedLines.length > 10 ? (
-                  <Text size="xs" c="dimmed">
-                    {t("features.puzzle.coveredSubvariantsMore", {
-                      defaultValue: "+{{count}} more",
-                      count: solvedLines.length - 10,
-                    })}
-                  </Text>
-                ) : null}
               </Stack>
             )}
           </Stack>
