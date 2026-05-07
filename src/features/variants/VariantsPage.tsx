@@ -418,14 +418,12 @@ function CoverageTimeControlSelector({
   options,
   onChange,
   disabled,
-  refreshing,
   t,
 }: {
   value: CoverageProfileTimeControlCategory[];
   options: CoverageProfileTimeControlCategory[];
   onChange: (values: CoverageProfileTimeControlCategory[]) => void;
   disabled: boolean;
-  refreshing: boolean;
   t: (key: string, options?: { defaultValue?: string; count?: number }) => string;
 }) {
   const selectedSet = new Set(value.length > 0 ? value : options);
@@ -521,7 +519,7 @@ function CoverageTimeControlSelector({
                   </Text>
                 )}
               </Group>
-              {refreshing ? <Loader size={16} /> : <IconChevronDown size={16} color="var(--mantine-color-gray-4)" />}
+              <IconChevronDown size={16} color="var(--mantine-color-gray-4)" />
             </Group>
           </Box>
         </Popover.Target>
@@ -681,20 +679,16 @@ function toCoverageOpenings(openings: Opening[]): CoverageOpeningRow[] {
     .sort((a, b) => b.games - a.games);
 }
 
-function formatEngineAdvantageForRepertoire(
+function formatEngineAdvantage(
   score: { value: { type: "cp" | "mate"; value: number } } | null | undefined,
-  fen: string,
-  repertoireColor: "white" | "black",
 ): string | null {
   if (!score?.value || typeof score.value.value !== "number") return null;
-  const sideToMove = fenTurnColor(fen);
-  const perspective = sideToMove === repertoireColor ? 1 : -1;
   if (score.value.type === "mate") {
-    const mate = Math.trunc(score.value.value * perspective);
+    const mate = Math.trunc(score.value.value);
     const prefix = mate > 0 ? "+" : "";
     return `M${prefix}${mate}`;
   }
-  const cp = score.value.value * perspective;
+  const cp = score.value.value;
   const pawns = cp / 100;
   const prefix = pawns > 0 ? "+" : "";
   return `${prefix}${pawns.toFixed(2)}`;
@@ -1204,6 +1198,12 @@ function buildSanSequenceFromCoveragePath(path: CoverageGraphNode[]): string[] {
   return sequence;
 }
 
+function getCoverageNodeTerminalFen(node: CoverageGraphNode | null | undefined): string | null {
+  if (!node) return null;
+  const forcedReplyNode = node.children.length === 1 && node.children[0].tier === "root" ? node.children[0] : null;
+  return forcedReplyNode?.fen ?? node.fen ?? null;
+}
+
 function findTreePathBySanSequence(root: TreeNode, sanSequence: string[]): number[] | null {
   const path: number[] = [];
   let currentNode: TreeNode | null = root;
@@ -1575,7 +1575,7 @@ export default function VariantsPage() {
   const [coverageProfileTimeControlFilters, setCoverageProfileTimeControlFilters] = useState<
     CoverageProfileTimeControlCategory[]
   >([]);
-  const [coverageProfileStatsRefreshing, setCoverageProfileStatsRefreshing] = useState(false);
+  const [_coverageProfileStatsRefreshing, setCoverageProfileStatsRefreshing] = useState(false);
   const [coverageEngineMs, setCoverageEngineMs] = useState(1000);
   const [coverageEngineEvaluating, setCoverageEngineEvaluating] = useState(false);
   const [configureBuildModalOpened, setConfigureBuildModalOpened] = useState(false);
@@ -4460,7 +4460,12 @@ export default function VariantsPage() {
         coverageGraphTargetKey,
         ...collectSubtreeKeys(coverageGraphTargetKey).filter((key) => key !== coverageGraphTargetKey),
       ];
-      const fenCandidates = [sourceNode?.fen ?? null, parentNode?.fen ?? null].filter(
+      const fenCandidates = [
+        coverageActionNode.fen ?? null,
+        getCoverageNodeTerminalFen(sourceNode),
+        sourceNode?.fen ?? null,
+        parentNode?.fen ?? null,
+      ].filter(
         (value, index, array): value is string =>
           typeof value === "string" && value.trim().length > 0 && array.indexOf(value) === index,
       );
@@ -4812,7 +4817,7 @@ export default function VariantsPage() {
             await new Promise((resolve) => setTimeout(resolve, 80));
           }
 
-          const baseAdvantage = formatEngineAdvantageForRepertoire(bestLine?.score, nodeFen, coverageGraphOrientation);
+          const baseAdvantage = formatEngineAdvantage(bestLine?.score);
           if (!baseAdvantage) {
             failedCount += 1;
             continue;
@@ -4909,7 +4914,6 @@ export default function VariantsPage() {
     coverageActionNode,
     coverageEngineMs,
     coverageGraphCachePath,
-    coverageGraphOrientation,
     coverageGraphRoot,
     coverageGraphSourceSignature,
     coverageGraphTargetKey,
@@ -6151,7 +6155,6 @@ export default function VariantsPage() {
                   }}
                   options={coverageProfileTimeControlOptions}
                   disabled={coverageProfileTimeControlOptions.length === 0}
-                  refreshing={coverageProfileStatsRefreshing}
                   t={t}
                 />
                 <Button

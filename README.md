@@ -429,9 +429,9 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 | **Lines** | 23.05% |
 
 **Test Statistics:**
-- ✅ **83 test files** passing
-- ✅ **336 tests** passing
-- ⏱️ Test execution time: ~71 seconds
+- ✅ **180 test files** passing
+- ✅ **319 tests** passing
+- ⏱️ Test execution time: ~0 seconds
 
 **Well-Tested Areas:**
 - **Profile Components** (92.59% coverage): Player profiles, account selectors, personal cards, and panel components
