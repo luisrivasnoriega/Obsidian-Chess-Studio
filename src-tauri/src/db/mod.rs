@@ -514,6 +514,43 @@ fn ensure_db_initialized(db: &mut SqliteConnection) -> Result<()> {
     analysis_stats::ensure_profile_analysis_tables(db)?;
     weakness_model::ensure_profile_weakness_tables(db)?;
 
+    // Keep profile DB titles descriptive whenever we can infer a profile/player name.
+    // This upgrades legacy DBs that still have generic titles like "Profile Database".
+    let current_title: Option<String> = info::table
+        .filter(info::name.eq("Title"))
+        .select(info::value)
+        .first::<Option<String>>(db)
+        .optional()?
+        .flatten()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let profile_player_name: Option<String> = info::table
+        .filter(info::name.eq("ProfilePlayerName"))
+        .select(info::value)
+        .first::<Option<String>>(db)
+        .optional()?
+        .flatten()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let is_generic_title = current_title
+        .as_deref()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized.is_empty()
+                || normalized == "profile database"
+                || normalized == "profile"
+                || normalized == "untitled"
+        })
+        .unwrap_or(true);
+
+    if is_generic_title {
+        if let Some(profile_name) = profile_player_name {
+            upsert_info_value(db, "Title", &profile_name)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -886,6 +923,7 @@ pub async fn init_profile_db(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     let description = description.unwrap_or_default();
+    let normalized_title = title.trim().to_string();
     let db_exists = db_path.exists();
 
     let db = &mut get_db_or_create(
@@ -932,6 +970,17 @@ pub async fn init_profile_db(
             .flatten();
         if existing.is_none() {
             upsert_info_value(db, "ProfilePlayerName", title.trim())?;
+        }
+    }
+
+    // Always keep profile DB metadata aligned with the current profile name.
+    // This prevents generic labels ("Profile Database") from showing up in selectors.
+    if !normalized_title.is_empty() {
+        upsert_info_value(db, "Title", &normalized_title)?;
+        if description.trim().is_empty() {
+            upsert_info_value(db, "Description", "Profile database")?;
+        } else {
+            upsert_info_value(db, "Description", description.trim())?;
         }
     }
 

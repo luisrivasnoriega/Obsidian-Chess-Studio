@@ -679,7 +679,6 @@ export default function DashboardPage() {
     total: number;
     unanalyzed: number;
   } | null>(null);
-  const [analyzeAllAnalyzedCount, setAnalyzeAllAnalyzedCount] = useState(0);
   const [analyzeAllMissingBalancedStatsCount, setAnalyzeAllMissingBalancedStatsCount] = useState(0);
 
   // FIDE player information
@@ -1530,7 +1529,6 @@ export default function DashboardPage() {
       setAnalyzeAllScopeFilters(scopeFilters);
       setAnalyzeAllScopedRows([]);
       setAnalyzeAllCounts(null);
-      setAnalyzeAllAnalyzedCount(0);
       setAnalyzeAllMissingBalancedStatsCount(0);
       setAnalyzeAllModalOpened(true);
 
@@ -1564,10 +1562,8 @@ export default function DashboardPage() {
         const rowsForType = scopedRows.filter((row) => (type === "all" ? true : row.kind === type));
         const total = rowsForType.length;
         const unanalyzed = rowsForType.filter((row) => !isRowReadyForAnalyzeSkip(row)).length;
-        const analyzed = Math.max(0, total - unanalyzed);
 
         setAnalyzeAllCounts({ type, total, unanalyzed });
-        setAnalyzeAllAnalyzedCount(analyzed);
 
         const analyzedRows = rowsForType.filter((row) => row.isAnalyzed && !!row.pgn?.trim());
         if (!analyzedRows.length) {
@@ -1589,7 +1585,6 @@ export default function DashboardPage() {
         setAnalyzeAllMissingBalancedStatsCount(missingCount);
       } catch {
         setAnalyzeAllScopedRows([]);
-        setAnalyzeAllAnalyzedCount(0);
         setAnalyzeAllMissingBalancedStatsCount(0);
       }
     },
@@ -1714,97 +1709,6 @@ export default function DashboardPage() {
     notifications.show({
       title: t("features.dashboard.backfillBalancedStatsDone", { defaultValue: "Balanced stats updated" }),
       message: t("features.dashboard.backfillBalancedStatsDoneMessage", {
-        defaultValue: "Updated {{updated}} games. Skipped {{skipped}}.",
-        updated,
-        skipped,
-      }),
-      color: updated > 0 ? "green" : "yellow",
-    });
-  }, [activeProfileId, analyzeAllGameType, analyzeAllScopeFilters.minMoves, analyzeAllScopedRows, t]);
-
-  const handleRecalculateBalancedElo = useCallback(async () => {
-    if (!activeProfileId || !analyzeAllGameType) return;
-
-    const analyzeMinMoves = Math.max(5, analyzeAllScopeFilters.minMoves ?? 0);
-    const scopedRowsForRun = analyzeAllScopedRows.filter((row) => (row.moves ?? 0) >= analyzeMinMoves);
-    const rowsForSelectedType = scopedRowsForRun.filter((row) =>
-      analyzeAllGameType === "all" ? true : row.kind === analyzeAllGameType,
-    );
-    const analyzedRows = rowsForSelectedType.filter((row) => row.isAnalyzed && !!row.pgn?.trim());
-
-    if (!analyzedRows.length) {
-      setAnalyzeAllAnalyzedCount(0);
-      return;
-    }
-
-    notifications.show({
-      title: t("features.dashboard.recalculateBalancedStatsStarted", { defaultValue: "Recalculating balanced Elo" }),
-      message: t("features.dashboard.recalculateBalancedStatsStartedMessage", {
-        defaultValue: "Recalculating {{count}} analyzed games with the latest formula.",
-        count: analyzedRows.length,
-      }),
-      color: "blue",
-    });
-
-    let updated = 0;
-    let skipped = 0;
-    let pendingRefreshUpdates = 0;
-
-    const emitGamesHistoryRefresh = () => {
-      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
-    };
-
-    for (const row of analyzedRows) {
-      const pgn = row.pgn?.trim() ?? "";
-      if (!pgn) {
-        skipped++;
-        continue;
-      }
-
-      try {
-        const tree = await parsePGN(pgn);
-        const reportStats = getGameStats(tree.root);
-        const userColor = row.color === "black" ? "black" : "white";
-        const computed = buildStatsPayloadForBackend(reportStats, userColor, tree);
-        if (!computed) {
-          skipped++;
-          continue;
-        }
-
-        const mergedStats: GameStats = {
-          accuracy: computed.accuracy,
-          acpl: computed.acpl,
-          ...(computed.estimatedElo != null ? { estimatedElo: computed.estimatedElo } : {}),
-          ...(computed.opponentEstimatedElo != null ? { opponentEstimatedElo: computed.opponentEstimatedElo } : {}),
-          ...(computed.opponentRatingElo != null ? { opponentRatingElo: computed.opponentRatingElo } : {}),
-        };
-
-        const gameIdToSave = row.analysisGameId || row.gameKey;
-        if (!gameIdToSave) {
-          skipped++;
-          continue;
-        }
-
-        await saveGameStats(gameIdToSave, mergedStats, activeProfileId);
-        updated++;
-        pendingRefreshUpdates++;
-        if (pendingRefreshUpdates >= 10) {
-          emitGamesHistoryRefresh();
-          pendingRefreshUpdates = 0;
-        }
-      } catch {
-        skipped++;
-      }
-    }
-
-    setAnalyzeAllAnalyzedCount(Math.max(0, analyzedRows.length - skipped));
-    if (updated > 0) {
-      emitGamesHistoryRefresh();
-    }
-
-    notifications.show({
-      title: t("features.dashboard.recalculateBalancedStatsDone", { defaultValue: "Balanced Elo recalculated" }),
-      message: t("features.dashboard.recalculateBalancedStatsDoneMessage", {
         defaultValue: "Updated {{updated}} games. Skipped {{skipped}}.",
         updated,
         skipped,
@@ -3890,10 +3794,8 @@ export default function DashboardPage() {
                 ? analyzeAllCounts.unanalyzed
                 : 0
             }
-            analyzedGameCount={analyzeAllAnalyzedCount}
             missingBalancedStatsCount={analyzeAllMissingBalancedStatsCount}
             onBackfillMissingStats={handleBackfillMissingBalancedStats}
-            onRecalculateBalancedElo={handleRecalculateBalancedElo}
           />
         </Stack>
       )}

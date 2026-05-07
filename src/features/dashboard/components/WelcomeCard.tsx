@@ -1,4 +1,5 @@
-import { Badge, Box, Card, Group, Image, SimpleGrid, Stack, Text, Title } from "@mantine/core";
+import { Badge, Box, Card, Group, Image, SimpleGrid, Stack, Text, ThemeIcon, Title } from "@mantine/core";
+import { IconBolt, IconStopwatch, IconSun } from "@tabler/icons-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -95,6 +96,35 @@ export function WelcomeCard({
         fideInfo.rapidRating ||
         fideInfo.blitzRating),
   );
+  const fideRatingCards = [
+    {
+      key: "standard",
+      label: t("features.dashboard.timeControlCards.standard", { defaultValue: "Standard" }),
+      value: fideInfo?.standardRating,
+      accent: "#818cf8",
+      accentSoft: "rgba(129, 140, 248, 0.15)",
+      color: "indigo.5",
+      icon: <IconSun size={15} stroke={2.5} />,
+    },
+    {
+      key: "rapid",
+      label: t("features.dashboard.editProfile.rapid"),
+      value: fideInfo?.rapidRating,
+      accent: "#22d3ee",
+      accentSoft: "rgba(34, 211, 238, 0.15)",
+      color: "cyan.5",
+      icon: <IconStopwatch size={15} stroke={2.5} />,
+    },
+    {
+      key: "blitz",
+      label: t("features.dashboard.editProfile.blitz"),
+      value: fideInfo?.blitzRating,
+      accent: "#fde047",
+      accentSoft: "rgba(253, 224, 71, 0.15)",
+      color: "yellow.5",
+      icon: <IconBolt size={15} stroke={2.7} />,
+    },
+  ];
   // Determine welcome message based on first open, player name, title, and gender
   let welcomeMessage: string;
 
@@ -203,38 +233,47 @@ export function WelcomeCard({
 
             {/* Ratings FIDE */}
             {!compact && fideInfo && (fideInfo.standardRating || fideInfo.rapidRating || fideInfo.blitzRating) && (
-              <Group gap="xl" align="flex-start" wrap="wrap">
-                {fideInfo.standardRating && (
-                  <Stack gap={2} align="center">
-                    <Text size="xs" c="teal.6" fw={500}>
-                      {t("features.dashboard.editProfile.standard")}
-                    </Text>
-                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
-                      {fideInfo.standardRating}
-                    </Text>
-                  </Stack>
-                )}
-                {fideInfo.rapidRating && (
-                  <Stack gap={2} align="center">
-                    <Text size="xs" c="teal.6" fw={500}>
-                      {t("features.dashboard.editProfile.rapid")}
-                    </Text>
-                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="teal.6" fw={700} lh={1}>
-                      {fideInfo.rapidRating}
-                    </Text>
-                  </Stack>
-                )}
-                {fideInfo.blitzRating && (
-                  <Stack gap={2} align="center">
-                    <Text size="xs" c="yellow.6" fw={500}>
-                      {t("features.dashboard.editProfile.blitz")}
-                    </Text>
-                    <Text fz={{ base: "1.375rem", sm: "1.625rem", md: "1.875rem" }} c="yellow.6" fw={700} lh={1}>
-                      {fideInfo.blitzRating}
-                    </Text>
-                  </Stack>
-                )}
-              </Group>
+              <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="xs">
+                {fideRatingCards
+                  .filter((rating) => typeof rating.value === "number")
+                  .map((rating) => (
+                    <Stack
+                      key={rating.key}
+                      gap={4}
+                      px="sm"
+                      py={8}
+                      style={{
+                        minWidth: 116,
+                        borderRadius: 12,
+                        border: `1px solid color-mix(in srgb, ${rating.accent} 34%, var(--mantine-color-dark-4))`,
+                        background: `radial-gradient(110% 120% at 0% 0%, ${rating.accentSoft} 0%, transparent 52%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-6))`,
+                        boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 26px color-mix(in srgb, ${rating.accent} 10%, transparent)`,
+                      }}
+                    >
+                      <Group gap={7} wrap="nowrap">
+                        <ThemeIcon
+                          size={24}
+                          radius="xl"
+                          variant="filled"
+                          color={rating.color}
+                          style={{
+                            color: "var(--mantine-color-dark-9)",
+                            boxShadow: `0 0 18px color-mix(in srgb, ${rating.accent} 34%, transparent)`,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {rating.icon}
+                        </ThemeIcon>
+                        <Text size="xs" fw={800} c={rating.accent} truncate>
+                          {rating.label}
+                        </Text>
+                      </Group>
+                      <Text fw={850} fz="xl" lh={1.05}>
+                        {rating.value}
+                      </Text>
+                    </Stack>
+                  ))}
+              </SimpleGrid>
             )}
           </Stack>
 
@@ -293,30 +332,38 @@ export function WelcomeCard({
                 </Group>
 
                 <SimpleGrid cols={3} spacing={8}>
-                  <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed">
-                      {t("features.dashboard.editProfile.standard")}
-                    </Text>
-                    <Text fw={800} c="teal.4">
-                      {fideInfo?.standardRating ?? "--"}
-                    </Text>
-                  </Stack>
-                  <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed">
-                      {t("features.dashboard.editProfile.rapid")}
-                    </Text>
-                    <Text fw={800} c="cyan.4">
-                      {fideInfo?.rapidRating ?? "--"}
-                    </Text>
-                  </Stack>
-                  <Stack gap={0} align="center">
-                    <Text size="xs" c="dimmed">
-                      {t("features.dashboard.editProfile.blitz")}
-                    </Text>
-                    <Text fw={800} c="yellow.5">
-                      {fideInfo?.blitzRating ?? "--"}
-                    </Text>
-                  </Stack>
+                  {fideRatingCards.map((rating) => (
+                    <Stack
+                      key={rating.key}
+                      gap={4}
+                      align="center"
+                      p={8}
+                      style={{
+                        borderRadius: 10,
+                        border: `1px solid color-mix(in srgb, ${rating.accent} 30%, var(--mantine-color-dark-4))`,
+                        background: `radial-gradient(100% 100% at 0% 0%, ${rating.accentSoft} 0%, transparent 58%), color-mix(in srgb, var(--mantine-color-dark-6) 90%, var(--mantine-color-dark-5) 10%)`,
+                      }}
+                    >
+                      <ThemeIcon
+                        size={24}
+                        radius="xl"
+                        variant="filled"
+                        color={rating.color}
+                        style={{
+                          color: "var(--mantine-color-dark-9)",
+                          boxShadow: `0 0 16px color-mix(in srgb, ${rating.accent} 34%, transparent)`,
+                        }}
+                      >
+                        {rating.icon}
+                      </ThemeIcon>
+                      <Text size="xs" fw={800} c={rating.accent} truncate>
+                        {rating.label}
+                      </Text>
+                      <Text fw={850} c="gray.0" lh={1}>
+                        {rating.value ?? "--"}
+                      </Text>
+                    </Stack>
+                  ))}
                 </SimpleGrid>
               </Stack>
             ) : (

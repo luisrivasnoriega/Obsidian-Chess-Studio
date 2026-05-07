@@ -23,10 +23,8 @@ interface AnalyzeAllModalProps {
   analyzeMode?: "all" | "unanalyzed";
   engineOptions: Array<{ value: string; label: string }>;
   initialEnginePath?: string | null;
-  analyzedGameCount?: number;
   missingBalancedStatsCount?: number;
   onBackfillMissingStats?: () => Promise<void>;
-  onRecalculateBalancedElo?: () => Promise<void>;
 }
 
 export function AnalyzeAllModal({
@@ -38,16 +36,13 @@ export function AnalyzeAllModal({
   analyzeMode = "unanalyzed",
   engineOptions,
   initialEnginePath,
-  analyzedGameCount = 0,
   missingBalancedStatsCount = 0,
   onBackfillMissingStats,
-  onRecalculateBalancedElo,
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isBackfilling, setIsBackfilling] = useState(false);
-  const [isRecalculatingBalanced, setIsRecalculatingBalanced] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
@@ -190,27 +185,6 @@ export function AnalyzeAllModal({
     }
   };
 
-  const handleRecalculateBalancedElo = async () => {
-    if (!onRecalculateBalancedElo || isRecalculatingBalanced || isAnalyzing || isStopping || analyzedGameCount <= 0) {
-      return;
-    }
-    setIsRecalculatingBalanced(true);
-    try {
-      await onRecalculateBalancedElo();
-    } catch (e) {
-      notifications.show({
-        title: t("common.error", { defaultValue: "Error" }),
-        message: t("features.dashboard.recalculateBalancedStatsFailed", {
-          defaultValue: "Failed to recalculate balanced Elo values. {{error}}",
-          error: String(e),
-        }),
-        color: "red",
-      });
-    } finally {
-      setIsRecalculatingBalanced(false);
-    }
-  };
-
   // Reset when closed only if there is no active run; keep state alive for background analysis.
   useEffect(() => {
     const wasOpened = wasOpenedRef.current;
@@ -315,26 +289,11 @@ export function AnalyzeAllModal({
             })}
           </Text>
 
-          {onRecalculateBalancedElo && analyzedGameCount > 0 && (
-            <Button
-              variant="light"
-              color="blue"
-              disabled={isAnalyzing || isStopping || isRecalculatingBalanced || isBackfilling}
-              loading={isRecalculatingBalanced}
-              onClick={() => void handleRecalculateBalancedElo()}
-            >
-              {t("features.dashboard.recalculateBalancedStatsButton", {
-                defaultValue: "Recalculate balanced Elo ({{count}})",
-                count: analyzedGameCount,
-              })}
-            </Button>
-          )}
-
           {onBackfillMissingStats && missingBalancedStatsCount > 0 && (
             <Button
               variant="light"
               color="orange"
-              disabled={isAnalyzing || isStopping || isBackfilling || isRecalculatingBalanced}
+              disabled={isAnalyzing || isStopping || isBackfilling}
               loading={isBackfilling}
               onClick={() => void handleBackfillMissingStats()}
             >

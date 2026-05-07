@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
 
-const COVERAGE_TIER_RULE_VERSION = 3;
-const COVERAGE_LOW_SAMPLE_MIN_GAMES = 5000;
-
 export type CoverageExplorerCacheMove = {
   san: string;
   games: number;
+  white?: number;
+  black?: number;
+  draw?: number;
 };
 
 export type CoverageExplorerCacheEntry = {
@@ -45,36 +45,57 @@ function formatMonthTag(date: Date | null): string | null {
   return `${year}-${month}`;
 }
 
-export function buildCoverageSourceSignature(config: CoverageSourceConfig): string {
+export async function buildCoverageSourceSignature(config: CoverageSourceConfig): Promise<string> {
   if (config.dbType === "local") {
-    return JSON.stringify({
-      coverageTierRuleVersion: COVERAGE_TIER_RULE_VERSION,
-      lowSampleMinGames: COVERAGE_LOW_SAMPLE_MIN_GAMES,
-      dbType: "local",
-      localDatabasePath: config.localDatabasePath ?? null,
+    return await invoke<string>("variant_coverage_build_source_signature", {
+      config: {
+        dbType: "local",
+        localDatabasePath: config.localDatabasePath ?? null,
+        lichessSpeeds: [],
+        lichessRatings: [],
+        lichessSince: null,
+        lichessUntil: null,
+        lichessPlayer: "",
+        lichessColor: "white",
+        masterSince: null,
+        masterUntil: null,
+        includeChildren: false,
+      },
     });
   }
 
   if (config.dbType === "lch_master") {
-    return JSON.stringify({
-      coverageTierRuleVersion: COVERAGE_TIER_RULE_VERSION,
-      lowSampleMinGames: COVERAGE_LOW_SAMPLE_MIN_GAMES,
-      dbType: "lch_master",
-      masterSince: formatMonthTag(config.masterSince),
-      masterUntil: formatMonthTag(config.masterUntil),
+    return await invoke<string>("variant_coverage_build_source_signature", {
+      config: {
+        dbType: "lch_master",
+        localDatabasePath: null,
+        lichessSpeeds: [],
+        lichessRatings: [],
+        lichessSince: null,
+        lichessUntil: null,
+        lichessPlayer: "",
+        lichessColor: "white",
+        masterSince: formatMonthTag(config.masterSince),
+        masterUntil: formatMonthTag(config.masterUntil),
+        includeChildren: false,
+      },
     });
   }
 
-  return JSON.stringify({
-    coverageTierRuleVersion: COVERAGE_TIER_RULE_VERSION,
-    lowSampleMinGames: COVERAGE_LOW_SAMPLE_MIN_GAMES,
-    dbType: "lch_all",
-    lichessSpeeds: [...config.lichessSpeeds].sort(),
-    lichessRatings: [...config.lichessRatings].sort((a, b) => a - b),
-    lichessSince: formatMonthTag(config.lichessSince),
-    lichessUntil: formatMonthTag(config.lichessUntil),
-    lichessPlayer: config.lichessPlayer.trim().toLowerCase(),
-    lichessColor: config.lichessColor,
+  return await invoke<string>("variant_coverage_build_source_signature", {
+    config: {
+      dbType: "lch_all",
+      localDatabasePath: null,
+      lichessSpeeds: config.lichessSpeeds,
+      lichessRatings: config.lichessRatings,
+      lichessSince: formatMonthTag(config.lichessSince),
+      lichessUntil: formatMonthTag(config.lichessUntil),
+      lichessPlayer: config.lichessPlayer,
+      lichessColor: config.lichessColor,
+      masterSince: null,
+      masterUntil: null,
+      includeChildren: false,
+    },
   });
 }
 

@@ -336,6 +336,77 @@ async coverageCacheSet(sourceSignature: string, fen: string, moves: CoverageCach
     else return { status: "error", error: e  as any };
 }
 },
+async variantCoverageParseBuildConfigTags(tags: string[]) : Promise<VariantCoverageBuildConfigPatchDto> {
+    return await TAURI_INVOKE("variant_coverage_parse_build_config_tags", { tags });
+},
+async variantCoverageBuildSourceSignature(config: VariantCoverageBuildConfigDto) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_build_source_signature", { config }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageGraphCachePath(variantPath: string, sourceSignature: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_graph_cache_path", { variantPath, sourceSignature }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageReadGraphCache(filePath: string) : Promise<Result<VariantCoverageGraphCacheDto | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_read_graph_cache", { filePath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageWriteGraphCache(filePath: string, cache: VariantCoverageGraphCacheDto) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_write_graph_cache", { filePath, cache }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageTrimGraphByDepth(root: VariantCoverageGraphNodeDto, maxActiveMoves: bigint) : Promise<VariantCoverageGraphNodeDto> {
+    return await TAURI_INVOKE("variant_coverage_trim_graph_by_depth", { root, maxActiveMoves });
+},
+async variantCoverageClassifyPosition(fen: string, moves: VariantCoverageRawMoveDto[], tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null, repertoireColor: VariantCoverageColorDto) : Promise<VariantCoveragePositionDto> {
+    return await TAURI_INVOKE("variant_coverage_classify_position", { fen, moves, tierOverrides, repertoireColor });
+},
+async variantCoverageGetCachedPosition(sourceSignature: string, fen: string, tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null, repertoireColor: VariantCoverageColorDto) : Promise<Result<VariantCoveragePositionDto | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_get_cached_position", { sourceSignature, fen, tierOverrides, repertoireColor }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageGetProfilePosition(dbPath: string, fen: string, playerIds: number[], repertoireColor: VariantCoverageColorDto, timeControlCategories: string[]) : Promise<Result<VariantCoveragePositionDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_get_profile_position", { dbPath, fen, playerIds, repertoireColor, timeControlCategories }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageApplyPositionFlags(root: VariantCoverageGraphNodeDto, positions: Partial<{ [key in string]: VariantCoveragePositionDto }>, repertoireColor: VariantCoverageColorDto) : Promise<VariantCoverageGraphNodeDto> {
+    return await TAURI_INVOKE("variant_coverage_apply_position_flags", { root, positions, repertoireColor });
+},
+async variantCoverageApplyProfilePositionFlags(root: VariantCoverageGraphNodeDto, positions: Partial<{ [key in string]: VariantCoveragePositionDto }>, dbPath: string | null, playerIds: number[], repertoireColor: VariantCoverageColorDto, timeControlCategories: string[]) : Promise<Result<VariantCoverageGraphNodeDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variant_coverage_apply_profile_position_flags", { root, positions, dbPath, playerIds, repertoireColor, timeControlCategories }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantCoverageApplyNodeVisibilityRules(root: VariantCoverageGraphNodeDto) : Promise<VariantCoverageGraphNodeDto | null> {
+    return await TAURI_INVOKE("variant_coverage_apply_node_visibility_rules", { root });
+},
 async fileExists(path: string) : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("file_exists", { path }) };
@@ -1750,7 +1821,7 @@ export type ChessbasePreparedDownload = { query: string; maxGames: number; downl
 export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
 export type CoverageCacheEntryDto = { source_signature: string; fen: string; total_games: bigint; moves: CoverageCacheMoveDto[]; fetched_at_ms: bigint; expires_at_ms: bigint }
-export type CoverageCacheMoveDto = { san: string; games: bigint }
+export type CoverageCacheMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
 export type DashboardAccuracyByColor = { white: number | null; black: number | null }
@@ -2226,6 +2297,17 @@ export type UciOptionConfig =
 { type: "string"; value: { name: string; default: string | null } }
 export type UpdateGame = { fen: string; event: string; site: string; date?: string | null; time?: string | null; round?: string | null; white: string; white_elo?: number | null; black: string; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
 export type VariantBook = { rootNodeId: bigint; nodes: BookNode[]; edges: BookEdge[] }
+export type VariantCoverageBuildConfigDto = { dbType: VariantCoverageDatabaseTypeDto; localDatabasePath: string | null; lichessSpeeds: string[]; lichessRatings: number[]; lichessSince: string | null; lichessUntil: string | null; lichessPlayer: string; lichessColor: VariantCoverageColorDto; masterSince: string | null; masterUntil: string | null; includeChildren: boolean | null }
+export type VariantCoverageBuildConfigPatchDto = { dbType: VariantCoverageDatabaseTypeDto | null; localDatabasePath: string | null; lichessSpeeds: string[] | null; lichessRatings: number[] | null; lichessSince: string | null; lichessUntil: string | null; lichessPlayer: string; lichessColor: VariantCoverageColorDto; masterSince: string | null; masterUntil: string | null }
+export type VariantCoverageColorDto = "white" | "black"
+export type VariantCoverageDatabaseTypeDto = "local" | "lch_all" | "lch_master"
+export type VariantCoverageGraphCacheDto = { version: bigint; sourceSignature: string; maxMoves: bigint; positions: Partial<{ [key in string]: VariantCoveragePositionDto }>; tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null; labelOverrides: Partial<{ [key in string]: string }> | null; graphRoot: VariantCoverageGraphNodeDto; repertoireColor: VariantCoverageColorDto; generatedAt: string }
+export type VariantCoverageGraphNodeDto = { id: string; label: string; openingName: string | null; transpositionLabels: string[] | null; tier: VariantCoverageTierDto; percent: number | null; responsePercent: number | null; responseRarity: VariantCoverageResponseRarityDto | null; fen: string | null; overrideKey: string | null; activeMovesUsed: bigint | null; lowSample: boolean | null; unmappedResponse: boolean | null; collapsed: boolean | null; hiddenChildrenCount: bigint | null; activeWinRate: number | null; activeLossRate: number | null; profileWinRate: number | null; profileLossRate: number | null; engineAdvantage: string | null; engineMs: bigint | null; engineName: string | null; children: VariantCoverageGraphNodeDto[] }
+export type VariantCoverageMoveDto = { san: string; games?: bigint; white?: bigint; black?: bigint; draw?: bigint; percent?: number; tier: VariantCoverageTierDto; lowSample?: boolean; nextFen: string | null; activeWinRate: number | null; activeLossRate: number | null }
+export type VariantCoveragePositionDto = { fen: string; totalGames: bigint; moves: VariantCoverageMoveDto[] }
+export type VariantCoverageRawMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint; nextFen: string | null }
+export type VariantCoverageResponseRarityDto = "low_frequency" | "novelty"
+export type VariantCoverageTierDto = "root" | "mainline" | "secondary" | "alternative"
 export type VariantPosition = { fen: string; engine: string; recommended_move: string; ms: bigint }
 export type VariantsTreeNodeDto = { fen: string; san?: string | null; children?: VariantsTreeNodeDto[] }
 

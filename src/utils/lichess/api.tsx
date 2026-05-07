@@ -435,7 +435,7 @@ export async function getLichessGames(
   token?: string,
   signal?: AbortSignal,
 ): Promise<PositionData> {
-  const sourceSignature = buildCoverageSourceSignature({
+  const sourceSignature = await buildCoverageSourceSignature({
     dbType: "lch_all",
     lichessSpeeds: options.speeds ?? [],
     lichessRatings: options.ratings ?? [],
@@ -460,6 +460,9 @@ export async function getLichessGames(
       (payload.moves ?? []).map((move) => ({
         san: move.san,
         games: move.white + move.black + move.draws,
+        white: move.white,
+        black: move.black,
+        draw: move.draws,
       })),
     );
   } catch {
@@ -474,7 +477,7 @@ export async function getMasterGames(
   token?: string,
   signal?: AbortSignal,
 ): Promise<PositionData> {
-  const sourceSignature = buildCoverageSourceSignature({
+  const sourceSignature = await buildCoverageSourceSignature({
     dbType: "lch_master",
     masterSince: options.since ?? null,
     masterUntil: options.until ?? null,
@@ -493,6 +496,9 @@ export async function getMasterGames(
       (payload.moves ?? []).map((move) => ({
         san: move.san,
         games: move.white + move.black + move.draws,
+        white: move.white,
+        black: move.black,
+        draw: move.draws,
       })),
     );
   } catch {

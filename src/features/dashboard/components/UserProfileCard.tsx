@@ -15,12 +15,12 @@ import {
 } from "@mantine/core";
 import {
   IconAlertTriangle,
-  IconChevronRight,
-  IconClockHour4,
+  IconBolt,
   IconEdit,
-  IconFlame,
   IconGauge,
-  IconHourglassHigh,
+  IconRocket,
+  IconStopwatch,
+  IconSun,
   IconTargetArrow,
 } from "@tabler/icons-react";
 import { type ReactNode, useMemo, useState } from "react";
@@ -89,6 +89,8 @@ interface RatingEntry {
   key: RatingKey;
   label: string;
   color: string;
+  accent: string;
+  accentSoft: string;
   value: number | null;
   icon: ReactNode;
 }
@@ -177,31 +179,39 @@ export function UserProfileCard({
     const entries: RatingEntry[] = [
       {
         key: "classical",
-        label: t("chess.timeControl.classical", { defaultValue: "Classical" }),
-        color: "teal.5",
+        label: t("features.dashboard.timeControlCards.standard", { defaultValue: "Standard" }),
+        color: "indigo.5",
+        accent: "#818cf8",
+        accentSoft: "rgba(129, 140, 248, 0.15)",
         value: displayRatings.classical ?? null,
-        icon: <IconClockHour4 size={12} />,
+        icon: <IconSun size={15} stroke={2.5} />,
       },
       {
         key: "rapid",
         label: t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
         color: "cyan.5",
+        accent: "#22d3ee",
+        accentSoft: "rgba(34, 211, 238, 0.15)",
         value: displayRatings.rapid ?? null,
-        icon: <IconHourglassHigh size={12} />,
+        icon: <IconStopwatch size={15} stroke={2.5} />,
       },
       {
         key: "blitz",
         label: t("chess.timeControl.blitz", { defaultValue: "Blitz" }),
-        color: "yellow.6",
+        color: "yellow.5",
+        accent: "#fde047",
+        accentSoft: "rgba(253, 224, 71, 0.15)",
         value: displayRatings.blitz ?? null,
-        icon: <IconFlame size={12} />,
+        icon: <IconBolt size={15} stroke={2.7} />,
       },
       {
         key: "bullet",
         label: t("chess.timeControl.bullet", { defaultValue: "Bullet" }),
-        color: "blue.5",
+        color: "red.5",
+        accent: "#ff4d4f",
+        accentSoft: "rgba(255, 77, 79, 0.16)",
         value: displayRatings.bullet ?? null,
-        icon: <IconChevronRight size={12} />,
+        icon: <IconRocket size={15} stroke={2.5} />,
       },
     ];
 
@@ -380,28 +390,37 @@ export function UserProfileCard({
                 return (
                   <Stack
                     key={rating.key}
-                    gap={4}
-                    p="xs"
+                    gap={6}
+                    p="sm"
                     style={{
-                      borderRadius: 10,
-                      border:
-                        "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 10%, var(--mantine-color-dark-4))",
-                      background:
-                        "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-6))",
+                      borderRadius: 12,
+                      border: `1px solid color-mix(in srgb, ${rating.accent} 34%, var(--mantine-color-dark-4))`,
+                      background: `radial-gradient(110% 120% at 0% 0%, ${rating.accentSoft} 0%, transparent 52%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 92%, var(--mantine-color-dark-5) 8%), var(--mantine-color-dark-6))`,
+                      boxShadow: `inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 26px color-mix(in srgb, ${rating.accent} 10%, transparent)`,
                     }}
                   >
                     <Group justify="space-between" align="center" wrap="nowrap" gap={6}>
-                      <Group gap={4} wrap="nowrap">
-                        <ThemeIcon size={16} radius="xl" variant="light" color={rating.color}>
+                      <Group gap={7} wrap="nowrap" style={{ minWidth: 0 }}>
+                        <ThemeIcon
+                          size={24}
+                          radius="xl"
+                          variant="filled"
+                          color={rating.color}
+                          style={{
+                            color: "var(--mantine-color-dark-9)",
+                            boxShadow: `0 0 18px color-mix(in srgb, ${rating.accent} 34%, transparent)`,
+                            flexShrink: 0,
+                          }}
+                        >
                           {rating.icon}
                         </ThemeIcon>
-                        <Text size="xs" c={rating.color} truncate>
+                        <Text size="xs" fw={800} c={rating.accent} truncate>
                           {rating.label}
                         </Text>
                       </Group>
                       {sourceMeta && sourceMeta.source !== "fide" && renderPlatformIcon(sourceMeta.source, 12)}
                     </Group>
-                    <Text fw={800} fz="lg" lh={1.1}>
+                    <Text fw={850} fz="xl" lh={1.05}>
                       {rating.value}
                     </Text>
                     {sourceDescription && (
@@ -413,7 +432,7 @@ export function UserProfileCard({
                       value={ratio}
                       size="xs"
                       radius="xl"
-                      color={rating.color}
+                      color={rating.accent}
                       style={{
                         backgroundColor:
                           "color-mix(in srgb, var(--mantine-color-dark-5) 86%, var(--mantine-color-dark-4) 14%)",

@@ -13,6 +13,7 @@
   Modal,
   MultiSelect,
   NumberInput,
+  Popover,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -45,6 +46,7 @@ import {
 } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { exists, mkdir, readDir, readTextFile, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
@@ -63,20 +65,19 @@ import {
   processEntriesRecursively,
 } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeProfileIdAtom, activeTabAtom, profilesAtom, tabsAtom } from "@/state/atoms";
+import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
+import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { defaultPGN, getMoveText, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import {
-  buildCoverageSourceSignature,
-  getCoverageExplorerCache,
-  setCoverageExplorerCache,
-} from "@/utils/coverageExplorerCache";
-import { getDatabases, type Opening, searchPosition } from "@/utils/db";
+import { setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
+import { getDatabases, type Opening, query_players, searchPosition } from "@/utils/db";
 import { getDocumentDir } from "@/utils/documentDir";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import { getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
+import { getProfileDbPath } from "@/utils/profileDb";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
 import type { TreeNode } from "@/utils/treeReducer";
 import { PuzzleVariantsModal } from "../boards/components/PuzzleVariantsModal";
@@ -157,13 +158,45 @@ type VariantBuildConfig = {
   includeChildren: boolean;
 };
 
+type VariantCoverageBuildConfigPatchDto = {
+  dbType: VariantBuildConfig["dbType"] | null;
+  localDatabasePath: string | null;
+  lichessSpeeds: LichessGameSpeed[] | null;
+  lichessRatings: LichessRating[] | null;
+  lichessSince: string | null;
+  lichessUntil: string | null;
+  lichessPlayer: string;
+  lichessColor: "white" | "black";
+  masterSince: string | null;
+  masterUntil: string | null;
+};
+
+type VariantCoverageBuildConfigDto = {
+  dbType: VariantBuildConfig["dbType"];
+  localDatabasePath: string | null;
+  lichessSpeeds: LichessGameSpeed[];
+  lichessRatings: LichessRating[];
+  lichessSince: string | null;
+  lichessUntil: string | null;
+  lichessPlayer: string;
+  lichessColor: "white" | "black";
+  masterSince: string | null;
+  masterUntil: string | null;
+  includeChildren: boolean;
+};
+
 type CoverageMoveEntry = {
   san: string;
   games: number;
+  white: number;
+  black: number;
+  draw: number;
   percent: number;
   tier: CoverageTier;
   lowSample?: boolean;
   nextFen: string | null;
+  activeWinRate?: number | null;
+  activeLossRate?: number | null;
 };
 
 type CoveragePositionCacheEntry = {
@@ -172,8 +205,17 @@ type CoveragePositionCacheEntry = {
   moves: CoverageMoveEntry[];
 };
 
+type CoverageRawMoveEntry = {
+  san: string;
+  games: number;
+  white?: number;
+  black?: number;
+  draw?: number;
+  nextFen?: string | null;
+};
+
 type VariantCoverageCache = {
-  version: 4;
+  version: 6;
   sourceSignature: string;
   maxMoves: number;
   positions: Record<string, CoveragePositionCacheEntry>;
@@ -185,11 +227,14 @@ type VariantCoverageCache = {
 };
 
 type LegacyVariantCoverageCache = {
-  version: 3;
+  version: 3 | 4;
   sourceSignature: string;
   maxMoves: number;
   positions: Record<string, CoveragePositionCacheEntry>;
   tierOverrides?: Record<string, Exclude<CoverageTier, "root">>;
+  labelOverrides?: Record<string, string>;
+  graphRoot?: CoverageGraphNode;
+  repertoireColor?: "white" | "black";
   generatedAt: string;
 };
 
@@ -201,12 +246,82 @@ type CoverageBuildProgress = {
   positionsPending: number;
 };
 
+type CoverageProfileTimeControlCategory =
+  | "ultra_bullet"
+  | "bullet"
+  | "blitz"
+  | "rapid"
+  | "classical"
+  | "correspondence"
+  | "daily";
+
+type CoverageGamesHistoryFilterMetaResponse = {
+  availableTimeControlCategories: string[];
+  availableSources: string[];
+};
+
+type CoverageActionTab = "edit" | "puzzles" | "board" | "engine";
+
+type CoverageEngineBestLine = {
+  score: { value: { type: "cp" | "mate"; value: number } };
+  sanMoves?: string[] | null;
+  multipv?: number | null;
+};
+
 const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
-const COVERAGE_GRAPH_CACHE_VERSION = 4;
-const COVERAGE_GRAPH_CACHE_DIR = ".coverage-graphs";
-const COVERAGE_LOW_SAMPLE_MIN_GAMES = 5000;
+const COVERAGE_GRAPH_CACHE_VERSION = 6;
 const COVERAGE_BUILD_FETCH_CONCURRENCY = 4;
 const COVERAGE_BUILD_OPENING_LOOKUP_CONCURRENCY = 8;
+const COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS = 3;
+const COVERAGE_PROFILE_STATS_MAX_ACTIVE_DEPTH = COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS;
+const COVERAGE_CONTROL_INPUT_STYLE = {
+  minHeight: 38,
+  background:
+    "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-8) 90%, var(--mantine-color-blue-9) 10%), color-mix(in srgb, var(--mantine-color-dark-7) 92%, var(--mantine-color-blue-9) 8%))",
+  border: "1px solid color-mix(in srgb, var(--mantine-color-blue-7) 22%, var(--mantine-color-dark-4))",
+  boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.035)",
+  color: "var(--mantine-color-gray-0)",
+};
+const COVERAGE_CONTROL_LABEL_STYLE = {
+  color: "var(--mantine-color-gray-3)",
+  fontSize: 12,
+  fontWeight: 700,
+  marginBottom: 6,
+};
+const COVERAGE_NUMBER_INPUT_STYLES = {
+  label: COVERAGE_CONTROL_LABEL_STYLE,
+  input: COVERAGE_CONTROL_INPUT_STYLE,
+  control: {
+    borderColor: "color-mix(in srgb, var(--mantine-color-blue-7) 16%, var(--mantine-color-dark-4))",
+    color: "var(--mantine-color-gray-3)",
+  },
+};
+type CoverageGraphResumeSnapshot = {
+  targetKey: string;
+  depth: number;
+  root: CoverageGraphNode;
+  cachePath: string | null;
+  sourceSignature: string | null;
+  orientation: "white" | "black";
+  collapsedNodeIds: string[];
+  capturedAt: number;
+};
+
+let coverageGraphResumeSnapshot: CoverageGraphResumeSnapshot | null = null;
+
+function coverageLegendBadgeStyles(color: string, textColor = "var(--mantine-color-gray-1)") {
+  return {
+    root: {
+      background:
+        "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-8) 88%, var(--mantine-color-dark-5) 12%), var(--mantine-color-dark-7))",
+      border: `1px solid color-mix(in srgb, ${color} 38%, var(--mantine-color-dark-4))`,
+      boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.035)",
+      color: textColor,
+      fontWeight: 800,
+      textTransform: "uppercase" as const,
+    },
+  };
+}
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").toLowerCase();
@@ -270,6 +385,205 @@ function normalizeFenKey(fen: string): string {
   return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}`;
 }
 
+function normalizeCoverageIdentityName(value: string | null | undefined): string {
+  return stripAccountKey(`${value ?? ""}`)
+    .trim()
+    .toLowerCase();
+}
+
+function getCoverageTimeControlLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  value: CoverageProfileTimeControlCategory,
+): string {
+  switch (value) {
+    case "ultra_bullet":
+      return t("chess.timeControl.ultraBullet", { defaultValue: "UltraBullet" });
+    case "bullet":
+      return t("chess.timeControl.bullet", { defaultValue: "Bullet" });
+    case "blitz":
+      return t("chess.timeControl.blitz", { defaultValue: "Blitz" });
+    case "rapid":
+      return t("chess.timeControl.rapid", { defaultValue: "Rapid" });
+    case "classical":
+      return t("chess.timeControl.classical", { defaultValue: "Classical" });
+    case "correspondence":
+      return t("chess.timeControl.correspondence", { defaultValue: "Correspondence" });
+    case "daily":
+      return t("chess.timeControl.daily", { defaultValue: "Daily" });
+  }
+}
+
+function CoverageTimeControlSelector({
+  value,
+  options,
+  onChange,
+  disabled,
+  refreshing,
+  t,
+}: {
+  value: CoverageProfileTimeControlCategory[];
+  options: CoverageProfileTimeControlCategory[];
+  onChange: (values: CoverageProfileTimeControlCategory[]) => void;
+  disabled: boolean;
+  refreshing: boolean;
+  t: (key: string, options?: { defaultValue?: string; count?: number }) => string;
+}) {
+  const selectedSet = new Set(value.length > 0 ? value : options);
+  const selectedValues = options.filter((option) => selectedSet.has(option));
+  const allSelected = options.length > 0 && selectedValues.length === options.length;
+  const placeholder = t("features.board.variants.profileTimeControlsPlaceholder", {
+    defaultValue: "All available time controls",
+  });
+  const visiblePills = allSelected
+    ? [placeholder]
+    : selectedValues.slice(0, 2).map((option) => getCoverageTimeControlLabel(t, option));
+  const hiddenCount = allSelected ? 0 : Math.max(0, selectedValues.length - visiblePills.length);
+
+  const updateSelection = (nextValues: CoverageProfileTimeControlCategory[]) => {
+    onChange(nextValues.length > 0 ? nextValues : options);
+  };
+
+  const toggleOption = (option: CoverageProfileTimeControlCategory) => {
+    const nextSet = new Set(selectedValues);
+    if (nextSet.has(option)) {
+      nextSet.delete(option);
+    } else {
+      nextSet.add(option);
+    }
+    updateSelection(options.filter((candidate) => nextSet.has(candidate)));
+  };
+
+  return (
+    <Box w={300}>
+      <Text style={COVERAGE_CONTROL_LABEL_STYLE}>
+        {t("features.board.variants.profileTimeControls", {
+          defaultValue: "Profile time controls",
+        })}
+      </Text>
+      <Popover width={320} position="bottom-start" shadow="xl" withinPortal disabled={disabled}>
+        <Popover.Target>
+          <Box
+            component="button"
+            type="button"
+            disabled={disabled}
+            style={{
+              ...COVERAGE_CONTROL_INPUT_STYLE,
+              width: "100%",
+              minHeight: 38,
+              borderRadius: 10,
+              padding: "6px 10px",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.55 : 1,
+              textAlign: "left",
+            }}
+          >
+            <Group justify="space-between" gap="xs" wrap="nowrap">
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+                {visiblePills.map((label) => (
+                  <Box
+                    key={label}
+                    style={{
+                      maxWidth: allSelected ? 190 : 110,
+                      padding: "3px 9px",
+                      borderRadius: 999,
+                      background:
+                        "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-8) 24%, var(--mantine-color-dark-6)), color-mix(in srgb, var(--mantine-color-cyan-8) 18%, var(--mantine-color-dark-6)))",
+                      border: "1px solid color-mix(in srgb, var(--mantine-color-blue-4) 28%, transparent)",
+                      color: "var(--mantine-color-blue-0)",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {label}
+                  </Box>
+                ))}
+                {hiddenCount > 0 && (
+                  <Box
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      background: "color-mix(in srgb, var(--mantine-color-dark-5) 86%, var(--mantine-color-blue-8))",
+                      border: "1px solid color-mix(in srgb, var(--mantine-color-blue-6) 20%, transparent)",
+                      color: "var(--mantine-color-gray-2)",
+                      fontSize: 12,
+                      fontWeight: 800,
+                    }}
+                  >
+                    +{hiddenCount}
+                  </Box>
+                )}
+                {visiblePills.length === 0 && (
+                  <Text size="sm" c="dimmed" truncate>
+                    {placeholder}
+                  </Text>
+                )}
+              </Group>
+              {refreshing ? <Loader size={16} /> : <IconChevronDown size={16} color="var(--mantine-color-gray-4)" />}
+            </Group>
+          </Box>
+        </Popover.Target>
+        <Popover.Dropdown
+          style={{
+            padding: 8,
+            background:
+              "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 92%, var(--mantine-color-blue-9) 8%), var(--mantine-color-dark-7))",
+            border: "1px solid color-mix(in srgb, var(--mantine-color-blue-7) 24%, var(--mantine-color-dark-4))",
+            boxShadow: "0 18px 40px rgba(2, 6, 23, 0.35)",
+          }}
+        >
+          <Stack gap={6}>
+            <Button
+              variant="subtle"
+              size="xs"
+              radius="md"
+              onClick={() => onChange(options)}
+              styles={{
+                root: {
+                  justifyContent: "flex-start",
+                  color: "var(--mantine-color-blue-1)",
+                  background: allSelected
+                    ? "color-mix(in srgb, var(--mantine-color-blue-8) 20%, var(--mantine-color-dark-6))"
+                    : "transparent",
+                },
+              }}
+            >
+              {placeholder}
+            </Button>
+            {options.map((option) => (
+              <Checkbox
+                key={option}
+                checked={selectedSet.has(option)}
+                onChange={() => toggleOption(option)}
+                label={getCoverageTimeControlLabel(t, option)}
+                styles={{
+                  root: {
+                    padding: "6px 8px",
+                    borderRadius: 8,
+                    background: selectedSet.has(option)
+                      ? "color-mix(in srgb, var(--mantine-color-blue-8) 14%, transparent)"
+                      : "transparent",
+                  },
+                  label: {
+                    color: "var(--mantine-color-gray-1)",
+                    fontWeight: 650,
+                  },
+                  input: {
+                    backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 86%, var(--mantine-color-dark-4))",
+                    borderColor: "color-mix(in srgb, var(--mantine-color-blue-6) 34%, var(--mantine-color-dark-4))",
+                  },
+                }}
+              />
+            ))}
+          </Stack>
+        </Popover.Dropdown>
+      </Popover>
+    </Box>
+  );
+}
+
 function formatOpeningNameForCoverageNode(
   info: { eco: string; opening: string; variation: string } | null,
 ): string | null {
@@ -291,22 +605,6 @@ function getTagValue(tags: string[], prefix: string): string | null {
   return value && value.length > 0 ? value : null;
 }
 
-function parseCsvNumbers(input: string | null): number[] {
-  if (!input) return [];
-  return input
-    .split(",")
-    .map((v) => Number.parseInt(v.trim(), 10))
-    .filter((v) => Number.isFinite(v));
-}
-
-function parseCsvStrings(input: string | null): string[] {
-  if (!input) return [];
-  return input
-    .split(",")
-    .map((v) => v.trim())
-    .filter((v) => v.length > 0);
-}
-
 function formatMonthTag(date: Date | null): string | null {
   if (!date || Number.isNaN(date.getTime())) return null;
   const year = date.getFullYear();
@@ -314,103 +612,103 @@ function formatMonthTag(date: Date | null): string | null {
   return `${year}-${month}`;
 }
 
-function parseVariantBuildConfigFromTags(tags: string[]): Partial<VariantBuildConfig> {
-  const database = getTagValue(tags, "database:");
-  const dbPath = getTagValue(tags, "dbPath:");
-  const rawDbType = getTagValue(tags, "dbType:");
-  const lchSpeeds = parseCsvStrings(getTagValue(tags, "lchSpeeds:")).filter((v): v is LichessGameSpeed =>
-    ["ultraBullet", "bullet", "blitz", "rapid", "classical", "correspondence"].includes(v),
-  );
-  const lchRatings = parseCsvNumbers(getTagValue(tags, "lchRatings:")).filter((v): v is LichessRating =>
-    [0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500].includes(v as LichessRating),
-  );
-  const lchSince = parseDate(getTagValue(tags, "lchSince:")) ?? null;
-  const lchUntil = parseDate(getTagValue(tags, "lchUntil:")) ?? null;
-  const lchPlayer = getTagValue(tags, "lchPlayer:") ?? "";
-  const lchColor = getTagValue(tags, "lchColor:") === "black" ? "black" : "white";
-  const masterSince = parseDate(getTagValue(tags, "masterSince:")) ?? null;
-  const masterUntil = parseDate(getTagValue(tags, "masterUntil:")) ?? null;
+function parseCoverageMonthTag(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = parseDate(value);
+  if (parsed) return parsed;
+  const match = value.match(/^(\d{4})-(\d{1,2})/);
+  if (!match) return null;
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return new Date(year, month - 1, 1);
+}
 
-  let dbType: VariantBuildConfig["dbType"] | undefined;
-  if (rawDbType === "local" || rawDbType === "lch_all" || rawDbType === "lch_master") {
-    dbType = rawDbType;
-  } else if (database?.toLowerCase().startsWith("local")) {
-    dbType = "local";
-  } else if (database?.toLowerCase().includes("lichess")) {
-    dbType = "lch_all";
-  }
+async function parseVariantBuildConfigFromTags(tags: string[]): Promise<Partial<VariantBuildConfig>> {
+  const parsed = await invoke<VariantCoverageBuildConfigPatchDto>("variant_coverage_parse_build_config_tags", {
+    tags,
+  });
 
   return {
-    dbType,
-    localDatabasePath: dbPath,
-    lichessSpeeds: lchSpeeds.length > 0 ? lchSpeeds : undefined,
-    lichessRatings: lchRatings.length > 0 ? lchRatings : undefined,
-    lichessSince: lchSince,
-    lichessUntil: lchUntil,
-    lichessPlayer: lchPlayer,
-    lichessColor: lchColor,
-    masterSince,
-    masterUntil,
+    dbType: parsed.dbType ?? undefined,
+    localDatabasePath: parsed.localDatabasePath ?? null,
+    lichessSpeeds: parsed.lichessSpeeds && parsed.lichessSpeeds.length > 0 ? parsed.lichessSpeeds : undefined,
+    lichessRatings: parsed.lichessRatings && parsed.lichessRatings.length > 0 ? parsed.lichessRatings : undefined,
+    lichessSince: parseCoverageMonthTag(parsed.lichessSince),
+    lichessUntil: parseCoverageMonthTag(parsed.lichessUntil),
+    lichessPlayer: parsed.lichessPlayer ?? "",
+    lichessColor: parsed.lichessColor === "black" ? "black" : "white",
+    masterSince: parseCoverageMonthTag(parsed.masterSince),
+    masterUntil: parseCoverageMonthTag(parsed.masterUntil),
   };
 }
 
-function buildSourceSignature(config: VariantBuildConfig): string {
-  if (config.dbType === "local") {
-    return buildCoverageSourceSignature({
-      dbType: "local",
-      localDatabasePath: config.localDatabasePath,
-    });
-  }
-  if (config.dbType === "lch_master") {
-    return buildCoverageSourceSignature({
-      dbType: "lch_master",
-      masterSince: config.masterSince,
-      masterUntil: config.masterUntil,
-    });
-  }
-  return buildCoverageSourceSignature({
-    dbType: "lch_all",
+async function buildSourceSignature(config: VariantBuildConfig): Promise<string> {
+  const payload: VariantCoverageBuildConfigDto = {
+    dbType: config.dbType,
+    localDatabasePath: config.localDatabasePath,
     lichessSpeeds: config.lichessSpeeds,
     lichessRatings: config.lichessRatings,
-    lichessSince: config.lichessSince,
-    lichessUntil: config.lichessUntil,
+    lichessSince: formatMonthTag(config.lichessSince),
+    lichessUntil: formatMonthTag(config.lichessUntil),
     lichessPlayer: config.lichessPlayer,
     lichessColor: config.lichessColor,
-  });
+    masterSince: formatMonthTag(config.masterSince),
+    masterUntil: formatMonthTag(config.masterUntil),
+    includeChildren: config.includeChildren,
+  };
+  return await invoke<string>("variant_coverage_build_source_signature", { config: payload });
 }
 
-function classifyMoveTier(sortedMoves: Array<{ games: number }>): CoverageTier[] {
-  const total = sortedMoves.reduce((acc, row) => acc + row.games, 0);
-  if (total <= 0) return sortedMoves.map(() => "alternative");
+type CoverageOpeningRow = {
+  san: string;
+  games: number;
+  white: number;
+  black: number;
+  draw: number;
+};
 
-  let cumulative = 0;
-  return sortedMoves.map((move, index) => {
-    const pct = (move.games / total) * 100;
-    const nextCumulative = cumulative + pct;
-    let tier: CoverageTier;
-    // If the top move alone exceeds 60%, it is still considered mainline.
-    if (index === 0) {
-      tier = "mainline";
-    } else if (nextCumulative <= 60) {
-      tier = "mainline";
-    } else if (nextCumulative <= 80) {
-      tier = "secondary";
-    } else {
-      tier = "alternative";
-    }
-    cumulative = nextCumulative;
-    return tier;
-  });
-}
-
-function toCoverageOpenings(openings: Opening[]): Array<{ san: string; games: number }> {
+function toCoverageOpenings(openings: Opening[]): CoverageOpeningRow[] {
   return openings
     .map((opening) => ({
       san: opening.move,
       games: opening.white + opening.black + opening.draw,
+      white: opening.white,
+      black: opening.black,
+      draw: opening.draw,
     }))
     .filter((row) => row.san.trim().length > 0 && row.games > 0)
     .sort((a, b) => b.games - a.games);
+}
+
+function formatEngineAdvantageForRepertoire(
+  score: { value: { type: "cp" | "mate"; value: number } } | null | undefined,
+  fen: string,
+  repertoireColor: "white" | "black",
+): string | null {
+  if (!score?.value || typeof score.value.value !== "number") return null;
+  const sideToMove = fenTurnColor(fen);
+  const perspective = sideToMove === repertoireColor ? 1 : -1;
+  if (score.value.type === "mate") {
+    const mate = Math.trunc(score.value.value * perspective);
+    const prefix = mate > 0 ? "+" : "";
+    return `M${prefix}${mate}`;
+  }
+  const cp = score.value.value * perspective;
+  const pawns = cp / 100;
+  const prefix = pawns > 0 ? "+" : "";
+  return `${prefix}${pawns.toFixed(2)}`;
+}
+
+function isCoverageEngineBestLine(value: unknown): value is CoverageEngineBestLine {
+  if (!value || typeof value !== "object") return false;
+  const score = (value as { score?: unknown }).score;
+  if (!score || typeof score !== "object") return false;
+  const scoreValue = (score as { value?: unknown }).value;
+  if (!scoreValue || typeof scoreValue !== "object") return false;
+  const type = (scoreValue as { type?: unknown }).type;
+  const rawValue = (scoreValue as { value?: unknown }).value;
+  return (type === "cp" || type === "mate") && typeof rawValue === "number" && Number.isFinite(rawValue);
 }
 
 function getNextFenFromSan(fen: string, san: string): string | null {
@@ -426,35 +724,11 @@ function buildCoverageTierOverrideKey(fen: string, san: string): string {
   return `${normalizeFenKey(fen)}|${san.trim()}`;
 }
 
-function hashTextFnv1a(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 async function getCoverageGraphCacheFilePath(variantPath: string, sourceSignature: string): Promise<string> {
-  const cacheDir = await join(parentDir(variantPath), COVERAGE_GRAPH_CACHE_DIR);
-  if (!(await exists(cacheDir))) {
-    await mkdir(cacheDir, { recursive: true });
-  }
-  const fileStem = sanitizeFileStem(getFileName(variantPath).replace(/\.pgn$/i, ""));
-  const signatureHash = hashTextFnv1a(sourceSignature);
-  return await join(cacheDir, `${fileStem}-${signatureHash}.json`);
-}
-
-function parseCoverageCacheObject(rawCache: unknown): VariantCoverageCache | null {
-  if (!rawCache || typeof rawCache !== "object") return null;
-  const candidate = rawCache as Record<string, unknown>;
-  if (candidate.version !== COVERAGE_GRAPH_CACHE_VERSION) return null;
-  if (typeof candidate.sourceSignature !== "string") return null;
-  if (typeof candidate.maxMoves !== "number") return null;
-  if (!candidate.positions || typeof candidate.positions !== "object") return null;
-  if (!candidate.graphRoot || typeof candidate.graphRoot !== "object") return null;
-  if (candidate.repertoireColor !== "white" && candidate.repertoireColor !== "black") return null;
-  return candidate as VariantCoverageCache;
+  return await invoke<string>("variant_coverage_graph_cache_path", {
+    variantPath,
+    sourceSignature,
+  });
 }
 
 function parseLegacyCoverageCacheFromMetadata(rawMetadata: unknown): LegacyVariantCoverageCache | null {
@@ -462,84 +736,98 @@ function parseLegacyCoverageCacheFromMetadata(rawMetadata: unknown): LegacyVaria
   const candidate = (rawMetadata as Record<string, unknown>).coverageGraphCache;
   if (!candidate || typeof candidate !== "object") return null;
   const cache = candidate as Record<string, unknown>;
-  if (cache.version !== 3) return null;
+  if (cache.version !== 3 && cache.version !== 4) return null;
   if (typeof cache.sourceSignature !== "string") return null;
   if (typeof cache.maxMoves !== "number") return null;
   if (!cache.positions || typeof cache.positions !== "object") return null;
   return cache as LegacyVariantCoverageCache;
 }
 
-function hasCoverageLabelOverrides(
-  cache: VariantCoverageCache | LegacyVariantCoverageCache | null,
-): cache is VariantCoverageCache {
-  return Boolean(cache && cache.version === COVERAGE_GRAPH_CACHE_VERSION);
-}
-
 async function readCoverageGraphCache(filePath: string): Promise<VariantCoverageCache | null> {
-  if (!(await exists(filePath))) return null;
   try {
-    const raw = await readTextFile(filePath);
-    if (!raw.trim()) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    return parseCoverageCacheObject(parsed);
+    return await invoke<VariantCoverageCache | null>("variant_coverage_read_graph_cache", { filePath });
   } catch {
     return null;
   }
 }
 
 async function writeCoverageGraphCache(filePath: string, cache: VariantCoverageCache): Promise<void> {
-  await writeTextFile(filePath, JSON.stringify(cache, null, 2));
+  await invoke("variant_coverage_write_graph_cache", { filePath, cache });
 }
 
-function trimCoverageGraphByDepth(root: CoverageGraphNode, maxActiveMoves: number): CoverageGraphNode {
-  const visit = (node: CoverageGraphNode): CoverageGraphNode => {
-    const used = typeof node.activeMovesUsed === "number" ? node.activeMovesUsed : 0;
-    if (used >= maxActiveMoves) {
-      return {
-        ...node,
-        children: [],
-      };
-    }
-    return {
-      ...node,
-      children: node.children.map(visit),
-    };
-  };
-  return visit(root);
+async function trimCoverageGraphByDepth(root: CoverageGraphNode, maxActiveMoves: number): Promise<CoverageGraphNode> {
+  return await invoke<CoverageGraphNode>("variant_coverage_trim_graph_by_depth", {
+    root,
+    maxActiveMoves,
+  });
 }
 
-function applyLowSampleFlagsToGraph(
+async function applyLowSampleFlagsToGraph(
   root: CoverageGraphNode,
   positions: Record<string, CoveragePositionCacheEntry>,
-): CoverageGraphNode {
-  const visit = (node: CoverageGraphNode): CoverageGraphNode => {
-    const nextChildren = node.children.map(visit);
-    if (!node.overrideKey || node.tier === "root") {
-      return {
-        ...node,
-        children: nextChildren,
-      };
-    }
+  repertoireColor: "white" | "black",
+): Promise<CoverageGraphNode> {
+  return await invoke<CoverageGraphNode>("variant_coverage_apply_position_flags", {
+    root,
+    positions,
+    repertoireColor,
+  });
+}
 
-    const separator = node.overrideKey.lastIndexOf("|");
-    if (separator <= 0) {
-      return {
-        ...node,
-        children: nextChildren,
-      };
-    }
-    const fenKey = node.overrideKey.slice(0, separator);
-    const entry = positions[fenKey];
-    const lowSample = !!entry && entry.totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
+async function applyProfileFlagsToCoverageGraph(
+  root: CoverageGraphNode,
+  positions: Record<string, CoveragePositionCacheEntry>,
+  dbPath: string | null,
+  playerIds: number[],
+  repertoireColor: "white" | "black",
+  timeControlCategories: CoverageProfileTimeControlCategory[],
+): Promise<CoverageGraphNode> {
+  return await invoke<CoverageGraphNode>("variant_coverage_apply_profile_position_flags", {
+    root,
+    positions,
+    dbPath,
+    playerIds,
+    repertoireColor,
+    timeControlCategories,
+  });
+}
 
-    return {
-      ...node,
-      lowSample,
-      children: nextChildren,
-    };
-  };
+function serializeCoverageTierOverrides(
+  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
+): Record<string, Exclude<CoverageTier, "root">> {
+  const record: Record<string, Exclude<CoverageTier, "root">> = {};
+  for (const [key, tier] of tierOverrides.entries()) {
+    record[key] = tier;
+  }
+  return record;
+}
 
-  return visit(root);
+async function classifyCoveragePosition(
+  fen: string,
+  moves: CoverageRawMoveEntry[],
+  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
+  repertoireColor: "white" | "black",
+): Promise<CoveragePositionCacheEntry> {
+  return await invoke<CoveragePositionCacheEntry>("variant_coverage_classify_position", {
+    fen,
+    moves,
+    tierOverrides: serializeCoverageTierOverrides(tierOverrides),
+    repertoireColor,
+  });
+}
+
+async function getCachedCoveragePosition(
+  sourceSignature: string,
+  fen: string,
+  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
+  repertoireColor: "white" | "black",
+): Promise<CoveragePositionCacheEntry | null> {
+  return await invoke<CoveragePositionCacheEntry | null>("variant_coverage_get_cached_position", {
+    sourceSignature,
+    fen,
+    tierOverrides: serializeCoverageTierOverrides(tierOverrides),
+    repertoireColor,
+  });
 }
 
 function setCoverageTierByOverrideKey(
@@ -582,6 +870,38 @@ function setCoverageLabelByOverrideKey(
   };
 }
 
+function setCoverageEngineInfoByFenMap(
+  node: CoverageGraphNode,
+  engineInfoByFen: Map<string, { advantage: string; engineName: string; engineMs: number }>,
+): CoverageGraphNode {
+  const nodeFen = `${node.fen ?? ""}`.trim();
+  const nodeFenKey = nodeFen ? normalizeFenKey(nodeFen) : null;
+  const nextChildren = node.children.map((child) => setCoverageEngineInfoByFenMap(child, engineInfoByFen));
+  const engineInfo = nodeFenKey ? engineInfoByFen.get(nodeFenKey) : null;
+  if (engineInfo) {
+    return {
+      ...node,
+      engineAdvantage: engineInfo.advantage,
+      engineName: engineInfo.engineName,
+      engineMs: engineInfo.engineMs,
+      children: nextChildren,
+    };
+  }
+  return {
+    ...node,
+    children: nextChildren,
+  };
+}
+
+function collectCoverageSubtreeFens(node: CoverageGraphNode, output: string[] = []): string[] {
+  const fen = `${node.fen ?? ""}`.trim();
+  if (fen) output.push(fen);
+  for (const child of node.children) {
+    collectCoverageSubtreeFens(child, output);
+  }
+  return output;
+}
+
 function extractCoverageEditableLabel(label: string): string {
   const trimmed = label.trim();
   if (!trimmed) return "";
@@ -602,17 +922,137 @@ function findCoverageNodeById(node: CoverageGraphNode, id: string): CoverageGrap
   return null;
 }
 
+function mergeCoverageLabelWithForcedReply(coverageLabel: string, forcedLabel: string): string {
+  const forcedPrimary = forcedLabel.split("|")[0]?.split("->")[0]?.split(" - ")[0]?.trim();
+  const match = coverageLabel.match(/^(.*?)\s+([0-9]+(?:\.[0-9]+)?%)\s*(?:-\s*(.+))?$/);
+  if (!match) {
+    return forcedPrimary ? `${coverageLabel}, ${forcedPrimary}` : coverageLabel;
+  }
+
+  const [, moveSan, percent] = match;
+  if (!forcedPrimary) {
+    return `${moveSan} | ${percent}`;
+  }
+  return `${moveSan}, ${forcedPrimary} | ${percent}`;
+}
+
+function mergeCoverageLabelWithForcedReplies(coverageLabel: string, forcedLabels: string[]): string {
+  const normalizedForced = forcedLabels
+    .map((label) => label.split("|")[0]?.split("->")[0]?.split(" - ")[0]?.trim() ?? "")
+    .filter((label) => label.length > 0);
+  if (normalizedForced.length === 0) return coverageLabel;
+  const primary = normalizedForced[0];
+  const extra = normalizedForced.length - 1;
+  const renderedForced = extra > 0 ? `${primary} +${extra}` : primary;
+
+  const match = coverageLabel.match(/^(.*?)\s+([0-9]+(?:\.[0-9]+)?%)\s*(?:-\s*(.+))?$/);
+  if (!match) {
+    return `${coverageLabel}, ${renderedForced}`;
+  }
+
+  const [, moveSan, percent] = match;
+  return `${moveSan}, ${renderedForced} | ${percent}`;
+}
+
+type CoverageEngineAnnotation = {
+  advantage: string;
+  engineName?: string | null;
+  engineMs?: number | null;
+};
+
+function collectCoverageEngineAnnotationsByFen(
+  root: CoverageGraphNode | null | undefined,
+): Map<string, CoverageEngineAnnotation> {
+  const byFen = new Map<string, CoverageEngineAnnotation>();
+  if (!root) return byFen;
+  const walk = (node: CoverageGraphNode) => {
+    const fen = `${node.fen ?? ""}`.trim();
+    const advantage = `${node.engineAdvantage ?? ""}`.trim();
+    if (fen && advantage && !byFen.has(normalizeFenKey(fen))) {
+      byFen.set(normalizeFenKey(fen), {
+        advantage,
+        engineName: node.engineName ?? null,
+        engineMs: node.engineMs ?? null,
+      });
+    }
+    for (const child of node.children) {
+      walk(child);
+    }
+  };
+  walk(root);
+  return byFen;
+}
+
+function applyCoverageEngineAnnotationsByFen(
+  node: CoverageGraphNode,
+  annotationsByFen: Map<string, CoverageEngineAnnotation>,
+): CoverageGraphNode {
+  const nextChildren = node.children.map((child) => applyCoverageEngineAnnotationsByFen(child, annotationsByFen));
+  const fen = `${node.fen ?? ""}`.trim();
+  if (!fen) {
+    return {
+      ...node,
+      children: nextChildren,
+    };
+  }
+  const annotation = annotationsByFen.get(normalizeFenKey(fen));
+  if (!annotation) {
+    return {
+      ...node,
+      children: nextChildren,
+    };
+  }
+  return {
+    ...node,
+    engineAdvantage: annotation.advantage,
+    engineName: annotation.engineName ?? null,
+    engineMs: annotation.engineMs ?? null,
+    children: nextChildren,
+  };
+}
+
+function getCoverageResponseRarity(percent: number | undefined): "low_frequency" | "novelty" | undefined {
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return undefined;
+  if (percent < 5) return "novelty";
+  if (percent < 20) return "low_frequency";
+  return undefined;
+}
+
 function applyCollapsedCoverageNodes(
   root: CoverageGraphNode | null,
   collapsedIds: Set<string>,
 ): CoverageGraphNode | null {
   if (!root) return null;
   const visit = (node: CoverageGraphNode): CoverageGraphNode => {
-    if (collapsedIds.has(node.id)) {
+    const hasChildren = node.children.length > 0;
+    if (hasChildren && collapsedIds.has(node.id)) {
+      const forcedReplies = node.children.filter((child) => child.tier === "root");
+      const forcedReply = forcedReplies.length === 1 ? forcedReplies[0] : null;
+      const mergedLabel = forcedReply
+        ? mergeCoverageLabelWithForcedReply(node.label, forcedReply.label)
+        : forcedReplies.length > 1
+          ? mergeCoverageLabelWithForcedReplies(
+              node.label,
+              forcedReplies.map((child) => child.label),
+            )
+          : node.label;
       return {
         ...node,
+        label: mergedLabel,
+        responsePercent: forcedReply?.percent ?? node.responsePercent,
+        responseRarity: forcedReply ? getCoverageResponseRarity(forcedReply.percent) : node.responseRarity,
+        fen: forcedReply?.fen ?? node.fen,
+        openingName: forcedReply?.openingName ?? node.openingName,
+        activeWinRate: forcedReply ? forcedReply.activeWinRate : node.activeWinRate,
+        activeLossRate: forcedReply ? forcedReply.activeLossRate : node.activeLossRate,
+        profileWinRate: forcedReply ? forcedReply.profileWinRate : node.profileWinRate,
+        profileLossRate: forcedReply ? forcedReply.profileLossRate : node.profileLossRate,
+        engineAdvantage: forcedReply ? forcedReply.engineAdvantage : node.engineAdvantage,
+        engineName: forcedReply ? forcedReply.engineName : node.engineName,
+        engineMs: forcedReply ? forcedReply.engineMs : node.engineMs,
+        unmappedResponse: forcedReplies.length > 0 ? false : node.unmappedResponse,
         collapsed: true,
-        hiddenChildrenCount: node.children.length,
+        hiddenChildrenCount: forcedReply ? forcedReply.children.length : node.children.length,
         children: [],
       };
     }
@@ -624,6 +1064,75 @@ function applyCollapsedCoverageNodes(
     };
   };
   return visit(root);
+}
+
+function collectCollapsibleCoverageNodeIds(root: CoverageGraphNode | null): Set<string> {
+  const ids = new Set<string>();
+  if (!root) return ids;
+  const walk = (node: CoverageGraphNode) => {
+    if (node.tier !== "root" && node.children.length > 0) {
+      ids.add(node.id);
+    }
+    for (const child of node.children) {
+      walk(child);
+    }
+  };
+  walk(root);
+  return ids;
+}
+
+function getCoverageGraphRenderRoot(root: CoverageGraphNode): CoverageGraphNode {
+  if (root.tier === "root" && root.children.length === 1 && root.children[0].tier === "root") {
+    return root.children[0];
+  }
+  return root;
+}
+
+function buildCoverageDefaultCollapsedIds(root: CoverageGraphNode | null, expandedLevels: number): Set<string> {
+  const collapsedIds = new Set<string>();
+  if (!root) return collapsedIds;
+
+  const normalizedExpandedLevels = Math.max(1, Math.floor(expandedLevels));
+  const traversalRoot = getCoverageGraphRenderRoot(root);
+
+  const walk = (node: CoverageGraphNode, depth: number) => {
+    if (depth >= normalizedExpandedLevels && node.tier !== "root" && node.children.length > 0) {
+      collapsedIds.add(node.id);
+      return;
+    }
+    for (const child of node.children) {
+      walk(child, depth + 1);
+    }
+  };
+
+  walk(traversalRoot, 0);
+  return collapsedIds;
+}
+
+function collectCoverageBranchCollapseIds(node: CoverageGraphNode, startDepth: number): Set<string> {
+  const collapsed = new Set<string>();
+  const walk = (current: CoverageGraphNode, depth: number) => {
+    if (depth >= startDepth && current.tier !== "root" && current.children.length > 0) {
+      collapsed.add(current.id);
+    }
+    for (const child of current.children) {
+      walk(child, depth + 1);
+    }
+  };
+  walk(node, 0);
+  return collapsed;
+}
+
+function collectCoverageSubtreeNodeIds(node: CoverageGraphNode): Set<string> {
+  const ids = new Set<string>();
+  const walk = (current: CoverageGraphNode) => {
+    ids.add(current.id);
+    for (const child of current.children) {
+      walk(child);
+    }
+  };
+  walk(node);
+  return ids;
 }
 
 function findCoverageNodePathById(
@@ -953,7 +1462,7 @@ async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
       const database = getTagValue(tags, "database:");
       const engine = getTagValue(tags, "engine:");
       const engineMs = getTagValue(tags, "engineMs:");
-      const buildConfig = parseVariantBuildConfigFromTags(tags);
+      const buildConfig = await parseVariantBuildConfigFromTags(tags);
       const variantsCount =
         tags
           .find((tag) => tag.startsWith("variantsCount:"))
@@ -1014,8 +1523,10 @@ export default function VariantsPage() {
   const navigate = useNavigate();
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
+  const engines = useAtomValue(enginesAtom);
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const profiles = useAtomValue(profilesAtom);
+  const sessions = useAtomValue(sessionsAtom);
   const { layout } = useResponsiveLayout();
 
   const [search, setSearch] = useState("");
@@ -1049,7 +1560,7 @@ export default function VariantsPage() {
   const [coverageActionNode, setCoverageActionNode] = useState<CoverageGraphNode | null>(null);
   const [coverageActionTier, setCoverageActionTier] = useState<Exclude<CoverageTier, "root">>("mainline");
   const [coverageActionSaving, setCoverageActionSaving] = useState(false);
-  const [coverageActionTab, setCoverageActionTab] = useState<"edit" | "puzzles" | "board">("edit");
+  const [coverageActionTab, setCoverageActionTab] = useState<CoverageActionTab>("edit");
   const [coverageGraphOrientation, setCoverageGraphOrientation] = useState<"white" | "black">("white");
   const [coverageCollapsedNodeIds, setCoverageCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [coverageActionLabel, setCoverageActionLabel] = useState("");
@@ -1057,6 +1568,16 @@ export default function VariantsPage() {
   const [coveragePuzzleIncludeLowSample, setCoveragePuzzleIncludeLowSample] = useState(true);
   const [coveragePuzzleName, setCoveragePuzzleName] = useState("");
   const [coveragePuzzleGenerating, setCoveragePuzzleGenerating] = useState(false);
+  const [activeProfileCoverageDbPath, setActiveProfileCoverageDbPath] = useState<string | null>(null);
+  const [coverageProfileTimeControlOptions, setCoverageProfileTimeControlOptions] = useState<
+    CoverageProfileTimeControlCategory[]
+  >([]);
+  const [coverageProfileTimeControlFilters, setCoverageProfileTimeControlFilters] = useState<
+    CoverageProfileTimeControlCategory[]
+  >([]);
+  const [coverageProfileStatsRefreshing, setCoverageProfileStatsRefreshing] = useState(false);
+  const [coverageEngineMs, setCoverageEngineMs] = useState(1000);
+  const [coverageEngineEvaluating, setCoverageEngineEvaluating] = useState(false);
   const [configureBuildModalOpened, setConfigureBuildModalOpened] = useState(false);
   const [configureBuildTargetKey, setConfigureBuildTargetKey] = useState<string | null>(null);
   const [applyingBuildConfig, setApplyingBuildConfig] = useState(false);
@@ -1077,6 +1598,178 @@ export default function VariantsPage() {
     const profileToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() ?? "";
     return profileToken.length > 0 ? profileToken : undefined;
   }, [activeProfileId, profiles]);
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!activeProfileId) {
+        setActiveProfileCoverageDbPath(null);
+        return;
+      }
+      try {
+        const dbPath = await getProfileDbPath(activeProfileId);
+        if (!cancelled) setActiveProfileCoverageDbPath(dbPath);
+      } catch {
+        if (!cancelled) setActiveProfileCoverageDbPath(null);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileId]);
+
+  const activeProfileCoverageIdentityNames = useMemo(() => {
+    if (!activeProfileId) return [];
+    const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? null;
+    const names = new Set<string>();
+    const pushName = (value?: string | null) => {
+      const normalized = `${value ?? ""}`.trim();
+      if (normalized.length > 0) names.add(normalized);
+    };
+    pushName(activeProfile?.name);
+    pushName(activeProfile?.displayName);
+    for (const session of sessions) {
+      if (session.profileId !== activeProfileId) continue;
+      pushName(session.player);
+      if (session.lichess?.username) {
+        pushName(session.lichess.username);
+        pushName(getAccountKey("lichess", session.lichess.username));
+      }
+      if (session.chessCom?.username) {
+        pushName(session.chessCom.username);
+        pushName(getAccountKey("chesscom", session.chessCom.username));
+      }
+    }
+    return [...names];
+  }, [activeProfileId, profiles, sessions]);
+
+  const resolveActiveProfileCoveragePlayerIds = useCallback(
+    async (dbPathOverride?: string | null): Promise<number[]> => {
+      const profileStatsDbPath = `${dbPathOverride ?? activeProfileCoverageDbPath ?? ""}`.trim();
+      if (!profileStatsDbPath) return [];
+      const candidateNames = [
+        ...new Set(activeProfileCoverageIdentityNames.map((name) => name.trim()).filter(Boolean)),
+      ];
+      if (candidateNames.length === 0) return [];
+
+      const candidateRawLower = new Set(candidateNames.map((name) => name.toLowerCase()));
+      const candidateNormalized = new Set(
+        candidateNames.map((name) => normalizeCoverageIdentityName(name)).filter((name) => name.length > 0),
+      );
+
+      const queryTerms = new Set<string>();
+      for (const candidate of candidateNames) {
+        const trimmed = candidate.trim();
+        if (!trimmed) continue;
+        queryTerms.add(trimmed);
+        const stripped = stripAccountKey(trimmed).trim();
+        if (stripped && stripped.toLowerCase() !== trimmed.toLowerCase()) {
+          queryTerms.add(stripped);
+        }
+      }
+
+      const ids = new Set<number>();
+      const pageSize = 200;
+      const maxPages = 25;
+
+      for (const queryTerm of queryTerms) {
+        let page = 1;
+        while (page <= maxPages) {
+          try {
+            const response = await query_players(profileStatsDbPath, {
+              name: queryTerm,
+              range: undefined,
+              options: {
+                skipCount: false,
+                page,
+                pageSize,
+                sort: "name",
+                direction: "asc",
+              },
+            });
+
+            for (const player of response.data ?? []) {
+              if (typeof player.id !== "number" || !Number.isFinite(player.id)) continue;
+              const rawPlayerName = `${player.name ?? ""}`.trim();
+              if (!rawPlayerName) continue;
+              const rawPlayerLower = rawPlayerName.toLowerCase();
+              const normalizedPlayer = normalizeCoverageIdentityName(rawPlayerName);
+              if (
+                candidateRawLower.has(rawPlayerLower) ||
+                (normalizedPlayer.length > 0 && candidateNormalized.has(normalizedPlayer))
+              ) {
+                ids.add(Math.trunc(player.id));
+              }
+            }
+
+            const count = typeof response.count === "number" ? response.count : null;
+            const reachedLastPageByCount = count != null && page * pageSize >= count;
+            const reachedLastPageByData = (response.data?.length ?? 0) < pageSize;
+            if (reachedLastPageByCount || reachedLastPageByData) break;
+            page += 1;
+          } catch {
+            break;
+          }
+        }
+      }
+      return [...ids];
+    },
+    [activeProfileCoverageDbPath, activeProfileCoverageIdentityNames],
+  );
+
+  useEffect(() => {
+    if (!activeProfileId) {
+      setCoverageProfileTimeControlOptions([]);
+      setCoverageProfileTimeControlFilters([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await invoke<CoverageGamesHistoryFilterMetaResponse>("dashboard_get_games_history_filter_meta", {
+          req: {
+            profileId: activeProfileId,
+            profileUsernames: activeProfileCoverageIdentityNames,
+            gameHistoryLimit: 10000,
+            eventFilterId: null,
+            selectedOpponentId: null,
+            opponentContains: null,
+            resultFilter: null,
+            sourceFilter: null,
+            playerColor: null,
+            minMoves: null,
+          },
+        });
+        if (cancelled) return;
+        const nextOptions = (res.availableTimeControlCategories ?? []).filter(
+          (value): value is CoverageProfileTimeControlCategory =>
+            value === "ultra_bullet" ||
+            value === "bullet" ||
+            value === "blitz" ||
+            value === "rapid" ||
+            value === "classical" ||
+            value === "correspondence" ||
+            value === "daily",
+        );
+        setCoverageProfileTimeControlOptions(nextOptions);
+        setCoverageProfileTimeControlFilters((prev) => {
+          const nextSet = new Set(nextOptions);
+          const retained = prev.filter((value) => nextSet.has(value));
+          return retained.length > 0 ? retained : nextOptions;
+        });
+      } catch {
+        if (!cancelled) {
+          setCoverageProfileTimeControlOptions([]);
+          setCoverageProfileTimeControlFilters([]);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileCoverageIdentityNames, activeProfileId]);
 
   // Calculate responsive grid columns
   const isMobile = layout.files?.layoutType === "mobile" || false;
@@ -1167,7 +1860,7 @@ export default function VariantsPage() {
       try {
         const metadata = await readInfoMetadata(variant.path, "variants");
         const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
-        const parsed = parseVariantBuildConfigFromTags(tags);
+        const parsed = await parseVariantBuildConfigFromTags(tags);
         const dbType = parsed.dbType ?? variant.dbType ?? "local";
 
         setConfigureBuildTargetKey(normalizePath(variant.path));
@@ -2066,6 +2759,7 @@ export default function VariantsPage() {
   ]);
 
   const openCoverageGraphForKey = useCallback((key: string) => {
+    coverageGraphResumeSnapshot = null;
     setCoverageGraphTargetKey(key);
     setCoverageGraphDepth("");
     setCoverageGraphRoot(null);
@@ -2077,8 +2771,33 @@ export default function VariantsPage() {
     setCoveragePuzzleTierFilter("mainline");
     setCoveragePuzzleIncludeLowSample(true);
     setCoveragePuzzleName("");
+    setCoverageEngineMs(1000);
     setCoveragePrioritySyncing(false);
     setCoverageBuildProgress(null);
+    setCoverageGraphModalOpened(true);
+  }, []);
+
+  useEffect(() => {
+    const snapshot = coverageGraphResumeSnapshot;
+    if (!snapshot) return;
+    coverageGraphResumeSnapshot = null;
+
+    setCoverageGraphTargetKey(snapshot.targetKey);
+    setCoverageGraphDepth(snapshot.depth);
+    setCoverageGraphRoot(snapshot.root);
+    setCoverageCollapsedNodeIds(new Set(snapshot.collapsedNodeIds));
+    setCoverageGraphCachePath(snapshot.cachePath);
+    setCoverageGraphSourceSignature(snapshot.sourceSignature);
+    setCoverageGraphOrientation(snapshot.orientation);
+    setCoverageActionNode(null);
+    setCoverageActionTab("edit");
+    setCoveragePuzzleTierFilter("mainline");
+    setCoveragePuzzleIncludeLowSample(true);
+    setCoveragePuzzleName("");
+    setCoverageEngineMs(1000);
+    setCoveragePrioritySyncing(false);
+    setCoverageBuildProgress(null);
+    setCoverageGraphLoading(false);
     setCoverageGraphModalOpened(true);
   }, []);
 
@@ -2097,11 +2816,7 @@ export default function VariantsPage() {
   );
 
   const fetchCoverageOpenings = useCallback(
-    async (
-      fen: string,
-      config: VariantBuildConfig,
-      signal?: AbortSignal,
-    ): Promise<Array<{ san: string; games: number }>> => {
+    async (fen: string, config: VariantBuildConfig, signal?: AbortSignal): Promise<CoverageOpeningRow[]> => {
       if (config.dbType === "local") {
         if (!config.localDatabasePath) return [];
         const [openings] = await searchPosition(
@@ -2172,6 +2887,10 @@ export default function VariantsPage() {
         typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
           ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
           : Number.NaN;
+      const selectedProfileTimeControls =
+        coverageProfileTimeControlFilters.length > 0
+          ? coverageProfileTimeControlFilters
+          : coverageProfileTimeControlOptions;
       if (!Number.isFinite(requestedDepth)) {
         notifications.show({
           title: t("common.error"),
@@ -2198,7 +2917,7 @@ export default function VariantsPage() {
 
         const targetMetadata = await readInfoMetadata(targetVariant.path, "variants");
         const targetTags = Array.isArray(targetMetadata.tags) ? targetMetadata.tags : [];
-        const parsedConfig = parseVariantBuildConfigFromTags(targetTags);
+        const parsedConfig = await parseVariantBuildConfigFromTags(targetTags);
         const resolvedConfig: VariantBuildConfig = {
           ...buildConfig,
           ...parsedConfig,
@@ -2222,12 +2941,21 @@ export default function VariantsPage() {
           );
         }
 
-        const sourceSignature = buildSourceSignature(resolvedConfig);
+        const sourceSignature = await buildSourceSignature(resolvedConfig);
         const subtreeKeys = collectSubtreeKeys(coverageGraphTargetKey);
         if (subtreeKeys.length === 0) return;
         const variantsTotal = subtreeKeys.length;
         const cacheFilePath = await getCoverageGraphCacheFilePath(targetVariant.path, sourceSignature);
         const existingCache = await readCoverageGraphCache(cacheFilePath);
+        let resolvedProfileStatsDbPath = `${activeProfileCoverageDbPath ?? ""}`.trim();
+        if (!resolvedProfileStatsDbPath && activeProfileId) {
+          try {
+            resolvedProfileStatsDbPath = await getProfileDbPath(activeProfileId);
+          } catch {
+            resolvedProfileStatsDbPath = "";
+          }
+        }
+        const resolvedProfilePlayerIds = await resolveActiveProfileCoveragePlayerIds(resolvedProfileStatsDbPath);
         const legacyCache = existingCache ? null : parseLegacyCoverageCacheFromMetadata(targetMetadata);
         const { commands } = await import("@/bindings");
         const runCoverageFetch = createAsyncLimiter(COVERAGE_BUILD_FETCH_CONCURRENCY);
@@ -2288,9 +3016,21 @@ export default function VariantsPage() {
             openingNameInFlightByFenKey.delete(fenKey);
           }
         };
-        const enrichCoverageGraphNodeOpenings = async (node: CoverageGraphNode): Promise<CoverageGraphNode> => {
-          const openingName = await getOpeningNameByFen(node.fen);
-          const children = await Promise.all(node.children.map(enrichCoverageGraphNodeOpenings));
+        const resolveCoverageOpeningName = async (
+          fen: string | null | undefined,
+          fallbackOpeningName: string | null | undefined,
+        ): Promise<string | null> => {
+          return (await getOpeningNameByFen(fen)) ?? fallbackOpeningName ?? null;
+        };
+
+        const enrichCoverageGraphNodeOpenings = async (
+          node: CoverageGraphNode,
+          inheritedOpeningName: string | null = null,
+        ): Promise<CoverageGraphNode> => {
+          const openingName = await resolveCoverageOpeningName(node.fen, inheritedOpeningName);
+          const children = await Promise.all(
+            node.children.map((child) => enrichCoverageGraphNodeOpenings(child, openingName)),
+          );
           return {
             ...node,
             openingName,
@@ -2306,11 +3046,23 @@ export default function VariantsPage() {
         ) {
           setCoverageGraphOrientation(existingCache.repertoireColor);
           const graphWithOpenings = await enrichCoverageGraphNodeOpenings(existingCache.graphRoot);
-          setCoverageGraphRoot(
-            trimCoverageGraphByDepth(
-              applyLowSampleFlagsToGraph(graphWithOpenings, existingCache.positions),
-              requestedDepth,
-            ),
+          const graphWithPositionFlags = await applyLowSampleFlagsToGraph(
+            graphWithOpenings,
+            existingCache.positions,
+            existingCache.repertoireColor,
+          );
+          const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
+            graphWithPositionFlags,
+            existingCache.positions,
+            resolvedProfileStatsDbPath || null,
+            resolvedProfilePlayerIds,
+            existingCache.repertoireColor,
+            selectedProfileTimeControls,
+          );
+          const trimmedGraph = await trimCoverageGraphByDepth(graphWithProfileFlags, requestedDepth);
+          setCoverageGraphRoot(trimmedGraph);
+          setCoverageCollapsedNodeIds(
+            buildCoverageDefaultCollapsedIds(trimmedGraph, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
           );
           setCoverageGraphCachePath(cacheFilePath);
           setCoverageGraphSourceSignature(sourceSignature);
@@ -2342,6 +3094,16 @@ export default function VariantsPage() {
             : legacyCache && legacyCache.sourceSignature === sourceSignature
               ? legacyCache
               : null;
+        const profileStatsDbPath = resolvedProfileStatsDbPath;
+        const shouldFetchProfileStats = profileStatsDbPath.length > 0;
+        let resolvedProfilePlayerIdsPromise: Promise<number[]> | null = Promise.resolve(resolvedProfilePlayerIds);
+        const getResolvedProfilePlayerIds = async (): Promise<number[]> => {
+          if (!shouldFetchProfileStats || !profileStatsDbPath) return [];
+          if (resolvedProfilePlayerIdsPromise) return await resolvedProfilePlayerIdsPromise;
+          resolvedProfilePlayerIdsPromise = resolveActiveProfileCoveragePlayerIds(profileStatsDbPath);
+          return await resolvedProfilePlayerIdsPromise;
+        };
+        const preservedEngineAnnotations = collectCoverageEngineAnnotationsByFen(sourceCompatibleCache?.graphRoot);
         const positionCache = new Map<string, CoveragePositionCacheEntry>();
         const tierOverrides = new Map<string, Exclude<CoverageTier, "root">>();
         const labelOverrides = new Map<string, string>();
@@ -2352,12 +3114,9 @@ export default function VariantsPage() {
             }
           }
         }
-        if (
-          hasCoverageLabelOverrides(sourceCompatibleCache) &&
-          sourceCompatibleCache.labelOverrides &&
-          typeof sourceCompatibleCache.labelOverrides === "object"
-        ) {
-          for (const [overrideKey, rawLabel] of Object.entries(sourceCompatibleCache.labelOverrides)) {
+        const sourceLabelOverrides = sourceCompatibleCache?.labelOverrides;
+        if (sourceLabelOverrides && typeof sourceLabelOverrides === "object") {
+          for (const [overrideKey, rawLabel] of Object.entries(sourceLabelOverrides)) {
             const normalized = `${rawLabel ?? ""}`.trim();
             if (normalized.length > 0) {
               labelOverrides.set(overrideKey, normalized);
@@ -2375,16 +3134,16 @@ export default function VariantsPage() {
           const fenKey = normalizeFenKey(fen);
           const cached = positionCache.get(fenKey);
           if (cached) {
-            const lowSample = cached.totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
-            const needsHydration = cached.moves.some((move) => move.lowSample == null);
+            const needsHydration = cached.moves.some(
+              (move) => move.lowSample == null || move.activeWinRate == null || move.activeLossRate == null,
+            );
             if (!needsHydration) return cached;
-            const hydrated: CoveragePositionCacheEntry = {
-              ...cached,
-              moves: cached.moves.map((move) => ({
-                ...move,
-                lowSample,
-              })),
-            };
+            const hydrated = await classifyCoveragePosition(
+              cached.fen || fen,
+              cached.moves,
+              tierOverrides,
+              repertoireColor,
+            );
             positionCache.set(fenKey, hydrated);
             return hydrated;
           }
@@ -2394,39 +3153,15 @@ export default function VariantsPage() {
           }
 
           const request = runCoverageFetch(async () => {
-            let persistedCache: Awaited<ReturnType<typeof getCoverageExplorerCache>> = null;
+            let persistedPosition: CoveragePositionCacheEntry | null = null;
             try {
-              persistedCache = await getCoverageExplorerCache(sourceSignature, fen);
+              persistedPosition = await getCachedCoveragePosition(sourceSignature, fen, tierOverrides, repertoireColor);
             } catch {
-              persistedCache = null;
+              persistedPosition = null;
             }
-            if (persistedCache) {
-              const openingsFromCache = persistedCache.moves
-                .map((move) => ({
-                  san: `${move.san ?? ""}`.trim(),
-                  games: Number.isFinite(move.games) ? Math.max(0, Math.floor(move.games)) : 0,
-                }))
-                .filter((move) => move.san.length > 0);
-              const totalGames = openingsFromCache.reduce((acc, row) => acc + row.games, 0);
-              const lowSample = totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
-              const tiers = classifyMoveTier(openingsFromCache);
-              const moves: CoverageMoveEntry[] = openingsFromCache.map((row, index) => {
-                const overrideKey = buildCoverageTierOverrideKey(fen, row.san);
-                const overrideTier = tierOverrides.get(overrideKey);
-                const computedTier = tiers[index] ?? "alternative";
-                return {
-                  san: row.san,
-                  games: row.games,
-                  percent: totalGames > 0 ? Number(((row.games / totalGames) * 100).toFixed(1)) : 0,
-                  tier: overrideTier ?? computedTier,
-                  lowSample,
-                  nextFen: getNextFenFromSan(fen, row.san),
-                };
-              });
-
-              const entry: CoveragePositionCacheEntry = { fen, totalGames, moves };
-              positionCache.set(fenKey, entry);
-              return entry;
+            if (persistedPosition) {
+              positionCache.set(fenKey, persistedPosition);
+              return persistedPosition;
             }
 
             const openings = await withCoverageRetry(
@@ -2436,29 +3171,14 @@ export default function VariantsPage() {
                   12_000,
                 ),
             );
-            try {
-              await setCoverageExplorerCache(sourceSignature, fen, openings);
-            } catch {
-              // Cache write is best effort; the build should continue even if persistence fails.
+            if (resolvedConfig.dbType === "local") {
+              try {
+                await setCoverageExplorerCache(sourceSignature, fen, openings);
+              } catch {
+                // Cache write is best effort; the build should continue even if persistence fails.
+              }
             }
-            const totalGames = openings.reduce((acc, row) => acc + row.games, 0);
-            const lowSample = totalGames < COVERAGE_LOW_SAMPLE_MIN_GAMES;
-            const tiers = classifyMoveTier(openings);
-            const moves: CoverageMoveEntry[] = openings.map((row, index) => {
-              const overrideKey = buildCoverageTierOverrideKey(fen, row.san);
-              const overrideTier = tierOverrides.get(overrideKey);
-              const computedTier = tiers[index] ?? "alternative";
-              return {
-                san: row.san,
-                games: row.games,
-                percent: totalGames > 0 ? Number(((row.games / totalGames) * 100).toFixed(1)) : 0,
-                tier: overrideTier ?? computedTier,
-                lowSample,
-                nextFen: getNextFenFromSan(fen, row.san),
-              };
-            });
-
-            const entry: CoveragePositionCacheEntry = { fen, totalGames, moves };
+            const entry = await classifyCoveragePosition(fen, openings, tierOverrides, repertoireColor);
             positionCache.set(fenKey, entry);
             return entry;
           });
@@ -2468,6 +3188,65 @@ export default function VariantsPage() {
             return await request;
           } finally {
             positionEntryInFlightByFenKey.delete(fenKey);
+          }
+        };
+
+        const profilePositionCache = new Map<string, CoveragePositionCacheEntry>();
+        const profilePositionEntryInFlightByFenKey = new Map<string, Promise<CoveragePositionCacheEntry | null>>();
+        const getActiveProfilePositionEntry = async (
+          fen: string,
+          options?: { activeMovesUsed?: number },
+        ): Promise<CoveragePositionCacheEntry | null> => {
+          if (!shouldFetchProfileStats) return null;
+          const activeMovesUsed = options?.activeMovesUsed ?? 0;
+          if (activeMovesUsed > COVERAGE_PROFILE_STATS_MAX_ACTIVE_DEPTH) {
+            return null;
+          }
+          const fenKey = normalizeFenKey(fen);
+          const cached = profilePositionCache.get(fenKey);
+          if (cached) return cached;
+          const existingInFlight = profilePositionEntryInFlightByFenKey.get(fenKey);
+          if (existingInFlight) {
+            return await existingInFlight;
+          }
+
+          const request = runCoverageFetch(async () => {
+            const profilePlayerIds = await getResolvedProfilePlayerIds();
+            if (profilePlayerIds.length === 0) {
+              const emptyEntry: CoveragePositionCacheEntry = { fen, totalGames: 0, moves: [] };
+              profilePositionCache.set(fenKey, emptyEntry);
+              return emptyEntry;
+            }
+            if (!profileStatsDbPath) {
+              const emptyEntry: CoveragePositionCacheEntry = { fen, totalGames: 0, moves: [] };
+              profilePositionCache.set(fenKey, emptyEntry);
+              return emptyEntry;
+            }
+            const entry = await withCoverageRetry(
+              async () =>
+                await withCoverageRequestTimeout(
+                  async () =>
+                    await invoke<CoveragePositionCacheEntry>("variant_coverage_get_profile_position", {
+                      dbPath: profileStatsDbPath,
+                      fen,
+                      playerIds: profilePlayerIds,
+                      repertoireColor,
+                      timeControlCategories: selectedProfileTimeControls,
+                    }),
+                  12_000,
+                ),
+            );
+            profilePositionCache.set(fenKey, entry);
+            return entry;
+          });
+
+          profilePositionEntryInFlightByFenKey.set(fenKey, request);
+          try {
+            return await request;
+          } catch {
+            return null;
+          } finally {
+            profilePositionEntryInFlightByFenKey.delete(fenKey);
           }
         };
 
@@ -2745,19 +3524,33 @@ export default function VariantsPage() {
             for (const move of entry.moves) {
               percentBySan.set(move.san, move.percent);
             }
+            const profileMoveBySan = new Map<string, CoverageMoveEntry>();
+            const profileEntry = await getActiveProfilePositionEntry(fen, { activeMovesUsed });
+            for (const move of profileEntry?.moves ?? []) {
+              profileMoveBySan.set(move.san, move);
+            }
             const childExpansions: Array<Promise<void>> = [];
             for (const san of orientationMoves) {
               const nextFen = getNextFenFromSan(fen, san);
               const destinationVariantNames = nextFen ? variantNamesByFen.get(normalizeFenKey(nextFen)) : undefined;
               const responsePercent = percentBySan.get(san);
+              const responseMove = entry.moves.find((move) => move.san === san);
+              const profileMove = profileMoveBySan.get(san);
+              const overrideKey = buildCoverageTierOverrideKey(fen, san);
+              const openingName = await resolveCoverageOpeningName(nextFen, parentNode.openingName ?? null);
               const childNode: CoverageGraphNode = {
                 id: `${parentNode.id}|forced:${san}|${remainingMoves}`,
                 label: formatOrientationNodeLabel(san, destinationVariantNames),
-                openingName: await getOpeningNameByFen(nextFen),
+                openingName,
                 tier: "root",
                 percent: typeof responsePercent === "number" ? responsePercent : undefined,
                 fen: nextFen ?? null,
+                overrideKey,
                 activeMovesUsed: activeMovesUsed + 1,
+                activeWinRate: responseMove?.activeWinRate ?? undefined,
+                activeLossRate: responseMove?.activeLossRate ?? undefined,
+                profileWinRate: profileMove?.activeWinRate ?? undefined,
+                profileLossRate: profileMove?.activeLossRate ?? undefined,
                 children: [],
               };
               parentNode.children.push(childNode);
@@ -2774,31 +3567,49 @@ export default function VariantsPage() {
           }
 
           const entry = await getPositionEntry(fen);
-          const childExpansions: Array<Promise<void>> = [];
-          for (const move of entry.moves) {
+          const visibleMoves = entry.moves.filter((move) => {
             const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
             const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
-
-            // Hidden rule: alternative nodes without mapped response are not rendered; skip them entirely.
-            if (move.tier === "alternative" && !hasMappedResponse) {
-              continue;
+            if (move.tier === "alternative" && !hasMappedResponse) return false;
+            return true;
+          });
+          const profileMoveBySan = new Map<string, CoverageMoveEntry>();
+          if (visibleMoves.length > 0) {
+            const profileEntry = await getActiveProfilePositionEntry(fen, { activeMovesUsed });
+            for (const move of profileEntry?.moves ?? []) {
+              profileMoveBySan.set(move.san, move);
             }
+          }
+          const childExpansions: Array<Promise<void>> = [];
+          for (const move of visibleMoves) {
+            const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
+            const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
 
             const destinationVariantNames = move.nextFen
               ? variantNamesByFen.get(normalizeFenKey(move.nextFen))
               : undefined;
             const overrideKey = buildCoverageTierOverrideKey(fen, move.san);
             const customLabel = labelOverrides.get(overrideKey);
+            const profileMove = profileMoveBySan.get(move.san);
+            const sourceWinRate = move.activeWinRate ?? undefined;
+            const sourceLossRate = move.activeLossRate ?? undefined;
+            const profileWinRate = profileMove?.activeWinRate ?? undefined;
+            const profileLossRate = profileMove?.activeLossRate ?? undefined;
+            const openingName = await resolveCoverageOpeningName(move.nextFen, parentNode.openingName ?? null);
             const childNode: CoverageGraphNode = {
               id: `${parentNode.id}|${move.san}|${remainingMoves}`,
               label: formatCoverageNodeLabel(customLabel ?? move.san, move.percent, destinationVariantNames),
-              openingName: await getOpeningNameByFen(move.nextFen),
+              openingName,
               tier: move.tier,
               percent: move.percent,
               lowSample: move.lowSample ?? false,
               fen: move.nextFen,
               overrideKey,
               activeMovesUsed,
+              activeWinRate: sourceWinRate,
+              activeLossRate: sourceLossRate,
+              profileWinRate,
+              profileLossRate,
               children: [],
             };
             parentNode.children.push(childNode);
@@ -2850,7 +3661,7 @@ export default function VariantsPage() {
             branchParentNode = {
               id: `${rootNode.id}|prelude`,
               label: sanSequence.join(" "),
-              openingName: await getOpeningNameByFen(branchStartFen),
+              openingName: await resolveCoverageOpeningName(branchStartFen, rootNode.openingName),
               tier: "root",
               fen: branchStartFen,
               activeMovesUsed: 0,
@@ -2918,6 +3729,10 @@ export default function VariantsPage() {
         for (const [overrideKey, label] of labelOverrides.entries()) {
           labelOverridesRecord[overrideKey] = label;
         }
+        const rootNodeWithEngineAnnotations =
+          preservedEngineAnnotations.size > 0
+            ? applyCoverageEngineAnnotationsByFen(rootNode, preservedEngineAnnotations)
+            : rootNode;
         const nextCache: VariantCoverageCache = {
           version: COVERAGE_GRAPH_CACHE_VERSION,
           sourceSignature,
@@ -2925,7 +3740,7 @@ export default function VariantsPage() {
           positions: positionsRecord,
           tierOverrides: tierOverridesRecord,
           labelOverrides: labelOverridesRecord,
-          graphRoot: rootNode,
+          graphRoot: rootNodeWithEngineAnnotations,
           repertoireColor,
           generatedAt: new Date().toISOString(),
         };
@@ -2937,7 +3752,23 @@ export default function VariantsPage() {
           window.dispatchEvent(new Event("variants:updated"));
         } catch {}
         await refetch();
-        setCoverageGraphRoot(applyLowSampleFlagsToGraph(rootNode, positionsRecord));
+        const graphWithWinrate = await applyLowSampleFlagsToGraph(
+          rootNodeWithEngineAnnotations,
+          positionsRecord,
+          repertoireColor,
+        );
+        const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
+          graphWithWinrate,
+          positionsRecord,
+          profileStatsDbPath || null,
+          resolvedProfilePlayerIds,
+          repertoireColor,
+          selectedProfileTimeControls,
+        );
+        setCoverageGraphRoot(graphWithProfileFlags);
+        setCoverageCollapsedNodeIds(
+          buildCoverageDefaultCollapsedIds(graphWithProfileFlags, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
+        );
         setCoverageGraphOrientation(repertoireColor);
         pushProgress("building", true);
       } catch (error) {
@@ -2965,49 +3796,153 @@ export default function VariantsPage() {
       coverageGraphDepth,
       coverageGraphLoading,
       coverageGraphTargetKey,
+      coverageProfileTimeControlFilters,
+      coverageProfileTimeControlOptions,
       fetchCoverageOpenings,
+      activeProfileId,
+      activeProfileCoverageDbPath,
       lichessAuthToken,
       refetch,
+      resolveActiveProfileCoveragePlayerIds,
       t,
       variantLinkGraph.variantByKey,
     ],
   );
+
+  const refreshCoverageGraphProfileRates = useCallback(async () => {
+    if (!coverageGraphRoot || !coverageGraphCachePath || coverageGraphLoading) return;
+    const existingCache = await readCoverageGraphCache(coverageGraphCachePath);
+    if (!existingCache) return;
+
+    setCoverageProfileStatsRefreshing(true);
+    try {
+      let resolvedProfileStatsDbPath = `${activeProfileCoverageDbPath ?? ""}`.trim();
+      if (!resolvedProfileStatsDbPath && activeProfileId) {
+        try {
+          resolvedProfileStatsDbPath = await getProfileDbPath(activeProfileId);
+        } catch {
+          resolvedProfileStatsDbPath = "";
+        }
+      }
+      const selectedProfileTimeControls =
+        coverageProfileTimeControlFilters.length > 0
+          ? coverageProfileTimeControlFilters
+          : coverageProfileTimeControlOptions;
+      const playerIds = await resolveActiveProfileCoveragePlayerIds(resolvedProfileStatsDbPath);
+      const nextGraph = await applyProfileFlagsToCoverageGraph(
+        coverageGraphRoot,
+        existingCache.positions,
+        resolvedProfileStatsDbPath || null,
+        playerIds,
+        coverageGraphOrientation,
+        selectedProfileTimeControls,
+      );
+      setCoverageGraphRoot(nextGraph);
+    } finally {
+      setCoverageProfileStatsRefreshing(false);
+    }
+  }, [
+    activeProfileCoverageDbPath,
+    activeProfileId,
+    coverageGraphCachePath,
+    coverageGraphLoading,
+    coverageGraphOrientation,
+    coverageGraphRoot,
+    coverageProfileTimeControlFilters,
+    coverageProfileTimeControlOptions,
+    resolveActiveProfileCoveragePlayerIds,
+  ]);
+
+  useEffect(() => {
+    if (!coverageGraphModalOpened || !coverageGraphRoot || coverageGraphLoading) return;
+    void refreshCoverageGraphProfileRates();
+  }, [coverageGraphModalOpened, coverageGraphRoot, refreshCoverageGraphProfileRates, coverageGraphLoading]);
 
   const visibleCoverageGraphRoot = useMemo(
     () => applyCollapsedCoverageNodes(coverageGraphRoot, coverageCollapsedNodeIds),
     [coverageCollapsedNodeIds, coverageGraphRoot],
   );
 
+  useEffect(() => {
+    if (!coverageGraphRoot) return;
+    const validIds = collectCollapsibleCoverageNodeIds(coverageGraphRoot);
+    setCoverageCollapsedNodeIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [coverageGraphRoot]);
+
   const toggleCoverageNodeCollapsed = useCallback(
     (node: CoverageGraphNode) => {
       if (!coverageGraphRoot || node.tier === "root") return;
       setCoverageCollapsedNodeIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(node.id)) {
-          next.delete(node.id);
-          return next;
-        }
         const fullNode = findCoverageNodeById(coverageGraphRoot, node.id);
         if (!fullNode || fullNode.children.length === 0) {
           return prev;
         }
-        next.add(node.id);
+        const next = new Set(prev);
+        const isCollapsed = next.has(node.id);
+
+        if (!isCollapsed) {
+          next.add(node.id);
+          return next;
+        }
+
+        // Expand only one level: reveal current node children, keep deeper levels collapsed.
+        next.delete(node.id);
+        const branchCollapsedIds = collectCoverageBranchCollapseIds(fullNode, 2);
+        for (const collapsedId of branchCollapsedIds) {
+          next.add(collapsedId);
+        }
         return next;
       });
     },
     [coverageGraphRoot],
   );
 
-  const handleCoverageNodeClick = useCallback((node: CoverageGraphNode) => {
-    if (node.tier === "root") return;
-    setCoverageActionNode(node);
-    setCoverageActionTier(node.tier);
-    setCoverageActionTab("edit");
-    setCoverageActionLabel(extractCoverageEditableLabel(node.label));
-    setCoveragePuzzleTierFilter(node.tier);
-    const seedSan = extractSanFromCoverageLabel(node.label) ?? "node";
-    setCoveragePuzzleName(sanitizeFileStem(`coverage-${seedSan}`));
-  }, []);
+  const expandCoverageNodeAllChildren = useCallback(
+    (node: CoverageGraphNode) => {
+      if (!coverageGraphRoot || node.tier === "root") return;
+      setCoverageCollapsedNodeIds((prev) => {
+        const fullNode = findCoverageNodeById(coverageGraphRoot, node.id);
+        if (!fullNode || fullNode.children.length === 0) {
+          return prev;
+        }
+        const next = new Set(prev);
+        const subtreeIds = collectCoverageSubtreeNodeIds(fullNode);
+        for (const id of subtreeIds) {
+          next.delete(id);
+        }
+        return next;
+      });
+    },
+    [coverageGraphRoot],
+  );
+
+  const handleCoverageNodeClick = useCallback(
+    (node: CoverageGraphNode) => {
+      setCoverageActionNode(node);
+      setCoverageActionTier(node.tier === "secondary" || node.tier === "alternative" ? node.tier : "mainline");
+      setCoverageActionTab(node.tier === "root" ? "puzzles" : "edit");
+      setCoverageActionLabel(extractCoverageEditableLabel(node.label));
+      setCoveragePuzzleTierFilter(node.tier === "secondary" || node.tier === "alternative" ? node.tier : "mainline");
+      const seedSan = extractSanFromCoverageLabel(node.label) ?? "node";
+      setCoveragePuzzleName(sanitizeFileStem(`coverage-${seedSan}`));
+      const variantEngineMs = coverageGraphTargetKey
+        ? (variantLinkGraph.variantByKey.get(coverageGraphTargetKey)?.engineMs ?? null)
+        : null;
+      setCoverageEngineMs(variantEngineMs && variantEngineMs > 0 ? variantEngineMs : 1000);
+    },
+    [coverageGraphTargetKey, variantLinkGraph.variantByKey],
+  );
 
   const _applyCoverageNodeTierOverride = useCallback(async () => {
     if (!coverageActionNode || coverageActionNode.tier === "root") return;
@@ -3610,6 +4545,20 @@ export default function VariantsPage() {
         return;
       }
 
+      coverageGraphResumeSnapshot = {
+        targetKey: coverageGraphTargetKey,
+        depth:
+          typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+            ? Math.max(1, Math.floor(coverageGraphDepth))
+            : 1,
+        root: coverageGraphRoot,
+        cachePath: coverageGraphCachePath,
+        sourceSignature: coverageGraphSourceSignature,
+        orientation: coverageGraphOrientation,
+        collapsedNodeIds: Array.from(coverageCollapsedNodeIds),
+        capturedAt: Date.now(),
+      };
+
       await openFile(bestMatch.variant.path, setTabs, setActiveTab, {
         position: bestMatch.position,
         initialNotationView: "variations",
@@ -3617,6 +4566,7 @@ export default function VariantsPage() {
       navigate({ to: "/analysis" });
       setCoverageActionNode(null);
     } catch (error) {
+      coverageGraphResumeSnapshot = null;
       console.error("Failed to navigate to coverage node variant", error);
       notifications.show({
         title: t("common.error"),
@@ -3629,7 +4579,12 @@ export default function VariantsPage() {
   }, [
     collectSubtreeKeys,
     coverageActionNode,
+    coverageCollapsedNodeIds,
+    coverageGraphCachePath,
     coverageGraphRoot,
+    coverageGraphDepth,
+    coverageGraphOrientation,
+    coverageGraphSourceSignature,
     coverageGraphTargetKey,
     navigate,
     setActiveTab,
@@ -3768,6 +4723,201 @@ export default function VariantsPage() {
     variantLinkGraph.variantByKey,
   ]);
 
+  const runCoverageNodeEngineEval = useCallback(async () => {
+    if (!coverageActionNode || !coverageGraphTargetKey) return;
+    const sourceNode = coverageGraphRoot
+      ? (findCoverageNodeById(coverageGraphRoot, coverageActionNode.id) ?? coverageActionNode)
+      : coverageActionNode;
+    const nodeFens = [
+      ...new Map(collectCoverageSubtreeFens(sourceNode).map((fen) => [normalizeFenKey(fen), fen])).values(),
+    ];
+    if (nodeFens.length === 0) {
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.board.variants.coverageNodeBranchMissingFen", {
+          defaultValue: "Selected node and its children have no position context (FEN).",
+        }),
+        color: "red",
+      });
+      return;
+    }
+
+    const localEngines = engines.filter((engine): engine is Extract<(typeof engines)[number], { type: "local" }> => {
+      return engine.type === "local" && `${engine.path ?? ""}`.trim().length > 0;
+    });
+    const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey) ?? null;
+    const preferredEngineName = `${targetVariant?.engine ?? ""}`.trim().toLowerCase();
+    const selectedEngine =
+      localEngines.find((engine) => `${engine.name ?? ""}`.trim().toLowerCase() === preferredEngineName) ??
+      localEngines.find((engine) => engine.enabled !== false) ??
+      localEngines[0] ??
+      null;
+    if (!selectedEngine) {
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.board.variants.coverageEngineMissing", {
+          defaultValue: "No local engine available. Configure an engine first.",
+        }),
+        color: "red",
+      });
+      return;
+    }
+
+    const safeMs = Math.max(100, Math.min(60_000, Math.floor(coverageEngineMs || targetVariant?.engineMs || 1000)));
+    const engineTabPrefix = `coverage-node-eval-${Date.now()}`;
+    try {
+      setCoverageEngineEvaluating(true);
+      const { commands } = await import("@/bindings");
+      const { unwrap } = await import("@/utils/unwrap");
+      const extraOptions = (selectedEngine.settings ?? []).map((option) => ({
+        name: option.name,
+        value: option.value == null ? "" : String(option.value),
+      }));
+      const engineInfoByFen = new Map<string, { advantage: string; engineName: string; engineMs: number }>();
+      let failedCount = 0;
+
+      for (let index = 0; index < nodeFens.length; index += 1) {
+        const nodeFen = nodeFens[index];
+        if (!nodeFen) continue;
+        const engineTabId = `${engineTabPrefix}-${index}`;
+        try {
+          const startedAt = Date.now();
+          const maxWaitMs = safeMs + 3000;
+          let bestLine: CoverageEngineBestLine | null = null;
+
+          while (Date.now() - startedAt <= maxWaitMs) {
+            const result = unwrap(
+              await commands.getBestMoves(
+                selectedEngine.name,
+                selectedEngine.path,
+                engineTabId,
+                { t: "Time", c: safeMs },
+                {
+                  fen: nodeFen,
+                  moves: [],
+                  extraOptions,
+                },
+              ),
+            );
+            const lines = Array.isArray(result?.[1]) ? [...result[1]] : [];
+            const candidate =
+              lines.filter(isCoverageEngineBestLine).sort((a, b) => (a.multipv ?? 1) - (b.multipv ?? 1))[0] ?? null;
+            if (candidate) {
+              bestLine = candidate;
+            }
+            const progress = typeof result?.[0] === "number" ? result[0] : 0;
+            if (bestLine && progress >= 99.9 && Date.now() - startedAt >= safeMs) {
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 80));
+          }
+
+          const baseAdvantage = formatEngineAdvantageForRepertoire(bestLine?.score, nodeFen, coverageGraphOrientation);
+          if (!baseAdvantage) {
+            failedCount += 1;
+            continue;
+          }
+
+          const bestSan = `${bestLine?.sanMoves?.[0] ?? ""}`.trim();
+          const advantageText = bestSan.length > 0 ? `${baseAdvantage} (${bestSan})` : baseAdvantage;
+          engineInfoByFen.set(normalizeFenKey(nodeFen), {
+            advantage: advantageText,
+            engineName: selectedEngine.name,
+            engineMs: safeMs,
+          });
+        } catch (error) {
+          console.error("Failed to evaluate coverage node position", error);
+          failedCount += 1;
+        } finally {
+          try {
+            await commands.stopEngine(selectedEngine.path, engineTabId);
+          } catch {
+            // Best effort cleanup.
+          }
+        }
+      }
+
+      if (engineInfoByFen.size === 0) {
+        notifications.show({
+          title: t("common.warning"),
+          message: t("features.board.variants.coverageEngineNoScore", {
+            defaultValue: "Engine score not available for this node or its children.",
+          }),
+          color: "yellow",
+        });
+        return;
+      }
+
+      setCoverageGraphRoot((prev) => {
+        if (!prev) return prev;
+        return setCoverageEngineInfoByFenMap(prev, engineInfoByFen);
+      });
+      setCoverageActionNode((prev) => {
+        if (!prev) return prev;
+        const prevFen = `${prev.fen ?? ""}`.trim();
+        const nextEngineInfo = prevFen ? engineInfoByFen.get(normalizeFenKey(prevFen)) : null;
+        if (!nextEngineInfo) return prev;
+        return {
+          ...prev,
+          engineAdvantage: nextEngineInfo.advantage,
+          engineName: nextEngineInfo.engineName,
+          engineMs: nextEngineInfo.engineMs,
+        };
+      });
+
+      const resolvedCachePath =
+        coverageGraphCachePath ??
+        (coverageGraphSourceSignature && targetVariant
+          ? await getCoverageGraphCacheFilePath(targetVariant.path, coverageGraphSourceSignature)
+          : null);
+      if (resolvedCachePath) {
+        const existingCache = await readCoverageGraphCache(resolvedCachePath);
+        if (existingCache) {
+          const nextCache: VariantCoverageCache = {
+            ...existingCache,
+            version: COVERAGE_GRAPH_CACHE_VERSION,
+            graphRoot: setCoverageEngineInfoByFenMap(existingCache.graphRoot, engineInfoByFen),
+            generatedAt: new Date().toISOString(),
+          };
+          await writeCoverageGraphCache(resolvedCachePath, nextCache);
+          setCoverageGraphCachePath(resolvedCachePath);
+        }
+      }
+
+      notifications.show({
+        title: t("common.success"),
+        message: t("features.board.variants.coverageEngineEvalApplied", {
+          defaultValue: "Engine advantage saved for this node and its children.",
+          count: engineInfoByFen.size,
+          failed: failedCount,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      console.error("Failed to evaluate coverage node", error);
+      notifications.show({
+        title: t("common.error"),
+        message: t("features.board.variants.coverageEngineEvalFailed", {
+          defaultValue: "Failed to evaluate node with engine.",
+        }),
+        color: "red",
+      });
+    } finally {
+      setCoverageEngineEvaluating(false);
+    }
+  }, [
+    coverageActionNode,
+    coverageEngineMs,
+    coverageGraphCachePath,
+    coverageGraphOrientation,
+    coverageGraphRoot,
+    coverageGraphSourceSignature,
+    coverageGraphTargetKey,
+    engines,
+    t,
+    variantLinkGraph.variantByKey,
+  ]);
+
   const runCoverageActionPrimary = useCallback(async () => {
     if (coverageActionTab === "edit") {
       await applyCoverageNodeEdit();
@@ -3775,8 +4925,12 @@ export default function VariantsPage() {
     }
     if (coverageActionTab === "puzzles") {
       await generatePuzzlesFromCoverageNode();
+      return;
     }
-  }, [applyCoverageNodeEdit, coverageActionTab, generatePuzzlesFromCoverageNode]);
+    if (coverageActionTab === "engine") {
+      await runCoverageNodeEngineEval();
+    }
+  }, [applyCoverageNodeEdit, coverageActionTab, generatePuzzlesFromCoverageNode, runCoverageNodeEngineEval]);
 
   const coverageActionPrimaryLabel = useMemo(() => {
     if (coverageActionTab === "edit") {
@@ -3785,15 +4939,40 @@ export default function VariantsPage() {
     if (coverageActionTab === "puzzles") {
       return t("features.board.variants.coverageGeneratePuzzles", { defaultValue: "Generate puzzles" });
     }
+    if (coverageActionTab === "engine") {
+      return t("features.board.variants.coverageEngineRun", { defaultValue: "Analyze branch" });
+    }
     return "";
   }, [coverageActionTab, t]);
 
-  const coverageActionPrimaryLoading = coverageActionSaving || coveragePuzzleGenerating;
+  const coverageActionPrimaryLoading = coverageActionSaving || coveragePuzzleGenerating || coverageEngineEvaluating;
   const coverageActionPrimaryDisabled =
     coverageActionPrimaryLoading ||
     !coverageActionNode ||
-    (coverageActionTab === "edit" && coverageActionLabel.trim().length === 0);
+    (coverageActionTab === "edit" && coverageActionLabel.trim().length === 0) ||
+    (coverageActionTab === "engine" && coverageEngineMs < 100);
   const showCoverageActionPrimary = coverageActionTab !== "board";
+  const coverageActionTabs = useMemo(() => {
+    const tabs: Array<{ value: CoverageActionTab; label: string }> = [];
+    if (coverageActionNode?.tier !== "root") {
+      tabs.push({ value: "edit", label: t("features.board.variants.coverageActionEditTab", { defaultValue: "Edit" }) });
+    }
+    tabs.push({
+      value: "puzzles",
+      label: t("features.board.variants.coverageActionPuzzlesTab", { defaultValue: "Puzzles" }),
+    });
+    if (coverageActionNode?.fen) {
+      tabs.push({
+        value: "board",
+        label: t("features.board.variants.coverageActionBoardTab", { defaultValue: "Board" }),
+      });
+    }
+    tabs.push({
+      value: "engine",
+      label: t("features.board.variants.coverageActionEngineTab", { defaultValue: "Engine" }),
+    });
+    return tabs;
+  }, [coverageActionNode?.fen, coverageActionNode?.tier, t]);
   const coverageActionBoardFen = `${coverageActionNode?.fen ?? ""}`.trim();
   const coverageActionBoardError = useMemo(() => {
     if (!coverageActionBoardFen) return "missing";
@@ -4908,6 +6087,16 @@ export default function VariantsPage() {
             height: "100dvh",
             display: "flex",
             flexDirection: "column",
+            background:
+              "radial-gradient(100% 130% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 14%, transparent) 0%, transparent 58%), linear-gradient(160deg, color-mix(in srgb, var(--mantine-color-dark-8) 86%, var(--mantine-color-dark-6) 14%), var(--mantine-color-dark-8))",
+            border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 16%, var(--mantine-color-dark-4))",
+          },
+          header: {
+            background: "transparent",
+            borderBottom: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 14%, var(--mantine-color-dark-4))",
+          },
+          title: {
+            fontWeight: 700,
           },
           body: {
             flex: 1,
@@ -4917,74 +6106,146 @@ export default function VariantsPage() {
         }}
       >
         <Stack gap="md" style={{ height: "calc(100dvh - 96px)", minHeight: 0 }}>
-          <Group justify="space-between" align="flex-end" wrap="wrap">
-            <Group align="flex-end" gap="sm" wrap="wrap">
-              <NumberInput
-                label={t("features.board.variants.nMoves", { defaultValue: "N active moves" })}
-                value={coverageGraphDepth}
-                onChange={(value) => {
-                  if (typeof value === "number" && Number.isFinite(value)) {
-                    setCoverageGraphDepth(Math.max(1, Math.min(20, Math.floor(value))));
-                    return;
+          <Card
+            withBorder
+            radius="lg"
+            p="sm"
+            style={{
+              ...premiumMutedPanelStyle,
+              flexShrink: 0,
+              background:
+                "radial-gradient(90% 140% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 13%, transparent) 0%, transparent 58%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-8) 88%, var(--mantine-color-dark-6) 12%), var(--mantine-color-dark-8))",
+              boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 14px 34px rgba(2, 6, 23, 0.22)",
+            }}
+          >
+            <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
+              <Group align="flex-end" gap="xs" wrap="wrap">
+                <NumberInput
+                  label={t("features.board.variants.nMoves", { defaultValue: "N active moves" })}
+                  value={coverageGraphDepth}
+                  onChange={(value) => {
+                    if (typeof value === "number" && Number.isFinite(value)) {
+                      setCoverageGraphDepth(Math.max(1, Math.min(20, Math.floor(value))));
+                      return;
+                    }
+                    setCoverageGraphDepth("");
+                  }}
+                  placeholder={t("features.board.variants.coverageGraphDepthPlaceholder", {
+                    defaultValue: "Choose moves",
+                  })}
+                  min={1}
+                  max={20}
+                  maw={140}
+                  styles={COVERAGE_NUMBER_INPUT_STYLES}
+                />
+                <CoverageTimeControlSelector
+                  value={coverageProfileTimeControlFilters}
+                  onChange={(values) => {
+                    const allowed = new Set(coverageProfileTimeControlOptions);
+                    const nextValues = values.filter((value): value is CoverageProfileTimeControlCategory =>
+                      allowed.has(value as CoverageProfileTimeControlCategory),
+                    );
+                    setCoverageProfileTimeControlFilters(
+                      nextValues.length > 0 ? nextValues : coverageProfileTimeControlOptions,
+                    );
+                  }}
+                  options={coverageProfileTimeControlOptions}
+                  disabled={coverageProfileTimeControlOptions.length === 0}
+                  refreshing={coverageProfileStatsRefreshing}
+                  t={t}
+                />
+                <Button
+                  radius="md"
+                  variant="filled"
+                  color="blue"
+                  styles={{
+                    root: {
+                      ...premiumActionButtonStyles.root,
+                      minHeight: 38,
+                      background:
+                        "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-5) 90%, var(--mantine-color-cyan-4) 10%), var(--mantine-color-blue-7))",
+                      border: "1px solid color-mix(in srgb, var(--mantine-color-blue-3) 30%, transparent)",
+                      boxShadow: "0 10px 22px rgba(37, 99, 235, 0.2)",
+                    },
+                  }}
+                  onClick={() => void handleBuildCoverageGraph()}
+                  loading={coverageGraphLoading}
+                  disabled={typeof coverageGraphDepth !== "number" || !Number.isFinite(coverageGraphDepth)}
+                >
+                  {t("features.board.variants.buildCoverageGraph", { defaultValue: "Build graph" })}
+                </Button>
+                <Button
+                  radius="md"
+                  variant="light"
+                  color="blue"
+                  leftSection={<IconRefresh size={16} />}
+                  styles={{
+                    root: {
+                      ...premiumActionButtonStyles.root,
+                      minHeight: 38,
+                      background: "color-mix(in srgb, var(--mantine-color-blue-8) 13%, var(--mantine-color-dark-7))",
+                      border:
+                        "1px solid color-mix(in srgb, var(--mantine-color-blue-6) 24%, var(--mantine-color-dark-4))",
+                      color: "var(--mantine-color-blue-1)",
+                    },
+                  }}
+                  onClick={() => void handleBuildCoverageGraph({ forceRebuild: true })}
+                  loading={coverageGraphLoading}
+                  disabled={typeof coverageGraphDepth !== "number" || !Number.isFinite(coverageGraphDepth)}
+                >
+                  {t("features.board.variants.rebuildCoverageGraph", { defaultValue: "Rebuild graph" })}
+                </Button>
+              </Group>
+              <Group gap="xs">
+                <Badge
+                  variant="light"
+                  radius="xl"
+                  leftSection={
+                    <Box w={7} h={7} style={{ borderRadius: 999, background: COVERAGE_TIER_COLORS.mainline }} />
                   }
-                  setCoverageGraphDepth("");
-                }}
-                placeholder={t("features.board.variants.coverageGraphDepthPlaceholder", {
-                  defaultValue: "Choose moves",
-                })}
-                min={1}
-                max={20}
-                maw={140}
-              />
-              <Button
-                onClick={() => void handleBuildCoverageGraph()}
-                loading={coverageGraphLoading}
-                disabled={typeof coverageGraphDepth !== "number" || !Number.isFinite(coverageGraphDepth)}
-              >
-                {t("features.board.variants.buildCoverageGraph", { defaultValue: "Build graph" })}
-              </Button>
-              <Button
-                variant="default"
-                leftSection={<IconRefresh size={16} />}
-                onClick={() => void handleBuildCoverageGraph({ forceRebuild: true })}
-                loading={coverageGraphLoading}
-                disabled={typeof coverageGraphDepth !== "number" || !Number.isFinite(coverageGraphDepth)}
-              >
-                {t("features.board.variants.rebuildCoverageGraph", { defaultValue: "Rebuild graph" })}
-              </Button>
-            </Group>
-            <Group gap="xs">
-              <Badge
-                variant="filled"
-                styles={{ root: { backgroundColor: COVERAGE_TIER_COLORS.mainline, color: "#f8fafc" } }}
-              >
-                {t("features.board.variants.mainline", { defaultValue: "Main lines <= 60%" })}
-              </Badge>
-              <Badge
-                variant="filled"
-                styles={{ root: { backgroundColor: COVERAGE_TIER_COLORS.secondary, color: "#f8fafc" } }}
-              >
-                {t("features.board.variants.secondary", { defaultValue: "Secondary <= 80%" })}
-              </Badge>
-              <Badge
-                variant="filled"
-                styles={{ root: { backgroundColor: COVERAGE_TIER_COLORS.alternative, color: "#f8fafc" } }}
-              >
-                {t("features.board.variants.alternative", { defaultValue: "Alternative > 80%" })}
-              </Badge>
-              <Badge variant="filled" styles={{ root: { backgroundColor: COVERAGE_UNMAPPED_COLOR, color: "#111827" } }}>
-                {t("features.board.variants.unmappedResponseBadge", { defaultValue: "No response mapped" })}
-              </Badge>
-              {coveragePrioritySyncing ? (
-                <Badge color="blue" variant="light">
-                  {t("features.board.variants.prioritySynced", { defaultValue: "Priority synced (1/2/3)" })}
+                  styles={coverageLegendBadgeStyles(COVERAGE_TIER_COLORS.mainline)}
+                >
+                  {t("features.board.variants.mainline", { defaultValue: "Main lines <= 60%" })}
                 </Badge>
-              ) : null}
+                <Badge
+                  variant="light"
+                  radius="xl"
+                  leftSection={
+                    <Box w={7} h={7} style={{ borderRadius: 999, background: COVERAGE_TIER_COLORS.secondary }} />
+                  }
+                  styles={coverageLegendBadgeStyles(COVERAGE_TIER_COLORS.secondary)}
+                >
+                  {t("features.board.variants.secondary", { defaultValue: "Secondary <= 80%" })}
+                </Badge>
+                <Badge
+                  variant="light"
+                  radius="xl"
+                  leftSection={
+                    <Box w={7} h={7} style={{ borderRadius: 999, background: COVERAGE_TIER_COLORS.alternative }} />
+                  }
+                  styles={coverageLegendBadgeStyles(COVERAGE_TIER_COLORS.alternative)}
+                >
+                  {t("features.board.variants.alternative", { defaultValue: "Alternative > 80%" })}
+                </Badge>
+                <Badge
+                  variant="light"
+                  radius="xl"
+                  leftSection={<Box w={7} h={7} style={{ borderRadius: 999, background: COVERAGE_UNMAPPED_COLOR }} />}
+                  styles={coverageLegendBadgeStyles(COVERAGE_UNMAPPED_COLOR, "var(--mantine-color-yellow-1)")}
+                >
+                  {t("features.board.variants.unmappedResponseBadge", { defaultValue: "No response mapped" })}
+                </Badge>
+                {coveragePrioritySyncing ? (
+                  <Badge color="blue" variant="light" radius="xl">
+                    {t("features.board.variants.prioritySynced", { defaultValue: "Priority synced (1/2/3)" })}
+                  </Badge>
+                ) : null}
+              </Group>
             </Group>
-          </Group>
+          </Card>
 
           {coverageGraphLoading && coverageBuildProgress ? (
-            <Card withBorder radius="md" p="sm">
+            <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
               <Text size="sm" c="dimmed">
                 {coverageBuildProgress.phase === "preparing"
                   ? t("features.board.variants.coverageGraphPreparingProgress", {
@@ -5009,6 +6270,7 @@ export default function VariantsPage() {
               root={visibleCoverageGraphRoot}
               onNodeClick={handleCoverageNodeClick}
               onNodeToggleCollapse={toggleCoverageNodeCollapsed}
+              onNodeExpandAllChildren={expandCoverageNodeAllChildren}
             />
           </Box>
         </Stack>
@@ -5024,15 +6286,12 @@ export default function VariantsPage() {
         <Stack gap="md">
           <SegmentedControl
             value={coverageActionTab}
-            onChange={(value) => setCoverageActionTab(value === "puzzles" || value === "board" ? value : "edit")}
-            data={[
-              { value: "edit", label: t("features.board.variants.coverageActionEditTab", { defaultValue: "Edit" }) },
-              {
-                value: "puzzles",
-                label: t("features.board.variants.coverageActionPuzzlesTab", { defaultValue: "Puzzles" }),
-              },
-              { value: "board", label: t("features.board.variants.coverageActionBoardTab", { defaultValue: "Board" }) },
-            ]}
+            onChange={(value) => {
+              const nextValue: CoverageActionTab =
+                value === "edit" || value === "puzzles" || value === "board" || value === "engine" ? value : "puzzles";
+              setCoverageActionTab(coverageActionTabs.some((tab) => tab.value === nextValue) ? nextValue : "puzzles");
+            }}
+            data={coverageActionTabs}
             fullWidth
             radius="md"
           />
@@ -5099,6 +6358,23 @@ export default function VariantsPage() {
                   })}
                 />
               </Stack>
+            ) : coverageActionTab === "engine" ? (
+              <Stack gap="sm">
+                <NumberInput
+                  label={t("features.board.variants.coverageEngineMs", { defaultValue: "Engine time per move (ms)" })}
+                  value={coverageEngineMs}
+                  onChange={(value) => {
+                    if (typeof value === "number" && Number.isFinite(value)) {
+                      setCoverageEngineMs(Math.max(100, Math.min(60_000, Math.floor(value))));
+                      return;
+                    }
+                    setCoverageEngineMs(1000);
+                  }}
+                  min={100}
+                  max={60000}
+                  step={100}
+                />
+              </Stack>
             ) : coverageActionBoardError ? (
               <Text size="sm" c="dimmed">
                 {coverageActionBoardError === "missing"
@@ -5132,14 +6408,21 @@ export default function VariantsPage() {
                 ? t("features.board.variants.coveragePuzzleHint", {
                     defaultValue: "Generate puzzles from this node using the selected tier.",
                   })
-                : t("features.board.variants.coverageBoardHint", {
-                    defaultValue: "Board preview after this move using active side orientation.",
-                  })}
+                : coverageActionTab === "engine"
+                  ? t("features.board.variants.coverageEngineHint", {
+                      defaultValue:
+                        "Run engine analysis for this node and its children, then store the advantage labels in the graph.",
+                    })
+                  : t("features.board.variants.coverageBoardHint", {
+                      defaultValue: "Board preview after this move using active side orientation.",
+                    })}
           </Text>
           <Group justify="flex-end" gap="xs">
-            <Button variant="light" onClick={() => void goToCoverageNodeVariant()} disabled={!coverageActionNode}>
-              {t("features.board.variants.coverageGoToVariant", { defaultValue: "Go to variant" })}
-            </Button>
+            {coverageActionNode?.tier !== "root" ? (
+              <Button variant="light" onClick={() => void goToCoverageNodeVariant()} disabled={!coverageActionNode}>
+                {t("features.board.variants.coverageGoToVariant", { defaultValue: "Go to variant" })}
+              </Button>
+            ) : null}
             <Button variant="default" onClick={() => setCoverageActionNode(null)}>
               {t("common.cancel")}
             </Button>

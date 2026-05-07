@@ -622,6 +622,13 @@ export default function ProfilesPage() {
         prev.map((s) => (s.profileId === editingProfileId ? { ...s, player: name, updatedAt: now } : s)),
       );
 
+      try {
+        const dbPath = await getProfileDbPath(editingProfileId);
+        await commands.initProfileDb(dbPath, name, null);
+      } catch {
+        // Keep profile edits non-blocking if DB metadata sync fails.
+      }
+
       notifications.show({
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.updated", { defaultValue: "Profile updated." }),

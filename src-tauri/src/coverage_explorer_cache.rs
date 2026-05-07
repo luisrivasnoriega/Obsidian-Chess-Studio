@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use shakmaty::{fen::Fen, CastlingMode, Chess, EnPassantMode, Position};
+use shakmaty::{fen::Fen, CastlingMode, Chess, EnPassantMode};
 use specta::Type;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,6 +14,12 @@ const COVERAGE_CACHE_TTL_MS: i64 = 30_i64 * 24 * 60 * 60 * 1000; // 30 days
 pub struct CoverageCacheMoveDto {
     pub san: String,
     pub games: i64,
+    #[serde(default)]
+    pub white: i64,
+    #[serde(default)]
+    pub black: i64,
+    #[serde(default)]
+    pub draw: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -159,6 +165,9 @@ pub fn coverage_cache_set(
             Some(CoverageCacheMoveDto {
                 san,
                 games: m.games.max(0),
+                white: m.white.max(0),
+                black: m.black.max(0),
+                draw: m.draw.max(0),
             })
         })
         .collect();

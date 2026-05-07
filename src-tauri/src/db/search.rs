@@ -485,6 +485,47 @@ fn convert_position_query(query: PositionQueryJs) -> Result<PositionQuery, Error
     }
 }
 
+fn time_control_matches_category(time_control: Option<&str>, category: Option<&str>) -> bool {
+    let Some(category) = category.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let tc = time_control.unwrap_or("").trim();
+    let tc_lower = tc.to_lowercase();
+
+    if category == "correspondence" {
+        return tc == "-" || tc_lower.contains("correspondence");
+    }
+    if category == "daily" {
+        return tc.starts_with("1/") || tc_lower.contains("daily");
+    }
+    if category == "ultra_bullet" && tc_lower.contains("ultra") {
+        return true;
+    }
+    if category != "ultra_bullet" && tc_lower.contains("ultra") {
+        return false;
+    }
+    if category != "ultra_bullet" && tc_lower.contains(category) {
+        return true;
+    }
+
+    let total_seconds = if let Some((initial, increment)) = tc.split_once('+') {
+        let initial = initial.trim().parse::<i32>().ok();
+        let increment = increment.trim().parse::<i32>().ok();
+        initial.zip(increment).map(|(initial, increment)| initial + increment * 40)
+    } else {
+        tc.parse::<i32>().ok()
+    };
+
+    match (category, total_seconds) {
+        ("ultra_bullet", Some(total)) => total < 30,
+        ("bullet", Some(total)) => (30..180).contains(&total),
+        ("blitz", Some(total)) => (180..480).contains(&total),
+        ("rapid", Some(total)) => (480..1500).contains(&total),
+        ("classical", Some(total)) => total >= 1500,
+        _ => false,
+    }
+}
+
 impl PositionQuery {
     /// Check if a chess position matches this query
     #[inline(always)]
@@ -1026,6 +1067,7 @@ pub(crate) fn search_position_local_internal(
     let end_date = query.end_date.as_deref();
     let player1 = query.player1;
     let player2 = query.player2;
+    let time_control_category = query.time_control_category.as_deref();
     let wanted_result = query.wanted_result.as_deref().and_then(|r| match r {
         "whitewon" => Some("1-0"),
         "blackwon" => Some("0-1"),
@@ -1051,6 +1093,7 @@ pub(crate) fn search_position_local_internal(
             i32,            // black_material
             Option<i32>,    // white_elo
             Option<i32>,    // black_elo
+            Option<String>, // time_control
         )> = games::table
             .select((
                 games::id,
@@ -1065,6 +1108,7 @@ pub(crate) fn search_position_local_internal(
                 games::black_material,
                 games::white_elo,
                 games::black_elo,
+                games::time_control,
             ))
             .load(db)?;
 
@@ -1092,6 +1136,7 @@ pub(crate) fn search_position_local_internal(
                 black_material,
                 white_elo,
                 black_elo,
+                time_control,
             )| {
                 if state.new_request.available_permits() == 0 {
                     return;
@@ -1114,6 +1159,10 @@ pub(crate) fn search_position_local_internal(
                     if result.as_deref() != Some(expected_result) {
                         return;
                     }
+                }
+
+                if !time_control_matches_category(time_control.as_deref(), time_control_category) {
+                    return;
                 }
 
                 if let (Some(start_date), Some(date)) = (start_date, date) {
@@ -1420,6 +1469,7 @@ pub(crate) fn search_position_online_internal(
         Option<String>, // result
         Vec<u8>,        // moves
         Option<String>, // fen
+        Option<String>, // time_control
     )> = match games::table
         .select((
             games::id,
@@ -1429,6 +1479,7 @@ pub(crate) fn search_position_online_internal(
             games::result,
             games::moves,
             games::fen,
+            games::time_control,
         ))
         .load(db)
     {
@@ -1452,6 +1503,7 @@ pub(crate) fn search_position_online_internal(
     let end_date = query.end_date.as_deref();
     let player1 = query.player1;
     let player2 = query.player2;
+    let time_control_category = query.time_control_category.as_deref();
     let wanted_result = query.wanted_result.as_deref().and_then(|r| match r {
         "whitewon" => Some("1-0"),
         "blackwon" => Some("0-1"),
@@ -1471,6 +1523,7 @@ pub(crate) fn search_position_online_internal(
                 result,
                 game,
                 fen,
+                time_control,
             )| {
                 if state.new_request.available_permits() == 0 {
                     return;
@@ -1493,6 +1546,10 @@ pub(crate) fn search_position_online_internal(
                     if result.as_deref() != Some(expected_result) {
                         return;
                     }
+                }
+
+                if !time_control_matches_category(time_control.as_deref(), time_control_category) {
+                    return;
                 }
 
                 if let (Some(start_date), Some(date)) = (start_date, date) {
@@ -1578,6 +1635,7 @@ pub(crate) fn search_position_online_internal(
             result,
             game,
             fen,
+            time_control,
         ) in games.iter()
         {
             if state.new_request.available_permits() == 0 {
@@ -1601,6 +1659,10 @@ pub(crate) fn search_position_online_internal(
                 if result.as_deref() != Some(expected_result) {
                     continue;
                 }
+            }
+
+            if !time_control_matches_category(time_control.as_deref(), time_control_category) {
+                continue;
             }
 
             if let (Some(start_date), Some(date)) = (start_date, date) {
@@ -1762,7 +1824,8 @@ pub async fn search_position(
         || query.player2.is_some()
         || query.start_date.is_some()
         || query.end_date.is_some()
-        || query.wanted_result.is_some();
+        || query.wanted_result.is_some()
+        || query.time_control_category.is_some();
 
     // If filters are active, clear any existing cache for this position.
     // We never persist filtered searches, so this only invalidates legacy

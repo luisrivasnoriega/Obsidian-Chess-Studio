@@ -27,6 +27,7 @@ mod puzzle;
 mod puzzle_variants;
 mod tab_state_storage;
 mod variants_builder;
+mod variant_coverage_graph;
 mod variant_positions;
 
 #[cfg(target_os = "windows")]
@@ -120,6 +121,14 @@ use crate::puzzle::{
 use crate::puzzle_variants::generate_puzzle_variants_from_tree;
 use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
 use crate::variants_builder::build_variants_tree;
+use crate::variant_coverage_graph::{
+    variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
+    variant_coverage_apply_profile_position_flags, variant_coverage_build_source_signature,
+    variant_coverage_classify_position, variant_coverage_get_cached_position,
+    variant_coverage_get_profile_position, variant_coverage_graph_cache_path,
+    variant_coverage_parse_build_config_tags, variant_coverage_read_graph_cache,
+    variant_coverage_trim_graph_by_depth, variant_coverage_write_graph_cache,
+};
 use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{get_variant_position, upsert_variant_position};
 use crate::chessbase::{
@@ -227,6 +236,18 @@ pub async fn run() {
             get_engine_config,
             coverage_cache_get,
             coverage_cache_set,
+            variant_coverage_parse_build_config_tags,
+            variant_coverage_build_source_signature,
+            variant_coverage_graph_cache_path,
+            variant_coverage_read_graph_cache,
+            variant_coverage_write_graph_cache,
+            variant_coverage_trim_graph_by_depth,
+            variant_coverage_classify_position,
+            variant_coverage_get_cached_position,
+            variant_coverage_get_profile_position,
+            variant_coverage_apply_position_flags,
+            variant_coverage_apply_profile_position_flags,
+            variant_coverage_apply_node_visibility_rules,
             file_exists,
             get_file_metadata,
             save_welcome_card_image,

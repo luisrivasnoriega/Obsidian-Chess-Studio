@@ -66,6 +66,13 @@ type DBType =
   | { type: "lch_all"; options: LichessGamesOptions; fen: string }
   | { type: "lch_master"; options: MasterGamesOptions; fen: string };
 
+function extractProfileIdFromDbFilename(filename: string | null | undefined): string | null {
+  const value = (filename ?? "").trim();
+  const match = /^profile_(.+)\.db3$/i.exec(value);
+  if (!match?.[1]) return null;
+  return match[1];
+}
+
 export type LocalOptions = {
   path: string | null;
   fen: string;
@@ -193,10 +200,18 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   // Filter only successful game databases (not puzzles)
   // Note: DatabaseInfo from getDatabases includes 'file' field at runtime
   const gameDatabases = useMemo(() => {
-    return (databases ?? []).filter((db) => db.type === "success") as Array<
-      DatabaseInfo & { type: "success"; file: string }
-    >;
-  }, [databases]);
+    const knownProfileDbFilenames = new Set(profiles.map((profile) => `profile_${profile.id}.db3`.toLowerCase()));
+
+    return (databases ?? []).filter((db) => {
+      if (db.type !== "success") return false;
+      const filename = (db.filename ?? "").toLowerCase();
+      if (!filename.startsWith("profile_") || !filename.endsWith(".db3")) {
+        return true;
+      }
+      // Hide orphan profile DBs not linked to a live profile in app state.
+      return knownProfileDbFilenames.has(filename);
+    }) as Array<DatabaseInfo & { type: "success"; file: string }>;
+  }, [databases, profiles]);
 
   // Default local DB selection:
   // - keep user's explicit selection (`localOptions.path`) if present
@@ -206,10 +221,15 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     return gameDatabases[0]?.file ?? null;
   }, [gameDatabases, localOptions.path]);
   const localDatabaseOptions = useMemo(() => {
-    const options = gameDatabases.map((database) => ({
-      label: database.title,
-      value: database.file,
-    }));
+    const profileNameById = new Map(profiles.map((profile) => [profile.id, profile.name]));
+    const options = gameDatabases.map((database) => {
+      const profileId = extractProfileIdFromDbFilename(database.filename);
+      const profileName = profileId ? profileNameById.get(profileId) : null;
+      return {
+        label: profileName ?? database.title,
+        value: database.file,
+      };
+    });
     if (chessbaseConnected) {
       options.unshift({
         label: t("chessbase.title"),
@@ -217,7 +237,18 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
       });
     }
     return options;
-  }, [gameDatabases, chessbaseConnected, t]);
+  }, [gameDatabases, chessbaseConnected, profiles, t]);
+
+  useEffect(() => {
+    if (db !== "local") return;
+    if (!localOptions.path) return;
+    const existsInOptions = localDatabaseOptions.some((option) => option.value === localOptions.path);
+    if (existsInOptions) return;
+    setLocalOptions((prev) => ({
+      ...prev,
+      path: localDatabaseOptions[0]?.value ?? null,
+    }));
+  }, [db, localOptions.path, localDatabaseOptions, setLocalOptions]);
 
   // Only search when we're in the database tab and viewing stats or games
   const isDatabaseTabActive = currentTabSelected === "database";
