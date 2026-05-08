@@ -58,7 +58,8 @@
         "https://explorer.lichess.ovh/**",
         "https://tablebase.lichess.ovh/**",
         "https://www.chessdb.cn/**",
-        "https://ocsverification20260122235102-bjhggaeuffg9cwdz.eastus-01.azurewebsites.net/**"
+        "https://ocsverification20260122235102-bjhggaeuffg9cwdz.eastus-01.azurewebsites.net/**",
+        "https://*.workers.dev/**"
       ]
     },
     "opener:default"

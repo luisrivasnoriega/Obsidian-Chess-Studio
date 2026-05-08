@@ -3,6 +3,12 @@ type PgnPuzzleFirstAttemptResult = "correct" | "incorrect";
 type PgnPuzzleFirstAttemptStore = Record<string, Record<string, PgnPuzzleFirstAttemptResult>>;
 type PgnPuzzlePathStore = Record<string, unknown>;
 
+export type PgnPuzzleProgressSnapshot = {
+  solved: number[];
+  attempted: number[];
+  firstAttempt: Record<string, PgnPuzzleFirstAttemptResult>;
+};
+
 export const PGN_PUZZLE_PROGRESS_UPDATED_EVENT = "pgn-puzzles:progress-updated";
 
 const STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnProgress";
@@ -254,6 +260,71 @@ export function getFirstAttemptPgnPuzzleStats(pgnPath: string): { attempted: num
     attempted: Math.max(attemptedKeys.length, firstAttemptEntries.length),
     correct: firstAttemptEntries.filter(([, result]) => result === "correct").length,
   };
+}
+
+export function getPgnPuzzleProgressSnapshot(pgnPath: string): PgnPuzzleProgressSnapshot {
+  return {
+    solved: getSolvedPgnPuzzleIndexes(pgnPath),
+    attempted: Object.keys(getMergedPuzzleFlags(readAttemptedStore(), pgnPath))
+      .map((key) => Number.parseInt(key, 10))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b),
+    firstAttempt: getMergedFirstAttemptResults(readFirstAttemptStore(), pgnPath),
+  };
+}
+
+export function mergePgnPuzzleProgressSnapshot(pgnPath: string, snapshot: PgnPuzzleProgressSnapshot): void {
+  if (!pgnPath) return;
+
+  const solvedStore = readStore();
+  const attemptedStore = readAttemptedStore();
+  const firstAttemptStore = readFirstAttemptStore();
+  const solvedKey = resolveWritePathKey(solvedStore, pgnPath);
+  const attemptedKey = resolveWritePathKey(attemptedStore, pgnPath);
+  const firstAttemptKey = resolveWritePathKey(firstAttemptStore, pgnPath);
+  const solved = solvedStore[solvedKey] ?? {};
+  const attempted = attemptedStore[attemptedKey] ?? {};
+  const firstAttempt = firstAttemptStore[firstAttemptKey] ?? {};
+  let changed = false;
+
+  for (const index of snapshot.solved) {
+    if (!Number.isFinite(index)) continue;
+    const key = String(Math.trunc(index));
+    if (!solved[key]) {
+      solved[key] = true;
+      changed = true;
+    }
+    if (!attempted[key]) {
+      attempted[key] = true;
+      changed = true;
+    }
+  }
+
+  for (const index of snapshot.attempted) {
+    if (!Number.isFinite(index)) continue;
+    const key = String(Math.trunc(index));
+    if (!attempted[key]) {
+      attempted[key] = true;
+      changed = true;
+    }
+  }
+
+  for (const [key, result] of Object.entries(snapshot.firstAttempt)) {
+    if (result !== "correct" && result !== "incorrect") continue;
+    if (!firstAttempt[key]) {
+      firstAttempt[key] = result;
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+  solvedStore[solvedKey] = solved;
+  attemptedStore[attemptedKey] = attempted;
+  firstAttemptStore[firstAttemptKey] = firstAttempt;
+  writeStore(solvedStore);
+  writeAttemptedStore(attemptedStore);
+  writeFirstAttemptStore(firstAttemptStore);
+  emitProgressUpdated();
 }
 
 export function isPgnPuzzleAttempted(pgnPath: string, puzzleIndex: number): boolean {

@@ -25,6 +25,7 @@ import {
   IconTargetArrow,
   IconTrophy,
 } from "@tabler/icons-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -39,7 +40,16 @@ import { useTranslation } from "react-i18next";
 import type { Event, GameQuery, GamesHistoryRow, MoveAnalysis } from "@/bindings";
 import { commands, type GoMode } from "@/bindings";
 import { detectProfileBookReview } from "@/features/boards/utils/postGameReview";
-import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  enginesAtom,
+  profilePawnStructuresUiStateByProfileAtom,
+  profileStatsUiStateByProfileAtom,
+  profilesAtom,
+  sessionsAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { addAnalysis } from "@/state/store/tree";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { getAnalyzedGamesBulk, getGameStatsBulk, saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
@@ -65,10 +75,21 @@ import {
   updateGameRecord,
 } from "@/utils/gameRecords";
 import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
+import {
+  isProfileCloudSyncTarget,
+  loadProfileCloudSyncConfig,
+  saveProfileCloudLocalState,
+  syncProfilePackageWithCloud,
+} from "@/utils/profileCloudSync";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { saveProfileGameAnalysisStats } from "@/utils/profileGameAnalysisStats";
 import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/profileLastActivity";
+import {
+  buildProfileTransferPackage,
+  importProfileTransferPackage,
+  validateProfileTransferPackage,
+} from "@/utils/profileTransfer";
 import { getPuzzleStats, type PuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import { createTab, genID, type Tab } from "@/utils/tabs";
@@ -391,6 +412,7 @@ function buildStatsPayloadForBackend(
 }
 
 export default function DashboardPage() {
+  const queryClient = useQueryClient();
   const [isFirstOpen, setIsFirstOpen] = useState(false);
   useEffect(() => {
     const key = "obsidian-chess-studio.firstOpen";
@@ -412,8 +434,13 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
+  const [profileStatsUiStateByProfile, setProfileStatsUiStateByProfile] = useAtom(profileStatsUiStateByProfileAtom);
+  const [profilePawnUiStateByProfile, setProfilePawnUiStateByProfile] = useAtom(
+    profilePawnStructuresUiStateByProfileAtom,
+  );
   const [lastActivityMap, setLastActivityMap] = useState<Map<string, number | null>>(new Map());
   const [isProfileSyncing, setIsProfileSyncing] = useState(false);
+  const autoCloudSyncProfileRef = useRef<string | null>(null);
 
   // Load last activity dates for all profiles
   useEffect(() => {
@@ -459,6 +486,86 @@ export default function DashboardPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
+  const isActiveProfileCloudSyncTarget = useMemo(
+    () => isProfileCloudSyncTarget(activeProfile, sessions),
+    [activeProfile, sessions],
+  );
+
+  useEffect(() => {
+    if (!activeProfile || !isActiveProfileCloudSyncTarget) return;
+    if (autoCloudSyncProfileRef.current === activeProfile.id) return;
+
+    const config = loadProfileCloudSyncConfig();
+    if (!config.endpoint.trim() || !config.syncSecret.trim() || !config.deviceId.trim()) {
+      return;
+    }
+
+    autoCloudSyncProfileRef.current = activeProfile.id;
+    let cancelled = false;
+
+    const runAutoCloudSync = async () => {
+      try {
+        const { pkg } = await buildProfileTransferPackage({
+          profile: activeProfile,
+          sessions,
+          profileStatsUiStateByProfile,
+          profilePawnUiStateByProfile,
+        });
+        const result = await syncProfilePackageWithCloud({
+          config,
+          profileId: activeProfile.id,
+          packageJson: JSON.stringify(pkg),
+        });
+        if (cancelled) return;
+
+        if (result.status === "downloaded") {
+          const summary = await importProfileTransferPackage({
+            pkg: validateProfileTransferPackage(result.packageJson),
+            profiles,
+            mode: "replace-existing",
+            setProfiles,
+            setSessions,
+            setProfileStatsUiStateByProfile,
+            setProfilePawnUiStateByProfile,
+            setActiveProfileId,
+          });
+          if (cancelled) return;
+
+          saveProfileCloudLocalState(config, summary.profileId, result.state);
+          await queryClient.invalidateQueries();
+          window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+          window.dispatchEvent(new Event("puzzles:updated"));
+          window.dispatchEvent(new Event("puzzle-variants:updated"));
+
+          return;
+        }
+
+        if (result.status === "uploaded") return;
+      } catch {
+        if (cancelled) return;
+        autoCloudSyncProfileRef.current = null;
+      }
+    };
+
+    void runAutoCloudSync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeProfile,
+    isActiveProfileCloudSyncTarget,
+    profilePawnUiStateByProfile,
+    profileStatsUiStateByProfile,
+    profiles,
+    queryClient,
+    setActiveProfileId,
+    setProfilePawnUiStateByProfile,
+    setProfileStatsUiStateByProfile,
+    setProfiles,
+    setSessions,
+    sessions,
+  ]);
 
   const sessionMeta = useCallback((session: Session) => {
     if (session.lichess?.username) return { platform: "lichess" as const, username: session.lichess.username };

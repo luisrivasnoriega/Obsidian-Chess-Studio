@@ -3,6 +3,7 @@ import { exists, mkdir } from "@tauri-apps/plugin-fs";
 import { getDocumentDir } from "@/utils/documentDir";
 
 const VARIANTS_ROOT = "variants";
+const PUZZLE_VARIANTS_ROOT = "puzzle-variants";
 const GLOBAL_VARIANTS_SCOPE = "global";
 
 function sanitizePathSegment(input: string): string {
@@ -33,4 +34,13 @@ export async function getVariantsDirectory(profileId: string | null | undefined)
     await mkdir(variantsDir, { recursive: true });
   }
   return variantsDir;
+}
+
+export async function getPuzzleVariantsDirectory(profileId: string | null | undefined): Promise<string> {
+  const documentsDir = await getDocumentDir();
+  const puzzleVariantsDir = await join(documentsDir, PUZZLE_VARIANTS_ROOT, buildProfileScope(profileId));
+  if (!(await exists(puzzleVariantsDir))) {
+    await mkdir(puzzleVariantsDir, { recursive: true });
+  }
+  return puzzleVariantsDir;
 }

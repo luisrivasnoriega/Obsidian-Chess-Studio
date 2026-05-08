@@ -11,6 +11,7 @@ import {
   Modal,
   Pagination,
   Paper,
+  PasswordInput,
   ScrollArea,
   Select,
   Stack,
@@ -25,6 +26,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronUp,
+  IconCloud,
   IconEdit,
   IconFileExport,
   IconFileImport,
@@ -56,7 +58,7 @@ import GenericHeader from "@/components/GenericHeader";
 import { DatabaseDetails } from "@/features/databases/DatabasesPage";
 import { type FileMetadata, normalizeFileInfoMetadata, processEntriesRecursively } from "@/features/files/utils/file";
 import Databases from "@/features/profiles/components/PersonalCardPanels/Databases";
-import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
+import { getPuzzleVariantsDirectory, getVariantsDirectory } from "@/features/variants/utils/profileDir";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeProfileIdAtom,
@@ -85,10 +87,31 @@ import { readInfoMetadata } from "@/utils/files";
 import { parseDate } from "@/utils/format";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { isFailedToFetchError } from "@/utils/networkCooldown";
+import {
+  downloadProfilePackageFromCloud,
+  isProfileCloudSyncTarget,
+  loadProfileCloudSyncConfig,
+  PROFILE_CLOUD_SYNC_TARGET,
+  type ProfileCloudSyncConfig,
+  saveProfileCloudLocalState,
+  saveProfileCloudSyncConfig,
+  syncProfilePackageWithCloud,
+  uploadProfilePackageToCloud,
+} from "@/utils/profileCloudSync";
 import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
 import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/profileLastActivity";
 import { normalizeProfileName } from "@/utils/profiles";
+import {
+  buildProfileTransferPackage,
+  importProfileTransferPackage,
+  validateProfileTransferPackage,
+} from "@/utils/profileTransfer";
+import {
+  ensurePuzzleVariantProfileTags,
+  PUZZLE_VARIANTS_TAG,
+  parsePuzzleVariantTags,
+} from "@/utils/puzzleVariantMetadata";
 import type { ChessComSession, LichessSession, Session } from "@/utils/session";
 import { genID } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -152,6 +175,12 @@ type ProfilePackageVariantEntry = {
   info: unknown;
 };
 
+type ProfilePackagePuzzleVariantEntry = {
+  relativePath: string;
+  pgn: string;
+  info: unknown;
+};
+
 type ProfilePackageAccountPgnEntry = {
   fileName: string;
   pgn: string;
@@ -184,6 +213,7 @@ type ProfileTransferPackageV1 = {
   profileDbBase64: string;
   accountPgnFiles: ProfilePackageAccountPgnEntry[];
   variants: ProfilePackageVariantEntry[];
+  puzzleVariants?: ProfilePackagePuzzleVariantEntry[];
   analysis: {
     analyzedGames: ProfilePackageAnalyzedGameEntry[];
     gameStats: ProfilePackageGameStatsEntry[];
@@ -300,10 +330,13 @@ export default function ProfilesPage() {
   const [exportLoading, setExportLoading] = useState(false);
   const [convertLoading, setConvertLoading] = useState(false);
   const [profileTransferBusy, setProfileTransferBusy] = useState(false);
+  const [cloudSyncBusy, setCloudSyncBusy] = useState(false);
+  const [cloudConfigDraft, setCloudConfigDraft] = useState<ProfileCloudSyncConfig>(() => loadProfileCloudSyncConfig());
 
   const [modalOpened, modal] = useDisclosure(false);
   const [accountModalOpened, accountModal] = useDisclosure(false);
   const [verificationModalOpened, verificationModal] = useDisclosure(false);
+  const [cloudSettingsOpened, cloudSettings] = useDisclosure(false);
   const [addAccountDefaultProfileId, setAddAccountDefaultProfileId] = useState<string | null>(null);
   const [pendingAccountPayload, setPendingAccountPayload] = useState<{
     payload: AddProfileAccountPayload;
@@ -476,6 +509,10 @@ export default function ProfilesPage() {
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
+  );
+  const isActiveProfileCloudSyncTarget = useMemo(
+    () => isProfileCloudSyncTarget(activeProfile, sessions),
+    [activeProfile, sessions],
   );
   const activeProfileSyncableCount = useMemo(() => {
     if (!activeProfile) return 0;
@@ -1503,6 +1540,37 @@ export default function ProfilesPage() {
         }
       }
 
+      const puzzleVariantsDir = await getPuzzleVariantsDirectory(profileId);
+      const puzzleVariants: ProfilePackagePuzzleVariantEntry[] = [];
+      if (await exists(puzzleVariantsDir)) {
+        const puzzleVariantEntries = await readDir(puzzleVariantsDir);
+        const allPuzzleVariantEntries = await processEntriesRecursively(puzzleVariantsDir, puzzleVariantEntries);
+        const puzzleVariantsOnly = allPuzzleVariantEntries.filter(
+          (entry): entry is FileMetadata =>
+            entry.type === "file" &&
+            entry.metadata.type === "puzzle" &&
+            entry.metadata.tags.includes(PUZZLE_VARIANTS_TAG),
+        );
+        for (const puzzleVariantFile of puzzleVariantsOnly) {
+          const parsedTags = parsePuzzleVariantTags(puzzleVariantFile.metadata.tags);
+          if (parsedTags.profileId && parsedTags.profileId !== profileId) {
+            continue;
+          }
+
+          const pgn = await readTextFile(puzzleVariantFile.path);
+          const info = await readInfoMetadata(puzzleVariantFile.path, "puzzle");
+          puzzleVariants.push({
+            relativePath: profileRelativePath(puzzleVariantsDir, puzzleVariantFile.path),
+            pgn,
+            info: {
+              ...info,
+              type: "puzzle",
+              tags: ensurePuzzleVariantProfileTags(info.tags, profileId),
+            },
+          });
+        }
+      }
+
       const analyzedRows = unwrap(await commands.analysisDbGetAllAnalyzedGames(profileId));
       const analyzedGames: ProfilePackageAnalyzedGameEntry[] = analyzedRows.map((row) => ({
         gameId: row.game_id,
@@ -1540,6 +1608,7 @@ export default function ProfilesPage() {
         profileDbBase64,
         accountPgnFiles,
         variants,
+        puzzleVariants,
         analysis: {
           analyzedGames,
           gameStats,
@@ -1560,9 +1629,10 @@ export default function ProfilesPage() {
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.transfer.exportDone", {
           defaultValue:
-            "Profile exported. Sessions: {{sessions}}, variants: {{variants}}, analyzed games: {{analyzed}}.",
+            "Profile exported. Sessions: {{sessions}}, variants: {{variants}}, puzzle variants: {{puzzleVariants}}, analyzed games: {{analyzed}}.",
           sessions: linkedSessions.length,
           variants: variants.length,
+          puzzleVariants: puzzleVariants.length,
           analyzed: analyzedGames.length,
         }),
         color: "green",
@@ -1699,9 +1769,35 @@ export default function ProfilesPage() {
         await writeTextFile(targetPgnPath, item.pgn);
 
         const normalizedInfo = normalizeFileInfoMetadata(item.info, "variants");
-        const targetInfoPath = targetPgnPath.replace(".pgn", ".info");
+        const targetInfoPath = targetPgnPath.replace(/\.pgn$/i, ".info");
         await writeTextFile(targetInfoPath, JSON.stringify(normalizedInfo, null, 2));
         variantsImported += 1;
+      }
+
+      let puzzleVariantsImported = 0;
+      const puzzleVariantsDir = await getPuzzleVariantsDirectory(targetProfileId);
+      await mkdir(puzzleVariantsDir, { recursive: true });
+      const puzzleVariants = Array.isArray(parsed.puzzleVariants) ? parsed.puzzleVariants : [];
+      for (const entry of puzzleVariants) {
+        if (!entry || typeof entry !== "object") continue;
+        const item = entry as Partial<ProfilePackagePuzzleVariantEntry>;
+        const cleanRelativePath =
+          typeof item.relativePath === "string" ? sanitizePackageRelativePath(item.relativePath) : null;
+        if (!cleanRelativePath || typeof item.pgn !== "string") continue;
+
+        const targetPgnPath = await resolve(puzzleVariantsDir, cleanRelativePath);
+        await mkdir(parentDir(targetPgnPath), { recursive: true });
+        await writeTextFile(targetPgnPath, item.pgn);
+
+        const normalizedInfo = normalizeFileInfoMetadata(item.info, "puzzle");
+        const targetInfo = {
+          ...normalizedInfo,
+          type: "puzzle" as const,
+          tags: ensurePuzzleVariantProfileTags(normalizedInfo.tags, targetProfileId),
+        };
+        const targetInfoPath = targetPgnPath.replace(/\.pgn$/i, ".info");
+        await writeTextFile(targetInfoPath, JSON.stringify(targetInfo, null, 2));
+        puzzleVariantsImported += 1;
       }
 
       const analysis = parsed.analysis && typeof parsed.analysis === "object" ? parsed.analysis : null;
@@ -1778,16 +1874,21 @@ export default function ProfilesPage() {
 
       await loadDatabases();
       invalidateProfilePlayerStats(targetProfileId);
+      try {
+        window.dispatchEvent(new Event("puzzles:updated"));
+        window.dispatchEvent(new Event("puzzle-variants:updated"));
+      } catch {}
 
       notifications.show({
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.transfer.importDone", {
           defaultValue:
-            "Profile imported as {{profile}}. Sessions: {{sessions}}, account files: {{accountFiles}}, variants: {{variants}}, analyzed games: {{analyzed}}, stats: {{stats}}.",
+            "Profile imported as {{profile}}. Sessions: {{sessions}}, account files: {{accountFiles}}, variants: {{variants}}, puzzle variants: {{puzzleVariants}}, analyzed games: {{analyzed}}, stats: {{stats}}.",
           profile: targetProfileName,
           sessions: normalizedSessions.length,
           accountFiles: accountFilesImported,
           variants: variantsImported,
+          puzzleVariants: puzzleVariantsImported,
           analyzed: analyzedImported,
           stats: statsImported,
         }),
@@ -1817,6 +1918,202 @@ export default function ProfilesPage() {
     t,
   ]);
 
+  const buildActiveProfilePackageJson = useCallback(async () => {
+    if (!activeProfile) {
+      throw new Error(t("profiles.transfer.noActiveProfile", { defaultValue: "Select an active profile first." }));
+    }
+    if (!isActiveProfileCloudSyncTarget) {
+      throw new Error(
+        t("profiles.cloud.targetOnly", {
+          defaultValue:
+            "Cloud sync is currently limited to profile {{profile}} linked to Lichess account {{username}}.",
+          profile: PROFILE_CLOUD_SYNC_TARGET.profileName,
+          username: PROFILE_CLOUD_SYNC_TARGET.lichessUsername,
+        }),
+      );
+    }
+    const { pkg } = await buildProfileTransferPackage({
+      profile: activeProfile,
+      sessions,
+      profileStatsUiStateByProfile,
+      profilePawnUiStateByProfile,
+    });
+    return { packageJson: JSON.stringify(pkg) };
+  }, [
+    activeProfile,
+    isActiveProfileCloudSyncTarget,
+    profilePawnUiStateByProfile,
+    profileStatsUiStateByProfile,
+    sessions,
+    t,
+  ]);
+
+  const applyCloudProfilePackageJson = useCallback(
+    async (packageJson: string) => {
+      const pkg = validateProfileTransferPackage(packageJson);
+      const summary = await importProfileTransferPackage({
+        pkg,
+        profiles,
+        mode: "replace-existing",
+        setProfiles,
+        setSessions,
+        setProfileStatsUiStateByProfile,
+        setProfilePawnUiStateByProfile,
+        setActiveProfileId,
+      });
+      await loadDatabases();
+      invalidateProfilePlayerStats(summary.profileId);
+      return summary;
+    },
+    [
+      invalidateProfilePlayerStats,
+      loadDatabases,
+      profiles,
+      setActiveProfileId,
+      setProfilePawnUiStateByProfile,
+      setProfileStatsUiStateByProfile,
+      setProfiles,
+      setSessions,
+    ],
+  );
+
+  const openCloudSettings = useCallback(() => {
+    setCloudConfigDraft(loadProfileCloudSyncConfig());
+    cloudSettings.open();
+  }, [cloudSettings]);
+
+  const saveCloudSettings = useCallback(() => {
+    saveProfileCloudSyncConfig(cloudConfigDraft);
+    cloudSettings.close();
+    notifications.show({
+      title: t("common.success", { defaultValue: "Success" }),
+      message: t("profiles.cloud.settingsSaved", { defaultValue: "Cloud sync settings saved." }),
+      color: "green",
+    });
+  }, [cloudConfigDraft, cloudSettings, t]);
+
+  const syncActiveProfileWithCloud = useCallback(async () => {
+    if (!activeProfile || cloudSyncBusy) return;
+    try {
+      setCloudSyncBusy(true);
+      const config = loadProfileCloudSyncConfig();
+      const { packageJson } = await buildActiveProfilePackageJson();
+      const result = await syncProfilePackageWithCloud({
+        config,
+        profileId: activeProfile.id,
+        packageJson,
+      });
+
+      if (result.status === "downloaded") {
+        const summary = await applyCloudProfilePackageJson(result.packageJson);
+        saveProfileCloudLocalState(config, summary.profileId, result.state);
+        notifications.show({
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("profiles.cloud.downloaded", {
+            defaultValue: "Cloud profile downloaded as {{profile}}.",
+            profile: summary.profileName,
+          }),
+          color: "green",
+        });
+        return;
+      }
+
+      if (result.status === "uploaded") {
+        notifications.show({
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("profiles.cloud.uploaded", { defaultValue: "Profile uploaded to cloud." }),
+          color: "green",
+        });
+        return;
+      }
+
+      if (result.status === "unchanged") {
+        notifications.show({
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("profiles.cloud.unchanged", { defaultValue: "Cloud profile is already up to date." }),
+          color: "green",
+        });
+        return;
+      }
+
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.cloud.conflict", {
+          defaultValue:
+            "Cloud and local profile both changed. Use upload or download explicitly after deciding which copy to keep.",
+        }),
+        color: "yellow",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        color: "red",
+      });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }, [activeProfile, applyCloudProfilePackageJson, buildActiveProfilePackageJson, cloudSyncBusy, t]);
+
+  const uploadActiveProfileToCloud = useCallback(async () => {
+    if (!activeProfile || cloudSyncBusy) return;
+    try {
+      setCloudSyncBusy(true);
+      const config = loadProfileCloudSyncConfig();
+      const { packageJson } = await buildActiveProfilePackageJson();
+      await uploadProfilePackageToCloud({ config, profileId: activeProfile.id, packageJson });
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.cloud.uploaded", { defaultValue: "Profile uploaded to cloud." }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        color: "red",
+      });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }, [activeProfile, buildActiveProfilePackageJson, cloudSyncBusy, t]);
+
+  const downloadActiveProfileFromCloud = useCallback(async () => {
+    if (cloudSyncBusy) return;
+    try {
+      setCloudSyncBusy(true);
+      const config = loadProfileCloudSyncConfig();
+      const result = await downloadProfilePackageFromCloud({ config });
+      const summary = await applyCloudProfilePackageJson(result.packageJson);
+      saveProfileCloudLocalState(config, summary.profileId, result.state);
+      notifications.show({
+        title: t("common.success", { defaultValue: "Success" }),
+        message: t("profiles.cloud.downloaded", {
+          defaultValue: "Cloud profile downloaded as {{profile}}.",
+          profile: summary.profileName,
+        }),
+        color: "green",
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error", { defaultValue: "Error" }),
+        message:
+          error instanceof Error
+            ? error.message
+            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        color: "red",
+      });
+    } finally {
+      setCloudSyncBusy(false);
+    }
+  }, [applyCloudProfilePackageJson, cloudSyncBusy, t]);
+
   const refreshPuzzleDatabases = useCallback(async () => {}, []);
 
   return (
@@ -1827,6 +2124,39 @@ export default function ProfilesPage() {
         showViewToggle={false}
         actions={
           <Group gap="xs">
+            {isActiveProfileCloudSyncTarget ? (
+              <>
+                <Button
+                  size="xs"
+                  radius="xl"
+                  variant="light"
+                  styles={premiumActionButtonStyles}
+                  leftSection={<IconCloud size="1rem" />}
+                  onClick={openCloudSettings}
+                  disabled={profileTransferBusy || isAccountSyncRunning || cloudSyncBusy}
+                >
+                  {t("profiles.cloud.settings", { defaultValue: "Cloud settings" })}
+                </Button>
+                <Button
+                  size="xs"
+                  radius="xl"
+                  variant="light"
+                  styles={premiumActionButtonStyles}
+                  leftSection={<IconCloud size="1rem" />}
+                  onClick={() => void syncActiveProfileWithCloud()}
+                  loading={cloudSyncBusy}
+                  disabled={
+                    !activeProfile ||
+                    !isActiveProfileCloudSyncTarget ||
+                    profileTransferBusy ||
+                    isAccountSyncRunning ||
+                    cloudSyncBusy
+                  }
+                >
+                  {t("profiles.cloud.sync", { defaultValue: "Cloud sync" })}
+                </Button>
+              </>
+            ) : null}
             <Button
               size="xs"
               radius="xl"
@@ -1835,7 +2165,7 @@ export default function ProfilesPage() {
               leftSection={<IconFileImport size="1rem" />}
               onClick={() => void importProfileFromFile()}
               loading={profileTransferBusy}
-              disabled={profileTransferBusy || isAccountSyncRunning}
+              disabled={profileTransferBusy || isAccountSyncRunning || cloudSyncBusy}
             >
               {t("profiles.transfer.importFile", { defaultValue: "Import profile file" })}
             </Button>
@@ -1847,7 +2177,7 @@ export default function ProfilesPage() {
               leftSection={<IconFileExport size="1rem" />}
               onClick={() => void exportProfileToFile()}
               loading={profileTransferBusy}
-              disabled={!activeProfile || profileTransferBusy || isAccountSyncRunning}
+              disabled={!activeProfile || profileTransferBusy || isAccountSyncRunning || cloudSyncBusy}
             >
               {t("profiles.transfer.exportFile", { defaultValue: "Export profile file" })}
             </Button>
@@ -1861,7 +2191,11 @@ export default function ProfilesPage() {
                 if (activeProfile) void syncProfileSessions(activeProfile);
               }}
               disabled={
-                !activeProfile || activeProfileSyncableCount === 0 || isAccountSyncRunning || profileTransferBusy
+                !activeProfile ||
+                activeProfileSyncableCount === 0 ||
+                isAccountSyncRunning ||
+                profileTransferBusy ||
+                cloudSyncBusy
               }
             >
               {t("profiles.sync.active", { defaultValue: "Update active profile" })}
@@ -1869,6 +2203,91 @@ export default function ProfilesPage() {
           </Group>
         }
       />
+
+      {isActiveProfileCloudSyncTarget ? (
+        <Modal
+          opened={cloudSettingsOpened}
+          onClose={cloudSettings.close}
+          title={t("profiles.cloud.settings", { defaultValue: "Cloud settings" })}
+          centered
+          size="lg"
+        >
+          <Stack gap="sm">
+            <Text size="sm" c="dimmed">
+              {t("profiles.cloud.targetOnly", {
+                defaultValue:
+                  "Cloud sync is currently limited to profile {{profile}} linked to Lichess account {{username}}.",
+                profile: PROFILE_CLOUD_SYNC_TARGET.profileName,
+                username: PROFILE_CLOUD_SYNC_TARGET.lichessUsername,
+              })}
+            </Text>
+            <TextInput
+              label={t("profiles.cloud.endpoint", { defaultValue: "Worker endpoint" })}
+              placeholder="https://ocs-profile-sync.<account>.workers.dev"
+              value={cloudConfigDraft.endpoint}
+              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, endpoint: event.currentTarget.value }))}
+            />
+            <TextInput
+              label={t("profiles.cloud.userId", { defaultValue: "User ID" })}
+              placeholder={PROFILE_CLOUD_SYNC_TARGET.userId}
+              description={t("profiles.cloud.fixedUserId", {
+                defaultValue: "Fixed for the Isabella / bethfisher94 single-profile sync.",
+              })}
+              value={PROFILE_CLOUD_SYNC_TARGET.userId}
+              disabled
+            />
+            <PasswordInput
+              label={t("profiles.cloud.syncKey", { defaultValue: "Sync key" })}
+              value={cloudConfigDraft.syncSecret}
+              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, syncSecret: event.currentTarget.value }))}
+            />
+            <TextInput
+              label={t("profiles.cloud.deviceId", { defaultValue: "Device ID" })}
+              value={cloudConfigDraft.deviceId}
+              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, deviceId: event.currentTarget.value }))}
+            />
+            <PasswordInput
+              label={t("profiles.cloud.authToken", { defaultValue: "Worker auth token" })}
+              description={t("profiles.cloud.authTokenDescription", {
+                defaultValue: "Only required if SYNC_AUTH_TOKEN is configured in the Worker.",
+              })}
+              value={cloudConfigDraft.authToken ?? ""}
+              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, authToken: event.currentTarget.value }))}
+            />
+            <Group justify="space-between" mt="sm">
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => {
+                    saveProfileCloudSyncConfig(cloudConfigDraft);
+                    void uploadActiveProfileToCloud();
+                  }}
+                  loading={cloudSyncBusy}
+                  disabled={!isActiveProfileCloudSyncTarget || cloudSyncBusy}
+                >
+                  {t("profiles.cloud.upload", { defaultValue: "Upload now" })}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => {
+                    saveProfileCloudSyncConfig(cloudConfigDraft);
+                    void downloadActiveProfileFromCloud();
+                  }}
+                  loading={cloudSyncBusy}
+                  disabled={cloudSyncBusy}
+                >
+                  {t("profiles.cloud.download", { defaultValue: "Download now" })}
+                </Button>
+              </Group>
+              <Button size="xs" onClick={saveCloudSettings}>
+                {t("common.save", { defaultValue: "Save" })}
+              </Button>
+            </Group>
+          </Stack>
+        </Modal>
+      ) : null}
 
       <Stack flex={1} style={{ minHeight: 0 }}>
         <ScrollArea h="100%" offsetScrollbars>

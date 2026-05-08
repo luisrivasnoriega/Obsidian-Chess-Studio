@@ -1,0 +1,16 @@
+name = "ocs-profile-sync"
+main = "src/index.ts"
+compatibility_date = "2026-05-08"
+
+[[r2_buckets]]
+binding = "PROFILE_SYNC_BUCKET"
+bucket_name = "ocs-sync"
+
+[[d1_databases]]
+binding = "PROFILE_SYNC_DB"
+database_name = "ocs-sync"
+database_id = "<your-d1-database-id>"
+
+# Optional. If set, OCS must send it as a Bearer token.
+# Configure with:
+#   wrangler secret put SYNC_AUTH_TOKEN

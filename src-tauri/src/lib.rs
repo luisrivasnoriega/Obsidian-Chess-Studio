@@ -203,9 +203,15 @@ pub struct AppState {
 // MAIN APPLICATION ENTRY POINT
 // ============================================================================
 
+fn install_rustls_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 #[tokio::main]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub async fn run() {
+    install_rustls_crypto_provider();
+
     let specta_builder = tauri_specta::Builder::new()
         .commands(tauri_specta::collect_commands!(
         get_system_locale,
@@ -647,16 +653,16 @@ fn get_preferred_stockfish_build_key() -> String {
     String::new()
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    target_arch = "x86_64"
+))]
 fn has_avx_vnni() -> bool {
     // AVX VNNI (aka AVX2+VNNI) is reported by CPUID.(EAX=7, ECX=1):EAX[4].
     //
     // We intentionally only use this for build selection; actual AVX usage is
     // validated via `is_x86_feature_detected!` elsewhere (e.g. AVX2).
-    #[cfg(target_arch = "x86_64")]
     use std::arch::x86_64::__cpuid_count;
-    #[cfg(target_arch = "x86")]
-    use std::arch::x86::__cpuid_count;
 
     unsafe {
         // First check max supported subleaf for leaf 7.
@@ -671,12 +677,10 @@ fn has_avx_vnni() -> bool {
     }
 }
 
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn has_avx_vnni() -> bool {
-    false
-}
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    target_arch = "x86_64"
+))]
 fn has_avx512_icl_like() -> bool {
     // "AVX-512ICL" binaries typically assume the "full" AVX-512 feature set found on
     // Ice Lake-family CPUs (and later), including VNNI. We approximate this by
@@ -688,13 +692,7 @@ fn has_avx512_icl_like() -> bool {
         && is_x86_feature_detected!("avx512vnni")
 }
 
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn has_avx512_icl_like() -> bool {
-    false
-}
-
-#[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
+#[cfg(all(any(target_os = "windows", target_os = "linux"), target_arch = "aarch64"))]
 fn has_aarch64_dotprod() -> bool {
     // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
     //
@@ -704,24 +702,11 @@ fn has_aarch64_dotprod() -> bool {
     cfg!(target_feature = "dotprod")
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[allow(dead_code)]
-fn has_aarch64_dotprod() -> bool {
-    false
-}
-
-#[cfg(target_arch = "arm")]
-#[allow(dead_code)]
+#[cfg(all(target_os = "linux", target_arch = "arm"))]
 fn has_arm_neon() -> bool {
     // `std::arch::is_arm_feature_detected!` is currently unstable on stable Rust.
     // Use compile-time detection instead to keep release builds working everywhere.
     cfg!(target_feature = "neon")
-}
-
-#[cfg(not(target_arch = "arm"))]
-#[allow(dead_code)]
-fn has_arm_neon() -> bool {
-    false
 }
 
 #[tauri::command]
@@ -739,67 +724,61 @@ fn process_memory_rss_mb() -> Option<u64> {
     system.process(pid).map(|process| process.memory() / 1024)
 }
 
+#[cfg(target_os = "windows")]
 fn get_gpu_names() -> Result<Vec<String>, String> {
-    #[cfg(target_os = "windows")]
-    {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to query GPU names: {}", e))?;
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to query GPU names: {}", e))?;
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let names: Vec<String> = stdout
-                .lines()
-                .map(|line| line.trim())
-                .filter(|line| !line.is_empty())
-                .filter(|line| {
-                    let lower = line.to_lowercase();
-                    !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
-                })
-                .map(|line| line.to_string())
-                .collect();
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let names: Vec<String> = stdout
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .filter(|line| {
+                let lower = line.to_lowercase();
+                !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
+            })
+            .map(|line| line.to_string())
+            .collect();
 
-            if !names.is_empty() {
-                return Ok(names);
-            }
-        }
-
-        let output = Command::new("wmic")
-            .args(["path", "win32_VideoController", "get", "name"])
-            .output()
-            .map_err(|e| format!("Failed to query GPU names via wmic: {}", e))?;
-
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let names: Vec<String> = stdout
-                .lines()
-                .map(|line| line.trim())
-                .filter(|line| !line.is_empty() && !line.eq_ignore_ascii_case("name"))
-                .filter(|line| {
-                    let lower = line.to_lowercase();
-                    !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
-                })
-                .map(|line| line.to_string())
-                .collect();
-
+        if !names.is_empty() {
             return Ok(names);
         }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Failed to query GPU names: {}", stderr.trim()))
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(Vec::new())
+    let output = Command::new("wmic")
+        .args(["path", "win32_VideoController", "get", "name"])
+        .output()
+        .map_err(|e| format!("Failed to query GPU names via wmic: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let names: Vec<String> = stdout
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.eq_ignore_ascii_case("name"))
+            .filter(|line| {
+                let lower = line.to_lowercase();
+                !lower.contains("microsoft basic display adapter") && !lower.contains("virtual")
+            })
+            .map(|line| line.to_string())
+            .collect();
+
+        return Ok(names);
     }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!("Failed to query GPU names: {}", stderr.trim()))
 }
 
+#[cfg(target_os = "windows")]
 #[tauri::command]
 #[specta::specta]
 fn get_preferred_lc0_engine_name() -> Result<Option<String>, String> {
@@ -808,51 +787,51 @@ fn get_preferred_lc0_engine_name() -> Result<Option<String>, String> {
     const LC0_ONNX_DML: &str = "Leela Chess Zero (ONNX-DML)";
     const LC0_DNNL: &str = "Leela Chess Zero (DNNL)";
 
-    #[cfg(target_os = "windows")]
-    {
-        let gpu_names = get_gpu_names().unwrap_or_default();
-        if gpu_names.is_empty() {
-            return Ok(Some(LC0_DNNL.to_string()));
-        }
+    let gpu_names = get_gpu_names().unwrap_or_default();
+    if gpu_names.is_empty() {
+        return Ok(Some(LC0_DNNL.to_string()));
+    }
 
-        let mut has_gtx_legacy = false;
-        for raw_name in gpu_names {
-            let name = raw_name.to_uppercase();
+    let mut has_gtx_legacy = false;
+    for raw_name in gpu_names {
+        let name = raw_name.to_uppercase();
 
-            if name.contains("RTX") {
-                if let Some(series) = parse_gpu_series(&name, "RTX") {
-                    if series >= 2000 {
-                        return Ok(Some(LC0_CUDA12.to_string()));
-                    }
-                } else if contains_any(&name, &["RTX 20", "RTX 30", "RTX 40"]) {
+        if name.contains("RTX") {
+            if let Some(series) = parse_gpu_series(&name, "RTX") {
+                if series >= 2000 {
                     return Ok(Some(LC0_CUDA12.to_string()));
                 }
+            } else if contains_any(&name, &["RTX 20", "RTX 30", "RTX 40"]) {
+                return Ok(Some(LC0_CUDA12.to_string()));
             }
+        }
 
-            if name.contains("GTX") {
-                if let Some(series) = parse_gpu_series(&name, "GTX") {
-                    if (600..=1699).contains(&series) {
-                        has_gtx_legacy = true;
-                    }
-                } else {
+        if name.contains("GTX") {
+            if let Some(series) = parse_gpu_series(&name, "GTX") {
+                if (600..=1699).contains(&series) {
                     has_gtx_legacy = true;
                 }
+            } else {
+                has_gtx_legacy = true;
             }
         }
-
-        if has_gtx_legacy {
-            return Ok(Some(LC0_CUDNN.to_string()));
-        }
-
-        return Ok(Some(LC0_ONNX_DML.to_string()));
     }
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(Some(LC0_DNNL.to_string()))
+    if has_gtx_legacy {
+        return Ok(Some(LC0_CUDNN.to_string()));
     }
+
+    Ok(Some(LC0_ONNX_DML.to_string()))
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+#[specta::specta]
+fn get_preferred_lc0_engine_name() -> Result<Option<String>, String> {
+    Ok(Some("Leela Chess Zero (DNNL)".to_string()))
+}
+
+#[cfg(target_os = "windows")]
 fn parse_gpu_series(name: &str, token: &str) -> Option<u32> {
     let name_upper = name.to_uppercase();
     let token_upper = token.to_uppercase();
@@ -885,6 +864,7 @@ fn parse_gpu_series(name: &str, token: &str) -> Option<u32> {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }

@@ -1,6 +1,6 @@
 [package]
 name = "obsidian-chess-studio"
-version = "3.0.4"
+version = "3.0.5"
 description = "A Modern Chess Database"
 authors = ["OCS Team"]
 license = "GPL-3.0-only"
@@ -85,6 +85,7 @@ base64 = "0.22.1"
 flate2 = "1.1.5"
 keyring = "2.3.3"
 tokio-tungstenite = { version = "0.23.1", features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [features]
 # by default Tauri runs in production mode

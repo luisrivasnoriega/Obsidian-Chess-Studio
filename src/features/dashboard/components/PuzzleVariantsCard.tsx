@@ -2,77 +2,42 @@ import { Badge, Box, Button, Card, Group, Loader, Progress, ScrollArea, Stack, T
 import { notifications } from "@mantine/notifications";
 import { IconPuzzle } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { useAtom, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { loadDirectories } from "@/App";
 import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
-import { activeTabAtom, puzzleUnsolvedOnlyDbAtom, selectedPuzzleDbAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  puzzleUnsolvedOnlyDbAtom,
+  selectedPuzzleDbAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import {
   getSolvedPgnPuzzleCount,
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
   resetPgnPuzzleProgressForPaths,
 } from "@/utils/pgnPuzzleProgress";
+import {
+  PUZZLE_VARIANTS_TAG,
+  parsePuzzleVariantTags,
+  puzzleVariantMatchesProfile,
+} from "@/utils/puzzleVariantMetadata";
 import { createTab } from "@/utils/tabs";
 
 type PuzzleVariantFile = {
   title: string;
   path: string;
   puzzleCount: number;
+  profileId: string | null;
+  variantPath: string | null;
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
   coverageNode: string | null;
   coverageTier: "mainline" | "secondary" | "alternative" | null;
 };
-
-function parsePuzzleVariantTags(tags: string[]): {
-  variantName: string | null;
-  depth: number | null;
-  mainline: string | null;
-  coverageNode: string | null;
-  coverageTier: "mainline" | "secondary" | "alternative" | null;
-} {
-  const variantName =
-    tags
-      .find((tag) => tag.startsWith("variant:"))
-      ?.slice("variant:".length)
-      .trim() || null;
-  const depthRaw =
-    tags
-      .find((tag) => tag.startsWith("depth:"))
-      ?.slice("depth:".length)
-      .trim() || null;
-  const depth = depthRaw ? Number.parseInt(depthRaw, 10) : null;
-  const mainline =
-    tags
-      .find((tag) => tag.startsWith("mainline:"))
-      ?.slice("mainline:".length)
-      .trim() || null;
-  const coverageNode =
-    tags
-      .find((tag) => tag.startsWith("coverageNode:"))
-      ?.slice("coverageNode:".length)
-      .trim() || null;
-  const coverageTierRaw =
-    tags
-      .find((tag) => tag.startsWith("coverageTier:"))
-      ?.slice("coverageTier:".length)
-      .trim()
-      .toLowerCase() || null;
-  const coverageTier =
-    coverageTierRaw === "mainline" || coverageTierRaw === "secondary" || coverageTierRaw === "alternative"
-      ? coverageTierRaw
-      : null;
-
-  return {
-    variantName,
-    depth: depthRaw && Number.isFinite(depth) ? depth : null,
-    mainline,
-    coverageNode,
-    coverageTier,
-  };
-}
 
 function humanizePuzzleTitle(title: string): string {
   const withoutGeneratedSuffix = title.replace(/-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}$/i, "");
@@ -118,6 +83,7 @@ export function PuzzleVariantsCard() {
   const setActiveTab = useSetAtom(activeTabAtom);
   const setSelectedPuzzleDb = useSetAtom(selectedPuzzleDbAtom);
   const setPuzzleUnsolvedOnlyDb = useSetAtom(puzzleUnsolvedOnlyDbAtom);
+  const activeProfileId = useAtomValue(activeProfileIdAtom);
 
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<PuzzleVariantFile[]>([]);
@@ -156,15 +122,17 @@ export function PuzzleVariantsCard() {
       const variantFiles = allEntries
         .filter((entry): entry is FileMetadata => entry.type === "file")
         .filter((file) => file.metadata.type === "puzzle")
-        .filter((file) => file.metadata.tags.includes("puzzle-variants"))
+        .filter((file) => file.metadata.tags.includes(PUZZLE_VARIANTS_TAG))
+        .filter((file) => puzzleVariantMatchesProfile(file.metadata.tags, activeProfileId))
         .map((file) => {
-          const { variantName, depth, mainline, coverageNode, coverageTier } = parsePuzzleVariantTags(
-            file.metadata.tags,
-          );
+          const { profileId, variantPath, variantName, depth, mainline, coverageNode, coverageTier } =
+            parsePuzzleVariantTags(file.metadata.tags);
           return {
             title: file.name,
             path: file.path,
             puzzleCount: file.numGames,
+            profileId,
+            variantPath,
             variantName,
             depth,
             mainline,
@@ -179,7 +147,7 @@ export function PuzzleVariantsCard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeProfileId]);
 
   useEffect(() => {
     void reloadFiles();

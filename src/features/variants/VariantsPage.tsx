@@ -75,12 +75,12 @@ import { defaultPGN, getMoveText, getPGNFromReportView, parsePGN } from "@/utils
 import { positionFromFen } from "@/utils/chessops";
 import { setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
 import { getDatabases, type Opening, query_players, searchPosition } from "@/utils/db";
-import { getDocumentDir } from "@/utils/documentDir";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import { getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
 import { getProfileDbPath } from "@/utils/profileDb";
+import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
 import type { TreeNode } from "@/utils/treeReducer";
 import { PuzzleVariantsModal } from "../boards/components/PuzzleVariantsModal";
@@ -94,7 +94,7 @@ import {
 import { VariantGridView } from "./components/VariantGridView";
 import type { VariantInfo } from "./types";
 import { repairVariantLinks } from "./utils/links";
-import { getVariantsDirectory } from "./utils/profileDir";
+import { getPuzzleVariantsDirectory, getVariantsDirectory } from "./utils/profileDir";
 
 type VariantTreeNode = {
   key: string;
@@ -429,6 +429,21 @@ function normalizeFenKey(fen: string): string {
   return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}`;
 }
 
+function buildFenMatchKeys(fen: string | null | undefined): string[] {
+  const trimmed = `${fen ?? ""}`.trim();
+  if (!trimmed) return [];
+  const parts = trimmed.split(/\s+/);
+  const keys = new Set<string>();
+  keys.add(`fen4:${normalizeFenKey(trimmed)}`);
+  if (parts[0]) {
+    if (parts[1]) {
+      keys.add(`board-turn:${parts[0]} ${parts[1]}`);
+    }
+    keys.add(`board:${parts[0]}`);
+  }
+  return Array.from(keys);
+}
+
 function buildCriticalLineCoverageCachePath(cacheFilePath: string): string {
   if (/\.json$/i.test(cacheFilePath)) {
     return cacheFilePath.replace(/\.json$/i, "-critical-lines.json");
@@ -446,6 +461,13 @@ function coverageTierPriority(tier: CoverageTier): number | null {
   if (tier === "secondary") return 2;
   if (tier === "alternative") return 3;
   return null;
+}
+
+function variantPriorityColor(priority: number): string {
+  if (priority === 1) return "blue";
+  if (priority === 2) return "green";
+  if (priority === 3) return "red";
+  return "gray";
 }
 
 function coverageTierFileSuffix(tier: Exclude<CoverageTier, "root">): string {
@@ -1326,17 +1348,6 @@ function collectTreePathsByFen(node: TreeNode, targetFenKey: string, currentPath
   for (let i = 0; i < node.children.length; i += 1) {
     collectTreePathsByFen(node.children[i], targetFenKey, [...currentPath, i], out);
   }
-}
-
-function collectTreeFenKeys(node: TreeNode, out: Set<string> = new Set<string>()): Set<string> {
-  const fen = `${node.fen ?? ""}`.trim();
-  if (fen) {
-    out.add(normalizeFenKey(fen));
-  }
-  for (const child of node.children) {
-    collectTreeFenKeys(child, out);
-  }
-  return out;
 }
 
 function getSanSequenceAtTreePath(root: TreeNode, path: number[]): string[] {
@@ -3702,7 +3713,7 @@ export default function VariantsPage() {
         };
 
         const variantRootFenByKey = new Map<string, string>();
-        const variantFenKeysByKey = new Map<string, Set<string>>();
+        const variantRootFensByKey = new Map<string, string[]>();
         const variantTreesByKey = new Map<string, Array<Awaited<ReturnType<typeof parsePGN>>>>();
         const { unwrap } = await import("@/utils/unwrap");
         for (const key of subtreeKeys) {
@@ -3711,7 +3722,7 @@ export default function VariantsPage() {
           try {
             const count = unwrap(await commands.countPgnGames(variant.path));
             if (count <= 0) continue;
-            const endIndex = key === coverageGraphTargetKey || mappedOnly ? Math.max(0, count - 1) : 0;
+            const endIndex = Math.max(0, count - 1);
             const games = unwrap(await commands.readGames(variant.path, 0, endIndex));
             const trees: Array<Awaited<ReturnType<typeof parsePGN>>> = [];
             for (const game of games) {
@@ -3725,12 +3736,12 @@ export default function VariantsPage() {
             }
             if (trees.length === 0) continue;
             variantTreesByKey.set(key, trees);
+            const rootFens = [
+              ...trees.map((tree) => tree.root.fen).filter((fen) => `${fen ?? ""}`.trim().length > 0),
+              ...(variant.fen?.trim() ? [variant.fen.trim()] : []),
+            ];
             variantRootFenByKey.set(key, trees[0].root.fen);
-            const fenKeys = new Set<string>();
-            for (const tree of trees) {
-              collectTreeFenKeys(tree.root, fenKeys);
-            }
-            variantFenKeysByKey.set(key, fenKeys);
+            variantRootFensByKey.set(key, Array.from(new Set(rootFens)));
           } catch {
             // Ignore invalid variant files in coverage graph.
           } finally {
@@ -3743,15 +3754,29 @@ export default function VariantsPage() {
         const variantNamesByFen = new Map<string, string[]>();
         for (const key of subtreeKeys) {
           const variant = variantLinkGraph.variantByKey.get(key);
-          const rootFen = variantRootFenByKey.get(key);
-          if (!variant || !rootFen) continue;
-          const fenKey = normalizeFenKey(rootFen);
-          const current = variantNamesByFen.get(fenKey) ?? [];
-          if (!current.includes(variant.name)) {
-            current.push(variant.name);
-            variantNamesByFen.set(fenKey, current);
+          const rootFens = variantRootFensByKey.get(key) ?? [];
+          if (!variant || rootFens.length === 0) continue;
+          for (const rootFen of rootFens) {
+            for (const fenKey of buildFenMatchKeys(rootFen)) {
+              const current = variantNamesByFen.get(fenKey) ?? [];
+              if (!current.includes(variant.name)) {
+                current.push(variant.name);
+                variantNamesByFen.set(fenKey, current);
+              }
+            }
           }
         }
+        const getVariantNamesForFen = (fen: string | null | undefined): string[] | undefined => {
+          const names: string[] = [];
+          for (const fenKey of buildFenMatchKeys(fen)) {
+            for (const name of variantNamesByFen.get(fenKey) ?? []) {
+              if (!names.includes(name)) {
+                names.push(name);
+              }
+            }
+          }
+          return names.length > 0 ? names : undefined;
+        };
 
         const formatCoverageNodeLabel = (san: string, percent: number, variantNames: string[] | undefined) => {
           if (!variantNames || variantNames.length === 0) return `${san} ${percent}%`;
@@ -3957,6 +3982,104 @@ export default function VariantsPage() {
           return `${san} - ${variantNames.join(" / ")}`;
         };
 
+        const prioritySyncKeys = new Set(subtreeKeys.filter((key) => key !== coverageGraphTargetKey));
+        const variantKeysByRootFen = new Map<string, Set<string>>();
+        const variantKeysByIdentity = new Map<string, Set<string>>();
+        const addVariantIdentity = (identity: string | null | undefined, key: string) => {
+          const identityKey = normalizeCoverageIdentityName(identity);
+          if (!identityKey) return;
+          const keys = variantKeysByIdentity.get(identityKey) ?? new Set<string>();
+          keys.add(key);
+          variantKeysByIdentity.set(identityKey, keys);
+        };
+        for (const key of prioritySyncKeys) {
+          const variant = variantLinkGraph.variantByKey.get(key);
+          addVariantIdentity(variant?.name, key);
+          addVariantIdentity(variant?.opening, key);
+          const rootFens = variantRootFensByKey.get(key) ?? [];
+          for (const rootFen of rootFens) {
+            for (const fenKey of buildFenMatchKeys(rootFen)) {
+              const keys = variantKeysByRootFen.get(fenKey) ?? new Set<string>();
+              keys.add(key);
+              variantKeysByRootFen.set(fenKey, keys);
+            }
+          }
+        }
+
+        const collectPriorityUpdatesFromGraph = (graphRoot: CoverageGraphNode): Map<string, number> => {
+          const priorityUpdates = new Map<string, { priority: number; depth: number }>();
+          const collectIdentityKeysFromNode = (node: CoverageGraphNode): Set<string> => {
+            const identities = new Set<string>();
+            const openingKey = normalizeCoverageIdentityName(node.openingName);
+            if (openingKey) identities.add(openingKey);
+            const separator = node.label.indexOf(" - ");
+            if (separator >= 0) {
+              const suffix = node.label.slice(separator + 3);
+              for (const name of suffix.split(" / ")) {
+                const nameKey = normalizeCoverageIdentityName(name);
+                if (nameKey) identities.add(nameKey);
+              }
+            }
+            return identities;
+          };
+          const visit = (node: CoverageGraphNode, depth: number, inheritedPriority: number | null) => {
+            const nodePriority = coverageTierPriority(node.tier);
+            const effectivePriority = nodePriority ?? inheritedPriority;
+            if (effectivePriority) {
+              const keys = new Set<string>();
+              for (const fenKey of buildFenMatchKeys(node.fen)) {
+                for (const key of variantKeysByRootFen.get(fenKey) ?? []) {
+                  keys.add(key);
+                }
+              }
+              for (const identityKey of collectIdentityKeysFromNode(node)) {
+                for (const key of variantKeysByIdentity.get(identityKey) ?? []) {
+                  keys.add(key);
+                }
+              }
+              for (const key of keys) {
+                const current = priorityUpdates.get(key);
+                if (!current || depth < current.depth) {
+                  priorityUpdates.set(key, { priority: effectivePriority, depth });
+                }
+              }
+            }
+            const nextInheritedPriority = nodePriority ?? inheritedPriority;
+            for (const child of node.children) {
+              visit(child, depth + 1, nextInheritedPriority);
+            }
+          };
+          visit(graphRoot, 0, null);
+          return new Map(Array.from(priorityUpdates.entries()).map(([key, value]) => [key, value.priority]));
+        };
+        const syncVariantPriorityMetadata = async (graphRoot: CoverageGraphNode) => {
+          if (!persistResults) return false;
+          const priorityUpdates = collectPriorityUpdatesFromGraph(graphRoot);
+          if (prioritySyncKeys.size === 0) return false;
+
+          let updated = 0;
+          for (const key of prioritySyncKeys) {
+            const variant = variantLinkGraph.variantByKey.get(key);
+            if (!variant) continue;
+            const priority = priorityUpdates.get(key) ?? null;
+            const metadata = await readInfoMetadata(variant.path, "variants");
+            metadata.tags = (metadata.tags || []).filter((tag) => !tag.startsWith("priority:"));
+            if (priority !== null) {
+              metadata.tags.push(`priority:${priority}`);
+            }
+            await writeInfoMetadata(variant.path, metadata);
+            updated += 1;
+          }
+          if (updated > 0) {
+            setCoveragePrioritySyncing(true);
+            try {
+              window.dispatchEvent(new Event("variants:updated"));
+            } catch {}
+          }
+
+          return updated > 0;
+        };
+
         const getSourcePositionRates = async (fen: string | null | undefined) => {
           if (!fen) return {};
           try {
@@ -4054,7 +4177,7 @@ export default function VariantsPage() {
                 return entryMove.san === move.san;
               });
               const nextActiveMovesUsed = activeMovesUsed + (isActiveMove ? 1 : 0);
-              const destinationVariantNames = variantNamesByFen.get(nextFenKey);
+              const destinationVariantNames = getVariantNamesForFen(move.nextFen);
               const resultSourceRates = await getSourcePositionRates(move.nextFen);
               const resultProfileRates = await getProfilePositionRates(move.nextFen, {
                 activeMovesUsed: nextActiveMovesUsed,
@@ -4142,7 +4265,7 @@ export default function VariantsPage() {
             const childExpansions: Array<Promise<void>> = [];
             for (const san of orientationMoves) {
               const nextFen = getNextFenFromSan(fen, san);
-              const destinationVariantNames = nextFen ? variantNamesByFen.get(normalizeFenKey(nextFen)) : undefined;
+              const destinationVariantNames = getVariantNamesForFen(nextFen);
               const responsePercent = percentBySan.get(san);
               const responseMove = entry.moves.find((move) => move.san === san);
               const profileMove = profileMoveBySan.get(san);
@@ -4199,9 +4322,7 @@ export default function VariantsPage() {
             const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
             const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
 
-            const destinationVariantNames = move.nextFen
-              ? variantNamesByFen.get(normalizeFenKey(move.nextFen))
-              : undefined;
+            const destinationVariantNames = getVariantNamesForFen(move.nextFen);
             const overrideKey = buildCoverageTierOverrideKey(fen, move.san);
             const customLabel = labelOverrides.get(overrideKey);
             const profileMove = profileMoveBySan.get(move.san);
@@ -4327,6 +4448,9 @@ export default function VariantsPage() {
             buildCoverageDefaultCollapsedIds(graphWithResultFenRates, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
           );
           setCoverageGraphOrientation(repertoireColor);
+          if (await syncVariantPriorityMetadata(graphWithResultFenRates)) {
+            void refetch();
+          }
           pushProgress("building", true);
           return;
         }
@@ -4362,59 +4486,6 @@ export default function VariantsPage() {
         await expandNode(branchStartFen, branchParentNode, requestedDepth, 0);
         positionsPending = 0;
         pushProgress("building", true);
-
-        if (persistResults) {
-          const variantKeysByFen = new Map<string, Set<string>>();
-          for (const key of subtreeKeys) {
-            const variant = variantLinkGraph.variantByKey.get(key);
-            const rootFen = variantRootFenByKey.get(key) ?? variant?.fen ?? null;
-            if (!variant) continue;
-            const fenKeys = new Set<string>(variantFenKeysByKey.get(key) ?? []);
-            if (rootFen) {
-              fenKeys.add(normalizeFenKey(rootFen));
-            }
-            for (const fenKey of fenKeys) {
-              const keys = variantKeysByFen.get(fenKey) ?? new Set<string>();
-              keys.add(key);
-              variantKeysByFen.set(fenKey, keys);
-            }
-          }
-
-          const priorityUpdates = new Map<string, number>();
-          const collectPriorityUpdatesFromGraph = (node: CoverageGraphNode) => {
-            const priority = coverageTierPriority(node.tier);
-            const nodeFen = `${node.fen ?? ""}`.trim();
-            if (priority && nodeFen) {
-              const variantKeys = variantKeysByFen.get(normalizeFenKey(nodeFen)) ?? new Set<string>();
-              for (const key of variantKeys) {
-                const currentPriority = priorityUpdates.get(key);
-                if (!currentPriority || priority < currentPriority) {
-                  priorityUpdates.set(key, priority);
-                }
-              }
-            }
-            for (const child of node.children) {
-              collectPriorityUpdatesFromGraph(child);
-            }
-          };
-          collectPriorityUpdatesFromGraph(rootNode);
-
-          for (const [key, priority] of priorityUpdates.entries()) {
-            const variant = variantLinkGraph.variantByKey.get(key);
-            if (!variant) continue;
-            const metadata = await readInfoMetadata(variant.path, "variants");
-            metadata.tags = (metadata.tags || []).filter((tag) => !tag.startsWith("priority:"));
-            metadata.tags.push(`priority:${priority}`);
-            await writeInfoMetadata(variant.path, metadata);
-          }
-          if (priorityUpdates.size > 0) {
-            setCoveragePrioritySyncing(true);
-            try {
-              window.dispatchEvent(new Event("variants:updated"));
-            } catch {}
-            void refetch();
-          }
-        }
 
         const positionsRecord: Record<string, CoveragePositionCacheEntry> = {};
         for (const [fenKey, value] of positionCache.entries()) {
@@ -4474,6 +4545,9 @@ export default function VariantsPage() {
           positionsRecord,
           repertoireColor,
         );
+        if (await syncVariantPriorityMetadata(graphWithResultFenRates)) {
+          void refetch();
+        }
         coverageGraphPositionsRef.current = positionsRecord;
         setCoverageGraphRoot(graphWithResultFenRates);
         setCoverageCollapsedNodeIds(
@@ -4997,15 +5071,13 @@ export default function VariantsPage() {
       const tree = await parsePGN(firstGame);
       const orientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
 
-      const documentDir = await getDocumentDir();
-      if (!documentDir) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("errors.missingFilePath"),
-          color: "red",
-        });
-        return;
-      }
+      const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
+      const variantsDir = await getVariantsDirectory(activeProfileId);
+      const sourceTags = buildPuzzleVariantSourceTags({
+        profileId: activeProfileId,
+        variantsDir,
+        variantPath: targetVariant.path,
+      });
 
       const hasTierInSubtree = (node: CoverageGraphNode, selectedTier: Exclude<CoverageTier, "root">): boolean => {
         const isEligibleBySample = coveragePuzzleIncludeLowSample || !node.lowSample;
@@ -5116,7 +5188,8 @@ export default function VariantsPage() {
             : `${selectedName}-${selectedTier}-d${selectedDepth}-${now}`,
         );
         const tags = [
-          "puzzle-variants",
+          PUZZLE_VARIANTS_TAG,
+          ...sourceTags,
           `variant:${targetVariant.name}`,
           `coverageNode:${coverageActionNode.label}`,
           `coverageTier:${selectedTier}`,
@@ -5131,7 +5204,7 @@ export default function VariantsPage() {
           filetype: "puzzle",
           tags,
           pgn: result.pgn,
-          dir: documentDir,
+          dir: puzzleVariantsDir,
         });
 
         if (createResult.isErr) {
@@ -5193,6 +5266,7 @@ export default function VariantsPage() {
     coveragePuzzleIncludeLowSample,
     coveragePuzzleName,
     coveragePuzzleTierFilter,
+    activeProfileId,
     t,
     variantLinkGraph.variantByKey,
   ]);
@@ -5811,15 +5885,8 @@ export default function VariantsPage() {
       setGeneratingPuzzles(true);
 
       try {
-        const documentDir = await getDocumentDir();
-        if (!documentDir) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("errors.missingFilePath"),
-            color: "red",
-          });
-          return;
-        }
+        const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
+        const variantsDir = await getVariantsDirectory(activeProfileId);
 
         const { commands } = await import("@/bindings");
         const { unwrap } = await import("@/utils/unwrap");
@@ -5917,7 +5984,12 @@ export default function VariantsPage() {
               .trim();
 
             const tags = [
-              "puzzle-variants",
+              PUZZLE_VARIANTS_TAG,
+              ...buildPuzzleVariantSourceTags({
+                profileId: activeProfileId,
+                variantsDir,
+                variantPath: variant.path,
+              }),
               `variant:${variant.name}`,
               `depth:${selectedDepth}`,
               `orientation:${orientation}`,
@@ -5931,7 +6003,7 @@ export default function VariantsPage() {
               filetype: "puzzle",
               tags,
               pgn: result.pgn,
-              dir: documentDir,
+              dir: puzzleVariantsDir,
             });
             if (createResult.isErr) {
               failedVariants += 1;
@@ -5971,7 +6043,7 @@ export default function VariantsPage() {
         setPuzzleTargetKey(null);
       }
     },
-    [collectSubtreeKeys, generatingPuzzles, puzzleTargetKey, t, variantLinkGraph],
+    [activeProfileId, collectSubtreeKeys, generatingPuzzles, puzzleTargetKey, t, variantLinkGraph],
   );
 
   const handleValidateVariantTree = useCallback(
@@ -6319,7 +6391,7 @@ export default function VariantsPage() {
       sortable: true,
       render: (row: VariantTableRow) =>
         row.variant.priority !== null ? (
-          <Badge variant="light" color="indigo" size="sm">
+          <Badge variant="light" color={variantPriorityColor(row.variant.priority)} size="sm">
             {row.variant.priority}
           </Badge>
         ) : (

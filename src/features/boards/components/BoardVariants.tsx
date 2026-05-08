@@ -46,7 +46,7 @@ import PracticePanel from "@/components/panels/practice/PracticePanel";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useDebouncedAutoSave } from "@/features/boards/hooks/useDebouncedAutoSave";
-import { getVariantsDirectory } from "@/features/variants/utils/profileDir";
+import { getPuzzleVariantsDirectory, getVariantsDirectory } from "@/features/variants/utils/profileDir";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeProfileIdAtom,
@@ -72,6 +72,7 @@ import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { getDatabases } from "@/utils/db";
 import { createFile, isTempImportFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
+import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
 import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
 import { reloadTab, saveTab, saveToFile, type Tab } from "@/utils/tabs";
 import { getNodeAtPath, type TreeNode } from "@/utils/treeReducer";
@@ -103,7 +104,7 @@ function BoardVariants() {
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const autoSave = useAtomValue(autoSaveAtom);
   const { data: dirs } = useQuery({ queryKey: ["dirs"], queryFn: loadDirectories, staleTime: Infinity });
-  const documentDir = dirs?.documentDir ?? null;
+  const _documentDir = dirs?.documentDir ?? null;
   const boardRef = useRef<HTMLDivElement | null>(null);
   const activeTab = useAtomValue(activeTabAtom);
 
@@ -227,19 +228,13 @@ function BoardVariants() {
 
         const puzzleColor: "white" | "black" = boardOrientation === "black" ? "black" : "white";
 
-        if (!documentDir) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("errors.missingFilePath"),
-            color: "red",
-          });
-          return;
-        }
+        const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
+        const variantsDir = await getVariantsDirectory(activeProfileId);
 
         const variantName = getVariantBaseName();
         const baseName = `puzzle-variants-${variantName}-d${selectedDepth}-${formatDateToPGN(new Date())}`;
         const filePath = await save({
-          defaultPath: `${documentDir}/${baseName}.pgn`,
+          defaultPath: `${puzzleVariantsDir}/${baseName}.pgn`,
           filters: [{ name: "PGN", extensions: ["pgn"] }],
         });
 
@@ -251,7 +246,12 @@ function BoardVariants() {
             .split(/[/\\]/)
             .pop() || baseName;
         const tags = [
-          "puzzle-variants",
+          PUZZLE_VARIANTS_TAG,
+          ...buildPuzzleVariantSourceTags({
+            profileId: activeProfileId,
+            variantsDir,
+            variantPath: currentTab?.source?.type === "file" ? currentTab.source.path : null,
+          }),
           `variant:${variantName}`,
           `depth:${selectedDepth}`,
           `orientation:${puzzleColor}`,
@@ -302,7 +302,7 @@ function BoardVariants() {
           filetype: "puzzle",
           tags,
           pgn: puzzlesPGN,
-          dir: documentDir,
+          dir: puzzleVariantsDir,
         });
 
         try {
@@ -323,7 +323,7 @@ function BoardVariants() {
         });
       }
     },
-    [store, boardOrientation, documentDir, getVariantBaseName, t],
+    [activeProfileId, boardOrientation, currentTab, getVariantBaseName, store, t],
   );
 
   const reloadBoard = useCallback(async () => {

@@ -64,6 +64,9 @@ ehthumbs.db
 .env
 .env.*
 
+# Local Cloudflare deployment config
+cloudflare/**/wrangler.toml
+
 # Tauri
 src-tauri/binaries/
 src-tauri/target/

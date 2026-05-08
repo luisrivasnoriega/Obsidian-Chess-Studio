@@ -8,10 +8,13 @@ import {
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
 } from "@/utils/pgnPuzzleProgress";
 import type { Puzzle } from "@/utils/puzzles";
+import { PUZZLE_VARIANTS_TAG, parsePuzzleVariantTags } from "@/utils/puzzleVariantMetadata";
 import { unwrap } from "@/utils/unwrap";
 
 type PuzzleVariantsInfo = {
   displayName: string;
+  profileId: string | null;
+  variantPath: string | null;
   variantName: string | null;
   depth: number | null;
   mainline: string | null;
@@ -42,53 +45,6 @@ function setCachedSolutions(dbPath: string, solutions: string[]) {
     if (oldest === undefined) break;
     solutionCache.delete(oldest);
   }
-}
-
-function parsePuzzleVariantTags(tags: string[]): {
-  variantName: string | null;
-  depth: number | null;
-  mainline: string | null;
-  coverageNode: string | null;
-  coverageTier: "mainline" | "secondary" | "alternative" | null;
-} {
-  const variantName =
-    tags
-      .find((tag) => tag.startsWith("variant:"))
-      ?.slice("variant:".length)
-      .trim() || null;
-  const depthRaw =
-    tags
-      .find((tag) => tag.startsWith("depth:"))
-      ?.slice("depth:".length)
-      .trim() || null;
-  const depth = depthRaw ? Number.parseInt(depthRaw, 10) : null;
-  const mainline =
-    tags
-      .find((tag) => tag.startsWith("mainline:"))
-      ?.slice("mainline:".length)
-      .trim() || null;
-  const coverageNode =
-    tags
-      .find((tag) => tag.startsWith("coverageNode:"))
-      ?.slice("coverageNode:".length)
-      .trim() || null;
-  const coverageTierRaw =
-    tags
-      .find((tag) => tag.startsWith("coverageTier:"))
-      ?.slice("coverageTier:".length)
-      .trim()
-      .toLowerCase() || null;
-  const coverageTier =
-    coverageTierRaw === "mainline" || coverageTierRaw === "secondary" || coverageTierRaw === "alternative"
-      ? coverageTierRaw
-      : null;
-  return {
-    variantName,
-    depth: depthRaw && Number.isFinite(depth) ? depth : null,
-    mainline,
-    coverageNode,
-    coverageTier,
-  };
 }
 
 function normalizePath(path: string): string {
@@ -184,7 +140,7 @@ export function PuzzleVariantsPanel({
         const tags = Array.isArray(metadata.tags)
           ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
           : [];
-        if (!tags.includes("puzzle-variants")) {
+        if (!tags.includes(PUZZLE_VARIANTS_TAG)) {
           setInfo(null);
           setSolutionHeaders([]);
           return;
@@ -198,6 +154,8 @@ export function PuzzleVariantsPanel({
         if (cancelled) return;
         setInfo({
           displayName,
+          profileId: parsed.profileId,
+          variantPath: parsed.variantPath,
           variantName: parsed.variantName,
           depth: parsed.depth,
           mainline: parsed.mainline,

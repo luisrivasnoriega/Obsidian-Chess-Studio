@@ -44,6 +44,7 @@ pub async fn screen_capture(_window: Window) -> Result<(), String> {
 /// Gets the AppData directory path for logs (Roaming on Windows)
 /// This matches BaseDirectory::AppData behavior but is needed before app initialization
 fn get_app_data_log_dir() -> std::path::PathBuf {
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     const APP_IDENTIFIER: &str = "com.ocs";
     
     #[cfg(target_os = "windows")]

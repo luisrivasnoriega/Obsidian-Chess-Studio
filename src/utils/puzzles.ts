@@ -1,7 +1,10 @@
+import { getDefaultStore } from "jotai";
 import { loadDirectories } from "@/App";
 import { commands, type PuzzleDatabaseInfo } from "@/bindings";
 import type { FileInfoMetadata, FileMetadata } from "@/features/files/utils/file";
+import { activeProfileIdAtom } from "@/state/atoms";
 import { logger } from "./logger";
+import { PUZZLE_VARIANTS_TAG, parsePuzzleVariantTags, puzzleVariantMatchesProfile } from "./puzzleVariantMetadata";
 import { unwrap } from "./unwrap";
 
 export type Completion = "correct" | "incorrect" | "incomplete";
@@ -30,8 +33,9 @@ export const ADAPTIVE_EASY_MIN_PROB = 0.6;
 export const ADAPTIVE_EASY_MAX_PROB = 0.8;
 const PUZZLE_DB_CACHE_TTL_MS = 15_000;
 
-let puzzleDbCache: { timestamp: number; value: PuzzleDatabaseInfo[] } | null = null;
+let puzzleDbCache: { timestamp: number; value: PuzzleDatabaseInfo[]; profileId: string | null } | null = null;
 let puzzleDbLoadPromise: Promise<PuzzleDatabaseInfo[]> | null = null;
+let puzzleDbLoadProfileId: string | null = null;
 
 // Helper functions to get data from different sections
 async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]> {
@@ -89,7 +93,7 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
   return dbPuzzles;
 }
 
-async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
+async function getFilesFromFilesSection(activeProfileId: string | null): Promise<PuzzleDatabaseInfo[]> {
   const { readDir, exists } = await import("@tauri-apps/plugin-fs");
   const { processEntriesRecursively } = await import("@/features/files/utils/file");
 
@@ -113,23 +117,18 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
     });
 
     // Convert puzzle files to database format
-    localPuzzles = await Promise.all(
+    const localPuzzleResults = await Promise.all(
       puzzleFiles.map(async (file) => {
         const fileInfo = file.metadata as FileInfoMetadata;
         const tags = Array.isArray(fileInfo?.tags)
           ? fileInfo.tags.filter((t): t is string => typeof t === "string")
           : [];
-        const isPuzzleVariants = tags.includes("puzzle-variants");
-        const variantName =
-          tags
-            .find((tag) => tag.startsWith("variant:"))
-            ?.slice("variant:".length)
-            .trim() || null;
-        const depth =
-          tags
-            .find((tag) => tag.startsWith("depth:"))
-            ?.slice("depth:".length)
-            .trim() || null;
+        const isPuzzleVariants = tags.includes(PUZZLE_VARIANTS_TAG);
+        if (isPuzzleVariants && !puzzleVariantMatchesProfile(tags, activeProfileId)) {
+          return null;
+        }
+
+        const { variantName, depth } = parsePuzzleVariantTags(tags);
 
         const [statsResult, countResult] = await Promise.all([
           commands.getFileMetadata(file.path),
@@ -147,6 +146,7 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
         };
       }),
     );
+    localPuzzles = localPuzzleResults.filter((item): item is PuzzleDatabaseInfo => item != null);
   } catch (err) {
     logger.error("Error loading local puzzles:", err);
   }
@@ -240,25 +240,33 @@ async function getPuzzleDatabase(path: string): Promise<PuzzleDatabaseInfo | nul
 
 export async function getPuzzleDatabases(forceRefresh = false): Promise<PuzzleDatabaseInfo[]> {
   const now = Date.now();
-  if (!forceRefresh && puzzleDbCache && now - puzzleDbCache.timestamp < PUZZLE_DB_CACHE_TTL_MS) {
+  const activeProfileId = getDefaultStore().get(activeProfileIdAtom) ?? null;
+  if (
+    !forceRefresh &&
+    puzzleDbCache &&
+    puzzleDbCache.profileId === activeProfileId &&
+    now - puzzleDbCache.timestamp < PUZZLE_DB_CACHE_TTL_MS
+  ) {
     return puzzleDbCache.value;
   }
 
-  if (!forceRefresh && puzzleDbLoadPromise) {
+  if (!forceRefresh && puzzleDbLoadPromise && puzzleDbLoadProfileId === activeProfileId) {
     return puzzleDbLoadPromise;
   }
 
+  puzzleDbLoadProfileId = activeProfileId;
   puzzleDbLoadPromise = (async () => {
     const [dbPuzzles, localPuzzles] = await Promise.all([
       getDatabasesFromDatabasesSection(),
-      getFilesFromFilesSection(),
+      getFilesFromFilesSection(activeProfileId),
     ]);
 
     const combined = [...dbPuzzles, ...localPuzzles];
-    puzzleDbCache = { timestamp: Date.now(), value: combined };
+    puzzleDbCache = { timestamp: Date.now(), value: combined, profileId: activeProfileId };
     return combined;
   })().finally(() => {
     puzzleDbLoadPromise = null;
+    puzzleDbLoadProfileId = null;
   });
 
   return puzzleDbLoadPromise;
