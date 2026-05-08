@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use diesel::connection::SimpleConnection;
 use diesel::sql_query;
@@ -115,8 +115,8 @@ pub async fn get_account_sync_state(
         db_path.to_string_lossy().as_ref(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
-            journal_mode: JournalMode::Off,
+            busy_timeout: Some(Duration::from_secs(30)),
+            journal_mode: JournalMode::Preserve,
         },
     )?;
     ensure_sync_schema(db)?;
@@ -144,8 +144,8 @@ pub async fn upsert_account_sync_state(
         db_path.to_string_lossy().as_ref(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
-            journal_mode: JournalMode::Off,
+            busy_timeout: Some(Duration::from_secs(30)),
+            journal_mode: JournalMode::Preserve,
         },
     )?;
     ensure_sync_schema(db)?;
@@ -194,8 +194,8 @@ pub async fn mark_account_sync_batch_complete(
         db_path.to_string_lossy().as_ref(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
-            journal_mode: JournalMode::Off,
+            busy_timeout: Some(Duration::from_secs(30)),
+            journal_mode: JournalMode::Preserve,
         },
     )?;
     ensure_sync_schema(db)?;
@@ -231,8 +231,8 @@ pub async fn list_account_sync_completed_batches(
         db_path.to_string_lossy().as_ref(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
-            journal_mode: JournalMode::Off,
+            busy_timeout: Some(Duration::from_secs(30)),
+            journal_mode: JournalMode::Preserve,
         },
     )?;
     ensure_sync_schema(db)?;

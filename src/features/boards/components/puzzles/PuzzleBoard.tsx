@@ -14,7 +14,7 @@ import { keyMapAtom } from "@/state/keybindings";
 import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import { recordPgnPuzzleAttempted, recordPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
+import { recordPgnPuzzleIncorrect, recordPgnPuzzleSolved } from "@/utils/pgnPuzzleProgress";
 import { recordPuzzleSolved } from "@/utils/puzzleStreak";
 import type { Completion, Puzzle } from "@/utils/puzzles";
 import { getNodeAtPath, treeIteratorMainLine } from "@/utils/treeReducer";
@@ -179,7 +179,7 @@ function PuzzleBoard({
       setHasMistake(true);
       setPendingMove(null);
       if (puzzle.source?.type === "pgn") {
-        recordPgnPuzzleAttempted(puzzle.source.path, puzzle.source.index);
+        recordPgnPuzzleIncorrect(puzzle.source.path, puzzle.source.index);
       }
 
       // If configured, jump to next puzzle on failure

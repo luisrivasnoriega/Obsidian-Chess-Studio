@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use shakmaty::{fen::Fen, CastlingMode, Chess, EnPassantMode};
 use specta::Type;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 const COVERAGE_CACHE_DB_PATH: &str = "db/coverage_explorer_cache.db3";
@@ -53,6 +53,7 @@ fn get_cache_db_path(app: &AppHandle) -> Result<PathBuf> {
 fn get_cache_connection(app: &AppHandle) -> Result<Connection> {
     let db_path = get_cache_db_path(app)?;
     let conn = Connection::open(db_path)?;
+    conn.busy_timeout(Duration::from_secs(30))?;
     conn.execute_batch(
         r#"
         PRAGMA journal_mode=WAL;

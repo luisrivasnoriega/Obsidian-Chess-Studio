@@ -108,6 +108,12 @@ pub struct VariantCoverageMoveDto {
 pub struct VariantCoveragePositionDto {
     pub fen: String,
     pub total_games: i64,
+    #[serde(default)]
+    pub white: i64,
+    #[serde(default)]
+    pub black: i64,
+    #[serde(default)]
+    pub draw: i64,
     pub moves: Vec<VariantCoverageMoveDto>,
 }
 
@@ -162,9 +168,42 @@ pub struct VariantCoverageGraphCacheDto {
     pub positions: HashMap<String, VariantCoveragePositionDto>,
     pub tier_overrides: Option<HashMap<String, VariantCoverageTierDto>>,
     pub label_overrides: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub critical_line_dismissed_fen_keys: Vec<String>,
     pub graph_root: VariantCoverageGraphNodeDto,
     pub repertoire_color: VariantCoverageColorDto,
     pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VariantCoverageCriticalLineReasonDto {
+    Source,
+    Engine,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantCoverageCriticalLineNodeDto {
+    pub id: String,
+    pub label: String,
+    pub opening_name: Option<String>,
+    pub fen: Option<String>,
+    pub path: Vec<String>,
+    pub source_win_rate: Option<f64>,
+    pub source_loss_rate: Option<f64>,
+    pub profile_win_rate: Option<f64>,
+    pub profile_loss_rate: Option<f64>,
+    pub engine_advantage: Option<String>,
+    pub reasons: Vec<VariantCoverageCriticalLineReasonDto>,
+    pub node: VariantCoverageGraphNodeDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantCoverageCriticalLineReportDto {
+    pub active_color: VariantCoverageColorDto,
+    pub nodes: Vec<VariantCoverageCriticalLineNodeDto>,
 }
 
 fn get_tag_value(tags: &[String], prefix: &str) -> Option<String> {
@@ -275,6 +314,123 @@ fn normalize_fen_key(fen: &str) -> String {
 
 fn build_tier_override_key(fen: &str, san: &str) -> String {
     format!("{}|{}", normalize_fen_key(fen), san.trim())
+}
+
+fn parse_engine_advantage_color(value: Option<&str>) -> Option<VariantCoverageColorDto> {
+    let text = value?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let score_text = if let Some(rest) = text.strip_prefix('M').or_else(|| text.strip_prefix('m')) {
+        rest
+    } else {
+        text
+    };
+    let mut end = 0usize;
+    for (index, ch) in score_text.char_indices() {
+        let is_score_char = ch.is_ascii_digit() || ch == '+' || ch == '-' || ch == '.';
+        if !is_score_char {
+            break;
+        }
+        end = index + ch.len_utf8();
+    }
+    if end == 0 {
+        return None;
+    }
+
+    let score = score_text[..end].parse::<f64>().ok()?;
+    if !score.is_finite() || score.abs() < 0.01 {
+        return None;
+    }
+    if score > 0.0 {
+        Some(VariantCoverageColorDto::White)
+    } else {
+        Some(VariantCoverageColorDto::Black)
+    }
+}
+
+fn fen_side_to_move_color(fen: Option<&str>) -> Option<VariantCoverageColorDto> {
+    match fen?.split_whitespace().nth(1)? {
+        "w" => Some(VariantCoverageColorDto::White),
+        "b" => Some(VariantCoverageColorDto::Black),
+        _ => None,
+    }
+}
+
+fn label_path_segment(label: &str) -> String {
+    let value = label
+        .split('|')
+        .next()
+        .unwrap_or(label)
+        .split(" - ")
+        .next()
+        .unwrap_or(label)
+        .trim();
+    if value.is_empty() {
+        "--".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn collect_critical_line_nodes(
+    node: &VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+    parent_active_moves_used: i64,
+    path: &mut Vec<String>,
+    out: &mut Vec<VariantCoverageCriticalLineNodeDto>,
+) {
+    path.push(label_path_segment(&node.label));
+
+    let mut reasons = Vec::new();
+    let active_moves_used = node.active_moves_used.unwrap_or(parent_active_moves_used);
+    let side_to_move = fen_side_to_move_color(node.fen.as_deref());
+    let node_ends_after_active_move = side_to_move == Some(opposite_coverage_color(active_color));
+    let has_active_move_context = active_moves_used > 0 || node_ends_after_active_move;
+    let is_active_player_node = has_active_move_context
+        && node.unmapped_response != Some(true)
+        && (node.tier == VariantCoverageTierDto::Root
+            || active_moves_used > parent_active_moves_used
+            || node_ends_after_active_move);
+
+    let has_sufficient_sample = node.low_sample != Some(true);
+    if is_active_player_node && has_sufficient_sample {
+        if let (Some(win_rate), Some(loss_rate)) = (node.active_win_rate, node.active_loss_rate) {
+            if win_rate.is_finite() && loss_rate.is_finite() && loss_rate > win_rate {
+                reasons.push(VariantCoverageCriticalLineReasonDto::Source);
+            }
+        }
+
+        if let Some(engine_color) = parse_engine_advantage_color(node.engine_advantage.as_deref()) {
+            if engine_color != active_color {
+                reasons.push(VariantCoverageCriticalLineReasonDto::Engine);
+            }
+        }
+    }
+
+    if !reasons.is_empty() {
+        out.push(VariantCoverageCriticalLineNodeDto {
+            id: node.id.clone(),
+            label: node.label.clone(),
+            opening_name: node.opening_name.clone(),
+            fen: node.fen.clone(),
+            path: path.clone(),
+            source_win_rate: node.active_win_rate,
+            source_loss_rate: node.active_loss_rate,
+            profile_win_rate: node.profile_win_rate,
+            profile_loss_rate: node.profile_loss_rate,
+            engine_advantage: node.engine_advantage.clone(),
+            reasons,
+            node: node.clone(),
+        });
+    }
+
+    for child in &node.children {
+        collect_critical_line_nodes(child, active_color, active_moves_used, path, out);
+    }
+
+    path.pop();
 }
 
 fn hash_text_fnv1a(value: &str) -> String {
@@ -420,6 +576,9 @@ fn classify_position_moves(
     sorted_moves.sort_by(|a, b| b.games.cmp(&a.games));
 
     let total_games: i64 = sorted_moves.iter().map(|row| row.games).sum();
+    let position_white: i64 = sorted_moves.iter().map(|row| row.white.max(0)).sum();
+    let position_black: i64 = sorted_moves.iter().map(|row| row.black.max(0)).sum();
+    let position_draw: i64 = sorted_moves.iter().map(|row| row.draw.max(0)).sum();
     let low_sample = total_games < COVERAGE_LOW_SAMPLE_MIN_GAMES;
     let computed_tiers = classify_tiers(&sorted_moves);
     let tier_overrides = tier_overrides.unwrap_or_default();
@@ -465,6 +624,9 @@ fn classify_position_moves(
     VariantCoveragePositionDto {
         fen,
         total_games,
+        white: position_white,
+        black: position_black,
+        draw: position_draw,
         moves,
     }
 }
@@ -612,6 +774,63 @@ fn active_side_loss_rate(move_entry: &VariantCoverageMoveDto, repertoire_color: 
     Some(((losses as f64 / total as f64) * 1000.0).round() / 10.0)
 }
 
+fn active_side_position_win_rate(
+    position: &VariantCoveragePositionDto,
+    repertoire_color: VariantCoverageColorDto,
+) -> Option<f64> {
+    let mut white = position.white.max(0);
+    let mut black = position.black.max(0);
+    let mut draw = position.draw.max(0);
+    if white + black + draw <= 0 {
+        white = position.moves.iter().map(|row| row.white.max(0)).sum();
+        black = position.moves.iter().map(|row| row.black.max(0)).sum();
+        draw = position.moves.iter().map(|row| row.draw.max(0)).sum();
+    }
+    let total = white + black + draw;
+    if total <= 0 {
+        return None;
+    }
+    let wins = match repertoire_color {
+        VariantCoverageColorDto::White => white,
+        VariantCoverageColorDto::Black => black,
+    };
+    Some(((wins as f64 / total as f64) * 1000.0).round() / 10.0)
+}
+
+fn active_side_position_loss_rate(
+    position: &VariantCoveragePositionDto,
+    repertoire_color: VariantCoverageColorDto,
+) -> Option<f64> {
+    let mut white = position.white.max(0);
+    let mut black = position.black.max(0);
+    let mut draw = position.draw.max(0);
+    if white + black + draw <= 0 {
+        white = position.moves.iter().map(|row| row.white.max(0)).sum();
+        black = position.moves.iter().map(|row| row.black.max(0)).sum();
+        draw = position.moves.iter().map(|row| row.draw.max(0)).sum();
+    }
+    let total = white + black + draw;
+    if total <= 0 {
+        return None;
+    }
+    let losses = match repertoire_color {
+        VariantCoverageColorDto::White => black,
+        VariantCoverageColorDto::Black => white,
+    };
+    Some(((losses as f64 / total as f64) * 1000.0).round() / 10.0)
+}
+
+fn opposite_coverage_color(color: VariantCoverageColorDto) -> VariantCoverageColorDto {
+    match color {
+        VariantCoverageColorDto::White => VariantCoverageColorDto::Black,
+        VariantCoverageColorDto::Black => VariantCoverageColorDto::White,
+    }
+}
+
+fn node_move_color(node: &VariantCoverageGraphNodeDto) -> Option<VariantCoverageColorDto> {
+    fen_side_to_move_color(node.fen.as_deref()).map(opposite_coverage_color)
+}
+
 fn apply_position_flags_to_node(
     mut node: VariantCoverageGraphNodeDto,
     positions: &HashMap<String, VariantCoveragePositionDto>,
@@ -623,9 +842,18 @@ fn apply_position_flags_to_node(
         .map(|child| apply_position_flags_to_node(child, positions, repertoire_color))
         .collect();
 
-    if node.tier == VariantCoverageTierDto::Root && node.override_key.is_none() {
+    let result_position = node
+        .fen
+        .as_deref()
+        .and_then(|fen| positions.get(&normalize_fen_key(fen)));
+    if let Some(entry) = result_position {
+        let move_color = node_move_color(&node).unwrap_or(repertoire_color);
+        node.low_sample = Some(entry.total_games < COVERAGE_LOW_SAMPLE_MIN_GAMES);
+        node.active_win_rate = active_side_position_win_rate(entry, move_color);
+        node.active_loss_rate = active_side_position_loss_rate(entry, move_color);
         return node;
     }
+
     let Some(override_key) = node.override_key.as_deref() else {
         return node;
     };
@@ -657,12 +885,24 @@ fn apply_position_flags_to_node(
 fn apply_profile_flags_to_node(
     mut node: VariantCoverageGraphNodeDto,
     positions: &HashMap<String, VariantCoveragePositionDto>,
+    repertoire_color: VariantCoverageColorDto,
 ) -> VariantCoverageGraphNodeDto {
     node.children = node
         .children
         .into_iter()
-        .map(|child| apply_profile_flags_to_node(child, positions))
+        .map(|child| apply_profile_flags_to_node(child, positions, repertoire_color))
         .collect();
+
+    let result_position = node
+        .fen
+        .as_deref()
+        .and_then(|fen| positions.get(&normalize_fen_key(fen)));
+    if let Some(entry) = result_position {
+        let move_color = node_move_color(&node).unwrap_or(repertoire_color);
+        node.profile_win_rate = active_side_position_win_rate(entry, move_color);
+        node.profile_loss_rate = active_side_position_loss_rate(entry, move_color);
+        return node;
+    }
 
     let Some(override_key) = node.override_key.as_deref() else {
         return node;
@@ -697,6 +937,9 @@ fn apply_profile_flags_to_node(
 }
 
 fn collect_override_fen_keys(node: &VariantCoverageGraphNodeDto, keys: &mut Vec<String>) {
+    if let Some(fen) = node.fen.as_deref() {
+        keys.push(normalize_fen_key(fen));
+    }
     if let Some(override_key) = node.override_key.as_deref() {
         if let Some(separator) = override_key.rfind('|') {
             if separator > 0 {
@@ -800,6 +1043,7 @@ fn apply_node_visibility_rules_node(
             node.response_rarity = response_rarity(forced_reply.percent);
             node.fen = forced_reply.fen.or(node.fen);
             node.opening_name = forced_reply.opening_name.or(node.opening_name);
+            node.active_moves_used = forced_reply.active_moves_used.or(node.active_moves_used);
             node.active_win_rate = forced_reply.active_win_rate;
             node.active_loss_rate = forced_reply.active_loss_rate;
             node.profile_win_rate = forced_reply.profile_win_rate;
@@ -821,6 +1065,7 @@ fn apply_node_visibility_rules_node(
         node.response_rarity = response_rarity(forced_reply.percent);
         node.fen = forced_reply.fen.or(node.fen);
         node.opening_name = forced_reply.opening_name.or(node.opening_name);
+        node.active_moves_used = forced_reply.active_moves_used.or(node.active_moves_used);
         node.active_win_rate = forced_reply.active_win_rate;
         node.active_loss_rate = forced_reply.active_loss_rate;
         node.profile_win_rate = forced_reply.profile_win_rate;
@@ -986,6 +1231,21 @@ pub fn variant_coverage_trim_graph_by_depth(
 
 #[tauri::command]
 #[specta::specta]
+pub fn variant_coverage_critical_line_report(
+    root: VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+) -> VariantCoverageCriticalLineReportDto {
+    let mut nodes = Vec::new();
+    let mut path = Vec::new();
+    collect_critical_line_nodes(&root, active_color, 0, &mut path, &mut nodes);
+    VariantCoverageCriticalLineReportDto {
+        active_color,
+        nodes,
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn variant_coverage_classify_position(
     fen: String,
     moves: Vec<VariantCoverageRawMoveDto>,
@@ -1062,13 +1322,13 @@ pub async fn variant_coverage_apply_profile_position_flags(
     time_control_categories: Vec<String>,
 ) -> Result<VariantCoverageGraphNodeDto> {
     let Some(db_path) = db_path.filter(|value| !value.trim().is_empty()) else {
-        return Ok(apply_profile_flags_to_node(root, &HashMap::new()));
+        return Ok(apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color));
     };
     let mut unique_player_ids = player_ids;
     unique_player_ids.sort_unstable();
     unique_player_ids.dedup();
     if unique_player_ids.is_empty() {
-        return Ok(apply_profile_flags_to_node(root, &HashMap::new()));
+        return Ok(apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color));
     }
 
     let categories = normalized_profile_time_control_categories(time_control_categories);
@@ -1095,7 +1355,7 @@ pub async fn variant_coverage_apply_profile_position_flags(
         profile_positions.insert(fen_key, profile_entry);
     }
 
-    Ok(apply_profile_flags_to_node(root, &profile_positions))
+    Ok(apply_profile_flags_to_node(root, &profile_positions, repertoire_color))
 }
 
 #[tauri::command]

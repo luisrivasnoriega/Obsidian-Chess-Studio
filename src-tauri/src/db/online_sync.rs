@@ -1605,7 +1605,7 @@ async fn optimize_profile_db_after_sync(
         db_path.to_str().unwrap(),
         ConnectionOptions {
             enable_foreign_keys: false,
-            busy_timeout: None,
+            busy_timeout: Some(Duration::from_secs(30)),
             journal_mode: JournalMode::Delete,
         },
     )?;

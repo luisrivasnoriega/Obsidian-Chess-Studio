@@ -4,8 +4,8 @@ import { type HierarchyPointLink, type HierarchyPointNode, hierarchy, tree } fro
 import { select } from "d3-selection";
 import { linkHorizontal } from "d3-shape";
 import "d3-transition";
-import { type ZoomBehavior, zoom, zoomIdentity } from "d3-zoom";
-import { useEffect, useId, useMemo, useRef } from "react";
+import { type ZoomTransform, zoomIdentity } from "d3-zoom";
+import { type PointerEvent, useEffect, useId, useMemo, useRef, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { premiumPanelStyle } from "@/styles/premiumSurface";
 
@@ -31,6 +31,7 @@ export type CoverageGraphNode = {
   activeLossRate?: number | null;
   profileWinRate?: number | null;
   profileLossRate?: number | null;
+  completeLine?: boolean;
   engineAdvantage?: string | null;
   engineMs?: number | null;
   engineName?: string | null;
@@ -54,8 +55,9 @@ const DIMS = {
   scale: 0.5,
   transitionDuration: 550,
 };
+const GRAPH_SCALE_EXTENT = [0.001, 1.25] as const;
 
-type CoverageVisualKey = CoverageTier | "unmapped";
+type CoverageVisualKey = CoverageTier | "unmapped" | "criticalLine";
 
 const NODE_VISUALS: Record<
   CoverageVisualKey,
@@ -114,6 +116,15 @@ const NODE_VISUALS: Record<
     border: "rgba(254, 249, 195, 0.72)",
     shadow: "rgba(202, 138, 4, 0.12)",
   },
+  criticalLine: {
+    start: "#831843",
+    end: "#190314",
+    badgeStart: "#f97316",
+    badgeEnd: "#db2777",
+    accent: "#fb7185",
+    border: "rgba(251, 113, 133, 0.78)",
+    shadow: "rgba(244, 63, 94, 0.22)",
+  },
 };
 
 type NodeWithMeta = HierarchyPointNode<CoverageGraphNode> & { nodeId: string };
@@ -131,17 +142,98 @@ type RenderedLink = {
 
 type VariantCoverageGraphProps = {
   root: CoverageGraphNode | null;
+  activeSide?: "white" | "black";
   onNodeClick?: (node: CoverageGraphNode) => void;
   onNodeToggleCollapse?: (node: CoverageGraphNode) => void;
   onNodeExpandAllChildren?: (node: CoverageGraphNode) => void;
 };
 
-function edgeColor(target: CoverageGraphNode): string {
+function isUsableGraphTransform(transform: ZoomTransform | null): transform is ZoomTransform {
+  return (
+    !!transform &&
+    Number.isFinite(transform.x) &&
+    Number.isFinite(transform.y) &&
+    Number.isFinite(transform.k) &&
+    transform.k >= GRAPH_SCALE_EXTENT[0] &&
+    transform.k <= GRAPH_SCALE_EXTENT[1]
+  );
+}
+
+function clampGraphTransform(transform: ZoomTransform): ZoomTransform {
+  const safeX = Number.isFinite(transform.x) ? transform.x : 0;
+  const safeY = Number.isFinite(transform.y) ? transform.y : 0;
+  const rawScale = Number.isFinite(transform.k) ? transform.k : DIMS.scale;
+  const safeScale = Math.max(GRAPH_SCALE_EXTENT[0], Math.min(GRAPH_SCALE_EXTENT[1], rawScale));
+  return zoomIdentity.translate(safeX, safeY).scale(safeScale);
+}
+
+function parseEngineAdvantageDirection(value: string | null | undefined): "white" | "black" | "equal" | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  const mateMatch = text.match(/^M([+-]?\d+)/i);
+  if (mateMatch) {
+    const mateValue = Number.parseInt(mateMatch[1], 10);
+    if (!Number.isFinite(mateValue) || mateValue === 0) return null;
+    return mateValue > 0 ? "white" : "black";
+  }
+  const scoreMatch = text.match(/^([+-]?\d+(?:\.\d+)?)/);
+  if (!scoreMatch) return null;
+  const score = Number.parseFloat(scoreMatch[1]);
+  if (!Number.isFinite(score)) return null;
+  if (Math.abs(score) < 0.01) return "equal";
+  return score > 0 ? "white" : "black";
+}
+
+function fenSideToMove(fen: string | null | undefined): "white" | "black" | null {
+  const turn = `${fen ?? ""}`.trim().split(/\s+/)[1];
+  if (turn === "w") return "white";
+  if (turn === "b") return "black";
+  return null;
+}
+
+export function nodeIsCriticalLine(
+  node: CoverageGraphNode,
+  activeSide: "white" | "black",
+  parentActiveMovesUsed?: number | null,
+): boolean {
+  if (node.unmappedResponse === true) return false;
+  if (node.lowSample === true) return false;
+  const sideToMove = fenSideToMove(node.fen);
+  const opponentSide = activeSide === "white" ? "black" : "white";
+  const activeMovesUsed = hasFiniteNumber(node.activeMovesUsed) ? (node.activeMovesUsed ?? 0) : 0;
+  const parentMovesUsed = hasFiniteNumber(parentActiveMovesUsed) ? (parentActiveMovesUsed ?? 0) : 0;
+  const nodeEndsAfterActiveMove = sideToMove === opponentSide;
+  const isActivePlayerNode =
+    (activeMovesUsed > 0 || nodeEndsAfterActiveMove) &&
+    (node.tier === "root" || activeMovesUsed > parentMovesUsed || nodeEndsAfterActiveMove);
+  if (!isActivePlayerNode) return false;
+
+  const sourceLosesMoreThanWins =
+    hasFiniteNumber(node.activeWinRate) &&
+    hasFiniteNumber(node.activeLossRate) &&
+    (node.activeLossRate ?? 0) > (node.activeWinRate ?? 0);
+  if (sourceLosesMoreThanWins) return true;
+
+  const engineAdvantageSide = parseEngineAdvantageDirection(node.engineAdvantage);
+  return engineAdvantageSide === opponentSide;
+}
+
+function edgeColor(
+  target: CoverageGraphNode,
+  activeSide: "white" | "black",
+  parentActiveMovesUsed?: number | null,
+): string {
+  if (nodeIsCriticalLine(target, activeSide, parentActiveMovesUsed)) return NODE_VISUALS.criticalLine.accent;
   if (target.unmappedResponse) return COVERAGE_UNMAPPED_COLOR;
   return COVERAGE_TIER_COLORS[target.tier] ?? "#64748b";
 }
 
-function getNodeVisualKey(node: CoverageGraphNode): CoverageVisualKey {
+function getNodeVisualKey(
+  node: CoverageGraphNode,
+  activeSide: "white" | "black",
+  parentActiveMovesUsed?: number | null,
+): CoverageVisualKey {
+  if (nodeIsCriticalLine(node, activeSide, parentActiveMovesUsed)) return "criticalLine";
   return node.unmappedResponse ? "unmapped" : node.tier;
 }
 
@@ -439,6 +531,7 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
           responseRarity,
           fen: forcedReply.fen ?? normalizedNode.fen,
           openingName: forcedReply.openingName ?? normalizedNode.openingName,
+          activeMovesUsed: forcedReply.activeMovesUsed ?? normalizedNode.activeMovesUsed,
           activeWinRate: forcedReply.activeWinRate,
           activeLossRate: forcedReply.activeLossRate,
           profileWinRate: forcedReply.profileWinRate,
@@ -473,6 +566,7 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
         responseRarity,
         fen: forcedReply.fen ?? normalizedNode.fen,
         openingName: forcedReply.openingName ?? normalizedNode.openingName,
+        activeMovesUsed: forcedReply.activeMovesUsed ?? normalizedNode.activeMovesUsed,
         activeWinRate: forcedReply.activeWinRate,
         activeLossRate: forcedReply.activeLossRate,
         profileWinRate: forcedReply.profileWinRate,
@@ -497,6 +591,7 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
 
 export function VariantCoverageGraph({
   root,
+  activeSide = "white",
   onNodeClick,
   onNodeToggleCollapse,
   onNodeExpandAllChildren,
@@ -504,9 +599,15 @@ export function VariantCoverageGraph({
   const { t } = useTranslation();
   const svgIdPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const svgRef = useRef<SVGSVGElement>(null);
-  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const viewportRef = useRef<SVGGElement | null>(null);
   const hierarchyRef = useRef<HierarchyPointNode<CoverageGraphNode> | null>(null);
-  const lastTransformRef = useRef<any>(null);
+  const lastTransformRef = useRef<ZoomTransform | null>(null);
+  const panStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    transform: ZoomTransform;
+  } | null>(null);
   const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visualRoot = useMemo(() => {
     const normalized = root ? normalizeCoverageNode(root) : null;
@@ -520,22 +621,92 @@ export function VariantCoverageGraph({
     return normalized;
   }, [root]);
 
+  const applyGraphTransform = (transform: ZoomTransform, animated = false) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const safeTransform = clampGraphTransform(transform);
+    lastTransformRef.current = safeTransform;
+    const selection = select(viewport);
+    selection.interrupt();
+    if (animated) {
+      selection.transition().duration(180).attr("transform", safeTransform.toString());
+      return;
+    }
+    selection.attr("transform", safeTransform.toString());
+  };
+
   const centerGraph = () => {
-    if (!svgRef.current || !zoomRef.current || !hierarchyRef.current) return;
-    const svg = select(svgRef.current);
-    const node = svg.node();
-    if (!node) return;
-    const { width, height } = node.getBoundingClientRect();
+    if (!svgRef.current || !hierarchyRef.current) return;
+    const { width, height } = svgRef.current.getBoundingClientRect();
+    const currentScale = lastTransformRef.current?.k ?? DIMS.scale;
     const transform = zoomIdentity
-      .translate(width / 2 - hierarchyRef.current.y * DIMS.scale, height / 2 - hierarchyRef.current.x * DIMS.scale)
-      .scale(DIMS.scale);
-    svg.transition().duration(DIMS.transitionDuration).call(zoomRef.current.transform, transform);
+      .translate(width / 2 - hierarchyRef.current.y * currentScale, height / 2 - hierarchyRef.current.x * currentScale)
+      .scale(currentScale);
+    applyGraphTransform(transform, true);
+  };
+
+  const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    const target = event.target as Element | null;
+    if (event.button !== 0 || target?.closest("g[data-node]")) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      transform: lastTransformRef.current ?? zoomIdentity,
+    };
+  };
+
+  const handlePointerMove = (event: PointerEvent<SVGSVGElement>) => {
+    const panState = panStateRef.current;
+    if (!panState || panState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const dx = event.clientX - panState.startX;
+    const dy = event.clientY - panState.startY;
+    applyGraphTransform(
+      zoomIdentity.translate(panState.transform.x + dx, panState.transform.y + dy).scale(panState.transform.k),
+    );
+  };
+
+  const endPointerPan = (event: PointerEvent<SVGSVGElement>) => {
+    const panState = panStateRef.current;
+    if (!panState || panState.pointerId !== event.pointerId) return;
+    panStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleWheelZoom = (event: WheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!svgRef.current || event.deltaY === 0) return;
+
+    const current = lastTransformRef.current ?? zoomIdentity;
+    const modeMultiplier = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? 420 : 1;
+    const normalizedDelta = event.deltaY * modeMultiplier;
+    const nextScale = Math.max(
+      GRAPH_SCALE_EXTENT[0],
+      Math.min(GRAPH_SCALE_EXTENT[1], current.k * 2 ** (-normalizedDelta / 360)),
+    );
+    if (nextScale === current.k) return;
+
+    const rect = svgRef.current.getBoundingClientRect();
+    const anchorX = event.clientX - rect.left;
+    const anchorY = event.clientY - rect.top;
+    const scaleFactor = nextScale / current.k;
+    const nextX = anchorX - (anchorX - current.x) * scaleFactor;
+    const nextY = anchorY - (anchorY - current.y) * scaleFactor;
+
+    applyGraphTransform(zoomIdentity.translate(nextX, nextY).scale(nextScale));
   };
 
   useEffect(() => {
     if (!svgRef.current || !visualRoot) return;
 
     const svg = select(svgRef.current);
+    svg.on(".zoom", null);
     svg.selectAll("*").remove();
     svg.style("background", "transparent");
 
@@ -555,6 +726,7 @@ export function VariantCoverageGraph({
       secondary: `${svgIdPrefix}-coverage-node-secondary`,
       alternative: `${svgIdPrefix}-coverage-node-alternative`,
       unmapped: `${svgIdPrefix}-coverage-node-unmapped`,
+      criticalLine: `${svgIdPrefix}-coverage-node-critical-line`,
     };
     const badgeGradientIds: Record<CoverageVisualKey, string> = {
       root: `${svgIdPrefix}-coverage-badge-root`,
@@ -562,6 +734,7 @@ export function VariantCoverageGraph({
       secondary: `${svgIdPrefix}-coverage-badge-secondary`,
       alternative: `${svgIdPrefix}-coverage-badge-alternative`,
       unmapped: `${svgIdPrefix}-coverage-badge-unmapped`,
+      criticalLine: `${svgIdPrefix}-coverage-badge-critical-line`,
     };
 
     const defs = svg.append("defs");
@@ -673,31 +846,20 @@ export function VariantCoverageGraph({
       .style("pointer-events", "none");
 
     const g = svg.append("g");
+    viewportRef.current = g.node();
     const hierarchyRoot = hierarchy(visualRoot, (d) => d.children);
     const treeRoot = tree<CoverageGraphNode>().nodeSize(DIMS.nodeSpacing)(hierarchyRoot);
     hierarchyRef.current = treeRoot;
     const renderedDag = buildRenderedDag(treeRoot);
 
-    const zoomBehavior = zoom<SVGSVGElement, unknown>()
-      .filter((event) => {
-        if (event.type === "wheel") return true;
-        const target = event.target as Element | null;
-        return !target?.closest("g[data-node]");
-      })
-      .on("zoom", (event) => {
-        lastTransformRef.current = event.transform;
-        g.attr("transform", event.transform);
-      });
-    zoomRef.current = zoomBehavior;
-    svg.call(zoomBehavior);
-
-    if (lastTransformRef.current) {
-      svg.call(zoomBehavior.transform, lastTransformRef.current);
+    if (isUsableGraphTransform(lastTransformRef.current)) {
+      g.attr("transform", lastTransformRef.current.toString());
     } else {
       const initialTransform = zoomIdentity
         .translate(width / 2 - treeRoot.y * DIMS.scale, height / 2 - treeRoot.x * DIMS.scale)
         .scale(DIMS.scale);
-      svg.transition().duration(DIMS.transitionDuration).call(zoomBehavior.transform, initialTransform);
+      lastTransformRef.current = initialTransform;
+      g.transition().duration(DIMS.transitionDuration).attr("transform", initialTransform.toString());
     }
 
     const linkGenerator = linkHorizontal<RenderedLink, RenderedNode>()
@@ -726,7 +888,9 @@ export function VariantCoverageGraph({
       .data(renderedLinks)
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) => edgeColor(d.target.hierarchyNode.data))
+      .attr("stroke", (d) =>
+        edgeColor(d.target.hierarchyNode.data, activeSide, d.source.hierarchyNode.data.activeMovesUsed),
+      )
       .attr("stroke-width", DIMS.strokeWidth.link + 4)
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
@@ -740,7 +904,9 @@ export function VariantCoverageGraph({
       .data(renderedLinks)
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) => edgeColor(d.target.hierarchyNode.data))
+      .attr("stroke", (d) =>
+        edgeColor(d.target.hierarchyNode.data, activeSide, d.source.hierarchyNode.data.activeMovesUsed),
+      )
       .attr("stroke-width", DIMS.strokeWidth.link)
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
@@ -768,7 +934,9 @@ export function VariantCoverageGraph({
     nodes.each(function (d) {
       if (!(this instanceof SVGGElement)) return;
       const nodeData = d.hierarchyNode.data;
-      const visualKey = getNodeVisualKey(nodeData);
+      const parentActiveMovesUsed = d.hierarchyNode.parent?.data.activeMovesUsed ?? 0;
+      const isCriticalLine = nodeIsCriticalLine(nodeData, activeSide, parentActiveMovesUsed);
+      const visualKey = getNodeVisualKey(nodeData, activeSide, parentActiveMovesUsed);
       const visual = NODE_VISUALS[visualKey];
       const nodeGroup = select(this);
       const x = -DIMS.nodeWidth / 2;
@@ -792,6 +960,14 @@ export function VariantCoverageGraph({
         stroke: string;
         text: string;
       }> = [];
+      if (isCriticalLine) {
+        conditionBadges.push({
+          label: t("features.board.variants.coverageCriticalLineBadge", { defaultValue: "Critical Line" }),
+          fill: "rgba(225, 29, 72, 0.28)",
+          stroke: "rgba(251, 113, 133, 0.86)",
+          text: "#ffe4e6",
+        });
+      }
       if (nodeData.responseRarity === "novelty") {
         conditionBadges.push({
           label: t("features.board.variants.coverageResponseNovelty", { defaultValue: "Novelty" }),
@@ -1444,7 +1620,7 @@ export function VariantCoverageGraph({
         });
       }
     }
-  }, [onNodeClick, onNodeExpandAllChildren, onNodeToggleCollapse, svgIdPrefix, t, visualRoot]);
+  }, [activeSide, onNodeClick, onNodeExpandAllChildren, onNodeToggleCollapse, svgIdPrefix, t, visualRoot]);
 
   return (
     <Paper
@@ -1461,29 +1637,50 @@ export function VariantCoverageGraph({
         boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 56px rgba(2, 6, 23, 0.18)",
       }}
     >
-      <svg ref={svgRef} width="100%" height="100%" style={{ display: "block" }} />
-      <Tooltip label={t("common.centerGraph")} position="top">
-        <ActionIcon
-          aria-label={t("common.centerGraph")}
-          variant="subtle"
-          size="lg"
-          radius="md"
-          style={{
-            position: "absolute",
-            bottom: 16,
-            right: 16,
-            zIndex: 10,
-            background:
-              "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-6) 34%, transparent), rgba(15, 23, 42, 0.86))",
-            border: "1px solid color-mix(in srgb, var(--mantine-color-blue-5) 34%, var(--mantine-color-dark-4))",
-            boxShadow: "0 12px 28px rgba(2, 6, 23, 0.35)",
-            color: "var(--mantine-color-blue-1)",
-          }}
-          onClick={centerGraph}
-        >
-          <IconFocus size={18} />
-        </ActionIcon>
-      </Tooltip>
+      <svg
+        ref={svgRef}
+        width="100%"
+        height="100%"
+        style={{ display: "block", cursor: panStateRef.current ? "grabbing" : "grab", touchAction: "none" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endPointerPan}
+        onPointerCancel={endPointerPan}
+        onWheel={handleWheelZoom}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          bottom: 16,
+          right: 16,
+          zIndex: 10,
+          display: "flex",
+          gap: 8,
+        }}
+      >
+        <Tooltip label={t("common.centerGraph")} position="top">
+          <ActionIcon
+            aria-label={t("common.centerGraph")}
+            variant="subtle"
+            size="lg"
+            radius="md"
+            style={{
+              background:
+                "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-6) 34%, transparent), rgba(15, 23, 42, 0.86))",
+              border: "1px solid color-mix(in srgb, var(--mantine-color-blue-5) 34%, var(--mantine-color-dark-4))",
+              boxShadow: "0 12px 28px rgba(2, 6, 23, 0.35)",
+              color: "var(--mantine-color-blue-1)",
+            }}
+            onClick={centerGraph}
+          >
+            <IconFocus size={18} />
+          </ActionIcon>
+        </Tooltip>
+      </div>
     </Paper>
   );
 }

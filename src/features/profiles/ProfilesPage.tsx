@@ -708,10 +708,49 @@ export default function ProfilesPage() {
       }
 
       let dbPath = "";
+      const deletingActiveProfile = activeProfileId === profile.id;
+      const remainingProfiles = profiles.filter((p) => p.id !== profile.id);
+      const nextActiveProfileId = remainingProfiles[0]?.id ?? null;
+      const dbFilename = profileDbFilename(profile.id);
+      let clearedReferenceDb = false;
       try {
         dbPath = await getProfileDbPath(profile.id);
+        if (dbPath && referenceDb === dbPath) {
+          setReferenceDb(null);
+          clearedReferenceDb = true;
+        }
+        if (deletingActiveProfile) {
+          setActiveProfileId(nextActiveProfileId);
+          await queryClient.cancelQueries({
+            predicate: (query) => {
+              const keyText = JSON.stringify(query.queryKey);
+              return (
+                keyText.includes(profile.id) ||
+                keyText.includes(dbFilename) ||
+                (dbPath ? keyText.includes(dbPath) : false)
+              );
+            },
+          });
+          queryClient.removeQueries({
+            predicate: (query) => {
+              const keyText = JSON.stringify(query.queryKey);
+              return (
+                keyText.includes(profile.id) ||
+                keyText.includes(dbFilename) ||
+                (dbPath ? keyText.includes(dbPath) : false)
+              );
+            },
+          });
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
+        }
         const result = await commands.deleteDatabase(dbPath);
         if (result.status === "error") {
+          if (deletingActiveProfile) {
+            setActiveProfileId(profile.id);
+          }
+          if (clearedReferenceDb) {
+            setReferenceDb(dbPath);
+          }
           const errorMessage =
             typeof result.error === "string" && result.error.trim()
               ? result.error
@@ -729,6 +768,12 @@ export default function ProfilesPage() {
           return;
         }
       } catch (error) {
+        if (deletingActiveProfile) {
+          setActiveProfileId(profile.id);
+        }
+        if (clearedReferenceDb) {
+          setReferenceDb(dbPath);
+        }
         const errorMessage =
           formatSyncError(error) || t("common.errorUnknown", { defaultValue: "Something went wrong." });
         console.error("[profiles] deleteProfile threw", {
@@ -758,15 +803,6 @@ export default function ProfilesPage() {
         return next;
       });
 
-      if (dbPath && referenceDb === dbPath) {
-        setReferenceDb(null);
-      }
-
-      if (activeProfileId === profile.id) {
-        const remaining = profiles.filter((p) => p.id !== profile.id);
-        setActiveProfileId(remaining[0]?.id ?? null);
-      }
-
       notifications.show({
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.deleted", { defaultValue: "Profile deleted." }),
@@ -777,6 +813,7 @@ export default function ProfilesPage() {
       activeProfileId,
       isAccountSyncRunning,
       profiles,
+      queryClient,
       referenceDb,
       sessions,
       setActiveProfileId,

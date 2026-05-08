@@ -23,7 +23,7 @@ use crate::{
     AppState,
 };
 use chrono::{NaiveDate, SecondsFormat, TimeZone, Utc};
-use dashmap::DashMap;
+use dashmap::{mapref::entry::Entry, DashMap};
 use diesel::{
     connection::{DefaultLoadingMode, SimpleConnection},
     insert_into,
@@ -204,6 +204,7 @@ pub(crate) fn get_pawn_home(board: &Board) -> u16 {
 
 #[derive(Debug)]
 pub enum JournalMode {
+    Preserve,
     Delete,
     Off,
 }
@@ -218,7 +219,7 @@ pub struct ConnectionOptions {
 impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
-            journal_mode: JournalMode::Delete,
+            journal_mode: JournalMode::Preserve,
             enable_foreign_keys: true,
             busy_timeout: Some(Duration::from_secs(60)), // OPTIMIZED: Increased from 30s to 60s for heavy queries
         }
@@ -233,6 +234,12 @@ impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
         conn: &mut SqliteConnection,
     ) -> std::result::Result<(), diesel::r2d2::Error> {
         (|| {
+            if let Some(d) = self.busy_timeout {
+                conn.batch_execute(
+                    &PRAGMA_BUSY_TIMEOUT.replace("{0}", &d.as_millis().to_string()),
+                )?;
+            }
+
             // FIXED: Check if tables exist before applying performance pragmas
             // This prevents errors when database is being initialized
             let tables_exist = diesel::sql_query(
@@ -249,16 +256,12 @@ impl diesel::r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error>
             }
 
             match self.journal_mode {
+                JournalMode::Preserve => {}
                 JournalMode::Delete => conn.batch_execute(PRAGMA_JOURNAL_MODE_DELETE)?,
                 JournalMode::Off => conn.batch_execute(PRAGMA_JOURNAL_MODE_OFF)?,
             }
             if self.enable_foreign_keys {
                 conn.batch_execute(PRAGMA_FOREIGN_KEYS_ON)?;
-            }
-            if let Some(d) = self.busy_timeout {
-                conn.batch_execute(
-                    &PRAGMA_BUSY_TIMEOUT.replace("{0}", &d.as_millis().to_string()),
-                )?;
             }
             Ok(())
         })()
@@ -277,39 +280,44 @@ fn get_db_or_create(
         m.contains("database disk image is malformed") || m.contains("file is not a database")
     }
 
-    if let Some(pool) = state.connection_pool.get(db_path) {
-        match pool.clone().get() {
-            Ok(conn) => return Ok(conn),
-            Err(e) => {
-                // If the pool can no longer create connections (corrupted DB, interrupted download, etc),
-                // drop it so future calls fail fast without repeatedly retrying for a long time.
-                let _ = state.connection_pool.remove(db_path);
-                let msg = e.to_string();
-                if is_malformed_sqlite_message(&msg) {
-                    let _ = std::fs::remove_file(db_path);
-                    let _ = std::fs::remove_file(format!("{db_path}.partial"));
-                    return Err(Error::PackageManager(
-                        "Corrupted database detected and removed".to_string(),
-                    ));
+    match state.connection_pool.entry(db_path.to_string()) {
+        Entry::Occupied(entry) => {
+            let pool = entry.get().clone();
+            drop(entry);
+            match pool.get() {
+                Ok(conn) => return Ok(conn),
+                Err(e) => {
+                    // If the pool can no longer create connections (corrupted DB, interrupted download, etc),
+                    // drop it so future calls fail fast without repeatedly retrying for a long time.
+                    let _ = state.connection_pool.remove(db_path);
+                    let msg = e.to_string();
+                    if is_malformed_sqlite_message(&msg) {
+                        let _ = std::fs::remove_file(db_path);
+                        let _ = std::fs::remove_file(format!("{db_path}.partial"));
+                        return Err(Error::PackageManager(
+                            "Corrupted database detected and removed".to_string(),
+                        ));
+                    }
+                    return Err(e.into());
                 }
-                return Err(e.into());
             }
         }
+        Entry::Vacant(entry) => {
+            // Build the pool, but only cache it after we successfully acquire a connection.
+            // This prevents "poisoning" the cache with a pool that can't create connections
+            // (e.g. partially downloaded / corrupted SQLite files).
+            let pool = Pool::builder()
+                .max_size(32) // OPTIMIZED: Increased from 16 to 32 for better concurrency
+                .min_idle(Some(0))
+                .connection_timeout(Duration::from_secs(30))
+                .connection_customizer(Box::new(options))
+                .build(ConnectionManager::<SqliteConnection>::new(db_path))?;
+
+            let conn = pool.get()?;
+            entry.insert(pool);
+            Ok(conn)
+        }
     }
-
-    // Build the pool, but only cache it after we successfully acquire a connection.
-    // This prevents "poisoning" the cache with a pool that can't create connections
-    // (e.g. partially downloaded / corrupted SQLite files).
-    let pool = Pool::builder()
-        .max_size(32) // OPTIMIZED: Increased from 16 to 32 for better concurrency
-        .min_idle(Some(4)) // OPTIMIZED: Keep minimum connections ready
-        .connection_timeout(Duration::from_secs(30))
-        .connection_customizer(Box::new(options))
-        .build(ConnectionManager::<SqliteConnection>::new(db_path))?;
-
-    let conn = pool.get()?;
-    state.connection_pool.insert(db_path.to_string(), pool);
-    Ok(conn)
 }
 
 pub fn insert_to_db_with_event_override(
@@ -766,7 +774,7 @@ pub(crate) fn convert_pgn_impl<'a>(
         ConnectionOptions {
             enable_foreign_keys: false,
             busy_timeout: Some(Duration::from_secs(30)),
-            journal_mode: JournalMode::Off,
+            journal_mode: JournalMode::Delete,
         },
     )?;
 
@@ -1440,7 +1448,7 @@ fn load_or_infer_profile_player_id_for_weakness(db: &mut SqliteConnection) -> Re
         #[diesel(sql_type = diesel::sql_types::Integer, column_name = "player_id")]
         player_id: i32,
         #[diesel(sql_type = diesel::sql_types::BigInt, column_name = "c")]
-        c: i64,
+        _c: i64,
     }
 
     let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
@@ -1785,7 +1793,7 @@ pub async fn get_profile_weakness_model(
         #[diesel(sql_type = diesel::sql_types::Integer, column_name = "WhiteID")]
         white_id: i32,
         #[diesel(sql_type = diesel::sql_types::Integer, column_name = "BlackID")]
-        black_id: i32,
+        _black_id: i32,
         #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "white_name")]
         white_name: Option<String>,
         #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>, column_name = "black_name")]
@@ -4552,12 +4560,19 @@ pub async fn delete_database(
             }
         }
     };
+    let target_file_name = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string());
+    let target_is_profile_db = target_file_name
+        .as_deref()
+        .map(|name| name.starts_with("profile_") && name.ends_with(".db3"))
+        .unwrap_or(false);
 
     // STEP 1: Cancel any ongoing searches by acquiring all permits
     // This will stop new searches and wait for current ones to complete
-    let _permits = state.new_request.clone();
-    let permit1 = _permits.acquire().await.ok();
-    let permit2 = _permits.acquire().await.ok();
+    let permits = state.new_request.clone();
+    let all_permits = permits.acquire_many(10).await.ok();
 
     // STEP 2: Remove from connection pool FIRST - this closes all connections
     // Do this BEFORE any database operations to ensure connections are closed immediately
@@ -4565,6 +4580,29 @@ pub async fn delete_database(
     if let Some(canonical) = canonical_path_str.as_deref() {
         if !same_path(&path_str, canonical) {
             remove_pool_entry(&state, canonical);
+        }
+    }
+    if target_is_profile_db {
+        let pool_keys_to_remove: Vec<String> = state
+            .connection_pool
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.key();
+                let same_file_name = PathBuf::from(key.as_str())
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .zip(target_file_name.as_deref())
+                    .map(|(left, right)| same_path(left, right))
+                    .unwrap_or(false);
+                if same_file_name {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for key in pool_keys_to_remove {
+            remove_pool_entry(&state, &key);
         }
     }
 
@@ -4580,9 +4618,14 @@ pub async fn delete_database(
         .iter()
         .filter(|entry| {
             let key_path = entry.key().1.to_string_lossy();
-            path_aliases
-                .iter()
-                .any(|candidate| same_path(candidate, key_path.as_ref()))
+            path_aliases.iter().any(|candidate| same_path(candidate, key_path.as_ref()))
+                || (target_is_profile_db
+                    && PathBuf::from(key_path.as_ref())
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .zip(target_file_name.as_deref())
+                        .map(|(left, right)| same_path(left, right))
+                        .unwrap_or(false))
         })
         .map(|entry| entry.key().clone())
         .collect();
@@ -4592,8 +4635,7 @@ pub async fn delete_database(
     }
 
     // Drop permits after cleanup
-    drop(permit1);
-    drop(permit2);
+    drop(all_permits);
 
     // STEP 4: Clear persistent position cache (non-blocking, errors are ignored)
     // This operation can be slow, but we don't wait for it to complete
@@ -5224,8 +5266,9 @@ pub async fn precache_openings(
                             let manager = ConnectionManager::<SqliteConnection>::new(file_str);
                             let new_pool = match diesel::r2d2::Pool::builder()
                                 .max_size(32)
-                                .min_idle(Some(4))
+                                .min_idle(Some(0))
                                 .connection_timeout(std::time::Duration::from_secs(30))
+                                .connection_customizer(Box::new(ConnectionOptions::default()))
                                 .build(manager)
                             {
                                 Ok(p) => p,

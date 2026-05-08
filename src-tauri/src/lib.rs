@@ -27,6 +27,8 @@ mod puzzle;
 mod puzzle_variants;
 mod tab_state_storage;
 mod variants_builder;
+mod variants_manager;
+mod variants_opening;
 mod variant_coverage_graph;
 mod variant_positions;
 
@@ -121,16 +123,22 @@ use crate::puzzle::{
 use crate::puzzle_variants::generate_puzzle_variants_from_tree;
 use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
 use crate::variants_builder::build_variants_tree;
+use crate::variants_manager::{variants_delete_files, variants_list_fast, variants_validate_consistency};
+use crate::variants_opening::variants_create_opening_variants;
 use crate::variant_coverage_graph::{
     variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
     variant_coverage_apply_profile_position_flags, variant_coverage_build_source_signature,
     variant_coverage_classify_position, variant_coverage_get_cached_position,
     variant_coverage_get_profile_position, variant_coverage_graph_cache_path,
     variant_coverage_parse_build_config_tags, variant_coverage_read_graph_cache,
+    variant_coverage_critical_line_report,
     variant_coverage_trim_graph_by_depth, variant_coverage_write_graph_cache,
 };
 use crate::pawn_structures::compute_pawn_structures;
-use crate::variant_positions::{get_variant_position, upsert_variant_position};
+use crate::variant_positions::{
+    get_variant_position, get_variant_position_engine_eval, upsert_variant_position,
+    upsert_variant_position_engine_eval,
+};
 use crate::chessbase::{
     chessbase_cancel_active_request,
     chessbase_clear_credentials, chessbase_download_games_quick_search, chessbase_get_credentials,
@@ -242,6 +250,7 @@ pub async fn run() {
             variant_coverage_read_graph_cache,
             variant_coverage_write_graph_cache,
             variant_coverage_trim_graph_by_depth,
+            variant_coverage_critical_line_report,
             variant_coverage_classify_position,
             variant_coverage_get_cached_position,
             variant_coverage_get_profile_position,
@@ -324,8 +333,14 @@ pub async fn run() {
             find_executable_path,
             get_variant_position,
             upsert_variant_position,
+            get_variant_position_engine_eval,
+            upsert_variant_position_engine_eval,
             generate_puzzle_variants_from_tree,
             build_variants_tree,
+            variants_list_fast,
+            variants_validate_consistency,
+            variants_delete_files,
+            variants_create_opening_variants,
             post_game_review_variants,
             analysis_db_set_analyzed_game,
             analysis_db_get_analyzed_game,
@@ -842,7 +857,8 @@ fn parse_gpu_series(name: &str, token: &str) -> Option<u32> {
     let name_upper = name.to_uppercase();
     let token_upper = token.to_uppercase();
     let start = name_upper.find(&token_upper)?;
-    let mut chars = name_upper[start + token_upper.len()..].chars().peekable();
+    let after_token = start.checked_add(token_upper.len())?;
+    let mut chars = name_upper.get(after_token..)?.chars().peekable();
 
     while let Some(c) = chars.peek() {
         if c.is_whitespace() {

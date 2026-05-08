@@ -100,6 +100,7 @@ fn get_cache_db(app: &AppHandle) -> Result<SqliteConnection, Error> {
             .to_str()
             .ok_or_else(|| Error::PackageManager("Invalid cache DB path".to_string()))?,
     )?;
+    conn.batch_execute("PRAGMA busy_timeout = 30000;")?;
 
     // Initialize schema if needed
     init_cache_schema(&mut conn)?;

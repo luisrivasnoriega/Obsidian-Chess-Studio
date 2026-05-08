@@ -374,6 +374,9 @@ async variantCoverageWriteGraphCache(filePath: string, cache: VariantCoverageGra
 async variantCoverageTrimGraphByDepth(root: VariantCoverageGraphNodeDto, maxActiveMoves: bigint) : Promise<VariantCoverageGraphNodeDto> {
     return await TAURI_INVOKE("variant_coverage_trim_graph_by_depth", { root, maxActiveMoves });
 },
+async variantCoverageCriticalLineReport(root: VariantCoverageGraphNodeDto, activeColor: VariantCoverageColorDto) : Promise<VariantCoverageCriticalLineReportDto> {
+    return await TAURI_INVOKE("variant_coverage_critical_line_report", { root, activeColor });
+},
 async variantCoverageClassifyPosition(fen: string, moves: VariantCoverageRawMoveDto[], tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null, repertoireColor: VariantCoverageColorDto) : Promise<VariantCoveragePositionDto> {
     return await TAURI_INVOKE("variant_coverage_classify_position", { fen, moves, tierOverrides, repertoireColor });
 },
@@ -1172,6 +1175,22 @@ async upsertVariantPosition(fen: string, engine: string, recommendedMove: string
     else return { status: "error", error: e  as any };
 }
 },
+async getVariantPositionEngineEval(fen: string, engine: string) : Promise<Result<VariantPosition | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_variant_position_engine_eval", { fen, engine }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async upsertVariantPositionEngineEval(fen: string, engine: string, recommendedMove: string, engineAdvantage: string, ms: bigint) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("upsert_variant_position_engine_eval", { fen, engine, recommendedMove, engineAdvantage, ms }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: string, selectedDepth: number, allowedStartKeys: string[] | null) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth, allowedStartKeys }) };
@@ -1183,6 +1202,38 @@ async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: strin
 async buildVariantsTree(request: BuildVariantsTreeRequest) : Promise<Result<BuildVariantsTreeResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("build_variants_tree", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantsListFast(variantsDir: string) : Promise<Result<VariantInfoDto[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variants_list_fast", { variantsDir }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantsValidateConsistency(variantsDir: string, targetPath: string) : Promise<Result<VariantValidationReportDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variants_validate_consistency", { variantsDir, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantsDeleteFiles(paths: string[]) : Promise<Result<VariantsDeleteFilesResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variants_delete_files", { paths }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async variantsCreateOpeningVariants(variantsDir: string, targetPath: string) : Promise<Result<CreateOpeningVariantsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variants_create_opening_variants", { variantsDir, targetPath }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1824,6 +1875,7 @@ export type CoverageCacheEntryDto = { source_signature: string; fen: string; tot
 export type CoverageCacheMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
+export type CreateOpeningVariantsResult = { created: number; removed: number; rootPath: string }
 export type DashboardAccuracyByColor = { white: number | null; black: number | null }
 export type DashboardAcplByTimeControl = { classical: number | null; rapid: number | null; blitz: number | null; bullet: number | null }
 export type DashboardAnalyzeAllJobInput = { jobId: string; fen: string | null; moves: string[] | null; pgn: string | null }
@@ -2297,18 +2349,29 @@ export type UciOptionConfig =
 { type: "string"; value: { name: string; default: string | null } }
 export type UpdateGame = { fen: string; event: string; site: string; date?: string | null; time?: string | null; round?: string | null; white: string; white_elo?: number | null; black: string; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
 export type VariantBook = { rootNodeId: bigint; nodes: BookNode[]; edges: BookEdge[] }
+export type VariantBuildDbTypeDto = "local" | "lch_all" | "lch_master"
 export type VariantCoverageBuildConfigDto = { dbType: VariantCoverageDatabaseTypeDto; localDatabasePath: string | null; lichessSpeeds: string[]; lichessRatings: number[]; lichessSince: string | null; lichessUntil: string | null; lichessPlayer: string; lichessColor: VariantCoverageColorDto; masterSince: string | null; masterUntil: string | null; includeChildren: boolean | null }
 export type VariantCoverageBuildConfigPatchDto = { dbType: VariantCoverageDatabaseTypeDto | null; localDatabasePath: string | null; lichessSpeeds: string[] | null; lichessRatings: number[] | null; lichessSince: string | null; lichessUntil: string | null; lichessPlayer: string; lichessColor: VariantCoverageColorDto; masterSince: string | null; masterUntil: string | null }
 export type VariantCoverageColorDto = "white" | "black"
+export type VariantCoverageCriticalLineNodeDto = { id: string; label: string; openingName: string | null; fen: string | null; path: string[]; sourceWinRate: number | null; sourceLossRate: number | null; profileWinRate: number | null; profileLossRate: number | null; engineAdvantage: string | null; reasons: VariantCoverageCriticalLineReasonDto[]; node: VariantCoverageGraphNodeDto }
+export type VariantCoverageCriticalLineReasonDto = "source" | "engine"
+export type VariantCoverageCriticalLineReportDto = { activeColor: VariantCoverageColorDto; nodes: VariantCoverageCriticalLineNodeDto[] }
 export type VariantCoverageDatabaseTypeDto = "local" | "lch_all" | "lch_master"
-export type VariantCoverageGraphCacheDto = { version: bigint; sourceSignature: string; maxMoves: bigint; positions: Partial<{ [key in string]: VariantCoveragePositionDto }>; tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null; labelOverrides: Partial<{ [key in string]: string }> | null; graphRoot: VariantCoverageGraphNodeDto; repertoireColor: VariantCoverageColorDto; generatedAt: string }
+export type VariantCoverageGraphCacheDto = { version: bigint; sourceSignature: string; maxMoves: bigint; positions: Partial<{ [key in string]: VariantCoveragePositionDto }>; tierOverrides: Partial<{ [key in string]: VariantCoverageTierDto }> | null; labelOverrides: Partial<{ [key in string]: string }> | null; criticalLineDismissedFenKeys?: string[]; graphRoot: VariantCoverageGraphNodeDto; repertoireColor: VariantCoverageColorDto; generatedAt: string }
 export type VariantCoverageGraphNodeDto = { id: string; label: string; openingName: string | null; transpositionLabels: string[] | null; tier: VariantCoverageTierDto; percent: number | null; responsePercent: number | null; responseRarity: VariantCoverageResponseRarityDto | null; fen: string | null; overrideKey: string | null; activeMovesUsed: bigint | null; lowSample: boolean | null; unmappedResponse: boolean | null; collapsed: boolean | null; hiddenChildrenCount: bigint | null; activeWinRate: number | null; activeLossRate: number | null; profileWinRate: number | null; profileLossRate: number | null; engineAdvantage: string | null; engineMs: bigint | null; engineName: string | null; children: VariantCoverageGraphNodeDto[] }
 export type VariantCoverageMoveDto = { san: string; games?: bigint; white?: bigint; black?: bigint; draw?: bigint; percent?: number; tier: VariantCoverageTierDto; lowSample?: boolean; nextFen: string | null; activeWinRate: number | null; activeLossRate: number | null }
-export type VariantCoveragePositionDto = { fen: string; totalGames: bigint; moves: VariantCoverageMoveDto[] }
+export type VariantCoveragePositionDto = { fen: string; totalGames: bigint; white?: bigint; black?: bigint; draw?: bigint; moves: VariantCoverageMoveDto[] }
 export type VariantCoverageRawMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint; nextFen: string | null }
 export type VariantCoverageResponseRarityDto = "low_frequency" | "novelty"
 export type VariantCoverageTierDto = "root" | "mainline" | "secondary" | "alternative"
-export type VariantPosition = { fen: string; engine: string; recommended_move: string; ms: bigint }
+export type VariantInfoDto = { name: string; path: string; priority: number | null; opening: string | null; fen: string | null; depth: number | null; lineDepth: number | null; database: string | null; engine: string | null; engineMs: number | null; dbType: VariantBuildDbTypeDto | null; variantsCount: number | null; comments: string | null; parentLink: VariantLinkRefDto | null; childLinks: VariantLinkRefDto[] }
+export type VariantLinkRefDto = { path: string; name: string; anchorFen: string; anchorPath: number[]; anchorPly: number; label: string | null }
+export type VariantPosition = { fen: string; engine: string; recommended_move: string; engine_advantage: string | null; ms: bigint }
+export type VariantValidationConflictDto = { fen: string; moves: VariantValidationMoveDto[] }
+export type VariantValidationMoveDto = { san: string; uci: string | null; occurrences: VariantValidationMoveOccurrenceDto[] }
+export type VariantValidationMoveOccurrenceDto = { variantName: string; variantPath: string; line: string }
+export type VariantValidationReportDto = { targetVariantName: string; targetVariantPath: string; activeColor: string; checkedVariants: number; checkedVariantPaths: string[]; checkedPositions: number; conflicts: VariantValidationConflictDto[]; skippedVariants: string[]; orientationMismatches: string[] }
+export type VariantsDeleteFilesResult = { deletedPgn: number; deletedInfo: number }
 export type VariantsTreeNodeDto = { fen: string; san?: string | null; children?: VariantsTreeNodeDto[] }
 
 /** tauri-specta globals **/

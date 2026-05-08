@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import {
-  getAttemptedPgnPuzzleCount,
+  getFirstAttemptPgnPuzzleStats,
   getSolvedPgnPuzzleCount,
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
 } from "@/utils/pgnPuzzleProgress";
@@ -255,8 +255,8 @@ export function PuzzleVariantsPanel({
   }, [info, selectedDb]);
 
   const solvedCount = useMemo(() => (selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0), [info, selectedDb]);
-  const attemptedCount = useMemo(
-    () => (selectedDb && info ? getAttemptedPgnPuzzleCount(selectedDb) : 0),
+  const firstAttemptStats = useMemo(
+    () => (selectedDb && info ? getFirstAttemptPgnPuzzleStats(selectedDb) : { attempted: 0, correct: 0 }),
     [info, selectedDb],
   );
   const clampedSolvedCount = useMemo(() => {
@@ -271,9 +271,9 @@ export function PuzzleVariantsPanel({
   }, [clampedSolvedCount, info]);
   const accuracy = useMemo(() => {
     if (!info) return 0;
-    if (attemptedCount <= 0) return 0;
-    return Math.round((clampedSolvedCount / attemptedCount) * 100);
-  }, [attemptedCount, clampedSolvedCount, info]);
+    if (firstAttemptStats.attempted <= 0) return 0;
+    return Math.round((firstAttemptStats.correct / firstAttemptStats.attempted) * 100);
+  }, [firstAttemptStats, info]);
   const recentIncorrectSubvariants = useMemo(() => {
     if (!selectedDb || !info || solutionHeaders.length === 0) return [];
     const activePath = normalizePath(selectedDb);

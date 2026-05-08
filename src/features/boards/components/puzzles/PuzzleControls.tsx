@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { recordPgnPuzzleIncorrect } from "@/utils/pgnPuzzleProgress";
 import type { Completion, Puzzle } from "@/utils/puzzles";
 import { createTab } from "@/utils/tabs";
 import { defaultTree } from "@/utils/treeReducer";
@@ -78,6 +79,9 @@ export const PuzzleControls = ({
   const handleViewSolution = async () => {
     if (!currentPuzzle) return;
     changeCompletion("incorrect", { affectRating: applyRating });
+    if (currentPuzzle.source?.type === "pgn") {
+      recordPgnPuzzleIncorrect(currentPuzzle.source.path, currentPuzzle.source.index);
+    }
 
     updateShowingSolution(true);
     goToStart();

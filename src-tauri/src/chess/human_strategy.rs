@@ -2520,20 +2520,36 @@ fn isolated_pawns_from_file_counts(file_counts: &[u8; 8]) -> i32 {
 }
 
 fn same_diagonal(a: (usize, usize), b: (usize, usize)) -> bool {
+    if a.0 > 7 || a.1 > 7 || b.0 > 7 || b.1 > 7 {
+        return false;
+    }
     (a.0 as i32 - b.0 as i32).abs() == (a.1 as i32 - b.1 as i32).abs()
 }
 
 fn is_diagonal_path_clear(board: &Board, from: (usize, usize), to: (usize, usize)) -> bool {
+    if from.0 > 7 || from.1 > 7 || to.0 > 7 || to.1 > 7 {
+        return false;
+    }
+    if from == to {
+        return true;
+    }
     if !same_diagonal(from, to) {
         return false;
     }
 
     let step_file = if to.0 > from.0 { 1i32 } else { -1i32 };
     let step_rank = if to.1 > from.1 { 1i32 } else { -1i32 };
-    let mut file = from.0 as i32 + step_file;
-    let mut rank = from.1 as i32 + step_rank;
+    let Some(mut file) = (from.0 as i32).checked_add(step_file) else {
+        return false;
+    };
+    let Some(mut rank) = (from.1 as i32).checked_add(step_rank) else {
+        return false;
+    };
 
     while file != to.0 as i32 || rank != to.1 as i32 {
+        if !(0..=7).contains(&file) || !(0..=7).contains(&rank) {
+            return false;
+        }
         let uf = file as usize;
         let ur = rank as usize;
         if let Some(square) = coords_to_square(uf, ur) {
@@ -2541,8 +2557,14 @@ fn is_diagonal_path_clear(board: &Board, from: (usize, usize), to: (usize, usize
                 return false;
             }
         }
-        file += step_file;
-        rank += step_rank;
+        let Some(next_file) = file.checked_add(step_file) else {
+            return false;
+        };
+        let Some(next_rank) = rank.checked_add(step_rank) else {
+            return false;
+        };
+        file = next_file;
+        rank = next_rank;
     }
 
     true
@@ -2552,8 +2574,8 @@ fn coords_to_square(file: usize, rank: usize) -> Option<Square> {
     if file > 7 || rank > 7 {
         return None;
     }
-    let file_c = (b'a' + file as u8) as char;
-    let rank_c = (b'1' + rank as u8) as char;
+    let file_c = b'a'.checked_add(file as u8)? as char;
+    let rank_c = b'1'.checked_add(rank as u8)? as char;
     let name = format!("{file_c}{rank_c}");
     name.parse::<Square>().ok()
 }

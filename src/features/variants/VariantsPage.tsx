@@ -33,6 +33,8 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconEdit,
+  IconExclamationCircle,
+  IconExternalLink,
   IconEye,
   IconFileExport,
   IconFileImport,
@@ -42,19 +44,20 @@ import {
   IconRefresh,
   IconSettings,
   IconShieldCheck,
+  IconSitemap,
   IconTrash,
 } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
-import { exists, mkdir, readDir, readTextFile, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readDir, readTextFile, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 import { makeFen } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Chessground } from "@/components/Chessground";
 import GenericHeader from "@/components/GenericHeader";
@@ -68,7 +71,7 @@ import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
 import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
-import { defaultPGN, getMoveText, parsePGN } from "@/utils/chess";
+import { defaultPGN, getMoveText, getPGNFromReportView, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
 import { getDatabases, type Opening, query_players, searchPosition } from "@/utils/db";
@@ -90,21 +93,25 @@ import {
 } from "./components/VariantCoverageGraph";
 import { VariantGridView } from "./components/VariantGridView";
 import type { VariantInfo } from "./types";
-import { cleanupVariantLinksAfterDelete, repairVariantLinks } from "./utils/links";
+import { repairVariantLinks } from "./utils/links";
 import { getVariantsDirectory } from "./utils/profileDir";
 
 type VariantTreeNode = {
   key: string;
+  canonicalKey?: string;
   variant: VariantInfo;
   children: VariantTreeNode[];
+  isTransposition?: boolean;
 };
 
 type VariantTableRow = VariantInfo & {
   key: string;
+  canonicalKey?: string;
   variant: VariantInfo;
   depth: number;
   hasChildren: boolean;
   expanded: boolean;
+  isTransposition?: boolean;
 };
 
 type VariantValidationMoveOccurrence = {
@@ -117,14 +124,17 @@ type VariantValidationConflict = {
   fen: string;
   moves: Array<{
     san: string;
+    uci?: string | null;
     occurrences: VariantValidationMoveOccurrence[];
   }>;
 };
 
 type VariantValidationReport = {
   targetVariantName: string;
+  targetVariantPath: string;
   activeColor: "white" | "black";
   checkedVariants: number;
+  checkedVariantPaths: string[];
   checkedPositions: number;
   conflicts: VariantValidationConflict[];
   skippedVariants: string[];
@@ -202,6 +212,9 @@ type CoverageMoveEntry = {
 type CoveragePositionCacheEntry = {
   fen: string;
   totalGames: number;
+  white?: number;
+  black?: number;
+  draw?: number;
   moves: CoverageMoveEntry[];
 };
 
@@ -221,6 +234,7 @@ type VariantCoverageCache = {
   positions: Record<string, CoveragePositionCacheEntry>;
   tierOverrides?: Record<string, Exclude<CoverageTier, "root">>;
   labelOverrides?: Record<string, string>;
+  criticalLineDismissedFenKeys?: string[];
   graphRoot: CoverageGraphNode;
   repertoireColor: "white" | "black";
   generatedAt: string;
@@ -261,11 +275,21 @@ type CoverageGamesHistoryFilterMetaResponse = {
 };
 
 type CoverageActionTab = "edit" | "puzzles" | "board" | "engine";
+type CoveragePuzzleTierFilter = Exclude<CoverageTier, "root"> | "all";
 
 type CoverageEngineBestLine = {
   score: { value: { type: "cp" | "mate"; value: number } };
   sanMoves?: string[] | null;
+  uciMoves?: string[] | null;
   multipv?: number | null;
+};
+
+type CachedVariantPositionEngineEval = {
+  fen: string;
+  engine: string;
+  recommended_move: string;
+  engine_advantage?: string | null;
+  ms: number | bigint;
 };
 
 const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
@@ -305,6 +329,26 @@ type CoverageGraphResumeSnapshot = {
   orientation: "white" | "black";
   collapsedNodeIds: string[];
   capturedAt: number;
+};
+
+type CriticalLineReportItem = {
+  id: string;
+  label: string;
+  node: CoverageGraphNode;
+  path: string[];
+  openingName: string | null;
+  fen: string | null;
+  sourceWinRate: number | null;
+  sourceLossRate: number | null;
+  profileWinRate: number | null;
+  profileLossRate: number | null;
+  engineAdvantage: string | null;
+  reasons: Array<"source" | "engine">;
+};
+
+type CriticalLineReport = {
+  activeColor: "white" | "black";
+  nodes: CriticalLineReportItem[];
 };
 
 let coverageGraphResumeSnapshot: CoverageGraphResumeSnapshot | null = null;
@@ -372,9 +416,9 @@ function sanitizePackageRelativePath(input: string): string | null {
   return candidate;
 }
 
-function sanitizeFileStem(input: string): string {
+function sanitizeFileStem(input: string, fallback = "puzzles"): string {
   const cleaned = input.replace(/[<>:"/\\|?*]/g, "").trim();
-  return cleaned.length > 0 ? cleaned : "puzzles";
+  return cleaned.length > 0 ? cleaned : fallback;
 }
 
 function normalizeFenKey(fen: string): string {
@@ -383,6 +427,44 @@ function normalizeFenKey(fen: string): string {
     return fen.trim();
   }
   return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}`;
+}
+
+function buildCriticalLineCoverageCachePath(cacheFilePath: string): string {
+  if (/\.json$/i.test(cacheFilePath)) {
+    return cacheFilePath.replace(/\.json$/i, "-critical-lines.json");
+  }
+  return `${cacheFilePath}-critical-lines.json`;
+}
+
+function getCriticalLineDismissalKey(fen: string | null | undefined, fallbackId: string): string {
+  const normalizedFen = `${fen ?? ""}`.trim();
+  return normalizedFen ? normalizeFenKey(normalizedFen) : fallbackId;
+}
+
+function coverageTierPriority(tier: CoverageTier): number | null {
+  if (tier === "mainline") return 1;
+  if (tier === "secondary") return 2;
+  if (tier === "alternative") return 3;
+  return null;
+}
+
+function coverageTierFileSuffix(tier: Exclude<CoverageTier, "root">): string {
+  if (tier === "mainline") return "Mainline";
+  if (tier === "secondary") return "Secondary";
+  return "Alternative";
+}
+
+function buildCoverageEngineCacheSignature(input: {
+  name?: string | null;
+  path?: string | null;
+  extraOptions: Array<{ name: string; value: string }>;
+  is960?: boolean;
+}): string {
+  const extraSignature = [...input.extraOptions]
+    .sort((a, b) => a.name.localeCompare(b.name) || a.value.localeCompare(b.value))
+    .map((option) => `${option.name.trim()}=${option.value.trim()}`)
+    .join(";");
+  return `${`${input.name ?? ""}`.trim()}|${`${input.path ?? ""}`.trim()}|is960=${input.is960 === true}|${extraSignature}`;
 }
 
 function normalizeCoverageIdentityName(value: string | null | undefined): string {
@@ -595,7 +677,7 @@ function formatOpeningNameForCoverageNode(
   return eco ? `${eco} ${base}` : base;
 }
 
-function getTagValue(tags: string[], prefix: string): string | null {
+function _getTagValue(tags: string[], prefix: string): string | null {
   const value = tags
     .find((tag) => tag.startsWith(prefix))
     ?.slice(prefix.length)
@@ -664,6 +746,13 @@ type CoverageOpeningRow = {
   white: number;
   black: number;
   draw: number;
+};
+
+type CoveragePositionFetchResult = {
+  moves: CoverageOpeningRow[];
+  white?: number;
+  black?: number;
+  draw?: number;
 };
 
 function toCoverageOpenings(openings: Opening[]): CoverageOpeningRow[] {
@@ -821,6 +910,16 @@ async function getCachedCoveragePosition(
     fen,
     tierOverrides: serializeCoverageTierOverrides(tierOverrides),
     repertoireColor,
+  });
+}
+
+async function getCoverageCriticalLineReport(
+  root: CoverageGraphNode,
+  activeColor: "white" | "black",
+): Promise<CriticalLineReport> {
+  return await invoke<CriticalLineReport>("variant_coverage_critical_line_report", {
+    root,
+    activeColor,
   });
 }
 
@@ -1037,6 +1136,7 @@ function applyCollapsedCoverageNodes(
         responseRarity: forcedReply ? getCoverageResponseRarity(forcedReply.percent) : node.responseRarity,
         fen: forcedReply?.fen ?? node.fen,
         openingName: forcedReply?.openingName ?? node.openingName,
+        activeMovesUsed: forcedReply?.activeMovesUsed ?? node.activeMovesUsed,
         activeWinRate: forcedReply ? forcedReply.activeWinRate : node.activeWinRate,
         activeLossRate: forcedReply ? forcedReply.activeLossRate : node.activeLossRate,
         profileWinRate: forcedReply ? forcedReply.profileWinRate : node.profileWinRate,
@@ -1228,6 +1328,17 @@ function collectTreePathsByFen(node: TreeNode, targetFenKey: string, currentPath
   }
 }
 
+function collectTreeFenKeys(node: TreeNode, out: Set<string> = new Set<string>()): Set<string> {
+  const fen = `${node.fen ?? ""}`.trim();
+  if (fen) {
+    out.add(normalizeFenKey(fen));
+  }
+  for (const child of node.children) {
+    collectTreeFenKeys(child, out);
+  }
+  return out;
+}
+
 function getSanSequenceAtTreePath(root: TreeNode, path: number[]): string[] {
   const sequence: string[] = [];
   let node: TreeNode | null = root;
@@ -1279,6 +1390,28 @@ function findBestTreePathByFen(root: TreeNode, fen: string, preferredSanSequence
   return bestPath;
 }
 
+function _getTreeNodeAtPath(root: TreeNode, path: number[]): TreeNode | null {
+  let node: TreeNode | null = root;
+  for (const index of path) {
+    if (!node || index < 0 || index >= node.children.length) return null;
+    node = node.children[index] ?? null;
+  }
+  return node;
+}
+
+function findFirstTreePathByFen(root: TreeNode, fen: string): number[] | null {
+  const targetFenKey = normalizeFenKey(fen);
+  const stack: Array<{ node: TreeNode; path: number[] }> = [{ node: root, path: [] }];
+  while (stack.length > 0) {
+    const { node, path } = stack.shift()!;
+    if (normalizeFenKey(node.fen) === targetFenKey) return path;
+    for (let i = 0; i < node.children.length; i += 1) {
+      stack.push({ node: node.children[i], path: [...path, i] });
+    }
+  }
+  return null;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message.trim();
@@ -1293,6 +1426,166 @@ function getErrorMessage(error: unknown): string {
     // ignore serialization issues
   }
   return "Unknown error";
+}
+
+function formatCoverageRate(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+
+function formatCoverageWinLoss(winRate: number | null | undefined, lossRate: number | null | undefined): string {
+  return `W ${formatCoverageRate(winRate)} / L ${formatCoverageRate(lossRate)}`;
+}
+
+function parseCoverageEngineAdvantageSide(value: string | null | undefined): "white" | "black" | null {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return null;
+  const scoreText = text.replace(/^M/i, "");
+  const match = scoreText.match(/^([+-]?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const score = Number.parseFloat(match[1]);
+  if (!Number.isFinite(score) || Math.abs(score) < 0.01) return null;
+  return score > 0 ? "white" : "black";
+}
+
+function buildCoverageCriticalLineReport(
+  root: CoverageGraphNode,
+  activeColor: "white" | "black",
+  positions: Record<string, CoveragePositionCacheEntry> = {},
+  options: { completeLinesOnly?: boolean; dismissedKeys?: Set<string> } = {},
+): CriticalLineReport {
+  const nodes: CriticalLineReportItem[] = [];
+  const path: string[] = [];
+  const activeOpponent = activeColor === "white" ? "black" : "white";
+
+  const labelPathSegment = (label: string) => {
+    const value = label.split("|")[0]?.split(" - ")[0]?.trim();
+    return value || "--";
+  };
+
+  const walk = (node: CoverageGraphNode, parentActiveMovesUsed: number) => {
+    path.push(labelPathSegment(node.label));
+    const activeMovesUsed = typeof node.activeMovesUsed === "number" ? node.activeMovesUsed : parentActiveMovesUsed;
+    const sideToMove = getFenSideToMove(node.fen);
+    const nodeEndsAfterActiveMove = sideToMove === activeOpponent;
+    const isActivePlayerNode =
+      (activeMovesUsed > 0 || nodeEndsAfterActiveMove) &&
+      node.unmappedResponse !== true &&
+      (node.tier === "root" || activeMovesUsed > parentActiveMovesUsed || nodeEndsAfterActiveMove);
+
+    const nodeFenKey = node.fen ? normalizeFenKey(node.fen) : null;
+    const nodePosition = nodeFenKey ? positions[nodeFenKey] : undefined;
+    const sourceRates = getCoveragePositionWinLossRatesForResultFen(nodePosition, node.fen, activeColor);
+    const sourceWinRate = sourceRates.winRate ?? node.activeWinRate ?? null;
+    const sourceLossRate = sourceRates.lossRate ?? node.activeLossRate ?? null;
+
+    const reasons: Array<"source" | "engine"> = [];
+    const isCompleteLineNode = node.completeLine === true || node.children.length === 0;
+    const hasSufficientSample = node.lowSample !== true;
+    if (isActivePlayerNode && hasSufficientSample && (!options.completeLinesOnly || isCompleteLineNode)) {
+      if (
+        typeof sourceWinRate === "number" &&
+        Number.isFinite(sourceWinRate) &&
+        typeof sourceLossRate === "number" &&
+        Number.isFinite(sourceLossRate) &&
+        sourceLossRate > sourceWinRate
+      ) {
+        reasons.push("source");
+      }
+
+      const engineSide = parseCoverageEngineAdvantageSide(node.engineAdvantage);
+      if (engineSide === activeOpponent) {
+        reasons.push("engine");
+      }
+    }
+
+    const dismissalKey = getCriticalLineDismissalKey(node.fen, node.id);
+    if (reasons.length > 0 && !options.dismissedKeys?.has(dismissalKey)) {
+      nodes.push({
+        id: node.id,
+        label: node.label,
+        node: {
+          ...node,
+          activeWinRate: sourceWinRate,
+          activeLossRate: sourceLossRate,
+        },
+        path: [...path],
+        openingName: node.openingName ?? null,
+        fen: node.fen ?? null,
+        sourceWinRate,
+        sourceLossRate,
+        profileWinRate: node.profileWinRate ?? null,
+        profileLossRate: node.profileLossRate ?? null,
+        engineAdvantage: node.engineAdvantage ?? null,
+        reasons,
+      });
+    }
+
+    for (const child of node.children) {
+      walk(child, activeMovesUsed);
+    }
+    path.pop();
+  };
+
+  walk(root, 0);
+  return { activeColor, nodes };
+}
+
+function getCoveragePositionWinLossRates(
+  entry: CoveragePositionCacheEntry | null | undefined,
+  repertoireColor: "white" | "black",
+): { winRate?: number; lossRate?: number } {
+  if (!entry) return {};
+  const hasPositionTotals =
+    typeof entry.white === "number" &&
+    typeof entry.black === "number" &&
+    typeof entry.draw === "number" &&
+    entry.white + entry.black + entry.draw > 0;
+  const white = hasPositionTotals
+    ? Math.max(0, entry.white ?? 0)
+    : entry.moves.reduce((sum, move) => sum + Math.max(0, move.white), 0);
+  const black = hasPositionTotals
+    ? Math.max(0, entry.black ?? 0)
+    : entry.moves.reduce((sum, move) => sum + Math.max(0, move.black), 0);
+  const draw = hasPositionTotals
+    ? Math.max(0, entry.draw ?? 0)
+    : entry.moves.reduce((sum, move) => sum + Math.max(0, move.draw), 0);
+  const total = white + black + draw;
+  if (total <= 0) return {};
+  const wins = repertoireColor === "white" ? white : black;
+  const losses = repertoireColor === "white" ? black : white;
+  return {
+    winRate: Math.round((wins / total) * 1000) / 10,
+    lossRate: Math.round((losses / total) * 1000) / 10,
+  };
+}
+
+function getCoveragePositionWinLossRatesForResultFen(
+  entry: CoveragePositionCacheEntry | null | undefined,
+  resultFen: string | null | undefined,
+  fallbackColor: "white" | "black",
+): { winRate?: number; lossRate?: number } {
+  const sideToMove = getFenSideToMove(resultFen);
+  const moveColor = sideToMove ? (sideToMove === "white" ? "black" : "white") : fallbackColor;
+  return getCoveragePositionWinLossRates(entry, moveColor);
+}
+
+function normalizeCoverageGraphSourceRatesByResultFen(
+  node: CoverageGraphNode,
+  positions: Record<string, CoveragePositionCacheEntry>,
+  fallbackColor: "white" | "black",
+): CoverageGraphNode {
+  const fen = `${node.fen ?? ""}`.trim();
+  const entry = fen ? positions[normalizeFenKey(fen)] : undefined;
+  const rates = getCoveragePositionWinLossRatesForResultFen(entry, fen, fallbackColor);
+  return {
+    ...node,
+    activeWinRate: rates.winRate ?? node.activeWinRate,
+    activeLossRate: rates.lossRate ?? node.activeLossRate,
+    children: node.children.map((child) =>
+      normalizeCoverageGraphSourceRatesByResultFen(child, positions, fallbackColor),
+    ),
+  };
 }
 
 function isRetriableCoverageError(message: string): boolean {
@@ -1377,148 +1670,20 @@ function fenTurnColor(fen: string): "white" | "black" {
   return parts[1] === "b" ? "black" : "white";
 }
 
-function computeVariantActiveLineDepth(tree: Awaited<ReturnType<typeof parsePGN>> | null): number | null {
-  if (!tree?.root) return null;
-  const activeColor: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-
-  let maxActiveMoves = 0;
-  const walk = (node: TreeNode, activeMoves: number) => {
-    const children = Array.isArray(node.children) ? node.children : [];
-    if (children.length === 0) {
-      if (activeMoves > maxActiveMoves) {
-        maxActiveMoves = activeMoves;
-      }
-      return;
-    }
-
-    const sideToMove = fenTurnColor(node.fen);
-    for (const child of children) {
-      const nextActiveMoves = activeMoves + (sideToMove === activeColor ? 1 : 0);
-      walk(child, nextActiveMoves);
-    }
-  };
-
-  walk(tree.root, 0);
-  return maxActiveMoves;
+function getFenSideToMove(fen: string | null | undefined): "white" | "black" | null {
+  const turn = `${fen ?? ""}`.trim().split(/\s+/)[1];
+  if (turn === "w") return "white";
+  if (turn === "b") return "black";
+  return null;
 }
 
 async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
-  const scanDirs = [variantsDir];
-  const allEntries: Array<FileMetadata> = [];
-  for (const dir of scanDirs) {
-    if (!(await exists(dir))) {
-      continue;
-    }
-    const entries = await readDir(dir);
-    const resolved = await processEntriesRecursively(dir, entries);
-    allEntries.push(...resolved.filter((entry): entry is FileMetadata => entry.type === "file"));
-  }
-
-  if (allEntries.length === 0) {
-    return [];
-  }
-  const seenPaths = new Set<string>();
-  const variantFiles = allEntries.filter((file) => {
-    if (file.metadata.type !== "variants") {
-      return false;
-    }
-    const key = file.path.replace(/\\/g, "/").toLowerCase();
-    if (seenPaths.has(key)) {
-      return false;
-    }
-    seenPaths.add(key);
-    return true;
-  });
-
-  const variants: VariantInfo[] = [];
-
-  for (const file of variantFiles) {
-    try {
-      let gameTree: Awaited<ReturnType<typeof parsePGN>> | null = null;
-      try {
-        // Read the first game to extract richer metadata.
-        // If PGN is empty/corrupt, keep the variant visible via .info metadata.
-        const { commands } = await import("@/bindings");
-        const { unwrap } = await import("@/utils/unwrap");
-        const count = unwrap(await commands.countPgnGames(file.path));
-        if (count > 0) {
-          const games = unwrap(await commands.readGames(file.path, 0, 0));
-          const firstGame = games[0];
-          if (firstGame) {
-            gameTree = await parsePGN(firstGame);
-          }
-        }
-      } catch {
-        // Keep metadata-only fallback.
-      }
-
-      const tags = file.metadata.tags || [];
-
-      // Priority: metadata tags > PGN headers
-      const openingTag = getTagValue(tags, "opening:");
-      const priorityTag = getTagValue(tags, "priority:");
-      const fenTag = getTagValue(tags, "fen:");
-      const depth = getTagValue(tags, "depth:");
-      const database = getTagValue(tags, "database:");
-      const engine = getTagValue(tags, "engine:");
-      const engineMs = getTagValue(tags, "engineMs:");
-      const buildConfig = await parseVariantBuildConfigFromTags(tags);
-      const variantsCount =
-        tags
-          .find((tag) => tag.startsWith("variantsCount:"))
-          ?.slice("variantsCount:".length)
-          .trim() || null;
-      const commentsTag =
-        tags
-          .find((tag) => tag.startsWith("comments:"))
-          ?.slice("comments:".length)
-          .trim() || null;
-      const referencesTag =
-        tags
-          .find((tag) => tag.startsWith("references:"))
-          ?.slice("references:".length)
-          .trim() || null;
-      const comments = commentsTag || referencesTag || null;
-      const parentLink = file.metadata.type === "variants" ? (file.metadata.links?.parent ?? null) : null;
-      const childLinks =
-        file.metadata.type === "variants" && Array.isArray(file.metadata.links?.children)
-          ? file.metadata.links.children
-          : [];
-
-      // Fallback to PGN-derived headers if metadata tags don't exist
-      const opening = openingTag || gameTree?.headers?.eco || null;
-      const fen = fenTag || gameTree?.headers?.fen || null;
-      const lineDepth = computeVariantActiveLineDepth(gameTree);
-
-      const parsedPriority = priorityTag ? Number.parseInt(priorityTag, 10) : Number.NaN;
-
-      variants.push({
-        name: file.name,
-        path: file.path,
-        priority: Number.isFinite(parsedPriority) ? parsedPriority : null,
-        opening: opening || null,
-        fen: fen || null,
-        depth: depth ? Number.parseInt(depth, 10) : null,
-        lineDepth,
-        database: database || null,
-        engine: engine || null,
-        engineMs: engineMs ? Number.parseInt(engineMs, 10) : null,
-        dbType: buildConfig.dbType ?? null,
-        variantsCount: variantsCount ? Number.parseInt(variantsCount, 10) : null,
-        comments: comments,
-        parentLink,
-        childLinks,
-      });
-    } catch (error) {
-      console.error(`Error loading variant ${file.path}:`, error);
-    }
-  }
-
-  return variants;
+  return invoke<VariantInfo[]>("variants_list_fast", { variantsDir });
 }
 
 export default function VariantsPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
   const [_tabs, setTabs] = useAtom(tabsAtom);
@@ -1545,7 +1710,9 @@ export default function VariantsPage() {
   const [maxPuzzleDepth, setMaxPuzzleDepth] = useState(24);
   const [puzzleTargetKey, setPuzzleTargetKey] = useState<string | null>(null);
   const [generatingPuzzles, setGeneratingPuzzles] = useState(false);
+  const [openingVariantsTargetKey, setOpeningVariantsTargetKey] = useState<string | null>(null);
   const [validatingVariants, setValidatingVariants] = useState(false);
+  const [resolvingValidationConflict, setResolvingValidationConflict] = useState(false);
   const [validationReport, setValidationReport] = useState<VariantValidationReport | null>(null);
   const [validationModalOpened, setValidationModalOpened] = useState(false);
   const [coverageGraphModalOpened, setCoverageGraphModalOpened] = useState(false);
@@ -1564,7 +1731,7 @@ export default function VariantsPage() {
   const [coverageGraphOrientation, setCoverageGraphOrientation] = useState<"white" | "black">("white");
   const [coverageCollapsedNodeIds, setCoverageCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [coverageActionLabel, setCoverageActionLabel] = useState("");
-  const [coveragePuzzleTierFilter, setCoveragePuzzleTierFilter] = useState<Exclude<CoverageTier, "root">>("mainline");
+  const [coveragePuzzleTierFilter, setCoveragePuzzleTierFilter] = useState<CoveragePuzzleTierFilter>("mainline");
   const [coveragePuzzleIncludeLowSample, setCoveragePuzzleIncludeLowSample] = useState(true);
   const [coveragePuzzleName, setCoveragePuzzleName] = useState("");
   const [coveragePuzzleGenerating, setCoveragePuzzleGenerating] = useState(false);
@@ -1578,6 +1745,23 @@ export default function VariantsPage() {
   const [_coverageProfileStatsRefreshing, setCoverageProfileStatsRefreshing] = useState(false);
   const [coverageEngineMs, setCoverageEngineMs] = useState(1000);
   const [coverageEngineEvaluating, setCoverageEngineEvaluating] = useState(false);
+  const [criticalLineModalOpened, setCriticalLineModalOpened] = useState(false);
+  const [criticalLineReport, setCriticalLineReport] = useState<CriticalLineReport | null>(null);
+  const [criticalLineLoading, setCriticalLineLoading] = useState(false);
+  const [criticalLineRegenerating, setCriticalLineRegenerating] = useState(false);
+  const [criticalLineBuildRequest, setCriticalLineBuildRequest] = useState<{
+    key: string;
+    depth: number;
+    mappedOnly?: boolean;
+    completeLinesOnly?: boolean;
+    forceRebuild?: boolean;
+    bypassPositionCache?: boolean;
+  } | null>(null);
+  const [criticalLineReportRequestKey, setCriticalLineReportRequestKey] = useState<string | null>(null);
+  const [criticalLineMappedOnly, setCriticalLineMappedOnly] = useState(false);
+  const [criticalLineDismissedFenKeys, setCriticalLineDismissedFenKeys] = useState<Set<string>>(new Set());
+  const coverageGraphPositionsRef = useRef<Record<string, CoveragePositionCacheEntry>>({});
+  const criticalLineCompleteOnlyRef = useRef(false);
   const [configureBuildModalOpened, setConfigureBuildModalOpened] = useState(false);
   const [configureBuildTargetKey, setConfigureBuildTargetKey] = useState<string | null>(null);
   const [applyingBuildConfig, setApplyingBuildConfig] = useState(false);
@@ -1774,17 +1958,18 @@ export default function VariantsPage() {
   // Calculate responsive grid columns
   const isMobile = layout.files?.layoutType === "mobile" || false;
   const gridCols = isMobile ? 1 : { base: 1, md: 2, lg: 3 };
+  const variantsQueryKey = useMemo(() => ["variants", activeProfileId ?? "global"] as const, [activeProfileId]);
 
   const {
     data: variants = [],
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["variants", activeProfileId ?? "global"],
+    queryKey: variantsQueryKey,
     queryFn: async () => loadVariants(await getVariantsDirectory(activeProfileId)),
-    staleTime: 0,
-    gcTime: 60_000,
-    refetchOnMount: "always",
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
@@ -1811,12 +1996,22 @@ export default function VariantsPage() {
   }, [location.pathname, refetch]);
 
   useEffect(() => {
+    let refreshTimeout: number | null = null;
     const onVariantsUpdated = () => {
-      void refetch();
+      if (refreshTimeout !== null) {
+        window.clearTimeout(refreshTimeout);
+      }
+      refreshTimeout = window.setTimeout(() => {
+        refreshTimeout = null;
+        void refetch();
+      }, 80);
     };
     window.addEventListener("variants:links-updated", onVariantsUpdated);
     window.addEventListener("variants:updated", onVariantsUpdated);
     return () => {
+      if (refreshTimeout !== null) {
+        window.clearTimeout(refreshTimeout);
+      }
       window.removeEventListener("variants:links-updated", onVariantsUpdated);
       window.removeEventListener("variants:updated", onVariantsUpdated);
     };
@@ -2240,8 +2435,8 @@ export default function VariantsPage() {
       await writeInfoMetadata(finalPath, metadata);
 
       if (renamed) {
-        const variantsDir = await getVariantsDirectory(activeProfileId);
-        await repairVariantLinks(variantsDir);
+        const legacyVariantsDir = await getVariantsDirectory(activeProfileId);
+        await repairVariantLinks(legacyVariantsDir);
       }
       try {
         window.dispatchEvent(new Event("variants:links-updated"));
@@ -2276,13 +2471,99 @@ export default function VariantsPage() {
 
   const handleDelete = useCallback(
     (variant: VariantInfo) => {
+      const targetKey = normalizePath(variant.path);
+      const variantByKey = new Map<string, VariantInfo>();
+      const variantByFileName = new Map<string, VariantInfo[]>();
+      for (const item of variants) {
+        const key = normalizePath(item.path);
+        variantByKey.set(key, item);
+        const fileName = getFileName(item.path).toLowerCase();
+        const list = variantByFileName.get(fileName) ?? [];
+        list.push(item);
+        variantByFileName.set(fileName, list);
+      }
+
+      const resolveVariant = (
+        owner: VariantInfo,
+        rawPath: string,
+        fallbackName?: string | null,
+      ): VariantInfo | null => {
+        const resolved = resolveLinkedPath(owner.path, rawPath);
+        const direct = variantByKey.get(resolved);
+        if (direct) return direct;
+        const byPathFileName = variantByFileName.get(getFileName(rawPath).toLowerCase());
+        if (byPathFileName?.length) return byPathFileName[0] ?? null;
+        if (fallbackName) {
+          const byNameFileName = variantByFileName.get(fallbackName.toLowerCase());
+          if (byNameFileName?.length) return byNameFileName[0] ?? null;
+        }
+        return null;
+      };
+
+      const childrenByParent = new Map<string, Set<string>>();
+      const parentByChild = new Map<string, string>();
+      for (const item of variants) {
+        const selfKey = normalizePath(item.path);
+
+        if (item.parentLink?.path) {
+          const parentVariant = resolveVariant(item, item.parentLink.path, item.parentLink.name);
+          if (parentVariant) {
+            const parentKey = normalizePath(parentVariant.path);
+            if (parentKey !== selfKey) {
+              parentByChild.set(selfKey, parentKey);
+              const children = childrenByParent.get(parentKey) ?? new Set<string>();
+              children.add(selfKey);
+              childrenByParent.set(parentKey, children);
+            }
+          }
+        }
+
+        for (const childLink of item.childLinks ?? []) {
+          if (!childLink.path) continue;
+          const childVariant = resolveVariant(item, childLink.path, childLink.name);
+          if (!childVariant) continue;
+          const childKey = normalizePath(childVariant.path);
+          if (childKey === selfKey) continue;
+          const children = childrenByParent.get(selfKey) ?? new Set<string>();
+          children.add(childKey);
+          childrenByParent.set(selfKey, children);
+          if (!parentByChild.has(childKey)) {
+            parentByChild.set(childKey, selfKey);
+          }
+        }
+      }
+
+      const keysToDelete: string[] = [];
+      const visited = new Set<string>();
+      const walk = (key: string) => {
+        if (visited.has(key)) return;
+        visited.add(key);
+        keysToDelete.push(key);
+        const childKeys = Array.from(childrenByParent.get(key) ?? []).filter(
+          (childKey) => parentByChild.get(childKey) === key,
+        );
+        for (const childKey of childKeys) {
+          walk(childKey);
+        }
+      };
+      walk(targetKey);
+      const variantsToDelete = keysToDelete
+        .map((key) => variantByKey.get(key))
+        .filter((item): item is VariantInfo => !!item);
+      const descendantCount = Math.max(0, variantsToDelete.length - 1);
+
       modals.openConfirmModal({
         title: t("common.delete"),
         children: (
           <Text size="sm">
-            {t("features.board.variants.deleteConfirm", {
-              defaultValue: "Are you sure you want to delete this variant?",
-            })}
+            {descendantCount > 0
+              ? t("features.board.variants.deleteCascadeConfirm", {
+                  defaultValue: "Delete this variant and its {{count}} descendant variant(s)? This cannot be undone.",
+                  count: descendantCount,
+                })
+              : t("features.board.variants.deleteConfirm", {
+                  defaultValue: "Are you sure you want to delete this variant?",
+                })}
             <br />
             <Text component="span" fw={700}>
               {variant.name}
@@ -2293,29 +2574,33 @@ export default function VariantsPage() {
         confirmProps: { color: "red" },
         onConfirm: async () => {
           try {
-            await remove(variant.path);
-            // Also delete the .info file if it exists
-            const infoPath = variant.path.replace(".pgn", ".info");
-            if (await exists(infoPath)) {
-              await remove(infoPath);
-            }
-            try {
-              const variantDir = variant.path.replace(/[\\/][^\\/]+$/, "");
-              const report = await cleanupVariantLinksAfterDelete(variant.path, variantDir);
-              if (report.updatedFiles > 0 || report.removedLinks > 0) {
+            const deletedPathKeys = new Set(variantsToDelete.map((item) => normalizePath(item.path)));
+            await invoke("variants_delete_files", { paths: variantsToDelete.map((item) => item.path) });
+            queryClient.setQueryData<VariantInfo[]>(variantsQueryKey, (current) =>
+              (current ?? []).filter((item) => !deletedPathKeys.has(normalizePath(item.path))),
+            );
+            notifications.show({
+              title: t("common.success"),
+              message:
+                descendantCount > 0
+                  ? t("features.board.variants.deletedCascade", {
+                      defaultValue: "Deleted variant and {{count}} descendant variant(s).",
+                      count: descendantCount,
+                    })
+                  : t("features.board.variants.deleted", { defaultValue: "Variant deleted successfully" }),
+              color: "green",
+            });
+            void (async () => {
+              try {
+                const variantsDir = await getVariantsDirectory(activeProfileId);
+                await repairVariantLinks(variantsDir);
                 try {
                   window.dispatchEvent(new Event("variants:links-updated"));
                 } catch {}
+              } catch {
+                // Ignore link cleanup errors during delete.
               }
-            } catch {
-              // Ignore link cleanup errors during delete.
-            }
-            notifications.show({
-              title: t("common.success"),
-              message: t("features.board.variants.deleted", { defaultValue: "Variant deleted successfully" }),
-              color: "green",
-            });
-            await refetch();
+            })();
           } catch (_error) {
             notifications.show({
               title: t("common.error"),
@@ -2326,7 +2611,7 @@ export default function VariantsPage() {
         },
       });
     },
-    [refetch, t],
+    [activeProfileId, queryClient, t, variants, variantsQueryKey],
   );
 
   const handleRepairLinks = useCallback(async () => {
@@ -2493,11 +2778,24 @@ export default function VariantsPage() {
       if (!variant) return null;
       const nextLineage = new Set(lineage);
       nextLineage.add(key);
-      const childKeys = Array.from(childrenByParent.get(key) ?? []).filter(
-        (childKey) => parentByChild.get(childKey) === key,
-      );
+      const childKeys = Array.from(childrenByParent.get(key) ?? []);
       const sortedChildren = childKeys
-        .map((childKey) => buildNode(childKey, nextLineage))
+        .map((childKey) => {
+          const canonicalParentKey = parentByChild.get(childKey);
+          if (canonicalParentKey && canonicalParentKey !== key) {
+            if (!hasVisibleSubtree(childKey)) return null;
+            const childVariant = variantByKey.get(childKey);
+            if (!childVariant) return null;
+            return {
+              key: `${key}=>${childKey}`,
+              canonicalKey: childKey,
+              variant: childVariant,
+              children: [],
+              isTransposition: true,
+            };
+          }
+          return buildNode(childKey, nextLineage);
+        })
         .filter((child): child is VariantTreeNode => !!child)
         .sort((a, b) => sortVariants(a.variant, b.variant));
       return {
@@ -2626,6 +2924,62 @@ export default function VariantsPage() {
       return out;
     },
     [variantLinkGraph],
+  );
+
+  const validateVariantConsistencyBeforeAction = useCallback(
+    async (variant: VariantInfo, options: { showCleanReport?: boolean } = {}) => {
+      if (validatingVariants) return false;
+      setValidatingVariants(true);
+      setValidationReport(null);
+      try {
+        const variantsDir = await getVariantsDirectory(activeProfileId);
+        const report = await invoke<VariantValidationReport>("variants_validate_consistency", {
+          variantsDir,
+          targetPath: variant.path,
+        });
+
+        if (report.conflicts.length > 0 || options.showCleanReport) {
+          setValidationReport(report);
+          setValidationModalOpened(true);
+        }
+
+        if (report.conflicts.length > 0) {
+          notifications.show({
+            title: t("common.warning"),
+            message: t("features.board.variants.validationConflictsFound", {
+              defaultValue: "Detected {{count}} contradictions in active-side moves.",
+              count: report.conflicts.length,
+            }),
+            color: "yellow",
+          });
+          return false;
+        }
+
+        if (options.showCleanReport) {
+          notifications.show({
+            title: t("common.success"),
+            message: t("features.board.variants.validationNoConflicts", {
+              defaultValue: "No contradictions found for active-side moves.",
+            }),
+            color: "green",
+          });
+        }
+
+        return true;
+      } catch {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.validationFailed", {
+            defaultValue: "Failed to validate variant consistency.",
+          }),
+          color: "red",
+        });
+        return false;
+      } finally {
+        setValidatingVariants(false);
+      }
+    },
+    [activeProfileId, t, validatingVariants],
   );
 
   const applyBuildConfigToVariantTree = useCallback(async () => {
@@ -2758,8 +3112,60 @@ export default function VariantsPage() {
     variantLinkGraph.variantByKey,
   ]);
 
+  const handleCreateOpeningVariants = useCallback(
+    async (row: VariantTableRow) => {
+      if (openingVariantsTargetKey) return;
+
+      const rootKey = row.canonicalKey ?? row.key;
+      const rootVariant = variantLinkGraph.variantByKey.get(rootKey);
+      if (!rootVariant) return;
+      const canContinue = await validateVariantConsistencyBeforeAction(rootVariant);
+      if (!canContinue) return;
+
+      setOpeningVariantsTargetKey(rootKey);
+      try {
+        const variantsDir = await getVariantsDirectory(activeProfileId);
+        const result = await invoke<{ created: number; removed: number; rootPath: string }>(
+          "variants_create_opening_variants",
+          {
+            variantsDir,
+            targetPath: rootVariant.path,
+          },
+        );
+
+        try {
+          window.dispatchEvent(new Event("variants:links-updated"));
+          window.dispatchEvent(new Event("variants:updated"));
+        } catch {}
+        await refetch();
+
+        notifications.show({
+          title: t("common.success"),
+          message: t("features.board.variants.openingVariantsReplaced", {
+            defaultValue: "Replaced {{removed}} existing descendants with {{count}} ECO opening variants.",
+            count: result.created,
+            removed: result.removed,
+          }),
+          color: "green",
+        });
+      } catch (error) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.openingVariantsFailed", {
+            defaultValue: "Failed to create opening variants: {{reason}}",
+            reason: getErrorMessage(error),
+          }),
+          color: "red",
+        });
+      } finally {
+        setOpeningVariantsTargetKey(null);
+      }
+    },
+    [activeProfileId, openingVariantsTargetKey, refetch, t, validateVariantConsistencyBeforeAction, variantLinkGraph],
+  );
   const openCoverageGraphForKey = useCallback((key: string) => {
     coverageGraphResumeSnapshot = null;
+    coverageGraphPositionsRef.current = {};
     setCoverageGraphTargetKey(key);
     setCoverageGraphDepth("");
     setCoverageGraphRoot(null);
@@ -2802,23 +3208,30 @@ export default function VariantsPage() {
   }, []);
 
   const handleOpenCoverageGraph = useCallback(
-    (row: VariantTableRow) => {
-      openCoverageGraphForKey(row.key);
+    async (row: VariantTableRow) => {
+      const key = row.canonicalKey ?? row.key;
+      const variant = variantLinkGraph.variantByKey.get(key);
+      if (!variant) return;
+      const canContinue = await validateVariantConsistencyBeforeAction(variant);
+      if (!canContinue) return;
+      openCoverageGraphForKey(key);
     },
-    [openCoverageGraphForKey],
+    [openCoverageGraphForKey, validateVariantConsistencyBeforeAction, variantLinkGraph.variantByKey],
   );
 
   const handleOpenCoverageGraphForVariant = useCallback(
-    (variant: VariantInfo) => {
+    async (variant: VariantInfo) => {
+      const canContinue = await validateVariantConsistencyBeforeAction(variant);
+      if (!canContinue) return;
       openCoverageGraphForKey(normalizePath(variant.path));
     },
-    [openCoverageGraphForKey],
+    [openCoverageGraphForKey, validateVariantConsistencyBeforeAction],
   );
 
   const fetchCoverageOpenings = useCallback(
-    async (fen: string, config: VariantBuildConfig, signal?: AbortSignal): Promise<CoverageOpeningRow[]> => {
+    async (fen: string, config: VariantBuildConfig, signal?: AbortSignal): Promise<CoveragePositionFetchResult> => {
       if (config.dbType === "local") {
-        if (!config.localDatabasePath) return [];
+        if (!config.localDatabasePath) return { moves: [] };
         const [openings] = await searchPosition(
           {
             path: config.localDatabasePath,
@@ -2831,7 +3244,7 @@ export default function VariantsPage() {
           "variants-coverage",
           signal,
         );
-        return toCoverageOpenings(openings);
+        return { moves: toCoverageOpenings(openings) };
       }
 
       if (config.dbType === "lch_all") {
@@ -2848,14 +3261,19 @@ export default function VariantsPage() {
           lichessAuthToken,
           signal,
         );
-        return toCoverageOpenings(
-          payload.moves.map((move) => ({
-            move: move.san,
-            white: move.white,
-            black: move.black,
-            draw: move.draws,
-          })),
-        );
+        return {
+          moves: toCoverageOpenings(
+            payload.moves.map((move) => ({
+              move: move.san,
+              white: move.white,
+              black: move.black,
+              draw: move.draws,
+            })),
+          ),
+          white: payload.white,
+          black: payload.black,
+          draw: payload.draws,
+        };
       }
 
       const payload = await getMasterGames(
@@ -2867,22 +3285,35 @@ export default function VariantsPage() {
         lichessAuthToken,
         signal,
       );
-      return toCoverageOpenings(
-        payload.moves.map((move) => ({
-          move: move.san,
-          white: move.white,
-          black: move.black,
-          draw: move.draws,
-        })),
-      );
+      return {
+        moves: toCoverageOpenings(
+          payload.moves.map((move) => ({
+            move: move.san,
+            white: move.white,
+            black: move.black,
+            draw: move.draws,
+          })),
+        ),
+        white: payload.white,
+        black: payload.black,
+        draw: payload.draws,
+      };
     },
     [lichessAuthToken],
   );
 
   const handleBuildCoverageGraph = useCallback(
-    async (options?: { forceRebuild?: boolean }) => {
+    async (options?: {
+      forceRebuild?: boolean;
+      bypassPositionCache?: boolean;
+      persistResults?: boolean;
+      mappedOnly?: boolean;
+    }) => {
       if (!coverageGraphTargetKey || coverageGraphLoading) return;
       const forceRebuild = options?.forceRebuild === true;
+      const bypassPositionCache = options?.bypassPositionCache === true;
+      const persistResults = options?.persistResults !== false;
+      const mappedOnly = options?.mappedOnly === true;
       const requestedDepth =
         typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
           ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
@@ -2945,7 +3376,8 @@ export default function VariantsPage() {
         const subtreeKeys = collectSubtreeKeys(coverageGraphTargetKey);
         if (subtreeKeys.length === 0) return;
         const variantsTotal = subtreeKeys.length;
-        const cacheFilePath = await getCoverageGraphCacheFilePath(targetVariant.path, sourceSignature);
+        const baseCacheFilePath = await getCoverageGraphCacheFilePath(targetVariant.path, sourceSignature);
+        const cacheFilePath = mappedOnly ? buildCriticalLineCoverageCachePath(baseCacheFilePath) : baseCacheFilePath;
         const existingCache = await readCoverageGraphCache(cacheFilePath);
         let resolvedProfileStatsDbPath = `${activeProfileCoverageDbPath ?? ""}`.trim();
         if (!resolvedProfileStatsDbPath && activeProfileId) {
@@ -3042,9 +3474,10 @@ export default function VariantsPage() {
           !forceRebuild &&
           existingCache &&
           existingCache.sourceSignature === sourceSignature &&
-          existingCache.maxMoves >= requestedDepth
+          (mappedOnly || existingCache.maxMoves >= requestedDepth)
         ) {
           setCoverageGraphOrientation(existingCache.repertoireColor);
+          setCriticalLineDismissedFenKeys(new Set(existingCache.criticalLineDismissedFenKeys ?? []));
           const graphWithOpenings = await enrichCoverageGraphNodeOpenings(existingCache.graphRoot);
           const graphWithPositionFlags = await applyLowSampleFlagsToGraph(
             graphWithOpenings,
@@ -3059,7 +3492,15 @@ export default function VariantsPage() {
             existingCache.repertoireColor,
             selectedProfileTimeControls,
           );
-          const trimmedGraph = await trimCoverageGraphByDepth(graphWithProfileFlags, requestedDepth);
+          const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
+            graphWithProfileFlags,
+            existingCache.positions,
+            existingCache.repertoireColor,
+          );
+          coverageGraphPositionsRef.current = existingCache.positions;
+          const trimmedGraph = mappedOnly
+            ? graphWithResultFenRates
+            : await trimCoverageGraphByDepth(graphWithResultFenRates, requestedDepth);
           setCoverageGraphRoot(trimmedGraph);
           setCoverageCollapsedNodeIds(
             buildCoverageDefaultCollapsedIds(trimmedGraph, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
@@ -3154,31 +3595,41 @@ export default function VariantsPage() {
 
           const request = runCoverageFetch(async () => {
             let persistedPosition: CoveragePositionCacheEntry | null = null;
-            try {
-              persistedPosition = await getCachedCoveragePosition(sourceSignature, fen, tierOverrides, repertoireColor);
-            } catch {
-              persistedPosition = null;
+            if (!bypassPositionCache) {
+              try {
+                persistedPosition = await getCachedCoveragePosition(
+                  sourceSignature,
+                  fen,
+                  tierOverrides,
+                  repertoireColor,
+                );
+              } catch {
+                persistedPosition = null;
+              }
             }
             if (persistedPosition) {
               positionCache.set(fenKey, persistedPosition);
               return persistedPosition;
             }
 
-            const openings = await withCoverageRetry(
+            const positionResult = await withCoverageRetry(
               async () =>
                 await withCoverageRequestTimeout(
                   async (signal) => await fetchCoverageOpenings(fen, resolvedConfig, signal),
                   12_000,
                 ),
             );
-            if (resolvedConfig.dbType === "local") {
+            if (!bypassPositionCache && resolvedConfig.dbType === "local") {
               try {
-                await setCoverageExplorerCache(sourceSignature, fen, openings);
+                await setCoverageExplorerCache(sourceSignature, fen, positionResult.moves);
               } catch {
                 // Cache write is best effort; the build should continue even if persistence fails.
               }
             }
-            const entry = await classifyCoveragePosition(fen, openings, tierOverrides, repertoireColor);
+            const entry = await classifyCoveragePosition(fen, positionResult.moves, tierOverrides, repertoireColor);
+            entry.white = positionResult.white;
+            entry.black = positionResult.black;
+            entry.draw = positionResult.draw;
             positionCache.set(fenKey, entry);
             return entry;
           });
@@ -3251,6 +3702,7 @@ export default function VariantsPage() {
         };
 
         const variantRootFenByKey = new Map<string, string>();
+        const variantFenKeysByKey = new Map<string, Set<string>>();
         const variantTreesByKey = new Map<string, Array<Awaited<ReturnType<typeof parsePGN>>>>();
         const { unwrap } = await import("@/utils/unwrap");
         for (const key of subtreeKeys) {
@@ -3259,7 +3711,7 @@ export default function VariantsPage() {
           try {
             const count = unwrap(await commands.countPgnGames(variant.path));
             if (count <= 0) continue;
-            const endIndex = key === coverageGraphTargetKey ? Math.max(0, count - 1) : 0;
+            const endIndex = key === coverageGraphTargetKey || mappedOnly ? Math.max(0, count - 1) : 0;
             const games = unwrap(await commands.readGames(variant.path, 0, endIndex));
             const trees: Array<Awaited<ReturnType<typeof parsePGN>>> = [];
             for (const game of games) {
@@ -3274,6 +3726,11 @@ export default function VariantsPage() {
             if (trees.length === 0) continue;
             variantTreesByKey.set(key, trees);
             variantRootFenByKey.set(key, trees[0].root.fen);
+            const fenKeys = new Set<string>();
+            for (const tree of trees) {
+              collectTreeFenKeys(tree.root, fenKeys);
+            }
+            variantFenKeysByKey.set(key, fenKeys);
           } catch {
             // Ignore invalid variant files in coverage graph.
           } finally {
@@ -3500,6 +3957,159 @@ export default function VariantsPage() {
           return `${san} - ${variantNames.join(" / ")}`;
         };
 
+        const getSourcePositionRates = async (fen: string | null | undefined) => {
+          if (!fen) return {};
+          try {
+            return getCoveragePositionWinLossRatesForResultFen(await getPositionEntry(fen), fen, repertoireColor);
+          } catch {
+            return {};
+          }
+        };
+        const getProfilePositionRates = async (
+          fen: string | null | undefined,
+          options?: { activeMovesUsed?: number },
+        ) => {
+          if (!fen) return {};
+          try {
+            return getCoveragePositionWinLossRatesForResultFen(
+              await getActiveProfilePositionEntry(fen, options),
+              fen,
+              repertoireColor,
+            );
+          } catch {
+            return {};
+          }
+        };
+
+        type MappedLineMove = {
+          san: string;
+          nextFen: string;
+        };
+
+        const buildMappedLineGraph = async (rootNode: CoverageGraphNode, targetRootFen: string) => {
+          const mappedMovesByFen = new Map<string, Map<string, MappedLineMove>>();
+          const addMappedMove = (sourceFen: string, san: string, nextFen: string) => {
+            const sourceFenKey = normalizeFenKey(sourceFen);
+            const nextFenKey = normalizeFenKey(nextFen);
+            const moves = mappedMovesByFen.get(sourceFenKey) ?? new Map<string, MappedLineMove>();
+            const moveKey = `${san}|${nextFenKey}`;
+            if (!moves.has(moveKey)) {
+              moves.set(moveKey, { san, nextFen });
+              mappedMovesByFen.set(sourceFenKey, moves);
+            }
+          };
+          const collectMappedMoves = (node: TreeNode) => {
+            for (const child of node.children) {
+              const san = child.san?.trim();
+              if (san && child.fen) {
+                addMappedMove(node.fen, san, child.fen);
+              }
+              collectMappedMoves(child);
+            }
+          };
+
+          for (const [treeKey, trees] of variantTreesByKey.entries()) {
+            for (const tree of trees) {
+              const variantOrientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
+              if (variantOrientation !== repertoireColor && treeKey !== coverageGraphTargetKey) {
+                continue;
+              }
+              collectMappedMoves(tree.root);
+            }
+          }
+
+          const buildChildren = async (
+            fen: string,
+            parentNode: CoverageGraphNode,
+            activeMovesUsed: number,
+            pathEdges: Set<string>,
+          ) => {
+            const moves = Array.from(mappedMovesByFen.get(normalizeFenKey(fen))?.values() ?? []);
+            if (moves.length === 0) {
+              parentNode.completeLine = true;
+              return;
+            }
+
+            positionsProcessed += 1;
+            positionsPending = Math.max(0, positionsPending - 1);
+            pushProgress("building");
+
+            const sideToMove = fenTurnColor(fen);
+            const isActiveMove = sideToMove === repertoireColor;
+            let sourceEntry: CoveragePositionCacheEntry | null = null;
+            try {
+              sourceEntry = await getPositionEntry(fen);
+            } catch {
+              sourceEntry = null;
+            }
+
+            const childExpansions: Array<Promise<void>> = [];
+            for (const move of moves) {
+              const nextFenKey = normalizeFenKey(move.nextFen);
+              const edgeKey = `${normalizeFenKey(fen)}|${move.san}|${nextFenKey}`;
+              if (pathEdges.has(edgeKey)) continue;
+
+              const sourceMove = sourceEntry?.moves.find((entryMove) => {
+                if (entryMove.nextFen && normalizeFenKey(entryMove.nextFen) === nextFenKey) return true;
+                return entryMove.san === move.san;
+              });
+              const nextActiveMovesUsed = activeMovesUsed + (isActiveMove ? 1 : 0);
+              const destinationVariantNames = variantNamesByFen.get(nextFenKey);
+              const resultSourceRates = await getSourcePositionRates(move.nextFen);
+              const resultProfileRates = await getProfilePositionRates(move.nextFen, {
+                activeMovesUsed: nextActiveMovesUsed,
+              });
+              const label =
+                !isActiveMove && typeof sourceMove?.percent === "number"
+                  ? formatCoverageNodeLabel(move.san, sourceMove.percent, destinationVariantNames)
+                  : formatOrientationNodeLabel(move.san, destinationVariantNames);
+              const childNode: CoverageGraphNode = {
+                id: `${parentNode.id}|mapped:${move.san}|${nextFenKey}`,
+                label,
+                openingName: await resolveCoverageOpeningName(move.nextFen, parentNode.openingName ?? null),
+                tier: isActiveMove ? "root" : (sourceMove?.tier ?? "mainline"),
+                percent: sourceMove?.percent,
+                lowSample: sourceMove?.lowSample ?? false,
+                fen: move.nextFen,
+                overrideKey: buildCoverageTierOverrideKey(fen, move.san),
+                activeMovesUsed: nextActiveMovesUsed,
+                activeWinRate: resultSourceRates.winRate ?? sourceMove?.activeWinRate ?? undefined,
+                activeLossRate: resultSourceRates.lossRate ?? sourceMove?.activeLossRate ?? undefined,
+                profileWinRate: resultProfileRates.winRate ?? undefined,
+                profileLossRate: resultProfileRates.lossRate ?? undefined,
+                completeLine: false,
+                children: [],
+              };
+              parentNode.children.push(childNode);
+
+              const nextPathEdges = new Set(pathEdges);
+              nextPathEdges.add(edgeKey);
+              positionsPending += 1;
+              pushProgress("building");
+              childExpansions.push(
+                buildChildren(move.nextFen, childNode, nextActiveMovesUsed, nextPathEdges).then(() => {
+                  childNode.completeLine = childNode.children.length === 0;
+                }),
+              );
+            }
+
+            if (childExpansions.length > 0) {
+              await Promise.all(childExpansions);
+            }
+            parentNode.completeLine = parentNode.children.length === 0;
+          };
+
+          await buildChildren(targetRootFen, rootNode, 0, new Set<string>());
+        };
+
+        const maxCoverageActiveMoves = (node: CoverageGraphNode): number => {
+          const own =
+            typeof node.activeMovesUsed === "number" && Number.isFinite(node.activeMovesUsed)
+              ? node.activeMovesUsed
+              : 0;
+          return node.children.reduce((max, child) => Math.max(max, maxCoverageActiveMoves(child)), own);
+        };
+
         const expandNode = async (
           fen: string,
           parentNode: CoverageGraphNode,
@@ -3536,6 +4146,10 @@ export default function VariantsPage() {
               const responsePercent = percentBySan.get(san);
               const responseMove = entry.moves.find((move) => move.san === san);
               const profileMove = profileMoveBySan.get(san);
+              const resultSourceRates = await getSourcePositionRates(nextFen);
+              const resultProfileRates = await getProfilePositionRates(nextFen, {
+                activeMovesUsed: activeMovesUsed + 1,
+              });
               const overrideKey = buildCoverageTierOverrideKey(fen, san);
               const openingName = await resolveCoverageOpeningName(nextFen, parentNode.openingName ?? null);
               const childNode: CoverageGraphNode = {
@@ -3547,10 +4161,10 @@ export default function VariantsPage() {
                 fen: nextFen ?? null,
                 overrideKey,
                 activeMovesUsed: activeMovesUsed + 1,
-                activeWinRate: responseMove?.activeWinRate ?? undefined,
-                activeLossRate: responseMove?.activeLossRate ?? undefined,
-                profileWinRate: profileMove?.activeWinRate ?? undefined,
-                profileLossRate: profileMove?.activeLossRate ?? undefined,
+                activeWinRate: resultSourceRates.winRate ?? responseMove?.activeWinRate ?? undefined,
+                activeLossRate: resultSourceRates.lossRate ?? responseMove?.activeLossRate ?? undefined,
+                profileWinRate: resultProfileRates.winRate ?? profileMove?.activeWinRate ?? undefined,
+                profileLossRate: resultProfileRates.lossRate ?? profileMove?.activeLossRate ?? undefined,
                 children: [],
               };
               parentNode.children.push(childNode);
@@ -3591,10 +4205,12 @@ export default function VariantsPage() {
             const overrideKey = buildCoverageTierOverrideKey(fen, move.san);
             const customLabel = labelOverrides.get(overrideKey);
             const profileMove = profileMoveBySan.get(move.san);
-            const sourceWinRate = move.activeWinRate ?? undefined;
-            const sourceLossRate = move.activeLossRate ?? undefined;
-            const profileWinRate = profileMove?.activeWinRate ?? undefined;
-            const profileLossRate = profileMove?.activeLossRate ?? undefined;
+            const resultSourceRates = await getSourcePositionRates(move.nextFen);
+            const resultProfileRates = await getProfilePositionRates(move.nextFen, { activeMovesUsed });
+            const sourceWinRate = resultSourceRates.winRate ?? move.activeWinRate ?? undefined;
+            const sourceLossRate = resultSourceRates.lossRate ?? move.activeLossRate ?? undefined;
+            const profileWinRate = resultProfileRates.winRate ?? profileMove?.activeWinRate ?? undefined;
+            const profileLossRate = resultProfileRates.lossRate ?? profileMove?.activeLossRate ?? undefined;
             const openingName = await resolveCoverageOpeningName(move.nextFen, parentNode.openingName ?? null);
             const childNode: CoverageGraphNode = {
               id: `${parentNode.id}|${move.san}|${remainingMoves}`,
@@ -3643,6 +4259,77 @@ export default function VariantsPage() {
         }
         rootNode.fen = targetRootFen;
         rootNode.openingName = await getOpeningNameByFen(targetRootFen);
+        if (mappedOnly) {
+          positionsPending += 1;
+          pushProgress("building");
+          await buildMappedLineGraph(rootNode, targetRootFen);
+          positionsPending = 0;
+          pushProgress("building", true);
+
+          const positionsRecord: Record<string, CoveragePositionCacheEntry> = {};
+          for (const [fenKey, value] of positionCache.entries()) {
+            positionsRecord[fenKey] = value;
+          }
+          const tierOverridesRecord: Record<string, Exclude<CoverageTier, "root">> = {};
+          for (const [overrideKey, tier] of tierOverrides.entries()) {
+            tierOverridesRecord[overrideKey] = tier;
+          }
+          const labelOverridesRecord: Record<string, string> = {};
+          for (const [overrideKey, label] of labelOverrides.entries()) {
+            labelOverridesRecord[overrideKey] = label;
+          }
+          const rootNodeWithEngineAnnotations =
+            preservedEngineAnnotations.size > 0
+              ? applyCoverageEngineAnnotationsByFen(rootNode, preservedEngineAnnotations)
+              : rootNode;
+          const graphWithWinrate = await applyLowSampleFlagsToGraph(
+            rootNodeWithEngineAnnotations,
+            positionsRecord,
+            repertoireColor,
+          );
+          const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
+            graphWithWinrate,
+            positionsRecord,
+            profileStatsDbPath || null,
+            resolvedProfilePlayerIds,
+            repertoireColor,
+            selectedProfileTimeControls,
+          );
+          const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
+            graphWithProfileFlags,
+            positionsRecord,
+            repertoireColor,
+          );
+          const criticalCache: VariantCoverageCache = {
+            version: COVERAGE_GRAPH_CACHE_VERSION,
+            sourceSignature,
+            maxMoves: maxCoverageActiveMoves(graphWithResultFenRates),
+            positions: positionsRecord,
+            tierOverrides: tierOverridesRecord,
+            labelOverrides: labelOverridesRecord,
+            criticalLineDismissedFenKeys: [],
+            graphRoot: graphWithResultFenRates,
+            repertoireColor,
+            generatedAt: new Date().toISOString(),
+          };
+          if (persistResults) {
+            await writeCoverageGraphCache(cacheFilePath, criticalCache);
+            setCoverageGraphCachePath(cacheFilePath);
+            setCoverageGraphSourceSignature(sourceSignature);
+          } else {
+            setCoverageGraphCachePath(null);
+            setCoverageGraphSourceSignature(null);
+          }
+          setCriticalLineDismissedFenKeys(new Set());
+          coverageGraphPositionsRef.current = positionsRecord;
+          setCoverageGraphRoot(graphWithResultFenRates);
+          setCoverageCollapsedNodeIds(
+            buildCoverageDefaultCollapsedIds(graphWithResultFenRates, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
+          );
+          setCoverageGraphOrientation(repertoireColor);
+          pushProgress("building", true);
+          return;
+        }
         const branchStartFen = firstBranchAnchor?.anchorFen ?? targetRootFen;
         let branchParentNode = rootNode;
         if (firstBranchAnchor && targetTree && firstBranchAnchor.anchorPath.length > 0) {
@@ -3676,45 +4363,57 @@ export default function VariantsPage() {
         positionsPending = 0;
         pushProgress("building", true);
 
-        const priorityUpdates = new Map<string, number>();
-        for (const key of subtreeKeys) {
-          if (key === coverageGraphTargetKey) continue;
-          const variant = variantLinkGraph.variantByKey.get(key);
-          if (!variant?.parentLink) continue;
-          const anchorFenKey = normalizeFenKey(variant.parentLink.anchorFen);
-          const anchorEntry = positionCache.get(anchorFenKey);
-          if (!anchorEntry) continue;
-
-          const label = (variant.parentLink.label ?? "").trim();
-          let matchedMove = label ? anchorEntry.moves.find((move) => move.san === label) : undefined;
-          if (!matchedMove) {
-            const rootFen = variantRootFenByKey.get(key);
+        if (persistResults) {
+          const variantKeysByFen = new Map<string, Set<string>>();
+          for (const key of subtreeKeys) {
+            const variant = variantLinkGraph.variantByKey.get(key);
+            const rootFen = variantRootFenByKey.get(key) ?? variant?.fen ?? null;
+            if (!variant) continue;
+            const fenKeys = new Set<string>(variantFenKeysByKey.get(key) ?? []);
             if (rootFen) {
-              matchedMove = anchorEntry.moves.find(
-                (move) => move.nextFen && normalizeFenKey(move.nextFen) === normalizeFenKey(rootFen),
-              );
+              fenKeys.add(normalizeFenKey(rootFen));
+            }
+            for (const fenKey of fenKeys) {
+              const keys = variantKeysByFen.get(fenKey) ?? new Set<string>();
+              keys.add(key);
+              variantKeysByFen.set(fenKey, keys);
             }
           }
-          if (!matchedMove) continue;
-          if (matchedMove.tier === "mainline") {
-            priorityUpdates.set(key, 1);
-          } else if (matchedMove.tier === "secondary") {
-            priorityUpdates.set(key, 2);
-          } else {
-            priorityUpdates.set(key, 3);
-          }
-        }
 
-        for (const [key, priority] of priorityUpdates.entries()) {
-          const variant = variantLinkGraph.variantByKey.get(key);
-          if (!variant) continue;
-          const metadata = await readInfoMetadata(variant.path, "variants");
-          metadata.tags = (metadata.tags || []).filter((tag) => !tag.startsWith("priority:"));
-          metadata.tags.push(`priority:${priority}`);
-          await writeInfoMetadata(variant.path, metadata);
-        }
-        if (priorityUpdates.size > 0) {
-          setCoveragePrioritySyncing(true);
+          const priorityUpdates = new Map<string, number>();
+          const collectPriorityUpdatesFromGraph = (node: CoverageGraphNode) => {
+            const priority = coverageTierPriority(node.tier);
+            const nodeFen = `${node.fen ?? ""}`.trim();
+            if (priority && nodeFen) {
+              const variantKeys = variantKeysByFen.get(normalizeFenKey(nodeFen)) ?? new Set<string>();
+              for (const key of variantKeys) {
+                const currentPriority = priorityUpdates.get(key);
+                if (!currentPriority || priority < currentPriority) {
+                  priorityUpdates.set(key, priority);
+                }
+              }
+            }
+            for (const child of node.children) {
+              collectPriorityUpdatesFromGraph(child);
+            }
+          };
+          collectPriorityUpdatesFromGraph(rootNode);
+
+          for (const [key, priority] of priorityUpdates.entries()) {
+            const variant = variantLinkGraph.variantByKey.get(key);
+            if (!variant) continue;
+            const metadata = await readInfoMetadata(variant.path, "variants");
+            metadata.tags = (metadata.tags || []).filter((tag) => !tag.startsWith("priority:"));
+            metadata.tags.push(`priority:${priority}`);
+            await writeInfoMetadata(variant.path, metadata);
+          }
+          if (priorityUpdates.size > 0) {
+            setCoveragePrioritySyncing(true);
+            try {
+              window.dispatchEvent(new Event("variants:updated"));
+            } catch {}
+            void refetch();
+          }
         }
 
         const positionsRecord: Record<string, CoveragePositionCacheEntry> = {};
@@ -3744,14 +4443,19 @@ export default function VariantsPage() {
           repertoireColor,
           generatedAt: new Date().toISOString(),
         };
-        await writeCoverageGraphCache(cacheFilePath, nextCache);
-        setCoverageGraphCachePath(cacheFilePath);
-        setCoverageGraphSourceSignature(sourceSignature);
+        if (persistResults) {
+          await writeCoverageGraphCache(cacheFilePath, nextCache);
+          setCoverageGraphCachePath(cacheFilePath);
+          setCoverageGraphSourceSignature(sourceSignature);
 
-        try {
-          window.dispatchEvent(new Event("variants:updated"));
-        } catch {}
-        await refetch();
+          try {
+            window.dispatchEvent(new Event("variants:updated"));
+          } catch {}
+          await refetch();
+        } else {
+          setCoverageGraphCachePath(null);
+          setCoverageGraphSourceSignature(null);
+        }
         const graphWithWinrate = await applyLowSampleFlagsToGraph(
           rootNodeWithEngineAnnotations,
           positionsRecord,
@@ -3765,9 +4469,15 @@ export default function VariantsPage() {
           repertoireColor,
           selectedProfileTimeControls,
         );
-        setCoverageGraphRoot(graphWithProfileFlags);
+        const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
+          graphWithProfileFlags,
+          positionsRecord,
+          repertoireColor,
+        );
+        coverageGraphPositionsRef.current = positionsRecord;
+        setCoverageGraphRoot(graphWithResultFenRates);
         setCoverageCollapsedNodeIds(
-          buildCoverageDefaultCollapsedIds(graphWithProfileFlags, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
+          buildCoverageDefaultCollapsedIds(graphWithResultFenRates, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
         );
         setCoverageGraphOrientation(repertoireColor);
         pushProgress("building", true);
@@ -3782,6 +4492,10 @@ export default function VariantsPage() {
           }),
           color: "red",
         });
+        setCriticalLineLoading(false);
+        setCriticalLineBuildRequest(null);
+        setCriticalLineReportRequestKey(null);
+        setCriticalLineRegenerating(false);
       } finally {
         setCoverageGraphLoading(false);
         setCoverageBuildProgress((prev) => {
@@ -3808,6 +4522,247 @@ export default function VariantsPage() {
       variantLinkGraph.variantByKey,
     ],
   );
+
+  const showCriticalLineReport = useCallback(
+    async (root: CoverageGraphNode, activeColor: "white" | "black") => {
+      setCriticalLineLoading(true);
+      try {
+        const completeLinesOnly = criticalLineCompleteOnlyRef.current;
+        const localReport = buildCoverageCriticalLineReport(root, activeColor, coverageGraphPositionsRef.current, {
+          completeLinesOnly,
+          dismissedKeys: criticalLineDismissedFenKeys,
+        });
+        if (completeLinesOnly || localReport.nodes.length > 0) {
+          setCriticalLineReport(localReport);
+          setCriticalLineModalOpened(true);
+          return;
+        }
+
+        const backendReport = await getCoverageCriticalLineReport(root, activeColor);
+        setCriticalLineReport(backendReport);
+        setCriticalLineModalOpened(true);
+      } catch (error) {
+        const localReport = buildCoverageCriticalLineReport(root, activeColor, coverageGraphPositionsRef.current, {
+          completeLinesOnly: criticalLineCompleteOnlyRef.current,
+          dismissedKeys: criticalLineDismissedFenKeys,
+        });
+        if (localReport.nodes.length > 0) {
+          setCriticalLineReport(localReport);
+          setCriticalLineModalOpened(true);
+          return;
+        }
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.criticalLineReportFailed", {
+            defaultValue: "Failed to inspect critical lines: {{reason}}",
+            reason: getErrorMessage(error),
+          }),
+          color: "red",
+        });
+      } finally {
+        setCriticalLineLoading(false);
+        setCriticalLineRegenerating(false);
+      }
+    },
+    [criticalLineDismissedFenKeys, t],
+  );
+
+  const startCriticalLineInspection = useCallback(
+    async (options: { regenerate?: boolean } = {}) => {
+      const requestedDepth =
+        typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+          ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
+          : Number.NaN;
+      if (!coverageGraphTargetKey || !Number.isFinite(requestedDepth)) {
+        notifications.show({
+          title: t("common.warning"),
+          message: t("features.board.variants.criticalLineGraphMissing", {
+            defaultValue: "Choose a coverage graph depth before inspecting critical lines.",
+          }),
+          color: "yellow",
+        });
+        return;
+      }
+
+      const variant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
+      if (variant) {
+        const canContinue = await validateVariantConsistencyBeforeAction(variant);
+        if (!canContinue) return;
+      }
+
+      const regenerate = options.regenerate === true;
+      setCriticalLineRegenerating(regenerate);
+      if (regenerate) {
+        setCriticalLineDismissedFenKeys(new Set());
+      }
+      setCriticalLineLoading(true);
+      coverageGraphPositionsRef.current = {};
+      criticalLineCompleteOnlyRef.current = criticalLineMappedOnly;
+      setCriticalLineReport(null);
+      setCriticalLineReportRequestKey(coverageGraphTargetKey);
+      setCriticalLineBuildRequest({
+        key: coverageGraphTargetKey,
+        depth: requestedDepth,
+        mappedOnly: criticalLineMappedOnly,
+        completeLinesOnly: criticalLineMappedOnly,
+        forceRebuild: regenerate,
+        bypassPositionCache: regenerate,
+      });
+      setCoverageGraphRoot(null);
+    },
+    [
+      coverageGraphDepth,
+      coverageGraphTargetKey,
+      criticalLineMappedOnly,
+      t,
+      validateVariantConsistencyBeforeAction,
+      variantLinkGraph.variantByKey,
+    ],
+  );
+
+  const acceptCriticalLineRisk = useCallback(
+    async (item: CriticalLineReportItem) => {
+      const dismissalKey = getCriticalLineDismissalKey(item.fen, item.id);
+      const nextDismissedKeys = new Set(criticalLineDismissedFenKeys);
+      nextDismissedKeys.add(dismissalKey);
+      setCriticalLineDismissedFenKeys(nextDismissedKeys);
+      setCriticalLineReport((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          nodes: prev.nodes.filter((node) => getCriticalLineDismissalKey(node.fen, node.id) !== dismissalKey),
+        };
+      });
+
+      if (!coverageGraphCachePath) {
+        return;
+      }
+
+      try {
+        const cache = await readCoverageGraphCache(coverageGraphCachePath);
+        if (!cache) return;
+        const persistedKeys = new Set(cache.criticalLineDismissedFenKeys ?? []);
+        persistedKeys.add(dismissalKey);
+        await writeCoverageGraphCache(coverageGraphCachePath, {
+          ...cache,
+          criticalLineDismissedFenKeys: Array.from(persistedKeys),
+          generatedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.criticalLineDismissFailed", {
+            defaultValue: "Failed to update the critical line cache: {{reason}}",
+            reason: getErrorMessage(error),
+          }),
+          color: "red",
+        });
+      }
+    },
+    [coverageGraphCachePath, criticalLineDismissedFenKeys, t],
+  );
+
+  const handleOpenCoverageCriticalLines = useCallback(async () => {
+    const requestedDepth =
+      typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+        ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
+        : Number.NaN;
+    if (!coverageGraphTargetKey || !Number.isFinite(requestedDepth)) {
+      notifications.show({
+        title: t("common.warning"),
+        message: t("features.board.variants.criticalLineGraphMissing", {
+          defaultValue: "Choose a coverage graph depth before inspecting critical lines.",
+        }),
+        color: "yellow",
+      });
+      return;
+    }
+
+    setCriticalLineLoading(false);
+    setCriticalLineRegenerating(false);
+    coverageGraphPositionsRef.current = {};
+    setCriticalLineDismissedFenKeys(new Set());
+    setCriticalLineMappedOnly(true);
+    criticalLineCompleteOnlyRef.current = true;
+    setCriticalLineReport(null);
+    setCriticalLineModalOpened(true);
+  }, [coverageGraphDepth, coverageGraphTargetKey, t]);
+
+  const handleOpenCriticalLinesFromRow = useCallback(
+    async (row: VariantTableRow) => {
+      const key = row.canonicalKey ?? row.key;
+      const variant = variantLinkGraph.variantByKey.get(key);
+      if (!variant) return;
+
+      const requestedDepth =
+        typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+          ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
+          : Math.max(1, Math.min(20, row.variant.lineDepth ?? row.variant.depth ?? 5));
+
+      setCriticalLineLoading(false);
+      setCriticalLineRegenerating(false);
+      coverageGraphPositionsRef.current = {};
+      setCriticalLineDismissedFenKeys(new Set());
+      setCriticalLineMappedOnly(true);
+      criticalLineCompleteOnlyRef.current = true;
+      setCriticalLineReport(null);
+      setCriticalLineModalOpened(true);
+      setCriticalLineReportRequestKey(null);
+      setCriticalLineBuildRequest(null);
+      setCoverageGraphTargetKey(key);
+      setCoverageGraphDepth(requestedDepth);
+      setCoverageGraphRoot(null);
+      setCoverageCollapsedNodeIds(new Set());
+      setCoverageGraphCachePath(null);
+      setCoverageGraphSourceSignature(null);
+      setCoverageActionNode(null);
+      setCoverageActionTab("edit");
+      setCoveragePuzzleTierFilter("mainline");
+      setCoveragePuzzleIncludeLowSample(true);
+      setCoveragePuzzleName("");
+      setCoverageEngineMs(1000);
+      setCoveragePrioritySyncing(false);
+      setCoverageBuildProgress(null);
+    },
+    [coverageGraphDepth, variantLinkGraph.variantByKey],
+  );
+
+  useEffect(() => {
+    if (!criticalLineBuildRequest) return;
+    if (coverageGraphLoading) return;
+    if (coverageGraphTargetKey !== criticalLineBuildRequest.key) return;
+    if (coverageGraphDepth !== criticalLineBuildRequest.depth) return;
+    setCriticalLineBuildRequest(null);
+    criticalLineCompleteOnlyRef.current = criticalLineBuildRequest.completeLinesOnly === true;
+    void handleBuildCoverageGraph({
+      forceRebuild: criticalLineBuildRequest.forceRebuild === true,
+      bypassPositionCache: criticalLineBuildRequest.bypassPositionCache === true,
+      persistResults: criticalLineBuildRequest.mappedOnly === true,
+      mappedOnly: criticalLineBuildRequest.mappedOnly === true,
+    });
+  }, [
+    coverageGraphDepth,
+    coverageGraphLoading,
+    coverageGraphTargetKey,
+    criticalLineBuildRequest,
+    handleBuildCoverageGraph,
+  ]);
+
+  useEffect(() => {
+    if (!criticalLineReportRequestKey) return;
+    if (coverageGraphLoading || !coverageGraphRoot) return;
+    if (coverageGraphTargetKey !== criticalLineReportRequestKey) return;
+
+    setCriticalLineReportRequestKey(null);
+    void showCriticalLineReport(coverageGraphRoot, coverageGraphOrientation);
+  }, [
+    coverageGraphLoading,
+    coverageGraphOrientation,
+    coverageGraphRoot,
+    coverageGraphTargetKey,
+    criticalLineReportRequestKey,
+    showCriticalLineReport,
+  ]);
 
   const refreshCoverageGraphProfileRates = useCallback(async () => {
     if (!coverageGraphRoot || !coverageGraphCachePath || coverageGraphLoading) return;
@@ -3837,7 +4792,10 @@ export default function VariantsPage() {
         coverageGraphOrientation,
         selectedProfileTimeControls,
       );
-      setCoverageGraphRoot(nextGraph);
+      coverageGraphPositionsRef.current = existingCache.positions;
+      setCoverageGraphRoot(
+        normalizeCoverageGraphSourceRatesByResultFen(nextGraph, existingCache.positions, coverageGraphOrientation),
+      );
     } finally {
       setCoverageProfileStatsRefreshing(false);
     }
@@ -3944,225 +4902,6 @@ export default function VariantsPage() {
     [coverageGraphTargetKey, variantLinkGraph.variantByKey],
   );
 
-  const _applyCoverageNodeTierOverride = useCallback(async () => {
-    if (!coverageActionNode || coverageActionNode.tier === "root") return;
-    if (!coverageGraphTargetKey) return;
-    if (!coverageActionNode.overrideKey) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageTierOverrideUnavailable", {
-          defaultValue: "This node cannot be edited manually.",
-        }),
-        color: "red",
-      });
-      return;
-    }
-
-    const overrideKey = coverageActionNode.overrideKey;
-    try {
-      setCoverageActionSaving(true);
-
-      setCoverageGraphRoot((prev) => {
-        if (!prev) return prev;
-        return setCoverageTierByOverrideKey(prev, overrideKey, coverageActionTier);
-      });
-
-      const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
-      if (!targetVariant) return;
-      const resolvedCachePath =
-        coverageGraphCachePath ??
-        (coverageGraphSourceSignature
-          ? await getCoverageGraphCacheFilePath(targetVariant.path, coverageGraphSourceSignature)
-          : null);
-      if (!resolvedCachePath) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coverageTierOverrideNeedsRebuild", {
-            defaultValue: "No coverage cache found. Rebuild graph to persist manual tier changes.",
-          }),
-          color: "yellow",
-        });
-        setCoverageActionNode(null);
-        return;
-      }
-      const existingCache = await readCoverageGraphCache(resolvedCachePath);
-      if (!existingCache) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coverageTierOverrideNeedsRebuild", {
-            defaultValue: "No coverage cache found. Rebuild graph to persist manual tier changes.",
-          }),
-          color: "yellow",
-        });
-        setCoverageActionNode(null);
-        return;
-      }
-
-      const nextCache: VariantCoverageCache = {
-        ...existingCache,
-        version: COVERAGE_GRAPH_CACHE_VERSION,
-        tierOverrides: {
-          ...(existingCache.tierOverrides ?? {}),
-          [overrideKey]: coverageActionTier,
-        },
-        graphRoot: setCoverageTierByOverrideKey(existingCache.graphRoot, overrideKey, coverageActionTier),
-        generatedAt: new Date().toISOString(),
-      };
-
-      const separator = overrideKey.lastIndexOf("|");
-      if (separator > 0) {
-        const fenKey = overrideKey.slice(0, separator);
-        const san = overrideKey.slice(separator + 1);
-        const entry = nextCache.positions[fenKey];
-        if (entry) {
-          entry.moves = entry.moves.map((move) => (move.san === san ? { ...move, tier: coverageActionTier } : move));
-        }
-      }
-
-      await writeCoverageGraphCache(resolvedCachePath, nextCache);
-      setCoverageGraphCachePath(resolvedCachePath);
-      try {
-        window.dispatchEvent(new Event("variants:updated"));
-      } catch {}
-      notifications.show({
-        title: t("common.success"),
-        message: t("features.board.variants.coverageTierOverrideApplied", {
-          defaultValue: "Manual tier applied.",
-        }),
-        color: "green",
-      });
-      setCoverageActionNode(null);
-    } catch (error) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageTierOverrideFailed", {
-          defaultValue: "Failed to save manual tier change.",
-        }),
-        color: "red",
-      });
-      console.error("Failed to apply coverage tier override", error);
-    } finally {
-      setCoverageActionSaving(false);
-    }
-  }, [
-    coverageActionNode,
-    coverageActionTier,
-    coverageGraphCachePath,
-    coverageGraphSourceSignature,
-    coverageGraphTargetKey,
-    t,
-    variantLinkGraph.variantByKey,
-  ]);
-
-  const _applyCoverageNodeLabelOverride = useCallback(async () => {
-    if (!coverageActionNode || coverageActionNode.tier === "root") return;
-    if (!coverageGraphTargetKey) return;
-    if (!coverageActionNode.overrideKey) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageTierOverrideUnavailable", {
-          defaultValue: "This node cannot be edited manually.",
-        }),
-        color: "red",
-      });
-      return;
-    }
-    const nextLabel = coverageActionLabel.trim();
-    if (!nextLabel) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageRenameRequired", {
-          defaultValue: "Node name is required.",
-        }),
-        color: "red",
-      });
-      return;
-    }
-
-    const overrideKey = coverageActionNode.overrideKey;
-    try {
-      setCoverageActionSaving(true);
-      setCoverageGraphRoot((prev) => {
-        if (!prev) return prev;
-        return setCoverageLabelByOverrideKey(prev, overrideKey, nextLabel);
-      });
-
-      const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
-      if (!targetVariant) return;
-      const resolvedCachePath =
-        coverageGraphCachePath ??
-        (coverageGraphSourceSignature
-          ? await getCoverageGraphCacheFilePath(targetVariant.path, coverageGraphSourceSignature)
-          : null);
-      if (!resolvedCachePath) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coverageTierOverrideNeedsRebuild", {
-            defaultValue: "No coverage cache found. Rebuild graph to persist manual tier changes.",
-          }),
-          color: "yellow",
-        });
-        setCoverageActionNode(null);
-        return;
-      }
-      const existingCache = await readCoverageGraphCache(resolvedCachePath);
-      if (!existingCache) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coverageTierOverrideNeedsRebuild", {
-            defaultValue: "No coverage cache found. Rebuild graph to persist manual tier changes.",
-          }),
-          color: "yellow",
-        });
-        setCoverageActionNode(null);
-        return;
-      }
-
-      const nextCache: VariantCoverageCache = {
-        ...existingCache,
-        version: COVERAGE_GRAPH_CACHE_VERSION,
-        labelOverrides: {
-          ...(existingCache.labelOverrides ?? {}),
-          [overrideKey]: nextLabel,
-        },
-        graphRoot: setCoverageLabelByOverrideKey(existingCache.graphRoot, overrideKey, nextLabel),
-        generatedAt: new Date().toISOString(),
-      };
-      await writeCoverageGraphCache(resolvedCachePath, nextCache);
-      setCoverageGraphCachePath(resolvedCachePath);
-      try {
-        window.dispatchEvent(new Event("variants:updated"));
-      } catch {}
-      notifications.show({
-        title: t("common.success"),
-        message: t("features.board.variants.coverageRenameApplied", {
-          defaultValue: "Node name updated.",
-        }),
-        color: "green",
-      });
-      setCoverageActionNode(null);
-    } catch (error) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageRenameFailed", {
-          defaultValue: "Failed to save node name.",
-        }),
-        color: "red",
-      });
-      console.error("Failed to apply coverage label override", error);
-    } finally {
-      setCoverageActionSaving(false);
-    }
-  }, [
-    coverageActionLabel,
-    coverageActionNode,
-    coverageGraphCachePath,
-    coverageGraphSourceSignature,
-    coverageGraphTargetKey,
-    t,
-    variantLinkGraph.variantByKey,
-  ]);
-
   const generatePuzzlesFromCoverageNode = useCallback(async () => {
     if (!coverageActionNode) return;
     if (!coverageGraphRoot || !coverageGraphTargetKey) return;
@@ -4234,95 +4973,6 @@ export default function VariantsPage() {
         transpositionSourceNodes.push(sourceNode);
       }
 
-      const hasTierInSubtree = (node: CoverageGraphNode, selectedTier: Exclude<CoverageTier, "root">): boolean => {
-        const isEligibleBySample = coveragePuzzleIncludeLowSample || !node.lowSample;
-        if (node.tier === selectedTier && isEligibleBySample) return true;
-        for (const child of node.children) {
-          if (hasTierInSubtree(child, selectedTier)) return true;
-        }
-        return false;
-      };
-
-      const toFilteredPuzzleChildren = (parent: CoverageGraphNode): PuzzleTreeNodeDto[] => {
-        const out: PuzzleTreeNodeDto[] = [];
-        for (const child of parent.children) {
-          if (child.tier !== "root") {
-            const isEligibleBySample = coveragePuzzleIncludeLowSample || !child.lowSample;
-            const isSelectedTier = child.tier === coveragePuzzleTierFilter && isEligibleBySample;
-            const connectsToSelectedTier = hasTierInSubtree(child, coveragePuzzleTierFilter);
-            // Keep connectors so selected-tier branches deeper in the tree remain reachable.
-            if (!isSelectedTier && !connectsToSelectedTier) {
-              continue;
-            }
-          }
-          const san = extractSanFromCoverageLabel(child.label);
-          if (!san || !child.fen) {
-            continue;
-          }
-          out.push({
-            fen: child.fen,
-            san,
-            children: toFilteredPuzzleChildren(child),
-          });
-        }
-        return out;
-      };
-
-      const allowedStartKeys = new Set<string>();
-      const collectAllowedStartKeys = (parent: CoverageGraphNode) => {
-        for (const child of parent.children) {
-          if (
-            child.tier === coveragePuzzleTierFilter &&
-            child.overrideKey &&
-            (coveragePuzzleIncludeLowSample || !child.lowSample)
-          ) {
-            const hasPlayableReply = child.children.some((replyNode) => {
-              const replySan = extractSanFromCoverageLabel(replyNode.label);
-              return Boolean(replySan && replyNode.fen);
-            });
-            if (hasPlayableReply) {
-              allowedStartKeys.add(child.overrideKey);
-            }
-          }
-          collectAllowedStartKeys(child);
-        }
-      };
-      for (const transpositionSourceNode of transpositionSourceNodes) {
-        collectAllowedStartKeys(transpositionSourceNode);
-      }
-
-      const mergedPuzzleChildren: PuzzleTreeNodeDto[] = [];
-      for (const transpositionSourceNode of transpositionSourceNodes) {
-        mergedPuzzleChildren.push(...toFilteredPuzzleChildren(transpositionSourceNode));
-      }
-
-      const puzzleRoot: PuzzleTreeNodeDto = {
-        fen: startFen,
-        san: null,
-        children: mergedPuzzleChildren,
-      };
-
-      if (puzzleRoot.children.length === 0) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coveragePuzzleEmpty", {
-            defaultValue: "No branches available for the selected tier from this node.",
-          }),
-          color: "yellow",
-        });
-        return;
-      }
-      if (allowedStartKeys.size === 0) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coveragePuzzleEmpty", {
-            defaultValue: "No branches available for the selected tier from this node.",
-          }),
-          color: "yellow",
-        });
-        return;
-      }
-
       const { commands } = await import("@/bindings");
       const { unwrap } = await import("@/utils/unwrap");
       const count = unwrap(await commands.countPgnGames(targetVariant.path));
@@ -4346,12 +4996,6 @@ export default function VariantsPage() {
       }
       const tree = await parsePGN(firstGame);
       const orientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-      const result = await generatePuzzleVariantsFromTree({
-        root: puzzleRoot,
-        orientation,
-        selectedDepth,
-        allowedStartKeys: Array.from(allowedStartKeys),
-      });
 
       const documentDir = await getDocumentDir();
       if (!documentDir) {
@@ -4363,31 +5007,148 @@ export default function VariantsPage() {
         return;
       }
 
+      const hasTierInSubtree = (node: CoverageGraphNode, selectedTier: Exclude<CoverageTier, "root">): boolean => {
+        const isEligibleBySample = coveragePuzzleIncludeLowSample || !node.lowSample;
+        if (node.tier === selectedTier && isEligibleBySample) return true;
+        for (const child of node.children) {
+          if (hasTierInSubtree(child, selectedTier)) return true;
+        }
+        return false;
+      };
+
+      const toFilteredPuzzleChildren = (
+        parent: CoverageGraphNode,
+        selectedTier: Exclude<CoverageTier, "root">,
+      ): PuzzleTreeNodeDto[] => {
+        const out: PuzzleTreeNodeDto[] = [];
+        for (const child of parent.children) {
+          if (child.tier !== "root") {
+            const isEligibleBySample = coveragePuzzleIncludeLowSample || !child.lowSample;
+            const isSelectedTier = child.tier === selectedTier && isEligibleBySample;
+            const connectsToSelectedTier = hasTierInSubtree(child, selectedTier);
+            // Keep connectors so selected-tier branches deeper in the tree remain reachable.
+            if (!isSelectedTier && !connectsToSelectedTier) {
+              continue;
+            }
+          }
+          const san = extractSanFromCoverageLabel(child.label);
+          if (!san || !child.fen) {
+            continue;
+          }
+          out.push({
+            fen: child.fen,
+            san,
+            children: toFilteredPuzzleChildren(child, selectedTier),
+          });
+        }
+        return out;
+      };
+
+      const collectAllowedStartKeys = (
+        parent: CoverageGraphNode,
+        selectedTier: Exclude<CoverageTier, "root">,
+        allowedStartKeys: Set<string>,
+      ) => {
+        for (const child of parent.children) {
+          if (
+            child.tier === selectedTier &&
+            child.overrideKey &&
+            (coveragePuzzleIncludeLowSample || !child.lowSample)
+          ) {
+            const hasPlayableReply = child.children.some((replyNode) => {
+              const replySan = extractSanFromCoverageLabel(replyNode.label);
+              return Boolean(replySan && replyNode.fen);
+            });
+            if (hasPlayableReply) {
+              allowedStartKeys.add(child.overrideKey);
+            }
+          }
+          collectAllowedStartKeys(child, selectedTier, allowedStartKeys);
+        }
+      };
+
+      const buildPuzzleRootForTier = (selectedTier: Exclude<CoverageTier, "root">) => {
+        const allowedStartKeys = new Set<string>();
+        for (const transpositionSourceNode of transpositionSourceNodes) {
+          collectAllowedStartKeys(transpositionSourceNode, selectedTier, allowedStartKeys);
+        }
+
+        const mergedPuzzleChildren: PuzzleTreeNodeDto[] = [];
+        for (const transpositionSourceNode of transpositionSourceNodes) {
+          mergedPuzzleChildren.push(...toFilteredPuzzleChildren(transpositionSourceNode, selectedTier));
+        }
+
+        return {
+          root: {
+            fen: startFen,
+            san: null,
+            children: mergedPuzzleChildren,
+          },
+          allowedStartKeys,
+        };
+      };
+
+      const tiersToGenerate: Array<Exclude<CoverageTier, "root">> =
+        coveragePuzzleTierFilter === "all" ? ["mainline", "secondary", "alternative"] : [coveragePuzzleTierFilter];
       const now = formatDateToPGN(new Date());
-      const fileStem = sanitizeFileStem(`${selectedName}-${coveragePuzzleTierFilter}-d${selectedDepth}-${now}`);
-      const tags = [
-        "puzzle-variants",
-        `variant:${targetVariant.name}`,
-        `coverageNode:${coverageActionNode.label}`,
-        `coverageTier:${coveragePuzzleTierFilter}`,
-        `coverageLowSample:${coveragePuzzleIncludeLowSample ? "include" : "exclude"}`,
-        `depth:${selectedDepth}`,
-        `orientation:${orientation}`,
-      ];
+      let generatedFiles = 0;
+      let totalPuzzles = 0;
+      const emptyTiers: string[] = [];
 
-      const createResult = await createFile({
-        filename: fileStem,
-        filetype: "puzzle",
-        tags,
-        pgn: result.pgn,
-        dir: documentDir,
-      });
+      for (const selectedTier of tiersToGenerate) {
+        const { root: puzzleRoot, allowedStartKeys } = buildPuzzleRootForTier(selectedTier);
+        const tierSuffix = coverageTierFileSuffix(selectedTier);
+        if (puzzleRoot.children.length === 0 || allowedStartKeys.size === 0) {
+          emptyTiers.push(tierSuffix);
+          continue;
+        }
 
-      if (createResult.isErr) {
+        const result = await generatePuzzleVariantsFromTree({
+          root: puzzleRoot,
+          orientation,
+          selectedDepth,
+          allowedStartKeys: Array.from(allowedStartKeys),
+        });
+
+        const fileStem = sanitizeFileStem(
+          coveragePuzzleTierFilter === "all"
+            ? `${selectedName}-${tierSuffix}`
+            : `${selectedName}-${selectedTier}-d${selectedDepth}-${now}`,
+        );
+        const tags = [
+          "puzzle-variants",
+          `variant:${targetVariant.name}`,
+          `coverageNode:${coverageActionNode.label}`,
+          `coverageTier:${selectedTier}`,
+          `priority:${coverageTierPriority(selectedTier) ?? ""}`,
+          `coverageLowSample:${coveragePuzzleIncludeLowSample ? "include" : "exclude"}`,
+          `depth:${selectedDepth}`,
+          `orientation:${orientation}`,
+        ];
+
+        const createResult = await createFile({
+          filename: fileStem,
+          filetype: "puzzle",
+          tags,
+          pgn: result.pgn,
+          dir: documentDir,
+        });
+
+        if (createResult.isErr) {
+          throw createResult.error;
+        }
+
+        generatedFiles += 1;
+        totalPuzzles += result.count;
+      }
+
+      if (generatedFiles === 0) {
         notifications.show({
-          title: t("common.error"),
-          message: t("common.failedToGeneratePuzzles"),
-          color: "red",
+          title: t("common.warning"),
+          message: t("features.board.variants.coveragePuzzleEmpty", {
+            defaultValue: "No branches available for the selected tier from this node.",
+          }),
+          color: "yellow",
         });
         return;
       }
@@ -4399,10 +5160,18 @@ export default function VariantsPage() {
 
       notifications.show({
         title: t("common.success"),
-        message: t("features.board.variants.coveragePuzzleDone", {
-          defaultValue: "Generated {{count}} puzzles from selected node.",
-          count: result.count,
-        }),
+        message:
+          coveragePuzzleTierFilter === "all"
+            ? t("features.board.variants.coveragePuzzleAllDone", {
+                defaultValue: "Generated {{count}} puzzles across {{files}} files.",
+                count: totalPuzzles,
+                files: generatedFiles,
+                skipped: emptyTiers.join(", "),
+              })
+            : t("features.board.variants.coveragePuzzleDone", {
+                defaultValue: "Generated {{count}} puzzles from selected node.",
+                count: totalPuzzles,
+              }),
         color: "green",
       });
       setCoverageActionNode(null);
@@ -4428,175 +5197,182 @@ export default function VariantsPage() {
     variantLinkGraph.variantByKey,
   ]);
 
-  const goToCoverageNodeVariant = useCallback(async () => {
-    if (!coverageActionNode || !coverageGraphRoot || !coverageGraphTargetKey) return;
-    try {
-      const sourceNodePath = findCoverageNodePathById(coverageGraphRoot, coverageActionNode.id);
-      if (!sourceNodePath) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("features.board.variants.coverageNodeNotFound", {
-            defaultValue: "Could not locate the selected node in the current graph.",
-          }),
-          color: "red",
-        });
-        return;
-      }
-
-      const sourceNode = sourceNodePath[sourceNodePath.length - 1] ?? null;
-      const parentNode = sourceNodePath.length > 1 ? sourceNodePath[sourceNodePath.length - 2] : null;
-      const sanSequence = buildSanSequenceFromCoveragePath(sourceNodePath);
-      const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
-      if (!targetVariant) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-          color: "red",
-        });
-        return;
-      }
-
-      const orderedCandidateKeys = [
-        coverageGraphTargetKey,
-        ...collectSubtreeKeys(coverageGraphTargetKey).filter((key) => key !== coverageGraphTargetKey),
-      ];
-      const fenCandidates = [
-        coverageActionNode.fen ?? null,
-        getCoverageNodeTerminalFen(sourceNode),
-        sourceNode?.fen ?? null,
-        parentNode?.fen ?? null,
-      ].filter(
-        (value, index, array): value is string =>
-          typeof value === "string" && value.trim().length > 0 && array.indexOf(value) === index,
-      );
-      let bestMatch: { variant: VariantInfo; position: number[]; fenPriority: number; sanScore: number } | null = null;
-
-      const { commands } = await import("@/bindings");
-      const { unwrap } = await import("@/utils/unwrap");
-
-      for (const candidateKey of orderedCandidateKeys) {
-        const candidate = variantLinkGraph.variantByKey.get(candidateKey);
-        if (!candidate) continue;
-        try {
-          const count = unwrap(await commands.countPgnGames(candidate.path));
-          if (count <= 0) continue;
-          const games = unwrap(await commands.readGames(candidate.path, 0, 0));
-          const firstGame = games[0];
-          if (!firstGame) continue;
-          const tree = await parsePGN(firstGame);
-
-          let localBestPath: number[] | null = null;
-          let localFenPriority = Number.POSITIVE_INFINITY;
-          let localSanScore = -1;
-
-          for (let fenPriority = 0; fenPriority < fenCandidates.length; fenPriority += 1) {
-            const fenCandidate = fenCandidates[fenPriority];
-            const position = findBestTreePathByFen(tree.root, fenCandidate, sanSequence);
-            if (!position) continue;
-            const candidateSans = getSanSequenceAtTreePath(tree.root, position);
-            const sanScore = getSuffixSanMatchScore(candidateSans, sanSequence);
-            if (
-              localBestPath === null ||
-              fenPriority < localFenPriority ||
-              (fenPriority === localFenPriority && sanScore > localSanScore) ||
-              (fenPriority === localFenPriority && sanScore === localSanScore && position.length > localBestPath.length)
-            ) {
-              localBestPath = position;
-              localFenPriority = fenPriority;
-              localSanScore = sanScore;
-            }
-          }
-
-          // Fallback for legacy nodes where FEN cannot be matched, try exact SAN path only (no skipping).
-          if (!localBestPath) {
-            const sanOnlyPath = sanSequence.length > 0 ? findTreePathBySanSequence(tree.root, sanSequence) : [];
-            if (sanOnlyPath) {
-              localBestPath = sanOnlyPath;
-              localFenPriority = Number.POSITIVE_INFINITY;
-              localSanScore = getSuffixSanMatchScore(getSanSequenceAtTreePath(tree.root, sanOnlyPath), sanSequence);
-            }
-          }
-
-          if (!localBestPath) continue;
-
-          if (
-            !bestMatch ||
-            localFenPriority < bestMatch.fenPriority ||
-            (localFenPriority === bestMatch.fenPriority && localSanScore > bestMatch.sanScore) ||
-            (localFenPriority === bestMatch.fenPriority &&
-              localSanScore === bestMatch.sanScore &&
-              localBestPath.length > bestMatch.position.length)
-          ) {
-            bestMatch = {
-              variant: candidate,
-              position: localBestPath,
-              fenPriority: localFenPriority,
-              sanScore: localSanScore,
-            };
-          }
-        } catch {
-          // Ignore broken variants while resolving node jump target.
+  const goToCoverageNodeVariant = useCallback(
+    async (nodeOverride?: CoverageGraphNode) => {
+      const selectedNode = nodeOverride ?? coverageActionNode;
+      if (!selectedNode || !coverageGraphRoot || !coverageGraphTargetKey) return;
+      try {
+        const sourceNodePath = findCoverageNodePathById(coverageGraphRoot, selectedNode.id);
+        if (!sourceNodePath) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("features.board.variants.coverageNodeNotFound", {
+              defaultValue: "Could not locate the selected node in the current graph.",
+            }),
+            color: "red",
+          });
+          return;
         }
-      }
 
-      if (!bestMatch) {
-        notifications.show({
-          title: t("common.warning"),
-          message: t("features.board.variants.coverageGoToVariantMissing", {
-            defaultValue: "Could not map this node to a variant move path.",
-          }),
-          color: "yellow",
+        const sourceNode = sourceNodePath[sourceNodePath.length - 1] ?? null;
+        const parentNode = sourceNodePath.length > 1 ? sourceNodePath[sourceNodePath.length - 2] : null;
+        const sanSequence = buildSanSequenceFromCoveragePath(sourceNodePath);
+        const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
+        if (!targetVariant) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("common.noRecordsFound", { defaultValue: "No records found" }),
+            color: "red",
+          });
+          return;
+        }
+
+        const orderedCandidateKeys = [
+          coverageGraphTargetKey,
+          ...collectSubtreeKeys(coverageGraphTargetKey).filter((key) => key !== coverageGraphTargetKey),
+        ];
+        const fenCandidates = [
+          selectedNode.fen ?? null,
+          getCoverageNodeTerminalFen(sourceNode),
+          sourceNode?.fen ?? null,
+          parentNode?.fen ?? null,
+        ].filter(
+          (value, index, array): value is string =>
+            typeof value === "string" && value.trim().length > 0 && array.indexOf(value) === index,
+        );
+        let bestMatch: { variant: VariantInfo; position: number[]; fenPriority: number; sanScore: number } | null =
+          null;
+
+        const { commands } = await import("@/bindings");
+        const { unwrap } = await import("@/utils/unwrap");
+
+        for (const candidateKey of orderedCandidateKeys) {
+          const candidate = variantLinkGraph.variantByKey.get(candidateKey);
+          if (!candidate) continue;
+          try {
+            const count = unwrap(await commands.countPgnGames(candidate.path));
+            if (count <= 0) continue;
+            const games = unwrap(await commands.readGames(candidate.path, 0, 0));
+            const firstGame = games[0];
+            if (!firstGame) continue;
+            const tree = await parsePGN(firstGame);
+
+            let localBestPath: number[] | null = null;
+            let localFenPriority = Number.POSITIVE_INFINITY;
+            let localSanScore = -1;
+
+            for (let fenPriority = 0; fenPriority < fenCandidates.length; fenPriority += 1) {
+              const fenCandidate = fenCandidates[fenPriority];
+              const position = findBestTreePathByFen(tree.root, fenCandidate, sanSequence);
+              if (!position) continue;
+              const candidateSans = getSanSequenceAtTreePath(tree.root, position);
+              const sanScore = getSuffixSanMatchScore(candidateSans, sanSequence);
+              if (
+                localBestPath === null ||
+                fenPriority < localFenPriority ||
+                (fenPriority === localFenPriority && sanScore > localSanScore) ||
+                (fenPriority === localFenPriority &&
+                  sanScore === localSanScore &&
+                  position.length > localBestPath.length)
+              ) {
+                localBestPath = position;
+                localFenPriority = fenPriority;
+                localSanScore = sanScore;
+              }
+            }
+
+            // Fallback for legacy nodes where FEN cannot be matched, try exact SAN path only (no skipping).
+            if (!localBestPath) {
+              const sanOnlyPath = sanSequence.length > 0 ? findTreePathBySanSequence(tree.root, sanSequence) : [];
+              if (sanOnlyPath) {
+                localBestPath = sanOnlyPath;
+                localFenPriority = Number.POSITIVE_INFINITY;
+                localSanScore = getSuffixSanMatchScore(getSanSequenceAtTreePath(tree.root, sanOnlyPath), sanSequence);
+              }
+            }
+
+            if (!localBestPath) continue;
+
+            if (
+              !bestMatch ||
+              localFenPriority < bestMatch.fenPriority ||
+              (localFenPriority === bestMatch.fenPriority && localSanScore > bestMatch.sanScore) ||
+              (localFenPriority === bestMatch.fenPriority &&
+                localSanScore === bestMatch.sanScore &&
+                localBestPath.length > bestMatch.position.length)
+            ) {
+              bestMatch = {
+                variant: candidate,
+                position: localBestPath,
+                fenPriority: localFenPriority,
+                sanScore: localSanScore,
+              };
+            }
+          } catch {
+            // Ignore broken variants while resolving node jump target.
+          }
+        }
+
+        if (!bestMatch) {
+          notifications.show({
+            title: t("common.warning"),
+            message: t("features.board.variants.coverageGoToVariantMissing", {
+              defaultValue: "Could not map this node to a variant move path.",
+            }),
+            color: "yellow",
+          });
+          return;
+        }
+
+        coverageGraphResumeSnapshot = {
+          targetKey: coverageGraphTargetKey,
+          depth:
+            typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+              ? Math.max(1, Math.floor(coverageGraphDepth))
+              : 1,
+          root: coverageGraphRoot,
+          cachePath: coverageGraphCachePath,
+          sourceSignature: coverageGraphSourceSignature,
+          orientation: coverageGraphOrientation,
+          collapsedNodeIds: Array.from(coverageCollapsedNodeIds),
+          capturedAt: Date.now(),
+        };
+
+        await openFile(bestMatch.variant.path, setTabs, setActiveTab, {
+          position: bestMatch.position,
+          initialNotationView: "variations",
         });
-        return;
+        navigate({ to: "/analysis" });
+        setCoverageActionNode(null);
+      } catch (error) {
+        coverageGraphResumeSnapshot = null;
+        console.error("Failed to navigate to coverage node variant", error);
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.coverageGoToVariantFailed", {
+            defaultValue: "Failed to open variant for this node.",
+          }),
+          color: "red",
+        });
       }
-
-      coverageGraphResumeSnapshot = {
-        targetKey: coverageGraphTargetKey,
-        depth:
-          typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
-            ? Math.max(1, Math.floor(coverageGraphDepth))
-            : 1,
-        root: coverageGraphRoot,
-        cachePath: coverageGraphCachePath,
-        sourceSignature: coverageGraphSourceSignature,
-        orientation: coverageGraphOrientation,
-        collapsedNodeIds: Array.from(coverageCollapsedNodeIds),
-        capturedAt: Date.now(),
-      };
-
-      await openFile(bestMatch.variant.path, setTabs, setActiveTab, {
-        position: bestMatch.position,
-        initialNotationView: "variations",
-      });
-      navigate({ to: "/analysis" });
-      setCoverageActionNode(null);
-    } catch (error) {
-      coverageGraphResumeSnapshot = null;
-      console.error("Failed to navigate to coverage node variant", error);
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageGoToVariantFailed", {
-          defaultValue: "Failed to open variant for this node.",
-        }),
-        color: "red",
-      });
-    }
-  }, [
-    collectSubtreeKeys,
-    coverageActionNode,
-    coverageCollapsedNodeIds,
-    coverageGraphCachePath,
-    coverageGraphRoot,
-    coverageGraphDepth,
-    coverageGraphOrientation,
-    coverageGraphSourceSignature,
-    coverageGraphTargetKey,
-    navigate,
-    setActiveTab,
-    setTabs,
-    t,
-    variantLinkGraph.variantByKey,
-  ]);
+    },
+    [
+      collectSubtreeKeys,
+      coverageActionNode,
+      coverageCollapsedNodeIds,
+      coverageGraphCachePath,
+      coverageGraphRoot,
+      coverageGraphDepth,
+      coverageGraphOrientation,
+      coverageGraphSourceSignature,
+      coverageGraphTargetKey,
+      navigate,
+      setActiveTab,
+      setTabs,
+      t,
+      variantLinkGraph.variantByKey,
+    ],
+  );
 
   const applyCoverageNodeEdit = useCallback(async () => {
     if (!coverageActionNode || coverageActionNode.tier === "root") return;
@@ -4778,6 +5554,11 @@ export default function VariantsPage() {
         name: option.name,
         value: option.value == null ? "" : String(option.value),
       }));
+      const engineCacheSignature = buildCoverageEngineCacheSignature({
+        name: selectedEngine.name,
+        path: selectedEngine.path,
+        extraOptions,
+      });
       const engineInfoByFen = new Map<string, { advantage: string; engineName: string; engineMs: number }>();
       let failedCount = 0;
 
@@ -4786,6 +5567,21 @@ export default function VariantsPage() {
         if (!nodeFen) continue;
         const engineTabId = `${engineTabPrefix}-${index}`;
         try {
+          const cached = await invoke<CachedVariantPositionEngineEval | null>("get_variant_position_engine_eval", {
+            fen: nodeFen,
+            engine: engineCacheSignature,
+          }).catch(() => null);
+          const cachedAdvantage = `${cached?.engine_advantage ?? ""}`.trim();
+          const cachedMs = Number(cached?.ms ?? 0);
+          if (cachedAdvantage && Number.isFinite(cachedMs) && cachedMs >= safeMs) {
+            engineInfoByFen.set(normalizeFenKey(nodeFen), {
+              advantage: cachedAdvantage,
+              engineName: selectedEngine.name,
+              engineMs: cachedMs,
+            });
+            continue;
+          }
+
           const startedAt = Date.now();
           const maxWaitMs = safeMs + 3000;
           let bestLine: CoverageEngineBestLine | null = null;
@@ -4824,12 +5620,20 @@ export default function VariantsPage() {
           }
 
           const bestSan = `${bestLine?.sanMoves?.[0] ?? ""}`.trim();
+          const bestMove = bestSan || `${bestLine?.uciMoves?.[0] ?? ""}`.trim() || "best";
           const advantageText = bestSan.length > 0 ? `${baseAdvantage} (${bestSan})` : baseAdvantage;
           engineInfoByFen.set(normalizeFenKey(nodeFen), {
             advantage: advantageText,
             engineName: selectedEngine.name,
             engineMs: safeMs,
           });
+          await invoke("upsert_variant_position_engine_eval", {
+            fen: nodeFen,
+            engine: engineCacheSignature,
+            recommendedMove: bestMove,
+            engineAdvantage: advantageText,
+            ms: safeMs,
+          }).catch(() => undefined);
         } catch (error) {
           console.error("Failed to evaluate coverage node position", error);
           failedCount += 1;
@@ -4984,13 +5788,22 @@ export default function VariantsPage() {
     return error ? "invalid" : null;
   }, [coverageActionBoardFen]);
 
-  const handleOpenGeneratePuzzles = useCallback((row: VariantTableRow) => {
-    setPuzzleTargetKey(row.key);
-    setMaxPuzzleDepth(24);
-    const initialDepth = row.variant.depth && row.variant.depth > 0 ? Math.min(row.variant.depth, 24) : 1;
-    setPuzzleDepth(initialDepth);
-    setPuzzleModalOpened(true);
-  }, []);
+  const handleOpenGeneratePuzzles = useCallback(
+    async (row: VariantTableRow) => {
+      const key = row.canonicalKey ?? row.key;
+      const variant = variantLinkGraph.variantByKey.get(key);
+      if (!variant) return;
+      const canContinue = await validateVariantConsistencyBeforeAction(variant);
+      if (!canContinue) return;
+
+      setPuzzleTargetKey(key);
+      setMaxPuzzleDepth(24);
+      const initialDepth = variant.depth && variant.depth > 0 ? Math.min(variant.depth, 24) : 1;
+      setPuzzleDepth(initialDepth);
+      setPuzzleModalOpened(true);
+    },
+    [validateVariantConsistencyBeforeAction, variantLinkGraph.variantByKey],
+  );
 
   const generatePuzzlesForVariantTree = useCallback(
     async (selectedDepth: number) => {
@@ -5163,179 +5976,187 @@ export default function VariantsPage() {
 
   const handleValidateVariantTree = useCallback(
     async (row: VariantTableRow) => {
-      if (validatingVariants) return;
-      setValidatingVariants(true);
-      setValidationReport(null);
+      const key = row.canonicalKey ?? row.key;
+      const variant = variantLinkGraph.variantByKey.get(key) ?? row.variant;
+      await validateVariantConsistencyBeforeAction(variant, { showCleanReport: true });
+    },
+    [validateVariantConsistencyBeforeAction, variantLinkGraph.variantByKey],
+  );
+
+  const handleOpenValidationConflict = useCallback(
+    async (conflict: VariantValidationConflict, occurrence?: VariantValidationMoveOccurrence) => {
+      const targetPath = occurrence?.variantPath ?? conflict.moves[0]?.occurrences[0]?.variantPath;
+      if (!targetPath) return;
+
       try {
         const { commands } = await import("@/bindings");
         const { unwrap } = await import("@/utils/unwrap");
+        const count = unwrap(await commands.countPgnGames(targetPath));
+        if (count <= 0) throw new Error("Variant has no games");
+        const games = unwrap(await commands.readGames(targetPath, 0, 0));
+        const firstGame = games[0];
+        if (!firstGame) throw new Error("Variant has no readable PGN");
+        const tree = await parsePGN(firstGame);
+        const position = findFirstTreePathByFen(tree.root, conflict.fen) ?? [];
 
-        let familyRootKey = row.key;
-        const visitedRoots = new Set<string>();
-        while (!visitedRoots.has(familyRootKey)) {
-          visitedRoots.add(familyRootKey);
-          const parentKey = variantLinkGraph.parentByChild.get(familyRootKey);
-          if (!parentKey) break;
-          familyRootKey = parentKey;
-        }
-
-        const subtreeKeys = collectSubtreeKeys(familyRootKey);
-        if (subtreeKeys.length === 0) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-            color: "red",
-          });
-          return;
-        }
-
-        const targetVariant = variantLinkGraph.variantByKey.get(familyRootKey);
-        if (!targetVariant) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-            color: "red",
-          });
-          return;
-        }
-
-        const fenMoves = new Map<string, Map<string, VariantValidationMoveOccurrence[]>>();
-        const skippedVariants: string[] = [];
-        const orientationMismatches: string[] = [];
-        let activeColor: "white" | "black" | null = null;
-        let checkedVariants = 0;
-
-        for (const key of subtreeKeys) {
-          const variant = variantLinkGraph.variantByKey.get(key);
-          if (!variant) continue;
-
-          try {
-            const count = unwrap(await commands.countPgnGames(variant.path));
-            if (count <= 0) {
-              skippedVariants.push(variant.name);
-              continue;
-            }
-            const games = unwrap(await commands.readGames(variant.path, 0, 0));
-            const firstGame = games[0];
-            if (!firstGame) {
-              skippedVariants.push(variant.name);
-              continue;
-            }
-
-            const tree = await parsePGN(firstGame);
-            const variantOrientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-            if (!activeColor) {
-              activeColor = variantOrientation;
-            } else if (activeColor !== variantOrientation) {
-              orientationMismatches.push(`${variant.name} (${variantOrientation})`);
-            }
-            checkedVariants += 1;
-
-            const pathMoves: string[] = [];
-            const walk = (node: TreeNode) => {
-              const sideToMove = fenTurnColor(node.fen);
-              for (const child of node.children) {
-                const childSan = child.san?.trim();
-                if (!childSan) {
-                  pathMoves.push("?");
-                  walk(child);
-                  pathMoves.pop();
-                  continue;
-                }
-
-                pathMoves.push(childSan);
-                if (activeColor && sideToMove === activeColor) {
-                  const fenKey = normalizeFenKey(node.fen);
-                  const movesMap = fenMoves.get(fenKey) ?? new Map<string, VariantValidationMoveOccurrence[]>();
-                  const moveOcc = movesMap.get(childSan) ?? [];
-                  moveOcc.push({
-                    variantName: variant.name,
-                    variantPath: variant.path,
-                    line: pathMoves.join(" "),
-                  });
-                  movesMap.set(childSan, moveOcc);
-                  fenMoves.set(fenKey, movesMap);
-                }
-                walk(child);
-                pathMoves.pop();
-              }
-            };
-
-            walk(tree.root);
-          } catch {
-            skippedVariants.push(variant.name);
-          }
-        }
-
-        if (!activeColor) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-            color: "red",
-          });
-          return;
-        }
-
-        const conflicts: VariantValidationConflict[] = [];
-        for (const [fen, movesMap] of fenMoves.entries()) {
-          if (movesMap.size <= 1) continue;
-          const moves = Array.from(movesMap.entries())
-            .map(([san, occurrences]) => ({
-              san,
-              occurrences,
-            }))
-            .sort((a, b) => a.san.localeCompare(b.san));
-          conflicts.push({
-            fen,
-            moves,
-          });
-        }
-        conflicts.sort((a, b) => a.fen.localeCompare(b.fen));
-
-        setValidationReport({
-          targetVariantName: targetVariant.name,
-          activeColor,
-          checkedVariants,
-          checkedPositions: fenMoves.size,
-          conflicts,
-          skippedVariants,
-          orientationMismatches,
+        await openFile(targetPath, setTabs, setActiveTab, {
+          position,
+          initialNotationView: "variations",
         });
-        setValidationModalOpened(true);
-
+        setValidationModalOpened(false);
+        navigate({ to: "/analysis" });
+      } catch {
         notifications.show({
-          title: conflicts.length > 0 ? t("common.warning") : t("common.success"),
-          message:
-            conflicts.length > 0
-              ? t("features.board.variants.validationConflictsFound", {
-                  defaultValue: "Detected {{count}} contradictions in active-side moves.",
-                  count: conflicts.length,
-                })
-              : t("features.board.variants.validationNoConflicts", {
-                  defaultValue: "No contradictions found for active-side moves.",
-                }),
-          color: conflicts.length > 0 ? "yellow" : "green",
+          title: t("common.error"),
+          message: t("features.board.variants.validationOpenConflictFailed", {
+            defaultValue: "Failed to open the conflicting position.",
+          }),
+          color: "red",
         });
-      } finally {
-        setValidatingVariants(false);
       }
     },
-    [collectSubtreeKeys, t, validatingVariants, variantLinkGraph],
+    [navigate, setActiveTab, setTabs, t],
+  );
+
+  const handleApplyValidationMove = useCallback(
+    async (conflict: VariantValidationConflict, selectedSan: string) => {
+      if (!validationReport || resolvingValidationConflict) return;
+      setResolvingValidationConflict(true);
+      try {
+        const { commands } = await import("@/bindings");
+        const { unwrap } = await import("@/utils/unwrap");
+        const conflictFenKey = normalizeFenKey(conflict.fen);
+        const variantPaths = Array.from(
+          new Set(
+            validationReport.checkedVariantPaths.length > 0
+              ? validationReport.checkedVariantPaths
+              : conflict.moves.flatMap((move) => move.occurrences.map((occurrence) => occurrence.variantPath)),
+          ),
+        );
+
+        const parsedByPath = new Map<string, Awaited<ReturnType<typeof parsePGN>>>();
+        let selectedReplyTemplate: TreeNode | null = null;
+
+        const cloneNode = (node: TreeNode): TreeNode => ({
+          ...node,
+          move: node.move ? { ...node.move } : null,
+          shapes: node.shapes.map((shape) => ({ ...shape })),
+          annotations: [...node.annotations],
+          children: node.children.map(cloneNode),
+        });
+
+        const findSelectedReply = (node: TreeNode): TreeNode | null => {
+          if (normalizeFenKey(node.fen) === conflictFenKey) {
+            const reply = node.children.find((child) => child.san?.trim() === selectedSan);
+            if (reply) return reply;
+          }
+          for (const child of node.children) {
+            const found = findSelectedReply(child);
+            if (found) return found;
+          }
+          return null;
+        };
+
+        for (const path of variantPaths) {
+          const count = unwrap(await commands.countPgnGames(path));
+          if (count <= 0) continue;
+          const games = unwrap(await commands.readGames(path, 0, 0));
+          const firstGame = games[0];
+          if (!firstGame) continue;
+          const tree = await parsePGN(firstGame);
+          parsedByPath.set(path, tree);
+          selectedReplyTemplate ??= findSelectedReply(tree.root);
+        }
+
+        const selectedReply = selectedReplyTemplate;
+        if (!selectedReply) {
+          notifications.show({
+            title: t("common.error"),
+            message: t("features.board.variants.validationSelectedMoveMissing", {
+              defaultValue: "The selected move was not found in the checked variants.",
+            }),
+            color: "red",
+          });
+          return;
+        }
+
+        let updatedFiles = 0;
+        const applyToNode = (node: TreeNode): boolean => {
+          let changed = false;
+          if (normalizeFenKey(node.fen) === conflictFenKey) {
+            const currentMainSan = node.children[0]?.san?.trim() ?? null;
+            const hasOnlySelectedReply = node.children.length === 1 && currentMainSan === selectedSan;
+            if (!hasOnlySelectedReply) {
+              node.children = [cloneNode(selectedReply)];
+              changed = true;
+            }
+          }
+          for (const child of node.children) {
+            changed = applyToNode(child) || changed;
+          }
+          return changed;
+        };
+
+        for (const [path, tree] of parsedByPath.entries()) {
+          if (!applyToNode(tree.root)) continue;
+          const pgn = getPGNFromReportView(tree.root, {
+            headers: tree.headers,
+            glyphs: true,
+            comments: true,
+            variations: true,
+            extraMarkups: true,
+          });
+          unwrap(await commands.writeGame(path, 0, pgn));
+          updatedFiles += 1;
+        }
+
+        const variantsDir = await getVariantsDirectory(activeProfileId);
+        const refreshedReport = await invoke<VariantValidationReport>("variants_validate_consistency", {
+          variantsDir,
+          targetPath: validationReport.targetVariantPath,
+        });
+        setValidationReport(refreshedReport);
+        void queryClient.invalidateQueries({ queryKey: variantsQueryKey });
+
+        notifications.show({
+          title: t("common.success"),
+          message: t("features.board.variants.validationConflictResolved", {
+            defaultValue: "Applied {{move}} to {{count}} variant files.",
+            move: selectedSan,
+            count: updatedFiles,
+          }),
+          color: "green",
+        });
+      } catch {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.validationResolveFailed", {
+            defaultValue: "Failed to resolve the consistency conflict.",
+          }),
+          color: "red",
+        });
+      } finally {
+        setResolvingValidationConflict(false);
+      }
+    },
+    [activeProfileId, queryClient, resolvingValidationConflict, t, validationReport, variantsQueryKey],
   );
 
   const variantTableRows = useMemo(() => {
     const rows: VariantTableRow[] = [];
     const forceExpand = search.trim().length > 0;
     const walk = (node: VariantTreeNode, depth: number) => {
-      const hasChildren = node.children.length > 0;
-      const expanded = forceExpand || expandedKeys.has(node.key);
+      const hasChildren = !node.isTransposition && node.children.length > 0;
+      const expanded = !node.isTransposition && (forceExpand || expandedKeys.has(node.key));
       rows.push({
         ...node.variant,
         key: node.key,
+        canonicalKey: node.canonicalKey,
         variant: node.variant,
         depth,
         hasChildren,
         expanded,
+        isTransposition: node.isTransposition,
       });
       if (!hasChildren || !expanded) return;
       for (const child of node.children) {
@@ -5350,8 +6171,13 @@ export default function VariantsPage() {
 
   const visibleTreeVariants = useMemo(() => {
     const out: VariantInfo[] = [];
+    const seen = new Set<string>();
     const walk = (node: VariantTreeNode) => {
-      out.push(node.variant);
+      const key = node.canonicalKey ?? node.key;
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(node.variant);
+      }
       for (const child of node.children) {
         walk(child);
       }
@@ -5449,12 +6275,25 @@ export default function VariantsPage() {
             ) : (
               <Box w={22} />
             )}
-            <IconGitBranch size="1.2rem" style={{ flexShrink: 0 }} />
+            {row.isTransposition ? (
+              <Tooltip label={t("features.board.variants.transpositionLink", { defaultValue: "Transposition" })}>
+                <IconSitemap size="1.2rem" style={{ flexShrink: 0 }} />
+              </Tooltip>
+            ) : (
+              <IconGitBranch size="1.2rem" style={{ flexShrink: 0 }} />
+            )}
           </Group>
           <Box miw={0} style={{ flex: 1 }}>
-            <Text fw={600} size="sm" truncate>
-              {row.variant.name}
-            </Text>
+            <Group gap={6} wrap="nowrap">
+              <Text fw={600} size="sm" truncate>
+                {row.variant.name}
+              </Text>
+              {row.isTransposition ? (
+                <Badge variant="light" color="violet" size="xs">
+                  {t("features.board.variants.transpositionLink", { defaultValue: "Transposition" })}
+                </Badge>
+              ) : null}
+            </Group>
           </Box>
         </Group>
       ),
@@ -5562,18 +6401,23 @@ export default function VariantsPage() {
       sortable: false,
       render: (row: VariantTableRow) => (
         <Group gap={6} wrap="wrap">
-          {row.variant.parentLink ? (
+          {row.isTransposition ? (
+            <Badge variant="light" color="violet" size="sm">
+              {t("features.board.variants.transpositionLink", { defaultValue: "Transposition" })}
+            </Badge>
+          ) : null}
+          {!row.isTransposition && row.variant.parentLink ? (
             <Badge variant="outline" color="teal" size="sm">
               {t("features.board.variants.parentLink", { defaultValue: "Parent" })}
             </Badge>
           ) : null}
-          {(row.variant.childLinks?.length ?? 0) > 0 ? (
+          {!row.isTransposition && (row.variant.childLinks?.length ?? 0) > 0 ? (
             <Badge variant="light" color="cyan" size="sm">
               {t("features.board.variants.childLinks", { defaultValue: "Children" })}:{" "}
               {row.variant.childLinks?.length ?? 0}
             </Badge>
           ) : null}
-          {!row.variant.parentLink && (row.variant.childLinks?.length ?? 0) === 0 ? (
+          {!row.isTransposition && !row.variant.parentLink && (row.variant.childLinks?.length ?? 0) === 0 ? (
             <Text size="sm" c="dimmed" fs="italic">
               -
             </Text>
@@ -5616,8 +6460,8 @@ export default function VariantsPage() {
             <ActionIcon
               variant="subtle"
               color="yellow"
-              onClick={() => handleOpenGeneratePuzzles(row)}
-              disabled={generatingPuzzles}
+              onClick={() => void handleOpenGeneratePuzzles(row)}
+              disabled={generatingPuzzles || validatingVariants}
             >
               <IconPuzzle size={16} />
             </ActionIcon>
@@ -5637,9 +6481,46 @@ export default function VariantsPage() {
               <IconSettings size={16} />
             </ActionIcon>
           </Tooltip>
+          <Tooltip
+            label={t("features.board.variants.createOpeningVariants", {
+              defaultValue: "Create ECO opening variants",
+            })}
+          >
+            <ActionIcon
+              variant="subtle"
+              color="indigo"
+              onClick={() => void handleCreateOpeningVariants(row)}
+              disabled={openingVariantsTargetKey !== null || validatingVariants}
+            >
+              {openingVariantsTargetKey === (row.canonicalKey ?? row.key) ? (
+                <Loader size={14} />
+              ) : (
+                <IconSitemap size={16} />
+              )}
+            </ActionIcon>
+          </Tooltip>
           <Tooltip label={t("features.board.variants.coverageGraph", { defaultValue: "Open coverage graph" })}>
-            <ActionIcon variant="subtle" color="blue" onClick={() => handleOpenCoverageGraph(row)}>
+            <ActionIcon
+              variant="subtle"
+              color="blue"
+              onClick={() => void handleOpenCoverageGraph(row)}
+              disabled={validatingVariants}
+            >
               <IconGitBranch size={16} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label={t("features.board.variants.criticalLineNodes", { defaultValue: "Critical lines" })}>
+            <ActionIcon
+              variant="subtle"
+              color="pink"
+              onClick={() => void handleOpenCriticalLinesFromRow(row)}
+              disabled={validatingVariants || coverageGraphLoading || criticalLineLoading}
+            >
+              {criticalLineReportRequestKey === (row.canonicalKey ?? row.key) ? (
+                <Loader size={14} />
+              ) : (
+                <IconExclamationCircle size={16} />
+              )}
             </ActionIcon>
           </Tooltip>
           <Tooltip label={t("common.delete", { defaultValue: "Delete" })}>
@@ -6198,6 +7079,17 @@ export default function VariantsPage() {
                 >
                   {t("features.board.variants.rebuildCoverageGraph", { defaultValue: "Rebuild graph" })}
                 </Button>
+                <Button
+                  radius="md"
+                  variant="light"
+                  color="pink"
+                  leftSection={<IconExclamationCircle size={16} />}
+                  onClick={() => void handleOpenCoverageCriticalLines()}
+                  loading={criticalLineLoading}
+                  disabled={!coverageGraphRoot || coverageGraphLoading}
+                >
+                  {t("features.board.variants.criticalLineNodes", { defaultValue: "Critical lines" })}
+                </Button>
               </Group>
               <Group gap="xs">
                 <Badge
@@ -6271,11 +7163,181 @@ export default function VariantsPage() {
           <Box style={{ flex: 1, minHeight: 0, height: "100%" }}>
             <VariantCoverageGraph
               root={visibleCoverageGraphRoot}
+              activeSide={coverageGraphOrientation}
               onNodeClick={handleCoverageNodeClick}
               onNodeToggleCollapse={toggleCoverageNodeCollapsed}
               onNodeExpandAllChildren={expandCoverageNodeAllChildren}
             />
           </Box>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={criticalLineModalOpened}
+        onClose={() => {
+          setCriticalLineModalOpened(false);
+          setCriticalLineReportRequestKey(null);
+          setCriticalLineBuildRequest(null);
+          setCriticalLineLoading(false);
+          setCriticalLineRegenerating(false);
+        }}
+        title={t("features.board.variants.criticalLineNodesTitle", { defaultValue: "Critical lines" })}
+        centered
+        size="xl"
+      >
+        <Stack gap="md">
+          <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
+            <Group justify="space-between" align="center" gap="md" wrap="wrap">
+              <Stack gap={2}>
+                <Text fw={700}>
+                  {t("features.board.variants.criticalLineRunTitle", { defaultValue: "Inspect mapped lines" })}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {t("features.board.variants.criticalLineRunDescription", {
+                    defaultValue:
+                      "Uses the configured data source, saves a cache file, and reports only complete mapped lines.",
+                  })}
+                </Text>
+              </Stack>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="blue"
+                  loading={criticalLineLoading && !criticalLineRegenerating}
+                  disabled={criticalLineLoading || coverageGraphLoading}
+                  onClick={() => void startCriticalLineInspection()}
+                >
+                  {t("features.board.variants.criticalLineRunCached", { defaultValue: "Run with cache" })}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  loading={criticalLineLoading && criticalLineRegenerating}
+                  disabled={criticalLineLoading || coverageGraphLoading}
+                  onClick={() => void startCriticalLineInspection({ regenerate: true })}
+                >
+                  {t("features.board.variants.criticalLineRegenerate", {
+                    defaultValue: "Regenerate from scratch",
+                  })}
+                </Button>
+              </Group>
+            </Group>
+          </Card>
+
+          {criticalLineLoading ? (
+            <Group gap="sm">
+              <Loader size="sm" />
+              <Text size="sm" c="dimmed">
+                {t("features.board.variants.criticalLineLoading", {
+                  defaultValue: "Inspecting critical lines in backend...",
+                })}
+              </Text>
+            </Group>
+          ) : !criticalLineReport ? (
+            <Alert color="blue" variant="light" icon={<IconExclamationCircle size={18} />}>
+              {t("features.board.variants.criticalLineReady", {
+                defaultValue: "Run the inspection to generate or load the critical-lines cache.",
+              })}
+            </Alert>
+          ) : criticalLineReport.nodes.length === 0 ? (
+            <Alert color="teal" variant="light" icon={<IconShieldCheck size={18} />}>
+              {t("features.board.variants.criticalLineEmpty", {
+                defaultValue: "No critical lines were found for this graph.",
+              })}
+            </Alert>
+          ) : (
+            <Stack gap="sm">
+              <Group justify="space-between" align="center">
+                <Text size="sm" c="dimmed">
+                  {t("features.board.variants.criticalLineSummary", {
+                    defaultValue: "{{count}} critical lines found.",
+                    count: criticalLineReport.nodes.length,
+                  })}
+                </Text>
+                <Badge color={criticalLineReport.activeColor === "white" ? "blue" : "gray"} variant="light">
+                  {criticalLineReport.activeColor}
+                </Badge>
+              </Group>
+              {criticalLineReport.nodes.map((item, index) => (
+                <Card
+                  key={`${item.id}-${index}-${item.path.join("/")}`}
+                  withBorder
+                  radius="md"
+                  p="sm"
+                  style={premiumMutedPanelStyle}
+                >
+                  <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
+                    <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
+                      <Group gap="xs" wrap="wrap">
+                        {item.reasons.includes("source") ? (
+                          <Badge color="red" variant="light">
+                            {t("features.board.variants.criticalLineReasonSource", {
+                              defaultValue: "Source W/L risk",
+                            })}
+                          </Badge>
+                        ) : null}
+                        {item.reasons.includes("engine") ? (
+                          <Badge color="pink" variant="light">
+                            {t("features.board.variants.criticalLineReasonEngine", {
+                              defaultValue: "Engine favors opponent",
+                            })}
+                          </Badge>
+                        ) : null}
+                      </Group>
+                      <Text fw={800} truncate>
+                        {item.label}
+                      </Text>
+                      {item.openingName ? (
+                        <Text size="sm" c="dimmed" truncate>
+                          {item.openingName}
+                        </Text>
+                      ) : null}
+                      <Text size="xs" c="dimmed" truncate>
+                        {item.path.join(" -> ")}
+                      </Text>
+                      <Group gap="md" wrap="wrap">
+                        <Text size="xs">
+                          {t("features.board.variants.coverageCardSource", { defaultValue: "SOURCE" })}:{" "}
+                          <Text span fw={700}>
+                            {formatCoverageWinLoss(item.sourceWinRate, item.sourceLossRate)}
+                          </Text>
+                        </Text>
+                        <Text size="xs">
+                          {t("features.board.variants.coverageCardEval", { defaultValue: "EVAL" })}:{" "}
+                          <Text span fw={700}>
+                            {item.engineAdvantage || "--"}
+                          </Text>
+                        </Text>
+                      </Group>
+                    </Stack>
+                    <Stack gap="xs" align="flex-end">
+                      <Button
+                        size="xs"
+                        variant="light"
+                        leftSection={<IconExternalLink size={14} />}
+                        onClick={() => {
+                          setCriticalLineModalOpened(false);
+                          void goToCoverageNodeVariant(item.node);
+                        }}
+                      >
+                        {t("features.board.variants.coverageGoToVariant", { defaultValue: "Go to variant" })}
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="yellow"
+                        onClick={() => void acceptCriticalLineRisk(item)}
+                      >
+                        {t("features.board.variants.criticalLineAcceptRisk", { defaultValue: "Accept risk" })}
+                      </Button>
+                    </Stack>
+                  </Group>
+                </Card>
+              ))}
+            </Stack>
+          )}
         </Stack>
       </Modal>
 
@@ -6337,9 +7399,15 @@ export default function VariantsPage() {
                   <SegmentedControl
                     value={coveragePuzzleTierFilter}
                     onChange={(value) =>
-                      setCoveragePuzzleTierFilter(value === "secondary" || value === "alternative" ? value : "mainline")
+                      setCoveragePuzzleTierFilter(
+                        value === "secondary" || value === "alternative" || value === "all" ? value : "mainline",
+                      )
                     }
                     data={[
+                      {
+                        value: "all",
+                        label: t("features.board.variants.coveragePuzzleAll", { defaultValue: "All" }),
+                      },
                       { value: "mainline", label: t("features.board.variants.mainlineShort", { defaultValue: "ML" }) },
                       {
                         value: "secondary",
@@ -6493,26 +7561,74 @@ export default function VariantsPage() {
             ) : (
               <Stack gap="xs" style={{ maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
                 {validationReport.conflicts.map((conflict) => (
-                  <Alert key={conflict.fen} color="red" variant="light">
-                    <Stack gap={4}>
-                      <Text size="sm" fw={700}>
-                        {t("features.board.variants.validationFen", { defaultValue: "FEN" })}:{" "}
-                        <Code>{conflict.fen}</Code>
-                      </Text>
-                      {conflict.moves.map((move) => (
-                        <Box key={`${conflict.fen}-${move.san}`}>
-                          <Text size="sm" fw={600}>
-                            {t("features.board.variants.validationMove", { defaultValue: "Move" })}: {move.san}
+                  <Card key={conflict.fen} withBorder radius="md" p="sm">
+                    <Stack gap="xs">
+                      <Group justify="space-between" align="flex-start" gap="sm">
+                        <Box style={{ minWidth: 0, flex: 1 }}>
+                          <Text size="sm" fw={700}>
+                            {t("features.board.variants.validationFen", { defaultValue: "FEN" })}:{" "}
+                            <Code>{conflict.fen}</Code>
                           </Text>
-                          {move.occurrences.map((occurrence, index) => (
-                            <Text key={`${occurrence.variantPath}-${index}`} size="xs" c="dimmed">
-                              {occurrence.variantName} {"->"} {occurrence.line}
+                          <Text size="xs" c="dimmed">
+                            {t("features.board.variants.validationChooseMove", {
+                              defaultValue: "Choose the single reply that should be used for every occurrence.",
+                            })}
+                          </Text>
+                        </Box>
+                        <Button size="xs" variant="light" onClick={() => void handleOpenValidationConflict(conflict)}>
+                          {t("features.board.variants.validationOpenPosition", {
+                            defaultValue: "Open position",
+                          })}
+                        </Button>
+                      </Group>
+                      {conflict.moves.map((move) => (
+                        <Box
+                          key={`${conflict.fen}-${move.san}`}
+                          p="xs"
+                          style={{
+                            borderRadius: 8,
+                            border: "1px solid var(--mantine-color-dark-4)",
+                            background: "color-mix(in srgb, var(--mantine-color-dark-7) 80%, transparent)",
+                          }}
+                        >
+                          <Group justify="space-between" align="center" gap="sm">
+                            <Text size="sm" fw={700}>
+                              {move.san}
+                              {move.uci ? (
+                                <Text span size="xs" c="dimmed" ml={6}>
+                                  {move.uci}
+                                </Text>
+                              ) : null}
                             </Text>
+                            <Button
+                              size="xs"
+                              color="teal"
+                              loading={resolvingValidationConflict}
+                              onClick={() => void handleApplyValidationMove(conflict, move.san)}
+                            >
+                              {t("features.board.variants.validationUseMove", {
+                                defaultValue: "Use this move",
+                              })}
+                            </Button>
+                          </Group>
+                          {move.occurrences.map((occurrence, index) => (
+                            <Group key={`${occurrence.variantPath}-${index}`} gap="xs" wrap="nowrap">
+                              <Text size="xs" c="dimmed" style={{ minWidth: 0, flex: 1 }} truncate>
+                                {occurrence.variantName} {"->"} {occurrence.line}
+                              </Text>
+                              <Button
+                                size="compact-xs"
+                                variant="subtle"
+                                onClick={() => void handleOpenValidationConflict(conflict, occurrence)}
+                              >
+                                {t("common.open", { defaultValue: "Open" })}
+                              </Button>
+                            </Group>
                           ))}
                         </Box>
                       ))}
                     </Stack>
-                  </Alert>
+                  </Card>
                 ))}
               </Stack>
             )}

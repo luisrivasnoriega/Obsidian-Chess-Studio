@@ -11,6 +11,7 @@ pub struct VariantPosition {
     pub fen: String,
     pub engine: String,
     pub recommended_move: String,
+    pub engine_advantage: Option<String>,
     pub ms: i64,
 }
 
@@ -49,6 +50,7 @@ fn init_variant_positions_schema(conn: &Connection) -> Result<()> {
             fen_key TEXT,
             engine TEXT NOT NULL,
             recommended_move TEXT NOT NULL,
+            engine_advantage TEXT,
             ms INTEGER NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -60,6 +62,12 @@ fn init_variant_positions_schema(conn: &Connection) -> Result<()> {
     // Migration: older databases may not have fen_key.
     // SQLite does not support "ADD COLUMN IF NOT EXISTS", so we ignore the duplicate-column error.
     if let Err(err) = conn.execute("ALTER TABLE variant_positions ADD COLUMN fen_key TEXT", []) {
+        let msg = err.to_string();
+        if !msg.contains("duplicate column name") {
+            return Err(err.into());
+        }
+    }
+    if let Err(err) = conn.execute("ALTER TABLE variant_positions ADD COLUMN engine_advantage TEXT", []) {
         let msg = err.to_string();
         if !msg.contains("duplicate column name") {
             return Err(err.into());
@@ -121,7 +129,7 @@ fn fetch_variant_position_conn(
 
     let mut stmt = conn.prepare(
         r#"
-        SELECT fen, engine, recommended_move, ms
+        SELECT fen, engine, recommended_move, engine_advantage, ms
         FROM variant_positions
         WHERE engine = ?1 AND fen_key = ?2
         ORDER BY ms DESC
@@ -135,7 +143,8 @@ fn fetch_variant_position_conn(
                 fen: row.get(0)?,
                 engine: row.get(1)?,
                 recommended_move: row.get(2)?,
-                ms: row.get(3)?,
+                engine_advantage: row.get(3)?,
+                ms: row.get(4)?,
             })
         })
         .optional()?;
@@ -158,6 +167,7 @@ fn upsert_variant_position_conn(
     fen: &str,
     engine: &str,
     recommended_move: &str,
+    engine_advantage: Option<&str>,
     ms: i64,
 ) -> Result<()> {
     let fen_key = match fen_identity_key(fen) {
@@ -165,19 +175,36 @@ fn upsert_variant_position_conn(
         None => return Ok(()),
     };
     let safe_ms = ms.max(0);
+    let advantage = engine_advantage
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
 
     conn.execute(
         r#"
-        INSERT INTO variant_positions (fen, fen_key, engine, recommended_move, ms, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        INSERT INTO variant_positions (fen, fen_key, engine, recommended_move, engine_advantage, ms, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(fen_key, engine) DO UPDATE SET
             fen = excluded.fen,
-            recommended_move = excluded.recommended_move,
-            ms = excluded.ms,
+            recommended_move = CASE
+                WHEN excluded.ms >= variant_positions.ms THEN excluded.recommended_move
+                ELSE variant_positions.recommended_move
+            END,
+            engine_advantage = COALESCE(NULLIF(excluded.engine_advantage, ''), variant_positions.engine_advantage),
+            ms = CASE
+                WHEN excluded.ms > variant_positions.ms THEN excluded.ms
+                ELSE variant_positions.ms
+            END,
             updated_at = CURRENT_TIMESTAMP
         WHERE excluded.ms > variant_positions.ms
+           OR (
+                NULLIF(excluded.engine_advantage, '') IS NOT NULL
+                AND (
+                    variant_positions.engine_advantage IS NULL
+                    OR TRIM(variant_positions.engine_advantage) = ''
+                )
+           )
         "#,
-        params![fen, fen_key, engine, recommended_move, safe_ms],
+        params![fen, fen_key, engine, recommended_move, advantage, safe_ms],
     )?;
 
     Ok(())
@@ -188,10 +215,11 @@ fn upsert_variant_position_entry(
     fen: &str,
     engine: &str,
     recommended_move: &str,
+    engine_advantage: Option<&str>,
     ms: i64,
 ) -> Result<()> {
     let conn = get_variant_positions_db(app)?;
-    upsert_variant_position_conn(&conn, fen, engine, recommended_move, ms)
+    upsert_variant_position_conn(&conn, fen, engine, recommended_move, engine_advantage, ms)
 }
 
 #[tauri::command]
@@ -224,7 +252,44 @@ pub fn upsert_variant_position(
     if fen.is_empty() || engine.is_empty() || recommended_move.is_empty() {
         return Ok(());
     }
-    upsert_variant_position_entry(&app, fen, engine, recommended_move, ms)
+    upsert_variant_position_entry(&app, fen, engine, recommended_move, None, ms)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_variant_position_engine_eval(
+    app: AppHandle,
+    fen: String,
+    engine: String,
+) -> Result<Option<VariantPosition>> {
+    get_variant_position(app, fen, engine)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn upsert_variant_position_engine_eval(
+    app: AppHandle,
+    fen: String,
+    engine: String,
+    recommended_move: String,
+    engine_advantage: String,
+    ms: i64,
+) -> Result<()> {
+    let fen = fen.trim();
+    let engine = engine.trim();
+    let recommended_move = recommended_move.trim();
+    let engine_advantage = engine_advantage.trim();
+    if fen.is_empty() || engine.is_empty() || recommended_move.is_empty() || engine_advantage.is_empty() {
+        return Ok(());
+    }
+    upsert_variant_position_entry(
+        &app,
+        fen,
+        engine,
+        recommended_move,
+        Some(engine_advantage),
+        ms,
+    )
 }
 
 #[cfg(test)]
@@ -433,7 +498,7 @@ mod tests {
         let (_dir, conn) = open_temp_conn();
 
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", 1000).unwrap();
+        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, 1000).unwrap();
 
         let got = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
         assert_eq!(got.engine, "sf");
@@ -447,7 +512,7 @@ mod tests {
         let (_dir, conn) = open_temp_conn();
 
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", -50).unwrap();
+        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, -50).unwrap();
 
         let got = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
         assert_eq!(got.ms, 0);
@@ -462,10 +527,10 @@ mod tests {
 
         let key = fen_identity_key(fen_a).unwrap();
 
-        upsert_variant_position_conn(&conn, fen_a, "sf", "e2e4", 1000).unwrap();
+        upsert_variant_position_conn(&conn, fen_a, "sf", "e2e4", None, 1000).unwrap();
 
         // Lower ms => should NOT overwrite
-        upsert_variant_position_conn(&conn, fen_b, "sf", "d2d4", 900).unwrap();
+        upsert_variant_position_conn(&conn, fen_b, "sf", "d2d4", None, 900).unwrap();
 
         let row = read_row(&conn, &key, "sf").unwrap();
         assert_eq!(row.0, fen_a); // fen should remain old
@@ -473,7 +538,7 @@ mod tests {
         assert_eq!(row.2, 1000);
 
         // Equal ms => should NOT overwrite (strict >)
-        upsert_variant_position_conn(&conn, fen_b, "sf", "c2c4", 1000).unwrap();
+        upsert_variant_position_conn(&conn, fen_b, "sf", "c2c4", None, 1000).unwrap();
 
         let row2 = read_row(&conn, &key, "sf").unwrap();
         assert_eq!(row2.0, fen_a);
@@ -489,8 +554,8 @@ mod tests {
         let fen_b = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 99"; // same key
         let key = fen_identity_key(fen_a).unwrap();
 
-        upsert_variant_position_conn(&conn, fen_a, "sf", "e2e4", 1000).unwrap();
-        upsert_variant_position_conn(&conn, fen_b, "sf", "d2d4", 1500).unwrap();
+        upsert_variant_position_conn(&conn, fen_a, "sf", "e2e4", None, 1000).unwrap();
+        upsert_variant_position_conn(&conn, fen_b, "sf", "d2d4", None, 1500).unwrap();
 
         let row = read_row(&conn, &key, "sf").unwrap();
         assert_eq!(row.0, fen_b, "fen should be updated to the latest (best ms) entry");
@@ -509,8 +574,8 @@ mod tests {
 
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", 1000).unwrap();
-        upsert_variant_position_conn(&conn, fen, "lc0", "d2d4", 2000).unwrap();
+        upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, 1000).unwrap();
+        upsert_variant_position_conn(&conn, fen, "lc0", "d2d4", None, 2000).unwrap();
 
         let a = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
         let b = fetch_variant_position_conn(&conn, fen, "lc0").unwrap().unwrap();
@@ -529,6 +594,7 @@ mod tests {
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
             engine: "test_engine".to_string(),
             recommended_move: "e2e4".to_string(),
+            engine_advantage: None,
             ms: 1000i64,
         };
 
@@ -543,6 +609,7 @@ mod tests {
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
             engine: "test_engine".to_string(),
             recommended_move: "e2e4".to_string(),
+            engine_advantage: None,
             ms: i64::MAX,
         };
 
@@ -555,6 +622,7 @@ mod tests {
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
             engine: "test_engine".to_string(),
             recommended_move: "e2e4".to_string(),
+            engine_advantage: Some("+0.34 (e4)".to_string()),
             ms: 1000i64,
         };
 
@@ -567,5 +635,6 @@ mod tests {
         assert_eq!(deserialized.fen, pos.fen);
         assert_eq!(deserialized.engine, pos.engine);
         assert_eq!(deserialized.recommended_move, pos.recommended_move);
+        assert_eq!(deserialized.engine_advantage, pos.engine_advantage);
     }
 }

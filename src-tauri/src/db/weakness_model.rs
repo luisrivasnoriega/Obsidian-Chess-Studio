@@ -27,6 +27,7 @@ const PORTFOLIO_OVERLAP_THRESHOLD: f64 = 0.72;
 /// - it is used as a stable implementation contract across backend and UI,
 /// - later phases wire detectors/scoring to these entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 struct StructureCatalogRuleV1 {
     key: &'static str,
     perspective: &'static str, // "white" | "black" | "both"
@@ -37,6 +38,7 @@ struct StructureCatalogRuleV1 {
     exclusions: &'static [&'static str],
 }
 
+#[cfg(test)]
 const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
     StructureCatalogRuleV1 {
         key: "MAROCZY_BIND_STRICT",

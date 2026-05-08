@@ -16,6 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::time::Duration as StdDuration;
 use tauri::{AppHandle, Manager, State};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -606,6 +607,12 @@ fn parse_profile_db_path(app: &AppHandle, profile_id: &str) -> Result<PathBuf> {
     Ok(app_data
         .join("db")
         .join(format!("profile_{}.db3", profile_id)))
+}
+
+fn open_profile_db_connection(path: impl AsRef<Path>) -> rusqlite::Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(StdDuration::from_secs(30))?;
+    Ok(conn)
 }
 
 fn parse_timestamp_ms(date: Option<&str>, time: Option<&str>) -> i64 {
@@ -1724,7 +1731,7 @@ pub async fn dashboard_get_games_history_rows(
     // 2) Load online games (single query; later we split by platform).
     let db_path = parse_profile_db_path(&app, &profile_id)?;
     let (profile_player_ids, managed_event_ids, inferred_profile_player_id): (HashSet<i32>, HashSet<i32>, Option<i32>) =
-        match Connection::open(&db_path) {
+        match open_profile_db_connection(&db_path) {
         Ok(conn) => {
             let (player_ids, inferred_profile_player_id) = resolve_profile_player_ids(&conn, &usernames_lower);
             let managed_ids = managed_event_ids_set(&conn);
@@ -1761,7 +1768,7 @@ pub async fn dashboard_get_games_history_rows(
     }
 
     let online = get_games(db_path, q, state).await?.data;
-    let profile_db_conn = Connection::open(parse_profile_db_path(&app, &profile_id)?).ok();
+    let profile_db_conn = open_profile_db_connection(parse_profile_db_path(&app, &profile_id)?).ok();
 
     // 3) Build raw rows (without analysis enrichment).
     let mut rows: Vec<GamesHistoryRow> = Vec::new();
@@ -2826,7 +2833,7 @@ pub async fn dashboard_search_profile_opponents(
     let q_lower = q.to_lowercase();
     let usernames_lower = usernames_lower_set(&profile_usernames);
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let profile_player_ids: Vec<i32> = match Connection::open(&db_path) {
+    let profile_player_ids: Vec<i32> = match open_profile_db_connection(&db_path) {
         Ok(conn) => {
             let (resolved_ids, _) = resolve_profile_player_ids(&conn, &usernames_lower);
             let mut ids: Vec<i32> = resolved_ids.into_iter().collect();
@@ -2862,7 +2869,7 @@ pub async fn dashboard_search_profile_opponents(
     };
 
     if !profile_player_ids.is_empty() {
-        let conn = Connection::open(&db_path)?;
+        let conn = open_profile_db_connection(&db_path)?;
         let mut stmt = conn.prepare(
             r#"
             SELECT p.Name, COUNT(*) AS games_count
@@ -2923,7 +2930,7 @@ pub async fn dashboard_search_profile_opponents(
 
     // Ensure exact matches are included even if they were outside the first page/ranking window.
     if !seen_stripped_lower.contains(&q_lower) {
-        let conn = Connection::open(&db_path)?;
+        let conn = open_profile_db_connection(&db_path)?;
         let exact_name: Option<String> = if !profile_player_ids.is_empty() {
             let mut found: Option<String> = None;
             for profile_pid in profile_player_ids.iter().copied() {
@@ -3017,7 +3024,7 @@ pub fn dashboard_resolve_profile_db_game_id(
     }
 
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let conn = Connection::open(db_path)?;
+    let conn = open_profile_db_connection(db_path)?;
 
     // Resolve the internal Games.ID by searching for the external identifier.
     //
@@ -3086,7 +3093,7 @@ pub async fn dashboard_decode_profile_game_blob_moves(
     }
 
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let conn = Connection::open(db_path)?;
+    let conn = open_profile_db_connection(db_path)?;
 
     let row: Option<(Option<String>, Vec<u8>)> = conn
         .query_row(
@@ -3123,7 +3130,7 @@ pub fn dashboard_resolve_chesscom_game_url(
     }
 
     let db_path = parse_profile_db_path(&app, &profile_id)?;
-    let conn = Connection::open(&db_path)?;
+    let conn = open_profile_db_connection(&db_path)?;
 
     let row = conn
         .query_row(

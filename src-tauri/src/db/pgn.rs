@@ -15,7 +15,7 @@ pub fn get_material_count(board: &Board) -> MaterialCount {
     })
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameTreeNode {
     Move(SanPlus),
     Comment(String),
@@ -23,7 +23,7 @@ pub enum GameTreeNode {
     Variation(GameTree),
 }
 
-#[derive(Debug, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GameTree(Vec<GameTreeNode>);
 
 impl GameTree {

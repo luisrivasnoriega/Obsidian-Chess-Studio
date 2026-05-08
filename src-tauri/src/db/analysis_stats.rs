@@ -2105,7 +2105,7 @@ fn load_or_infer_profile_player_id(db: &mut SqliteConnection) -> Result<Option<i
         #[diesel(sql_type = Integer, column_name = "player_id")]
         player_id: i32,
         #[diesel(sql_type = BigInt, column_name = "c")]
-        c: i64,
+        _c: i64,
     }
 
     let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")

@@ -69,6 +69,10 @@ const ENABLE_CHECKPOINT_TABLE_SCHEMA: bool = true;
 #[allow(dead_code)]
 const CHECKPOINT_STRIDE: usize = 8;
 
+fn should_log_search_timing(tab_id: &str) -> bool {
+    !tab_id.starts_with("variants-coverage")
+}
+
 /// ============================================================================
 /// ONLINE database detection
 /// ============================================================================
@@ -1951,6 +1955,7 @@ pub async fn search_position(
                 },
             );
 
+            if should_log_search_timing(&tab_id) {
                 log::debug!(
                     target: "db.search.timing",
                     "search_position cache_hit=1 tab_id={} db={} local={} filters={} limit={} cached_openings={} cached_ids={} loaded_games={} cache_read_ms={} load_games_ms={} normalize_ms={} sort_ms={} total_ms={}",
@@ -1968,8 +1973,9 @@ pub async fn search_position(
                     sort_ms,
                     t_total.elapsed().as_millis(),
                 );
+            }
 
-                return Ok((cached_stats, normalized_games));
+            return Ok((cached_stats, normalized_games));
             }
         }
     }
@@ -1990,24 +1996,28 @@ pub async fn search_position(
     if ENABLE_AUX_INDEXES {
         let t_indexes = Instant::now();
         ensure_aux_indexes(db);
-        log::debug!(
-            target: "db.search.timing",
-            "search_position ensure_aux_indexes_ms={} tab_id={} db={}",
-            t_indexes.elapsed().as_millis(),
-            tab_id,
-            db_label
-        );
+        if should_log_search_timing(&tab_id) {
+            log::debug!(
+                target: "db.search.timing",
+                "search_position ensure_aux_indexes_ms={} tab_id={} db={}",
+                t_indexes.elapsed().as_millis(),
+                tab_id,
+                db_label
+            );
+        }
     }
     if ENABLE_CHECKPOINT_TABLE_SCHEMA {
         let t_checkpoints = Instant::now();
         ensure_checkpoint_table(db);
-        log::debug!(
-            target: "db.search.timing",
-            "search_position ensure_checkpoint_schema_ms={} tab_id={} db={}",
-            t_checkpoints.elapsed().as_millis(),
-            tab_id,
-            db_label
-        );
+        if should_log_search_timing(&tab_id) {
+            log::debug!(
+                target: "db.search.timing",
+                "search_position ensure_checkpoint_schema_ms={} tab_id={} db={}",
+                t_checkpoints.elapsed().as_millis(),
+                tab_id,
+                db_label
+            );
+        }
     }
 
     // Phase 1: scan and collect openings + sample IDs
@@ -2072,13 +2082,15 @@ pub async fn search_position(
 
     if state.new_request.available_permits() == 0 {
         drop(permit);
-        log::debug!(
-            target: "db.search.timing",
-            "search_position aborted=1 tab_id={} db={} total_ms={}",
-            tab_id,
-            db_label,
-            t_total.elapsed().as_millis(),
-        );
+        if should_log_search_timing(&tab_id) {
+            log::debug!(
+                target: "db.search.timing",
+                "search_position aborted=1 tab_id={} db={} total_ms={}",
+                tab_id,
+                db_label,
+                t_total.elapsed().as_millis(),
+            );
+        }
         return Err(Error::SearchStopped);
     }
 
@@ -2193,26 +2205,28 @@ pub async fn search_position(
         },
     );
 
-    log::debug!(
-        target: "db.search.timing",
-        "search_position cache_hit=0 tab_id={} db={} local={} filters={} strategy={} total_games={} openings={} matched_ids={} limit={} loaded_games={} scan_ms={} load_games_ms={} normalize_ms={} sort_ms={} save_cache_ms={} total_ms={}",
-        tab_id,
-        db_label,
-        is_local_db,
-        has_filters,
-        strategy,
-        total_games,
-        openings.len(),
-        all_game_ids.len(),
-        game_details_limit,
-        normalized_games.len(),
-        scan_ms,
-        load_games_ms,
-        normalize_ms,
-        sort_ms,
-        save_cache_ms,
-        t_total.elapsed().as_millis(),
-    );
+    if should_log_search_timing(&tab_id) {
+        log::debug!(
+            target: "db.search.timing",
+            "search_position cache_hit=0 tab_id={} db={} local={} filters={} strategy={} total_games={} openings={} matched_ids={} limit={} loaded_games={} scan_ms={} load_games_ms={} normalize_ms={} sort_ms={} save_cache_ms={} total_ms={}",
+            tab_id,
+            db_label,
+            is_local_db,
+            has_filters,
+            strategy,
+            total_games,
+            openings.len(),
+            all_game_ids.len(),
+            game_details_limit,
+            normalized_games.len(),
+            scan_ms,
+            load_games_ms,
+            normalize_ms,
+            sort_ms,
+            save_cache_ms,
+            t_total.elapsed().as_millis(),
+        );
+    }
 
     drop(permit);
     Ok((openings, normalized_games))

@@ -1,8 +1,8 @@
+import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
-import { exists, readDir } from "@tauri-apps/plugin-fs";
-import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
+import { exists } from "@tauri-apps/plugin-fs";
 import { readInfoMetadata, writeInfoMetadata } from "@/utils/files";
-import type { VariantLinkRef } from "../types";
+import type { VariantInfo, VariantLinkRef } from "../types";
 
 function isAbsolutePath(path: string): boolean {
   return /^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(path);
@@ -38,15 +38,13 @@ async function resolveLinkedPath(ownerFilePath: string, linkPath: string): Promi
   return join(ownerDir, linkPath);
 }
 
-async function listVariantFiles(documentDir: string): Promise<FileMetadata[]> {
+type LinkVariantFile = Pick<VariantInfo, "name" | "path">;
+
+async function listVariantFiles(documentDir: string): Promise<LinkVariantFile[]> {
   if (!(await exists(documentDir))) {
     return [];
   }
-  const entries = await readDir(documentDir);
-  const all = await processEntriesRecursively(documentDir, entries);
-  return all
-    .filter((entry): entry is FileMetadata => entry.type === "file")
-    .filter((entry) => entry.metadata.type === "variants");
+  return invoke<LinkVariantFile[]>("variants_list_fast", { variantsDir: documentDir });
 }
 
 export async function cleanupVariantLinksAfterDelete(
@@ -119,7 +117,7 @@ export async function repairVariantLinks(
   documentDir: string,
 ): Promise<{ updatedFiles: number; removedLinks: number; addedLinks: number }> {
   const variants = await listVariantFiles(documentDir);
-  const variantsByPath = new Map<string, FileMetadata>();
+  const variantsByPath = new Map<string, LinkVariantFile>();
   for (const variant of variants) {
     variantsByPath.set(normalizePath(variant.path), variant);
   }
