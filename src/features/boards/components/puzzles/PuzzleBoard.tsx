@@ -19,6 +19,20 @@ import { recordPuzzleSolved } from "@/utils/puzzleStreak";
 import type { Completion, Puzzle } from "@/utils/puzzles";
 import { getNodeAtPath, treeIteratorMainLine } from "@/utils/treeReducer";
 
+function getNowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function getPuzzleTimerKey(puzzle: Puzzle | null, currentPuzzle: number): string | null {
+  if (!puzzle) return null;
+  const sourceKey = puzzle.source
+    ? puzzle.source.type === "pgn"
+      ? `pgn:${puzzle.source.path}:${puzzle.source.index}`
+      : `db3:${puzzle.source.path}`
+    : "manual";
+  return `${currentPuzzle}:${sourceKey}:${puzzle.fen}:${puzzle.moves.join(" ")}`;
+}
+
 function PuzzleBoard({
   puzzles,
   currentPuzzle,
@@ -50,9 +64,21 @@ function PuzzleBoard({
   const currentNode = useMemo(() => getNodeAtPath(root, position), [root, position]);
 
   const puzzle = puzzles[currentPuzzle] ?? null;
+  const puzzleTimerKey = useMemo(() => getPuzzleTimerKey(puzzle, currentPuzzle), [currentPuzzle, puzzle]);
   const [_hasMistake, setHasMistake] = useState(false);
   const prevPuzzleIndexRef = useRef(currentPuzzle);
   const isProcessingMoveRef = useRef(false);
+  const activePuzzleTimerRef = useRef<{ key: string; startedAtMs: number } | null>(null);
+
+  useEffect(() => {
+    if (!puzzleTimerKey || puzzle?.completion === "correct") {
+      activePuzzleTimerRef.current = null;
+      return;
+    }
+    if (activePuzzleTimerRef.current?.key !== puzzleTimerKey) {
+      activePuzzleTimerRef.current = { key: puzzleTimerKey, startedAtMs: getNowMs() };
+    }
+  }, [puzzle?.completion, puzzleTimerKey]);
 
   // Reset tree when puzzle changes
   useEffect(() => {
@@ -145,12 +171,17 @@ function PuzzleBoard({
         if (currentMove === puzzle.moves.length - 1) {
           // If the puzzle is finally solved, keep it as solved in the session history.
           if (puzzle.completion !== "correct") {
+            const solveTimeMs =
+              activePuzzleTimerRef.current?.key === puzzleTimerKey
+                ? getNowMs() - activePuzzleTimerRef.current.startedAtMs
+                : undefined;
             changeCompletion("correct", { affectRating: applyRating });
             recordPuzzleSolved();
             if (puzzle.source?.type === "pgn") {
-              recordPgnPuzzleSolved(puzzle.source.path, puzzle.source.index);
+              recordPgnPuzzleSolved(puzzle.source.path, puzzle.source.index, solveTimeMs);
             }
           }
+          activePuzzleTimerRef.current = null;
           setHasMistake(false);
 
           if (db && (jumpToNext === "success" || jumpToNext === "success-and-failure")) {

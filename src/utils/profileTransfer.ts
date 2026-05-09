@@ -210,7 +210,14 @@ function normalizePuzzleProgressSnapshot(raw: unknown): PgnPuzzleProgressSnapsho
       firstAttempt[key] = result;
     }
   }
-  return { solved, attempted, firstAttempt };
+  const solveTimesRaw = record.solveTimes && typeof record.solveTimes === "object" ? record.solveTimes : {};
+  const solveTimes: PgnPuzzleProgressSnapshot["solveTimes"] = {};
+  for (const [key, value] of Object.entries(solveTimesRaw)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      solveTimes[key] = Math.round(value);
+    }
+  }
+  return { solved, attempted, firstAttempt, solveTimes };
 }
 
 export function validateProfileTransferPackage(raw: string): ProfileTransferPackageV1 {
@@ -394,7 +401,8 @@ export async function buildProfileTransferPackage(input: {
       if (
         progress.solved.length > 0 ||
         progress.attempted.length > 0 ||
-        Object.keys(progress.firstAttempt).length > 0
+        Object.keys(progress.firstAttempt).length > 0 ||
+        Object.keys(progress.solveTimes).length > 0
       ) {
         puzzleProgress.push({ relativePath, progress });
       }

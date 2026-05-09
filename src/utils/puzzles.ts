@@ -1,7 +1,7 @@
 import { getDefaultStore } from "jotai";
 import { loadDirectories } from "@/App";
 import { commands, type PuzzleDatabaseInfo } from "@/bindings";
-import type { FileInfoMetadata, FileMetadata } from "@/features/files/utils/file";
+import type { Directory, FileInfoMetadata, FileMetadata } from "@/features/files/utils/file";
 import { activeProfileIdAtom } from "@/state/atoms";
 import { logger } from "./logger";
 import { PUZZLE_VARIANTS_TAG, parsePuzzleVariantTags, puzzleVariantMatchesProfile } from "./puzzleVariantMetadata";
@@ -36,6 +36,18 @@ const PUZZLE_DB_CACHE_TTL_MS = 15_000;
 let puzzleDbCache: { timestamp: number; value: PuzzleDatabaseInfo[]; profileId: string | null } | null = null;
 let puzzleDbLoadPromise: Promise<PuzzleDatabaseInfo[]> | null = null;
 let puzzleDbLoadProfileId: string | null = null;
+
+function flattenFileEntries(entries: Array<FileMetadata | Directory>): FileMetadata[] {
+  const files: FileMetadata[] = [];
+  for (const entry of entries) {
+    if (entry.type === "file") {
+      files.push(entry);
+      continue;
+    }
+    files.push(...flattenFileEntries(entry.children));
+  }
+  return files;
+}
 
 // Helper functions to get data from different sections
 async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]> {
@@ -107,11 +119,11 @@ async function getFilesFromFilesSection(activeProfileId: string | null): Promise
       return [];
     }
     const entries = await readDir(documentsDir);
-    const allEntries = await processEntriesRecursively(documentsDir, entries);
+    const allEntries = flattenFileEntries(await processEntriesRecursively(documentsDir, entries));
 
     // Get local .pgn puzzle files from document directory
     const puzzleFiles = allEntries.filter((file): file is FileMetadata => {
-      if (file.type !== "file" || !file.path.endsWith(".pgn")) return false;
+      if (!file.path.endsWith(".pgn")) return false;
       const fileInfo = file.metadata as FileInfoMetadata;
       return fileInfo?.type === "puzzle";
     });

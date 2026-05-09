@@ -421,6 +421,27 @@ function sanitizeFileStem(input: string, fallback = "puzzles"): string {
   return cleaned.length > 0 ? cleaned : fallback;
 }
 
+function formatFileTimestamp(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}.${month}.${day}-${hours}${minutes}${seconds}`;
+}
+
+async function resolveAvailablePgnFileStem(dir: string, desiredStem: string): Promise<string> {
+  const baseStem = sanitizeFileStem(desiredStem);
+  let candidate = baseStem;
+  let suffix = 2;
+  while (await exists(await join(dir, `${candidate}.pgn`))) {
+    candidate = sanitizeFileStem(`${baseStem}-${suffix}`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
 function normalizeFenKey(fen: string): string {
   const parts = fen.trim().split(/\s+/);
   if (parts.length < 4) {
@@ -474,6 +495,17 @@ function coverageTierFileSuffix(tier: Exclude<CoverageTier, "root">): string {
   if (tier === "mainline") return "Mainline";
   if (tier === "secondary") return "Secondary";
   return "Alternative";
+}
+
+function formatCoverageEcoVariant(openingName: string | null | undefined): string | null {
+  const trimmed = `${openingName ?? ""}`.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^([A-E]\d{2})\s*[-:]\s*(.+)$/i);
+  if (!match) return trimmed;
+  const ecoCode = match[1]?.toUpperCase();
+  const opening = match[2]?.trim();
+  if (!ecoCode || !opening) return trimmed;
+  return `${ecoCode}: ${opening}`;
 }
 
 function buildCoverageEngineCacheSignature(input: {
@@ -1292,6 +1324,10 @@ function extractSanFromOverrideKey(overrideKey: string | undefined): string | nu
   if (separator <= 0 || separator + 1 >= overrideKey.length) return null;
   const san = overrideKey.slice(separator + 1).trim();
   return san.length > 0 ? san : null;
+}
+
+function extractSanFromCoverageNode(node: CoverageGraphNode): string | null {
+  return extractSanFromOverrideKey(node.overrideKey) ?? extractSanFromCoverageLabel(node.label);
 }
 
 function buildSanSequenceFromCoveragePath(path: CoverageGraphNode[]): string[] {
@@ -4966,7 +5002,7 @@ export default function VariantsPage() {
       setCoverageActionTab(node.tier === "root" ? "puzzles" : "edit");
       setCoverageActionLabel(extractCoverageEditableLabel(node.label));
       setCoveragePuzzleTierFilter(node.tier === "secondary" || node.tier === "alternative" ? node.tier : "mainline");
-      const seedSan = extractSanFromCoverageLabel(node.label) ?? "node";
+      const seedSan = extractSanFromCoverageNode(node) ?? "node";
       setCoveragePuzzleName(sanitizeFileStem(`coverage-${seedSan}`));
       const variantEngineMs = coverageGraphTargetKey
         ? (variantLinkGraph.variantByKey.get(coverageGraphTargetKey)?.engineMs ?? null)
@@ -4996,8 +5032,8 @@ export default function VariantsPage() {
         return;
       }
 
-      const sourceNodeRaw = findCoverageNodeById(coverageGraphRoot, coverageActionNode.id);
-      if (!sourceNodeRaw) {
+      const sourceNodePath = findCoverageNodePathById(coverageGraphRoot, coverageActionNode.id);
+      if (!sourceNodePath) {
         notifications.show({
           title: t("common.error"),
           message: t("features.board.variants.coverageNodeNotFound", {
@@ -5008,10 +5044,29 @@ export default function VariantsPage() {
         return;
       }
 
-      const sourceNode =
-        sourceNodeRaw.children.length === 1 && sourceNodeRaw.children[0].tier === "root"
-          ? sourceNodeRaw.children[0]
-          : sourceNodeRaw;
+      const selectedNode = sourceNodePath[sourceNodePath.length - 1] ?? null;
+      if (!selectedNode) {
+        notifications.show({
+          title: t("common.error"),
+          message: t("features.board.variants.coverageNodeNotFound", {
+            defaultValue: "Could not locate the selected node in the current graph.",
+          }),
+          color: "red",
+        });
+        return;
+      }
+      const selectedParentNode = sourceNodePath.length > 1 ? (sourceNodePath[sourceNodePath.length - 2] ?? null) : null;
+      const sourceNode = selectedNode.tier !== "root" && selectedParentNode ? selectedParentNode : selectedNode;
+      const directBranchOverrideKey = sourceNode === selectedParentNode ? (selectedNode.overrideKey ?? null) : null;
+      const directBranchSan = sourceNode === selectedParentNode ? extractSanFromCoverageNode(selectedNode) : null;
+      const directBranchMatches = (child: CoverageGraphNode): boolean => {
+        if (!directBranchOverrideKey && !directBranchSan) return true;
+        if (directBranchOverrideKey && child.overrideKey === directBranchOverrideKey) return true;
+        return Boolean(directBranchSan && extractSanFromCoverageNode(child) === directBranchSan);
+      };
+      const ecoVariant = formatCoverageEcoVariant(
+        coverageActionNode.openingName ?? selectedNode.openingName ?? sourceNode.openingName,
+      );
 
       const startFen = sourceNode.fen;
       if (!startFen) {
@@ -5026,17 +5081,13 @@ export default function VariantsPage() {
       }
       const startFenKey = normalizeFenKey(startFen);
 
-      const resolvePuzzleSourceNode = (node: CoverageGraphNode): CoverageGraphNode =>
-        node.children.length === 1 && node.children[0].tier === "root" ? node.children[0] : node;
-
       const transpositionSourceNodes: CoverageGraphNode[] = [];
       const seenSourceIds = new Set<string>();
       const collectTranspositionSourceNodes = (node: CoverageGraphNode) => {
-        const resolved = resolvePuzzleSourceNode(node);
-        const resolvedFen = `${resolved.fen ?? ""}`.trim();
-        if (resolvedFen.length > 0 && normalizeFenKey(resolvedFen) === startFenKey && !seenSourceIds.has(resolved.id)) {
-          seenSourceIds.add(resolved.id);
-          transpositionSourceNodes.push(resolved);
+        const resolvedFen = `${node.fen ?? ""}`.trim();
+        if (resolvedFen.length > 0 && normalizeFenKey(resolvedFen) === startFenKey && !seenSourceIds.has(node.id)) {
+          seenSourceIds.add(node.id);
+          transpositionSourceNodes.push(node);
         }
         for (const child of node.children) {
           collectTranspositionSourceNodes(child);
@@ -5091,9 +5142,13 @@ export default function VariantsPage() {
       const toFilteredPuzzleChildren = (
         parent: CoverageGraphNode,
         selectedTier: Exclude<CoverageTier, "root">,
+        directChildFilter?: (child: CoverageGraphNode) => boolean,
       ): PuzzleTreeNodeDto[] => {
         const out: PuzzleTreeNodeDto[] = [];
         for (const child of parent.children) {
+          if (directChildFilter && !directChildFilter(child)) {
+            continue;
+          }
           if (child.tier !== "root") {
             const isEligibleBySample = coveragePuzzleIncludeLowSample || !child.lowSample;
             const isSelectedTier = child.tier === selectedTier && isEligibleBySample;
@@ -5103,7 +5158,7 @@ export default function VariantsPage() {
               continue;
             }
           }
-          const san = extractSanFromCoverageLabel(child.label);
+          const san = extractSanFromCoverageNode(child);
           if (!san || !child.fen) {
             continue;
           }
@@ -5120,15 +5175,19 @@ export default function VariantsPage() {
         parent: CoverageGraphNode,
         selectedTier: Exclude<CoverageTier, "root">,
         allowedStartKeys: Set<string>,
+        directChildFilter?: (child: CoverageGraphNode) => boolean,
       ) => {
         for (const child of parent.children) {
+          if (directChildFilter && !directChildFilter(child)) {
+            continue;
+          }
           if (
             child.tier === selectedTier &&
             child.overrideKey &&
             (coveragePuzzleIncludeLowSample || !child.lowSample)
           ) {
             const hasPlayableReply = child.children.some((replyNode) => {
-              const replySan = extractSanFromCoverageLabel(replyNode.label);
+              const replySan = extractSanFromCoverageNode(replyNode);
               return Boolean(replySan && replyNode.fen);
             });
             if (hasPlayableReply) {
@@ -5142,12 +5201,14 @@ export default function VariantsPage() {
       const buildPuzzleRootForTier = (selectedTier: Exclude<CoverageTier, "root">) => {
         const allowedStartKeys = new Set<string>();
         for (const transpositionSourceNode of transpositionSourceNodes) {
-          collectAllowedStartKeys(transpositionSourceNode, selectedTier, allowedStartKeys);
+          collectAllowedStartKeys(transpositionSourceNode, selectedTier, allowedStartKeys, directBranchMatches);
         }
 
         const mergedPuzzleChildren: PuzzleTreeNodeDto[] = [];
         for (const transpositionSourceNode of transpositionSourceNodes) {
-          mergedPuzzleChildren.push(...toFilteredPuzzleChildren(transpositionSourceNode, selectedTier));
+          mergedPuzzleChildren.push(
+            ...toFilteredPuzzleChildren(transpositionSourceNode, selectedTier, directBranchMatches),
+          );
         }
 
         return {
@@ -5162,7 +5223,7 @@ export default function VariantsPage() {
 
       const tiersToGenerate: Array<Exclude<CoverageTier, "root">> =
         coveragePuzzleTierFilter === "all" ? ["mainline", "secondary", "alternative"] : [coveragePuzzleTierFilter];
-      const now = formatDateToPGN(new Date());
+      const now = formatFileTimestamp(new Date());
       let generatedFiles = 0;
       let totalPuzzles = 0;
       const emptyTiers: string[] = [];
@@ -5182,11 +5243,17 @@ export default function VariantsPage() {
           allowedStartKeys: Array.from(allowedStartKeys),
         });
 
-        const fileStem = sanitizeFileStem(
+        if (result.count <= 0 || result.pgn.trim().length === 0) {
+          emptyTiers.push(tierSuffix);
+          continue;
+        }
+
+        const fileStemBase = sanitizeFileStem(
           coveragePuzzleTierFilter === "all"
-            ? `${selectedName}-${tierSuffix}`
+            ? `${selectedName}-${tierSuffix}-d${selectedDepth}-${now}`
             : `${selectedName}-${selectedTier}-d${selectedDepth}-${now}`,
         );
+        const fileStem = await resolveAvailablePgnFileStem(puzzleVariantsDir, fileStemBase);
         const tags = [
           PUZZLE_VARIANTS_TAG,
           ...sourceTags,
@@ -5198,6 +5265,9 @@ export default function VariantsPage() {
           `depth:${selectedDepth}`,
           `orientation:${orientation}`,
         ];
+        if (ecoVariant) {
+          tags.push(`ecoVariant:${ecoVariant}`);
+        }
 
         const createResult = await createFile({
           filename: fileStem,
@@ -5958,8 +6028,15 @@ export default function VariantsPage() {
               selectedDepth,
             });
 
-            const now = formatDateToPGN(new Date());
-            const fileStem = sanitizeFileStem(`${variant.name}-puzzles-d${selectedDepth}-${now}-${variantIndex + 1}`);
+            if (result.count <= 0 || result.pgn.trim().length === 0) {
+              continue;
+            }
+
+            const now = formatFileTimestamp(new Date());
+            const fileStemBase = sanitizeFileStem(
+              `${variant.name}-puzzles-d${selectedDepth}-${now}-${variantIndex + 1}`,
+            );
+            const fileStem = await resolveAvailablePgnFileStem(puzzleVariantsDir, fileStemBase);
 
             const mainlineNodes: TreeNode[] = [];
             let currentNode: TreeNode = tree.root;

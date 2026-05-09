@@ -1,12 +1,14 @@
 type PgnPuzzleProgressStore = Record<string, Record<string, true>>;
 type PgnPuzzleFirstAttemptResult = "correct" | "incorrect";
 type PgnPuzzleFirstAttemptStore = Record<string, Record<string, PgnPuzzleFirstAttemptResult>>;
+type PgnPuzzleSolveTimeStore = Record<string, Record<string, number>>;
 type PgnPuzzlePathStore = Record<string, unknown>;
 
 export type PgnPuzzleProgressSnapshot = {
   solved: number[];
   attempted: number[];
   firstAttempt: Record<string, PgnPuzzleFirstAttemptResult>;
+  solveTimes: Record<string, number>;
 };
 
 export const PGN_PUZZLE_PROGRESS_UPDATED_EVENT = "pgn-puzzles:progress-updated";
@@ -14,6 +16,7 @@ export const PGN_PUZZLE_PROGRESS_UPDATED_EVENT = "pgn-puzzles:progress-updated";
 const STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnProgress";
 const ATTEMPTED_STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnAttempted";
 const FIRST_ATTEMPT_STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnFirstAttempt";
+const SOLVE_TIME_STORAGE_KEY = "obsidian-chess-studio.puzzle.pgnSolveTimes";
 
 function normalizePathKey(path: string): string {
   const trimmed = path.trim().replace(/\\/g, "/");
@@ -64,6 +67,21 @@ function getMergedFirstAttemptResults(
     for (const [puzzleKey, result] of Object.entries(results)) {
       if (result === "correct" || result === "incorrect") {
         merged[puzzleKey] = result;
+      }
+    }
+  }
+  return merged;
+}
+
+function getMergedPuzzleSolveTimes(store: PgnPuzzleSolveTimeStore, pgnPath: string): Record<string, number> {
+  const merged: Record<string, number> = {};
+  const keys = getMatchingPathKeys(store, pgnPath);
+  for (const key of keys) {
+    const times = store[key];
+    if (!times || typeof times !== "object") continue;
+    for (const [puzzleKey, timeMs] of Object.entries(times)) {
+      if (Number.isFinite(timeMs) && timeMs > 0) {
+        merged[puzzleKey] = Math.round(timeMs);
       }
     }
   }
@@ -133,6 +151,27 @@ function writeFirstAttemptStore(store: PgnPuzzleFirstAttemptStore) {
   }
 }
 
+function readSolveTimeStore(): PgnPuzzleSolveTimeStore {
+  try {
+    const raw = localStorage.getItem(SOLVE_TIME_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as PgnPuzzleSolveTimeStore;
+  } catch {
+    return {};
+  }
+}
+
+function writeSolveTimeStore(store: PgnPuzzleSolveTimeStore) {
+  try {
+    const raw = JSON.stringify(store);
+    localStorage.setItem(SOLVE_TIME_STORAGE_KEY, raw);
+  } catch {
+    // ignore write errors (e.g., quota)
+  }
+}
+
 function emitProgressUpdated(): void {
   try {
     window.dispatchEvent(new Event(PGN_PUZZLE_PROGRESS_UPDATED_EVENT));
@@ -155,6 +194,26 @@ function recordFirstAttemptResult(pgnPath: string, puzzleIndex: number, result: 
   results[puzzleKey] = result;
   store[fileKey] = results;
   writeFirstAttemptStore(store);
+  return true;
+}
+
+function recordPgnPuzzleSolveTime(
+  pgnPath: string,
+  puzzleIndex: number,
+  solveTimeMs: number | null | undefined,
+): boolean {
+  if (!Number.isFinite(solveTimeMs)) return false;
+  const normalizedTimeMs = Math.max(1, Math.round(Number(solveTimeMs)));
+
+  const store = readSolveTimeStore();
+  const fileKey = resolveWritePathKey(store, pgnPath);
+  const puzzleKey = String(puzzleIndex);
+  const times = store[fileKey] ?? {};
+  if (Number.isFinite(times[puzzleKey]) && times[puzzleKey] > 0) return false;
+
+  times[puzzleKey] = normalizedTimeMs;
+  store[fileKey] = times;
+  writeSolveTimeStore(store);
   return true;
 }
 
@@ -186,10 +245,11 @@ export function recordPgnPuzzleIncorrect(pgnPath: string, puzzleIndex: number): 
   }
 }
 
-export function recordPgnPuzzleSolved(pgnPath: string, puzzleIndex: number): void {
+export function recordPgnPuzzleSolved(pgnPath: string, puzzleIndex: number, solveTimeMs?: number): void {
   if (!pgnPath) return;
   if (!Number.isFinite(puzzleIndex)) return;
 
+  const solveTimeChanged = recordPgnPuzzleSolveTime(pgnPath, puzzleIndex, solveTimeMs);
   const attemptedBeforeSolve = isPgnPuzzleAttemptedInStore(readAttemptedStore(), pgnPath, puzzleIndex);
   const firstAttemptResult = attemptedBeforeSolve ? "incorrect" : "correct";
   const firstAttemptChanged = recordFirstAttemptResult(pgnPath, puzzleIndex, firstAttemptResult);
@@ -203,7 +263,7 @@ export function recordPgnPuzzleSolved(pgnPath: string, puzzleIndex: number): voi
 
   const solved = store[fileKey] ?? {};
   if (solved[puzzleKey]) {
-    if (firstAttemptChanged) {
+    if (firstAttemptChanged || solveTimeChanged) {
       emitProgressUpdated();
     }
     return;
@@ -262,6 +322,19 @@ export function getFirstAttemptPgnPuzzleStats(pgnPath: string): { attempted: num
   };
 }
 
+export function getPgnPuzzleSolveTimeStats(pgnPath: string): { count: number; averageMs: number | null } {
+  const solveTimes = getMergedPuzzleSolveTimes(readSolveTimeStore(), pgnPath);
+  const values = Object.values(solveTimes).filter((timeMs) => Number.isFinite(timeMs) && timeMs > 0);
+  if (values.length === 0) {
+    return { count: 0, averageMs: null };
+  }
+  const totalMs = values.reduce((sum, timeMs) => sum + timeMs, 0);
+  return {
+    count: values.length,
+    averageMs: totalMs / values.length,
+  };
+}
+
 export function getPgnPuzzleProgressSnapshot(pgnPath: string): PgnPuzzleProgressSnapshot {
   return {
     solved: getSolvedPgnPuzzleIndexes(pgnPath),
@@ -270,6 +343,7 @@ export function getPgnPuzzleProgressSnapshot(pgnPath: string): PgnPuzzleProgress
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b),
     firstAttempt: getMergedFirstAttemptResults(readFirstAttemptStore(), pgnPath),
+    solveTimes: getMergedPuzzleSolveTimes(readSolveTimeStore(), pgnPath),
   };
 }
 
@@ -279,12 +353,15 @@ export function mergePgnPuzzleProgressSnapshot(pgnPath: string, snapshot: PgnPuz
   const solvedStore = readStore();
   const attemptedStore = readAttemptedStore();
   const firstAttemptStore = readFirstAttemptStore();
+  const solveTimeStore = readSolveTimeStore();
   const solvedKey = resolveWritePathKey(solvedStore, pgnPath);
   const attemptedKey = resolveWritePathKey(attemptedStore, pgnPath);
   const firstAttemptKey = resolveWritePathKey(firstAttemptStore, pgnPath);
+  const solveTimeKey = resolveWritePathKey(solveTimeStore, pgnPath);
   const solved = solvedStore[solvedKey] ?? {};
   const attempted = attemptedStore[attemptedKey] ?? {};
   const firstAttempt = firstAttemptStore[firstAttemptKey] ?? {};
+  const solveTimes = solveTimeStore[solveTimeKey] ?? {};
   let changed = false;
 
   for (const index of snapshot.solved) {
@@ -317,13 +394,24 @@ export function mergePgnPuzzleProgressSnapshot(pgnPath: string, snapshot: PgnPuz
     }
   }
 
+  for (const [key, rawTimeMs] of Object.entries(snapshot.solveTimes ?? {})) {
+    const timeMs = typeof rawTimeMs === "number" ? rawTimeMs : Number(rawTimeMs);
+    if (!Number.isFinite(timeMs) || timeMs <= 0) continue;
+    if (!Number.isFinite(solveTimes[key]) || solveTimes[key] <= 0) {
+      solveTimes[key] = Math.round(timeMs);
+      changed = true;
+    }
+  }
+
   if (!changed) return;
   solvedStore[solvedKey] = solved;
   attemptedStore[attemptedKey] = attempted;
   firstAttemptStore[firstAttemptKey] = firstAttempt;
+  solveTimeStore[solveTimeKey] = solveTimes;
   writeStore(solvedStore);
   writeAttemptedStore(attemptedStore);
   writeFirstAttemptStore(firstAttemptStore);
+  writeSolveTimeStore(solveTimeStore);
   emitProgressUpdated();
 }
 
@@ -340,16 +428,19 @@ export function resetPgnPuzzleProgressForPaths(pgnPaths: string[]): number {
   const solvedStore = readStore();
   const attemptedStore = readAttemptedStore();
   const firstAttemptStore = readFirstAttemptStore();
+  const solveTimeStore = readSolveTimeStore();
   let changed = 0;
 
   for (const path of uniquePaths) {
     const solvedKeys = getMatchingPathKeys(solvedStore, path);
     const attemptedKeys = getMatchingPathKeys(attemptedStore, path);
     const firstAttemptKeys = getMatchingPathKeys(firstAttemptStore, path);
+    const solveTimeKeys = getMatchingPathKeys(solveTimeStore, path);
     const hadSolved = solvedKeys.length > 0;
     const hadAttempted = attemptedKeys.length > 0;
     const hadFirstAttempt = firstAttemptKeys.length > 0;
-    if (!hadSolved && !hadAttempted && !hadFirstAttempt) continue;
+    const hadSolveTime = solveTimeKeys.length > 0;
+    if (!hadSolved && !hadAttempted && !hadFirstAttempt && !hadSolveTime) continue;
 
     for (const key of solvedKeys) {
       delete solvedStore[key];
@@ -360,6 +451,9 @@ export function resetPgnPuzzleProgressForPaths(pgnPaths: string[]): number {
     for (const key of firstAttemptKeys) {
       delete firstAttemptStore[key];
     }
+    for (const key of solveTimeKeys) {
+      delete solveTimeStore[key];
+    }
     changed += 1;
   }
 
@@ -367,6 +461,7 @@ export function resetPgnPuzzleProgressForPaths(pgnPaths: string[]): number {
   writeStore(solvedStore);
   writeAttemptedStore(attemptedStore);
   writeFirstAttemptStore(firstAttemptStore);
+  writeSolveTimeStore(solveTimeStore);
   emitProgressUpdated();
   return changed;
 }

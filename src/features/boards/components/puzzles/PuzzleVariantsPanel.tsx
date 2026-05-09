@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import {
   getFirstAttemptPgnPuzzleStats,
+  getPgnPuzzleSolveTimeStats,
   getSolvedPgnPuzzleCount,
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
 } from "@/utils/pgnPuzzleProgress";
@@ -59,7 +60,10 @@ function getFileStem(path: string): string {
 }
 
 function humanizePuzzleTitle(title: string): string {
-  const withoutGeneratedSuffix = title.replace(/-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}$/i, "");
+  const withoutGeneratedSuffix = title.replace(
+    /-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}(?:-\d{6})?$/i,
+    "",
+  );
   return withoutGeneratedSuffix.replace(/[-_]+/g, " ").trim();
 }
 
@@ -217,6 +221,10 @@ export function PuzzleVariantsPanel({
     () => (selectedDb && info ? getFirstAttemptPgnPuzzleStats(selectedDb) : { attempted: 0, correct: 0 }),
     [info, selectedDb],
   );
+  const solveTimeStats = useMemo(
+    () => (selectedDb && info ? getPgnPuzzleSolveTimeStats(selectedDb) : { count: 0, averageMs: null }),
+    [info, selectedDb],
+  );
   const clampedSolvedCount = useMemo(() => {
     if (!info) return 0;
     return Math.min(solvedCount, Math.max(0, info.puzzleCount));
@@ -232,6 +240,10 @@ export function PuzzleVariantsPanel({
     if (firstAttemptStats.attempted <= 0) return 0;
     return Math.round((firstAttemptStats.correct / firstAttemptStats.attempted) * 100);
   }, [firstAttemptStats, info]);
+  const averageSolveTime = useMemo(() => {
+    if (!info || solveTimeStats.averageMs == null) return "--";
+    return t("units.duration", { duration: solveTimeStats.averageMs });
+  }, [info, solveTimeStats.averageMs, t]);
   const recentIncorrectSubvariants = useMemo(() => {
     if (!selectedDb || !info || solutionHeaders.length === 0) return [];
     const activePath = normalizePath(selectedDb);
@@ -300,6 +312,12 @@ export function PuzzleVariantsPanel({
                 {t("features.puzzle.variantsAccuracy", {
                   defaultValue: "Accuracy {{accuracy}}%",
                   accuracy,
+                })}
+              </Badge>
+              <Badge size="sm" variant="light">
+                {t("features.puzzle.averageSolveTime", {
+                  defaultValue: "Avg time {{time}}",
+                  time: averageSolveTime,
                 })}
               </Badge>
             </Group>

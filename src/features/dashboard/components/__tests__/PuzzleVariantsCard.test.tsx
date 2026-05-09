@@ -48,8 +48,11 @@ vi.mock("@/features/files/utils/file", async (importOriginal) => {
 });
 
 vi.mock("@/utils/pgnPuzzleProgress", () => ({
-  getSolvedPgnPuzzleCount: vi.fn().mockResolvedValue(0),
+  getFirstAttemptPgnPuzzleStats: vi.fn().mockReturnValue({ attempted: 0, correct: 0 }),
+  getPgnPuzzleSolveTimeStats: vi.fn().mockReturnValue({ count: 0, averageMs: null }),
+  getSolvedPgnPuzzleCount: vi.fn().mockReturnValue(0),
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT: "puzzle-progress-updated",
+  resetPgnPuzzleProgressForPaths: vi.fn().mockReturnValue(0),
 }));
 
 vi.mock("@/utils/tabs", async (importOriginal) => {

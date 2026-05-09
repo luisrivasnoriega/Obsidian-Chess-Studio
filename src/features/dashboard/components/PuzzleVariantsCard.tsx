@@ -1,12 +1,37 @@
-import { Badge, Box, Button, Card, Group, Loader, Progress, ScrollArea, Stack, Text, ThemeIcon } from "@mantine/core";
+import {
+  Badge,
+  Box,
+  Button,
+  Card,
+  Group,
+  Loader,
+  Progress,
+  ScrollArea,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from "@mantine/core";
+import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { IconPuzzle } from "@tabler/icons-react";
+import {
+  IconChevronRight,
+  IconCrown,
+  IconFilter,
+  IconPuzzle,
+  IconRefresh,
+  IconSearch,
+  IconTrash,
+} from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { join } from "@tauri-apps/api/path";
+import { exists, readDir, readTextFile, remove } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { loadDirectories } from "@/App";
-import { type FileMetadata, processEntriesRecursively } from "@/features/files/utils/file";
+import { commands } from "@/bindings";
+import { getPuzzleVariantsDirectory } from "@/features/variants/utils/profileDir";
 import {
   activeProfileIdAtom,
   activeTabAtom,
@@ -15,6 +40,8 @@ import {
   tabsAtom,
 } from "@/state/atoms";
 import {
+  getFirstAttemptPgnPuzzleStats,
+  getPgnPuzzleSolveTimeStats,
   getSolvedPgnPuzzleCount,
   PGN_PUZZLE_PROGRESS_UPDATED_EVENT,
   resetPgnPuzzleProgressForPaths,
@@ -25,6 +52,7 @@ import {
   puzzleVariantMatchesProfile,
 } from "@/utils/puzzleVariantMetadata";
 import { createTab } from "@/utils/tabs";
+import { unwrap } from "@/utils/unwrap";
 
 type PuzzleVariantFile = {
   title: string;
@@ -37,10 +65,16 @@ type PuzzleVariantFile = {
   mainline: string | null;
   coverageNode: string | null;
   coverageTier: "mainline" | "secondary" | "alternative" | null;
+  ecoVariant: string | null;
 };
 
+type PriorityFilter = "all" | "1" | "2" | "3";
+
 function humanizePuzzleTitle(title: string): string {
-  const withoutGeneratedSuffix = title.replace(/-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}$/i, "");
+  const withoutGeneratedSuffix = title.replace(
+    /-(mainline|secondary|alternative)-d\d+-\d{4}\.\d{2}\.\d{2}(?:-\d{6})?$/i,
+    "",
+  );
   return withoutGeneratedSuffix.replace(/[-_]+/g, " ").trim();
 }
 
@@ -54,6 +88,35 @@ function getTierPriority(tier: PuzzleVariantFile["coverageTier"]): number {
       return 3;
     default:
       return 9;
+  }
+}
+
+function getTierDisplayLabel(
+  t: (key: string, options?: { defaultValue?: string }) => string,
+  tier: PuzzleVariantFile["coverageTier"],
+): string {
+  switch (tier) {
+    case "mainline":
+      return t("features.dashboard.puzzleVariants.mainlineTier", { defaultValue: "Main line" });
+    case "secondary":
+      return t("features.dashboard.puzzleVariants.secondaryTier", { defaultValue: "Secondary" });
+    case "alternative":
+      return t("features.dashboard.puzzleVariants.alternativeTier", { defaultValue: "Alternative" });
+    default:
+      return t("features.dashboard.puzzleVariants.training", { defaultValue: "Training" });
+  }
+}
+
+function getTierBadgeColor(tier: PuzzleVariantFile["coverageTier"]): string {
+  switch (tier) {
+    case "mainline":
+      return "blue";
+    case "secondary":
+      return "green";
+    case "alternative":
+      return "red";
+    default:
+      return "gray";
   }
 }
 
@@ -74,7 +137,103 @@ function getPuzzleDisplayName(file: PuzzleVariantFile): string {
   return file.title;
 }
 
+function normalizeSearchText(value: string | null | undefined): string {
+  return `${value ?? ""}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 const PUZZLE_VARIANTS_UPDATED_EVENT = "puzzle-variants:updated";
+const puzzleVariantCountCache = new Map<string, number>();
+
+function getInfoPath(pgnPath: string): string {
+  return pgnPath.replace(/\.pgn$/i, ".info");
+}
+
+async function loadPuzzleVariantFilesFromDirectory(
+  dir: string,
+  activeProfileId: string | null,
+): Promise<PuzzleVariantFile[]> {
+  if (!(await exists(dir))) {
+    return [];
+  }
+
+  const entries = await readDir(dir);
+  const nested = await Promise.all(
+    entries.map(async (entry): Promise<PuzzleVariantFile[]> => {
+      const entryPath = await join(dir, entry.name);
+      if (entry.isDirectory) {
+        return loadPuzzleVariantFilesFromDirectory(entryPath, activeProfileId);
+      }
+      if (!entry.isFile || !entry.name.toLowerCase().endsWith(".pgn")) {
+        return [];
+      }
+
+      try {
+        const infoPath = getInfoPath(entryPath);
+        if (!(await exists(infoPath))) {
+          return [];
+        }
+
+        const metadata = JSON.parse(await readTextFile(infoPath)) as { type?: unknown; tags?: unknown };
+        const tags = Array.isArray(metadata.tags)
+          ? metadata.tags.filter((tag): tag is string => typeof tag === "string")
+          : [];
+        if (metadata.type !== "puzzle" || !tags.includes(PUZZLE_VARIANTS_TAG)) {
+          return [];
+        }
+        if (!puzzleVariantMatchesProfile(tags, activeProfileId)) {
+          return [];
+        }
+
+        const { profileId, variantPath, variantName, depth, mainline, coverageNode, coverageTier, ecoVariant } =
+          parsePuzzleVariantTags(tags);
+        let puzzleCount = puzzleVariantCountCache.get(entryPath);
+        if (puzzleCount === undefined) {
+          puzzleCount = unwrap(await commands.countPgnGames(entryPath));
+          puzzleVariantCountCache.set(entryPath, puzzleCount);
+        }
+
+        return [
+          {
+            title: entry.name.replace(/\.pgn$/i, ""),
+            path: entryPath,
+            puzzleCount,
+            profileId,
+            variantPath,
+            variantName,
+            depth,
+            mainline,
+            coverageNode,
+            coverageTier,
+            ecoVariant,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    }),
+  );
+
+  return nested.flat();
+}
+
+async function removePuzzleVariantFiles(paths: string[]): Promise<void> {
+  await Promise.all(
+    paths.map(async (path) => {
+      const infoPath = getInfoPath(path);
+      puzzleVariantCountCache.delete(path);
+      if (await exists(path)) {
+        await remove(path);
+      }
+      if (await exists(infoPath)) {
+        await remove(infoPath);
+      }
+    }),
+  );
+}
 
 export function PuzzleVariantsCard() {
   const { t } = useTranslation();
@@ -88,6 +247,8 @@ export function PuzzleVariantsCard() {
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<PuzzleVariantFile[]>([]);
   const [_progressVersion, setProgressVersion] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
 
   const openPuzzles = useCallback(
     (dbPath?: string, unsolvedOnly = false) => {
@@ -108,40 +269,8 @@ export function PuzzleVariantsCard() {
   const reloadFiles = useCallback(async () => {
     setLoading(true);
     try {
-      const { exists, readDir } = await import("@tauri-apps/plugin-fs");
-      const dirs = await loadDirectories();
-      const documentsDir = dirs.documentDir;
-      if (!(await exists(documentsDir))) {
-        setFiles([]);
-        return;
-      }
-
-      const entries = await readDir(documentsDir);
-      const allEntries = await processEntriesRecursively(documentsDir, entries);
-
-      const variantFiles = allEntries
-        .filter((entry): entry is FileMetadata => entry.type === "file")
-        .filter((file) => file.metadata.type === "puzzle")
-        .filter((file) => file.metadata.tags.includes(PUZZLE_VARIANTS_TAG))
-        .filter((file) => puzzleVariantMatchesProfile(file.metadata.tags, activeProfileId))
-        .map((file) => {
-          const { profileId, variantPath, variantName, depth, mainline, coverageNode, coverageTier } =
-            parsePuzzleVariantTags(file.metadata.tags);
-          return {
-            title: file.name,
-            path: file.path,
-            puzzleCount: file.numGames,
-            profileId,
-            variantPath,
-            variantName,
-            depth,
-            mainline,
-            coverageNode,
-            coverageTier,
-          };
-        });
-
-      setFiles(variantFiles);
+      const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
+      setFiles(await loadPuzzleVariantFilesFromDirectory(puzzleVariantsDir, activeProfileId ?? null));
     } catch {
       setFiles([]);
     } finally {
@@ -176,8 +305,24 @@ export function PuzzleVariantsCard() {
         const safeTotal = Math.max(0, file.puzzleCount);
         const clampedSolved = Math.min(solvedCount, safeTotal);
         const coverage = safeTotal > 0 ? Math.round((clampedSolved / safeTotal) * 100) : 0;
+        const firstAttemptStats = getFirstAttemptPgnPuzzleStats(file.path);
+        const accuracy =
+          firstAttemptStats.attempted > 0
+            ? Math.round((firstAttemptStats.correct / firstAttemptStats.attempted) * 100)
+            : 0;
+        const solveTimeStats = getPgnPuzzleSolveTimeStats(file.path);
+        const averageSolveTime =
+          solveTimeStats.averageMs == null ? "--" : t("units.duration", { duration: solveTimeStats.averageMs });
         const displayName = getPuzzleDisplayName(file);
-        return { ...file, solvedCount: clampedSolved, coverage, displayName };
+        return {
+          ...file,
+          solvedCount: clampedSolved,
+          coverage,
+          accuracy,
+          attemptedCount: firstAttemptStats.attempted,
+          averageSolveTime,
+          displayName,
+        };
       })
       .sort((a, b) => {
         const tierPriorityDiff = getTierPriority(a.coverageTier) - getTierPriority(b.coverageTier);
@@ -186,7 +331,60 @@ export function PuzzleVariantsCard() {
         }
         return a.displayName.localeCompare(b.displayName);
       });
-  }, [files]);
+  }, [files, t]);
+
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(searchQuery);
+    return rows.filter((row) => {
+      const priority = getTierPriority(row.coverageTier);
+      if (priorityFilter !== "all" && priority !== Number(priorityFilter)) {
+        return false;
+      }
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const tierLabel = getTierDisplayLabel(t, row.coverageTier);
+      const priorityTokens = [
+        `${priority}`,
+        `p${priority}`,
+        `priority ${priority}`,
+        `priority:${priority}`,
+        row.coverageTier === "mainline" ? "ml" : "",
+      ];
+      const searchable = [
+        row.displayName,
+        row.title,
+        row.variantName,
+        row.coverageNode,
+        row.ecoVariant,
+        row.mainline,
+        row.coverageTier,
+        tierLabel,
+        ...priorityTokens,
+      ]
+        .map(normalizeSearchText)
+        .filter(Boolean)
+        .join(" ");
+      return searchable.includes(normalizedQuery);
+    });
+  }, [priorityFilter, rows, searchQuery, t]);
+
+  const priorityFilterOptions = useMemo(
+    () => [
+      { value: "all", label: t("features.dashboard.puzzleVariants.priorityAll", { defaultValue: "All priorities" }) },
+      { value: "1", label: t("features.dashboard.puzzleVariants.priorityOne", { defaultValue: "Priority 1 - ML" }) },
+      {
+        value: "2",
+        label: t("features.dashboard.puzzleVariants.priorityTwo", { defaultValue: "Priority 2 - Secondary" }),
+      },
+      {
+        value: "3",
+        label: t("features.dashboard.puzzleVariants.priorityThree", { defaultValue: "Priority 3 - Alternative" }),
+      },
+    ],
+    [t],
+  );
 
   const resetProgress = useCallback(() => {
     try {
@@ -245,174 +443,456 @@ export function PuzzleVariantsCard() {
     [t],
   );
 
+  const deletePuzzleVariants = useCallback(
+    async (targets: Array<{ path: string }>) => {
+      const paths = targets.map((target) => target.path);
+      if (paths.length === 0) return;
+
+      try {
+        await removePuzzleVariantFiles(paths);
+        resetPgnPuzzleProgressForPaths(paths);
+        const pathSet = new Set(paths);
+        setFiles((current) => current.filter((file) => !pathSet.has(file.path)));
+        setSelectedPuzzleDb((current) => (current && pathSet.has(current) ? null : current));
+        setPuzzleUnsolvedOnlyDb((current) => (current && pathSet.has(current) ? null : current));
+
+        try {
+          window.dispatchEvent(new Event("puzzles:updated"));
+          window.dispatchEvent(new Event(PUZZLE_VARIANTS_UPDATED_EVENT));
+        } catch {}
+
+        notifications.show({
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("features.dashboard.puzzleVariants.deleteDone", {
+            defaultValue: "Deleted {{count}} puzzle variant files.",
+            count: paths.length,
+          }),
+          color: "green",
+        });
+      } catch {
+        notifications.show({
+          title: t("common.error", { defaultValue: "Error" }),
+          message: t("features.dashboard.puzzleVariants.deleteFailed", {
+            defaultValue: "Failed to delete puzzle variants.",
+          }),
+          color: "red",
+        });
+      }
+    },
+    [setPuzzleUnsolvedOnlyDb, setSelectedPuzzleDb, t],
+  );
+
+  const confirmDeletePuzzleVariant = useCallback(
+    (row: { path: string; displayName: string }) => {
+      modals.openConfirmModal({
+        title: t("features.dashboard.puzzleVariants.deleteOneTitle", { defaultValue: "Delete puzzle variant" }),
+        children: (
+          <Text size="sm">
+            {t("features.dashboard.puzzleVariants.deleteOneConfirm", {
+              defaultValue: "Delete {{name}} and its saved progress?",
+              name: row.displayName,
+            })}
+          </Text>
+        ),
+        labels: {
+          confirm: t("features.dashboard.puzzleVariants.deleteOne", { defaultValue: "Delete" }),
+          cancel: t("common.cancel", { defaultValue: "Cancel" }),
+        },
+        confirmProps: { color: "red" },
+        onConfirm: () => void deletePuzzleVariants([row]),
+      });
+    },
+    [deletePuzzleVariants, t],
+  );
+
+  const confirmDeleteAllPuzzleVariants = useCallback(() => {
+    modals.openConfirmModal({
+      title: t("features.dashboard.puzzleVariants.deleteAllTitle", { defaultValue: "Delete puzzle variants" }),
+      children: (
+        <Text size="sm">
+          {t("features.dashboard.puzzleVariants.deleteAllConfirm", {
+            defaultValue: "Delete {{count}} puzzle variant files and their saved progress?",
+            count: rows.length,
+          })}
+        </Text>
+      ),
+      labels: {
+        confirm: t("features.dashboard.puzzleVariants.deleteAll", { defaultValue: "Delete all" }),
+        cancel: t("common.cancel", { defaultValue: "Cancel" }),
+      },
+      confirmProps: { color: "red" },
+      onConfirm: () => void deletePuzzleVariants(rows),
+    });
+  }, [deletePuzzleVariants, rows, t]);
+
   return (
     <Card
       withBorder
-      p="lg"
+      p="xl"
       radius="lg"
       h="100%"
       style={{
         background:
-          "radial-gradient(120% 180% at 100% 0%, color-mix(in srgb, var(--mantine-color-cyan-9) 9%, transparent) 0%, transparent 52%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-5) 10%), var(--mantine-color-dark-7))",
-        borderColor: "color-mix(in srgb, var(--mantine-color-cyan-8) 18%, var(--mantine-color-dark-4))",
+          "radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 22%, transparent) 0%, transparent 52%), radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--mantine-color-cyan-9) 14%, transparent) 0%, transparent 55%), linear-gradient(145deg, #030812, #07111f 52%, #050a13)",
+        borderColor: "rgba(96, 165, 250, 0.22)",
+        boxShadow: "0 20px 70px rgba(0, 0, 0, 0.28)",
       }}
     >
-      <Group justify="space-between" mb="md">
-        <Group gap="xs">
-          <ThemeIcon
-            radius="md"
-            variant="light"
-            color="cyan"
-            style={{ border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-7) 30%, transparent)" }}
-          >
-            <IconPuzzle size={16} />
-          </ThemeIcon>
-          <Text fw={700}>{t("features.dashboard.puzzleVariants.title", { defaultValue: "Puzzle variants" })}</Text>
-        </Group>
-        <Group gap="xs">
-          <Button
-            size="xs"
-            radius="md"
-            variant="default"
-            disabled={rows.length === 0}
-            onClick={resetProgress}
-            style={{
-              borderColor: "color-mix(in srgb, var(--mantine-color-cyan-8) 20%, var(--mantine-color-dark-4))",
-              backgroundColor: "color-mix(in srgb, var(--mantine-color-dark-6) 90%, var(--mantine-color-cyan-9) 10%)",
-            }}
-          >
-            {t("features.dashboard.puzzleVariants.resetProgress", { defaultValue: "Reset progress" })}
-          </Button>
-          <Button
-            size="xs"
-            radius="md"
-            variant="light"
-            onClick={() => openPuzzles()}
-            leftSection={<IconPuzzle size={16} />}
-            style={{
-              border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 20%, transparent)",
-              background:
-                "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-blue-8) 84%, var(--mantine-color-blue-7) 16%), color-mix(in srgb, var(--mantine-color-blue-7) 90%, var(--mantine-color-blue-6) 10%))",
-            }}
-          >
-            {t("features.tabs.puzzle.button")}
-          </Button>
-        </Group>
-      </Group>
-      {loading ? (
-        <Group justify="center" py="md">
-          <Loader size="sm" />
-        </Group>
-      ) : rows.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          {t("features.dashboard.puzzleVariants.empty", {
-            defaultValue: "Generate puzzle variants from Build Variants to see them here.",
-          })}
-        </Text>
-      ) : (
-        <ScrollArea
-          h={260}
-          offsetScrollbars
-          style={{
-            borderRadius: 12,
-            border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 14%, var(--mantine-color-dark-4))",
-            background:
-              "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-6) 94%, var(--mantine-color-cyan-9) 6%), var(--mantine-color-dark-6))",
-            padding: 8,
-          }}
-        >
-          <Stack gap="sm">
-            {rows.map((row) => (
-              <Box
-                key={row.path}
-                onClick={() => openPuzzles(row.path)}
-                style={{
-                  cursor: "pointer",
-                  borderRadius: 11,
-                  border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 14%, var(--mantine-color-dark-4))",
-                  background:
-                    "linear-gradient(150deg, color-mix(in srgb, var(--mantine-color-dark-7) 84%, var(--mantine-color-dark-5) 16%), color-mix(in srgb, var(--mantine-color-dark-7) 92%, var(--mantine-color-dark-6) 8%))",
-                  padding: "10px 12px",
-                }}
-              >
-                <Group justify="space-between" wrap="nowrap" align="flex-start">
-                  <Stack gap={5} style={{ flex: 1, minWidth: 0 }}>
-                    <Group gap="xs" wrap="nowrap">
-                      <Text size="sm" fw={600} truncate>
-                        {row.displayName}
-                      </Text>
-                      {row.coverageTier === "mainline" ? (
-                        <Badge size="xs" variant="filled" radius="md" color="blue">
-                          {t("features.board.variants.mainlineShort", { defaultValue: "ML" })}
-                        </Badge>
-                      ) : row.coverageTier === "secondary" ? (
-                        <Badge size="xs" variant="filled" radius="md" color="green">
-                          {t("features.board.variants.secondaryShort", { defaultValue: "Secondary" })}
-                        </Badge>
-                      ) : row.coverageTier === "alternative" ? (
-                        <Badge size="xs" variant="filled" radius="md" color="red">
-                          {t("features.board.variants.alternativeShort", { defaultValue: "Alternative" })}
-                        </Badge>
-                      ) : null}
-                    </Group>
-                    {row.mainline ? (
-                      <Text size="xs" c="dimmed" truncate>
-                        {row.mainline}
-                      </Text>
-                    ) : null}
-                    <Progress
-                      value={row.coverage}
-                      size="xs"
-                      radius="xl"
-                      color="cyan"
-                      style={{
-                        backgroundColor:
-                          "color-mix(in srgb, var(--mantine-color-dark-5) 86%, var(--mantine-color-dark-4) 14%)",
-                      }}
-                    />
-                  </Stack>
+      <Stack gap="xl">
+        <Group justify="space-between" align="flex-start" gap="lg" wrap="wrap">
+          <Group gap="md" align="flex-start" style={{ flex: "1 1 260px" }}>
+            <ThemeIcon
+              radius="lg"
+              variant="light"
+              color="cyan"
+              size={58}
+              style={{
+                border: "1px solid rgba(34, 211, 238, 0.42)",
+                background: "linear-gradient(145deg, rgba(8, 47, 73, 0.72), rgba(2, 8, 23, 0.9))",
+                boxShadow: "0 0 34px rgba(34, 211, 238, 0.16)",
+              }}
+            >
+              <IconPuzzle size={28} />
+            </ThemeIcon>
+            <Stack gap={4} style={{ minWidth: 0 }}>
+              <Text fw={800} fz={28} lh={1.1}>
+                {t("features.dashboard.puzzleVariants.title", { defaultValue: "Puzzle variants" })}
+              </Text>
+              <Text size="sm" c="dimmed" lh={1.45}>
+                {t("features.dashboard.puzzleVariants.subtitle", {
+                  defaultValue: "Track progress and solve puzzles for each variant.",
+                })}
+              </Text>
+            </Stack>
+          </Group>
 
-                  <Stack gap={3} align="flex-end" style={{ flexShrink: 0 }}>
-                    <Text size="sm" fw={700}>
-                      {row.coverage}%
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {row.solvedCount}/{row.puzzleCount}
-                    </Text>
-                    <Button
-                      size="compact-xs"
-                      radius="md"
-                      variant="subtle"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        resetSingleProgress(row);
-                      }}
-                    >
-                      {t("features.dashboard.puzzleVariants.resetOne", { defaultValue: "Reset" })}
-                    </Button>
-                    <Button
-                      size="compact-xs"
-                      radius="md"
-                      variant="light"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        openPuzzles(row.path, true);
-                      }}
-                      style={{
-                        border: "1px solid color-mix(in srgb, var(--mantine-color-cyan-8) 20%, transparent)",
-                        backgroundColor:
-                          "color-mix(in srgb, var(--mantine-color-cyan-9) 28%, var(--mantine-color-dark-6) 72%)",
-                      }}
-                    >
-                      {t("features.dashboard.puzzleVariants.solveUnsolved", { defaultValue: "Solve Unsolved" })}
-                    </Button>
-                  </Stack>
-                </Group>
-              </Box>
-            ))}
-          </Stack>
-        </ScrollArea>
-      )}
+          <Group gap="sm" wrap="wrap" justify="flex-end">
+            <Button
+              size="md"
+              radius="md"
+              variant="default"
+              disabled={rows.length === 0}
+              onClick={resetProgress}
+              leftSection={<IconRefresh size={18} />}
+              style={{
+                borderColor: "rgba(148, 163, 184, 0.32)",
+                backgroundColor: "rgba(15, 23, 42, 0.72)",
+              }}
+            >
+              {t("features.dashboard.puzzleVariants.resetProgress", { defaultValue: "Reset progress" })}
+            </Button>
+            <Button
+              size="md"
+              radius="md"
+              variant="light"
+              onClick={() => openPuzzles()}
+              leftSection={<IconPuzzle size={18} />}
+              style={{
+                border: "1px solid rgba(14, 165, 233, 0.44)",
+                background: "linear-gradient(145deg, #0b63f6, #0647b8)",
+                color: "white",
+              }}
+            >
+              {t("features.tabs.puzzle.button")}
+            </Button>
+            <Button
+              size="md"
+              radius="md"
+              variant="default"
+              color="red"
+              disabled={rows.length === 0}
+              onClick={confirmDeleteAllPuzzleVariants}
+              leftSection={<IconTrash size={18} />}
+              style={{
+                borderColor: "rgba(248, 113, 113, 0.32)",
+                backgroundColor: "rgba(15, 23, 42, 0.72)",
+                color: "var(--mantine-color-red-3)",
+              }}
+            >
+              {t("features.dashboard.puzzleVariants.deleteAll", { defaultValue: "Delete all" })}
+            </Button>
+          </Group>
+        </Group>
+
+        {rows.length > 0 ? (
+          <Group gap="sm" align="flex-end" wrap="wrap">
+            <TextInput
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              placeholder={t("features.dashboard.puzzleVariants.searchPlaceholder", {
+                defaultValue: "Search by name, ECO, tier, or priority",
+              })}
+              leftSection={<IconSearch size={16} />}
+              style={{ flex: "1 1 320px" }}
+              styles={{
+                input: {
+                  backgroundColor: "rgba(15, 23, 42, 0.72)",
+                  borderColor: "rgba(96, 165, 250, 0.22)",
+                },
+              }}
+            />
+            <Select
+              value={priorityFilter}
+              onChange={(value) => setPriorityFilter((value as PriorityFilter | null) ?? "all")}
+              data={priorityFilterOptions}
+              leftSection={<IconFilter size={16} />}
+              allowDeselect={false}
+              style={{ flex: "0 1 260px" }}
+              styles={{
+                input: {
+                  backgroundColor: "rgba(15, 23, 42, 0.72)",
+                  borderColor: "rgba(96, 165, 250, 0.22)",
+                },
+              }}
+            />
+          </Group>
+        ) : null}
+
+        {loading ? (
+          <Group justify="center" py="xl">
+            <Loader size="sm" />
+          </Group>
+        ) : rows.length === 0 ? (
+          <Box
+            p="lg"
+            style={{
+              borderRadius: 16,
+              border: "1px solid rgba(96, 165, 250, 0.18)",
+              background: "rgba(15, 23, 42, 0.48)",
+            }}
+          >
+            <Text size="sm" c="dimmed">
+              {t("features.dashboard.puzzleVariants.empty", {
+                defaultValue: "Generate puzzle variants from Build Variants to see them here.",
+              })}
+            </Text>
+          </Box>
+        ) : filteredRows.length === 0 ? (
+          <Box
+            p="lg"
+            style={{
+              borderRadius: 16,
+              border: "1px solid rgba(96, 165, 250, 0.18)",
+              background: "rgba(15, 23, 42, 0.48)",
+            }}
+          >
+            <Text size="sm" c="dimmed">
+              {t("features.dashboard.puzzleVariants.noMatches", {
+                defaultValue: "No puzzle variants match the current filters.",
+              })}
+            </Text>
+          </Box>
+        ) : (
+          <ScrollArea.Autosize mah={620} offsetScrollbars>
+            <Stack gap="lg">
+              {filteredRows.map((row) => {
+                const tierLabel = getTierDisplayLabel(t, row.coverageTier);
+                return (
+                  <Box
+                    key={row.path}
+                    onClick={() => openPuzzles(row.path)}
+                    style={{
+                      cursor: "pointer",
+                      borderRadius: 18,
+                      border: "1px solid rgba(96, 165, 250, 0.18)",
+                      background:
+                        "radial-gradient(90% 120% at 0% 50%, rgba(14, 165, 233, 0.1), transparent 52%), linear-gradient(145deg, rgba(8, 19, 34, 0.94), rgba(6, 13, 25, 0.96))",
+                      boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+                      padding: "22px",
+                    }}
+                  >
+                    <Box style={{ display: "flex", gap: 26, alignItems: "center", flexWrap: "wrap" }}>
+                      <Group gap="lg" wrap="nowrap" style={{ flex: "1 1 300px", minWidth: 0 }}>
+                        <ThemeIcon
+                          radius="50%"
+                          variant="light"
+                          color="cyan"
+                          size={76}
+                          style={{
+                            border: "2px solid rgba(34, 211, 238, 0.84)",
+                            background: "radial-gradient(circle, rgba(14, 165, 233, 0.24), rgba(2, 8, 23, 0.92))",
+                            boxShadow: "0 0 0 10px rgba(14, 165, 233, 0.08), 0 0 34px rgba(34, 211, 238, 0.28)",
+                          }}
+                        >
+                          <IconCrown size={34} />
+                        </ThemeIcon>
+
+                        <Stack gap={8} style={{ minWidth: 0, flex: 1 }}>
+                          <Group gap="xs" wrap="nowrap">
+                            <Text fw={800} fz={24} lh={1.1} truncate>
+                              {row.displayName}
+                            </Text>
+                            <Badge
+                              size="md"
+                              radius="xl"
+                              variant="filled"
+                              color={getTierBadgeColor(row.coverageTier)}
+                              style={{ flexShrink: 0 }}
+                            >
+                              {row.coverageTier === "mainline"
+                                ? t("features.board.variants.mainlineShort", { defaultValue: "ML" })
+                                : tierLabel}
+                            </Badge>
+                          </Group>
+
+                          {row.ecoVariant ? (
+                            <Text size="sm" c="dimmed" truncate>
+                              {row.ecoVariant}
+                            </Text>
+                          ) : null}
+
+                          <Text size="sm" c="dimmed" truncate>
+                            {t("features.dashboard.puzzleVariants.trainingSet", {
+                              defaultValue: "{{tier}} training set",
+                              tier: tierLabel,
+                            })}
+                          </Text>
+
+                          <Group gap="xs" wrap="nowrap">
+                            <IconPuzzle size={18} color="var(--mantine-color-blue-3)" />
+                            <Text size="sm" c="dimmed">
+                              {t("features.dashboard.puzzleVariants.puzzleCount", {
+                                defaultValue: "{{count}} puzzles",
+                                count: row.puzzleCount,
+                              })}
+                            </Text>
+                          </Group>
+                        </Stack>
+                      </Group>
+
+                      <Box
+                        style={{
+                          flex: "1 1 430px",
+                          minWidth: "min(340px, 100%)",
+                          borderLeft: "1px solid rgba(148, 163, 184, 0.18)",
+                          borderRight: "1px solid rgba(148, 163, 184, 0.18)",
+                          padding: "6px 28px",
+                        }}
+                      >
+                        <Group grow gap={0} wrap="nowrap">
+                          <Stack gap={2} align="center">
+                            <Text fw={800} fz={28}>
+                              {row.coverage}%
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {t("features.dashboard.puzzleVariants.progress", { defaultValue: "Progress" })}
+                            </Text>
+                          </Stack>
+                          <Stack gap={2} align="center">
+                            <Text fw={800} fz={28}>
+                              {row.solvedCount}
+                              <Text span fz={16} c="dimmed" fw={500}>
+                                /{row.puzzleCount}
+                              </Text>
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {t("features.dashboard.puzzleVariants.solved", { defaultValue: "Solved" })}
+                            </Text>
+                          </Stack>
+                          <Stack gap={2} align="center">
+                            <Text fw={800} fz={28}>
+                              {row.accuracy}%
+                            </Text>
+                            <Text size="xs" c="dimmed" ta="center">
+                              {t("features.dashboard.puzzleVariants.solvedAccuracy", {
+                                defaultValue: "Solved accuracy",
+                              })}
+                            </Text>
+                          </Stack>
+                          <Stack gap={2} align="center">
+                            <Text fw={800} fz={24}>
+                              {row.averageSolveTime}
+                            </Text>
+                            <Text size="xs" c="dimmed" ta="center">
+                              {t("features.dashboard.puzzleVariants.averageSolveTime", {
+                                defaultValue: "Avg time",
+                              })}
+                            </Text>
+                          </Stack>
+                        </Group>
+
+                        <Group gap="sm" mt="xl" wrap="nowrap">
+                          <Progress
+                            value={row.coverage}
+                            size="sm"
+                            radius="xl"
+                            color="cyan"
+                            style={{
+                              flex: 1,
+                              backgroundColor: "rgba(148, 163, 184, 0.16)",
+                            }}
+                          />
+                          <Text size="sm" c="blue.4" fw={700} style={{ minWidth: 42, textAlign: "right" }}>
+                            {row.coverage}%
+                          </Text>
+                        </Group>
+                      </Box>
+
+                      <Stack gap="md" style={{ flex: "0 1 240px", minWidth: 210, marginLeft: "auto" }}>
+                        <Button
+                          size="md"
+                          radius="md"
+                          fullWidth
+                          rightSection={<IconChevronRight size={20} />}
+                          leftSection={<IconPuzzle size={20} />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openPuzzles(row.path, true);
+                          }}
+                          style={{
+                            border: "1px solid rgba(14, 165, 233, 0.52)",
+                            background: "linear-gradient(145deg, #0b63f6, #0647b8)",
+                            color: "white",
+                          }}
+                        >
+                          {t("features.dashboard.puzzleVariants.solveUnsolved", { defaultValue: "Solve Unsolved" })}
+                        </Button>
+
+                        <Group grow gap="sm" wrap="nowrap">
+                          <Button
+                            size="sm"
+                            radius="md"
+                            variant="default"
+                            leftSection={<IconRefresh size={16} />}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              resetSingleProgress(row);
+                            }}
+                            style={{
+                              borderColor: "rgba(96, 165, 250, 0.22)",
+                              backgroundColor: "rgba(15, 23, 42, 0.72)",
+                            }}
+                          >
+                            {t("features.dashboard.puzzleVariants.resetOne", { defaultValue: "Reset" })}
+                          </Button>
+                          <Button
+                            size="sm"
+                            radius="md"
+                            variant="default"
+                            color="red"
+                            leftSection={<IconTrash size={16} />}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              confirmDeletePuzzleVariant(row);
+                            }}
+                            style={{
+                              borderColor: "rgba(248, 113, 113, 0.26)",
+                              backgroundColor: "rgba(15, 23, 42, 0.72)",
+                              color: "var(--mantine-color-red-3)",
+                            }}
+                          >
+                            {t("features.dashboard.puzzleVariants.deleteOne", { defaultValue: "Delete" })}
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Stack>
+          </ScrollArea.Autosize>
+        )}
+      </Stack>
     </Card>
   );
 }
