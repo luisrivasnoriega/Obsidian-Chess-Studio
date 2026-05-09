@@ -458,6 +458,14 @@ async initProfileDb(dbPath: string, title: string, description: string | null) :
     else return { status: "error", error: e  as any };
 }
 },
+async replaceProfileDbFile(target: string, replacement: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("replace_profile_db_file", { target, replacement }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Persist computed, engine-derived analysis stats for a single profile database game.
  * 
@@ -1191,6 +1199,14 @@ async upsertVariantPositionEngineEval(fen: string, engine: string, recommendedMo
     else return { status: "error", error: e  as any };
 }
 },
+async generatePuzzleVariantsFromCoverageNode(request: GeneratePuzzleVariantsFromCoverageNodeRequest) : Promise<Result<GeneratePuzzleVariantsFromCoverageNodeResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_coverage_node", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async generatePuzzleVariantsFromTree(root: PuzzleTreeNodeDto, orientation: string, selectedDepth: number, allowedStartKeys: string[] | null) : Promise<Result<GeneratePuzzleVariantsResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("generate_puzzle_variants_from_tree", { root, orientation, selectedDepth, allowedStartKeys }) };
@@ -1873,6 +1889,8 @@ export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
 export type CoverageCacheEntryDto = { source_signature: string; fen: string; total_games: bigint; moves: CoverageCacheMoveDto[]; fetched_at_ms: bigint; expires_at_ms: bigint }
 export type CoverageCacheMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint }
+export type CoveragePuzzleTierFilterDto = "all" | "mainline" | "secondary" | "alternative"
+export type CoveragePuzzleVariantGenerationDto = { tier: VariantCoverageTierDto; pgn: string; count: bigint }
 export type CreateEventGamePayload = { white: string; black: string; date?: string | null; round?: string | null; result: Outcome }
 export type CreateManagedEventPayload = { name: string; eventType: ManagedEventType; location?: string | null; startDate?: string | null; endDate?: string | null; timeControl?: string | null }
 export type CreateOpeningVariantsResult = { created: number; removed: number; rootPath: string }
@@ -1971,6 +1989,8 @@ initialFen: string | null; accuracy: number | null; acpl: number | null; estimat
  * Approximate number of full moves.
  */
 moves: number; timeControl: string | null; timeControlCategory: string | null; timestampMs: bigint; eventId: number | null; eventName: string | null; isAnalyzed: boolean }
+export type GeneratePuzzleVariantsFromCoverageNodeRequest = { graphRoot: VariantCoverageGraphNodeDto; actionNodeId: string; orientation: string; selectedDepth: number; tierFilter: CoveragePuzzleTierFilterDto; includeLowSample: boolean }
+export type GeneratePuzzleVariantsFromCoverageNodeResponse = { results: CoveragePuzzleVariantGenerationDto[]; emptyTiers: VariantCoverageTierDto[]; ecoVariant: string | null }
 export type GeneratePuzzleVariantsResponse = { pgn: string; count: bigint }
 /**
  * Engine search mode (depth, time, nodes, etc).

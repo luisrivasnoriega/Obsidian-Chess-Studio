@@ -23,6 +23,55 @@ const entitySourceMetadataSchema = z.union([fileMetadataSchema, dbGameMetadataSc
 
 export type EntitySourceMetadata = z.infer<typeof entitySourceMetadataSchema>;
 
+export const analysisInitialConfigSchema = z.object({
+  analysisTab: z.string().optional(),
+  analysisSubTab: z.string().optional(),
+  notationView: z.enum(["variations", "repertoire", "report"]).optional(),
+});
+export type AnalysisInitialConfig = z.infer<typeof analysisInitialConfigSchema>;
+
+export const analysisNavigationContextSchema = z.discriminatedUnion("source", [
+  z.object({
+    source: z.literal("local"),
+    localGameId: z.string(),
+    profileId: z.string().nullish(),
+  }),
+  z.object({
+    source: z.literal("chesscom"),
+    gameKey: z.string(),
+    accountUsername: z.string().nullish(),
+    profileId: z.string().nullish(),
+    profileDbGameId: z.string().nullish(),
+  }),
+  z.object({
+    source: z.literal("lichess"),
+    gameKey: z.string(),
+    accountUsername: z.string().nullish(),
+    profileId: z.string().nullish(),
+    profileDbGameId: z.string().nullish(),
+  }),
+  z.object({
+    source: z.literal("chessbase"),
+    gameKey: z.string(),
+    profileId: z.string().nullish(),
+    profileDbGameId: z.string().nullish(),
+  }),
+]);
+export type AnalysisNavigationContext = z.infer<typeof analysisNavigationContextSchema>;
+
+const tabMetaSchema = z
+  .object({
+    timeControl: z
+      .object({
+        seconds: z.number(),
+        increment: z.number(),
+      })
+      .optional(),
+    initialConfig: analysisInitialConfigSchema.optional(),
+    analysisContext: analysisNavigationContextSchema.optional(),
+  })
+  .optional();
+
 export const tabSchema = z.object({
   name: z.string(),
   value: z.string(),
@@ -30,23 +79,116 @@ export const tabSchema = z.object({
   gameNumber: z.number().nullish(),
   source: entitySourceMetadataSchema.nullish(),
   route: z.string().optional(),
-  meta: z
-    .object({
-      timeControl: z.object({
-        seconds: z.number(),
-        increment: z.number(),
-      }),
-    })
-    .optional(),
+  meta: tabMetaSchema,
 });
 
 export type Tab = z.infer<typeof tabSchema>;
+
+export function removeAnalysisInitialConfigField(tab: Tab, field: keyof AnalysisInitialConfig): Tab {
+  const initialConfig = tab.meta?.initialConfig;
+  if (!initialConfig || !(field in initialConfig)) return tab;
+
+  const nextInitialConfig = { ...initialConfig };
+  delete nextInitialConfig[field];
+
+  const nextMeta = { ...(tab.meta ?? {}) };
+  if (Object.keys(nextInitialConfig).length > 0) {
+    nextMeta.initialConfig = nextInitialConfig;
+  } else {
+    delete nextMeta.initialConfig;
+  }
+
+  return {
+    ...tab,
+    meta: Object.keys(nextMeta).length > 0 ? nextMeta : undefined,
+  };
+}
+
+export function setAnalysisContextProfileGameIds(
+  tab: Tab,
+  profileId: string | null,
+  profileDbGameId: string | null,
+): Tab {
+  const analysisContext = tab.meta?.analysisContext;
+  if (!analysisContext) return tab;
+
+  const nextAnalysisContext =
+    analysisContext.source === "local"
+      ? {
+          ...analysisContext,
+          profileId,
+        }
+      : {
+          ...analysisContext,
+          profileId,
+          profileDbGameId,
+        };
+
+  return {
+    ...tab,
+    meta: {
+      ...(tab.meta ?? {}),
+      analysisContext: nextAnalysisContext,
+    },
+  };
+}
 
 export function genID() {
   function S4() {
     return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
   }
   return S4() + S4();
+}
+
+export function getLegacyAnalysisInitialConfig(tabId: string): AnalysisInitialConfig | null {
+  if (typeof window === "undefined" || !tabId) return null;
+  try {
+    const raw = sessionStorage.getItem(`${tabId}_initialConfig`);
+    if (!raw) return null;
+    const parsed = analysisInitialConfigSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getLegacyAnalysisNavigationContext(tabId: string): AnalysisNavigationContext | null {
+  if (typeof window === "undefined" || !tabId) return null;
+  try {
+    const localGameId = sessionStorage.getItem(`${tabId}_localGameId`);
+    if (localGameId) {
+      return {
+        source: "local",
+        localGameId,
+        profileId: sessionStorage.getItem(`${tabId}_profileId`),
+      };
+    }
+
+    const chessComGameUrl = sessionStorage.getItem(`${tabId}_chessComGameUrl`);
+    if (chessComGameUrl) {
+      return {
+        source: "chesscom",
+        gameKey: chessComGameUrl,
+        accountUsername: sessionStorage.getItem(`${tabId}_chessComUsername`),
+        profileId: sessionStorage.getItem(`${tabId}_profileId`),
+        profileDbGameId: sessionStorage.getItem(`${tabId}_profileDbGameId`),
+      };
+    }
+
+    const lichessGameId = sessionStorage.getItem(`${tabId}_lichessGameId`);
+    if (lichessGameId) {
+      return {
+        source: "lichess",
+        gameKey: lichessGameId,
+        accountUsername: sessionStorage.getItem(`${tabId}_lichessUsername`),
+        profileId: sessionStorage.getItem(`${tabId}_profileId`),
+        profileDbGameId: sessionStorage.getItem(`${tabId}_profileDbGameId`),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 export async function createTab({
@@ -61,6 +203,7 @@ export async function createTab({
   initialAnalysisTab,
   initialAnalysisSubTab,
   initialNotationView,
+  analysisContext,
   autoActivate = true,
 }: {
   tab: Omit<Tab, "value">;
@@ -74,6 +217,7 @@ export async function createTab({
   initialAnalysisTab?: string;
   initialAnalysisSubTab?: string;
   initialNotationView?: "variations" | "repertoire" | "report";
+  analysisContext?: AnalysisNavigationContext;
   autoActivate?: boolean;
 }) {
   const id = genID();
@@ -165,22 +309,27 @@ export async function createTab({
     setTabState(id, JSON.stringify({ version: 0, state: tree }));
   }
 
-  // Store initial view configuration if provided
+  const initialConfig: AnalysisInitialConfig = {};
   if (initialAnalysisTab || initialAnalysisSubTab || initialNotationView) {
-    const config: { analysisTab?: string; analysisSubTab?: string; notationView?: string } = {};
     if (initialAnalysisTab) {
-      config.analysisTab = initialAnalysisTab;
+      initialConfig.analysisTab = initialAnalysisTab;
     }
     if (initialAnalysisSubTab) {
-      config.analysisSubTab = initialAnalysisSubTab;
+      initialConfig.analysisSubTab = initialAnalysisSubTab;
     }
     if (initialNotationView) {
-      config.notationView = initialNotationView;
+      initialConfig.notationView = initialNotationView;
     }
-    try {
-      sessionStorage.setItem(`${id}_initialConfig`, JSON.stringify(config));
-    } catch {}
   }
+  const hasInitialConfig = Object.keys(initialConfig).length > 0;
+  const meta =
+    tab.meta || hasInitialConfig || analysisContext
+      ? {
+          ...tab.meta,
+          ...(hasInitialConfig ? { initialConfig } : {}),
+          ...(analysisContext ? { analysisContext } : {}),
+        }
+      : undefined;
 
   setTabs((prev) => {
     if (prev.length === 0 || (prev.length === 1 && prev[0].type === "new" && tab.type !== "new")) {
@@ -190,6 +339,7 @@ export async function createTab({
           value: id,
           source: srcInfo,
           gameNumber,
+          meta,
         },
       ];
     }
@@ -200,6 +350,7 @@ export async function createTab({
         value: id,
         source: srcInfo,
         gameNumber,
+        meta,
       },
     ];
   });

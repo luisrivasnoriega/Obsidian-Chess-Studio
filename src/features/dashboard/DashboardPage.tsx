@@ -25,7 +25,7 @@ import {
   IconTargetArrow,
   IconTrophy,
 } from "@tabler/icons-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -92,7 +92,13 @@ import {
 } from "@/utils/profileTransfer";
 import { getPuzzleStats, type PuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
-import { createTab, genID, type Tab } from "@/utils/tabs";
+import {
+  type AnalysisNavigationContext,
+  createTab,
+  genID,
+  setAnalysisContextProfileGameIds,
+  type Tab,
+} from "@/utils/tabs";
 import { createNode, defaultTree, type TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { AnalyzeAllModal } from "./components/AnalyzeAllModal";
@@ -122,6 +128,24 @@ const DEFAULT_PUZZLE_STATS: PuzzleStats = {
   currentStreak: 0,
   target: 30,
   history: [],
+};
+type DashboardGameSource = "local" | "lichess" | "chesscom";
+
+const dashboardQueryKeys = {
+  profileGames: (
+    profileId: string | null | undefined,
+    source: DashboardGameSource,
+    gameHistoryLimit: number,
+    sourceKey = "",
+  ) => ["dashboard", "profile", profileId ?? "none", "games", source, gameHistoryLimit, sourceKey] as const,
+  profileGamesRoot: (profileId: string | null | undefined) =>
+    ["dashboard", "profile", profileId ?? "none", "games"] as const,
+  profileGamesSource: (profileId: string | null | undefined, source: DashboardGameSource) =>
+    ["dashboard", "profile", profileId ?? "none", "games", source] as const,
+  profileOverview: (profileId: string | null | undefined, profileUsernamesKey: string) =>
+    ["dashboard", "profile", profileId ?? "none", "overview", profileUsernamesKey] as const,
+  profileOverviewRoot: (profileId: string | null | undefined) =>
+    ["dashboard", "profile", profileId ?? "none", "overview"] as const,
 };
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -411,6 +435,114 @@ function buildStatsPayloadForBackend(
   };
 }
 
+function hasEnoughLocalGameMoves(game: GameRecord): boolean {
+  if (game.moves?.length >= 5) return true;
+  if (!game.pgn) return false;
+  const movesSection = game.pgn.split(/\n\n/)[1] || game.pgn;
+  const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
+  return moveCount >= 5;
+}
+
+async function loadDashboardLocalGames(profileId: string | null, gameHistoryLimit: number): Promise<GameRecord[]> {
+  const games = await getRecentGames(profileId, gameHistoryLimit);
+  return games.filter(hasEnoughLocalGameMoves);
+}
+
+async function loadDashboardLichessGames(input: {
+  activeProfileId: string | null;
+  gameHistoryLimit: number;
+  lichessUsernames: string[];
+}): Promise<DashboardLichessGame[]> {
+  if (!input.activeProfileId || input.lichessUsernames.length === 0) return [];
+
+  const dbPath = await getProfileDbPath(input.activeProfileId);
+  const queryResult = await query_games(dbPath, {
+    options: {
+      page: 1,
+      pageSize: input.gameHistoryLimit,
+      sort: "date",
+      direction: "desc",
+      skipCount: true,
+    },
+  } as unknown as GameQuery);
+
+  const lichessRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("lichess.org"));
+  const analyzedGames = await getAnalyzedGamesBulk(
+    lichessRows.map((g) => String(g.id)),
+    input.activeProfileId,
+  );
+
+  return lichessRows
+    .map((g) => {
+      const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
+      const base = convertNormalizedToLichessGame(g);
+      return {
+        ...base,
+        eventId: g.event_id,
+        eventName: g.event ?? null,
+        ...(analyzedPgn ? { pgn: analyzedPgn } : {}),
+      };
+    })
+    .filter((g) => hasEnoughMovesInPgn(g.pgn, 5))
+    .slice(0, input.gameHistoryLimit);
+}
+
+async function loadDashboardChessComGames(input: {
+  activeProfileId: string | null;
+  gameHistoryLimit: number;
+  chessComUsernames: string[];
+}): Promise<ChessComGameWithEvent[]> {
+  if (!input.activeProfileId || input.chessComUsernames.length === 0) return [];
+
+  const dbPath = await getProfileDbPath(input.activeProfileId);
+  const queryResult = await query_games(dbPath, {
+    options: {
+      page: 1,
+      pageSize: input.gameHistoryLimit,
+      sort: "date",
+      direction: "desc",
+      skipCount: true,
+    },
+  } as unknown as GameQuery);
+
+  const chessComRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("chess.com"));
+  const analyzedGames = await getAnalyzedGamesBulk(
+    chessComRows.map((g) => String(g.id)),
+    input.activeProfileId,
+  );
+
+  return chessComRows
+    .map((g) => {
+      const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
+      const base = convertNormalizedToChessComGame(g);
+      return {
+        ...base,
+        eventId: g.event_id,
+        eventName: g.event ?? null,
+        ...(analyzedPgn ? { pgn: analyzedPgn } : {}),
+      };
+    })
+    .filter((g) => hasEnoughMovesInPgn(g.pgn, 5))
+    .slice(0, input.gameHistoryLimit);
+}
+
+async function loadDashboardOverviewMetrics(input: {
+  activeProfileId: string | null;
+  profileUsernames: string[];
+}): Promise<DashboardOverviewMetrics | null> {
+  if (!input.activeProfileId) return null;
+
+  return await invoke<DashboardOverviewMetrics>("dashboard_get_overview_metrics", {
+    req: {
+      profileId: input.activeProfileId,
+      profileUsernames: input.profileUsernames,
+      gameHistoryLimit: KPI_FETCH_LIMIT,
+      sampleSize: KPI_SAMPLE_SIZE,
+      trendWeeks: QUALITY_TREND_WEEKS,
+    },
+  });
+}
+
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [isFirstOpen, setIsFirstOpen] = useState(false);
@@ -430,6 +562,16 @@ export default function DashboardPage() {
 
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const [_activeTab, setActiveTab] = useAtom(activeTabAtom);
+  const updateAnalysisContextProfileGameIds = useCallback(
+    (tabId: string, profileId: string | null, profileDbGameId: string | null) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.value === tabId ? setAnalysisContextProfileGameIds(tab, profileId, profileDbGameId) : tab,
+        ),
+      );
+    },
+    [setTabs],
+  );
 
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
@@ -805,11 +947,6 @@ export default function DashboardPage() {
   } | null>(null);
   const [isLoadingFideData, setIsLoadingFideData] = useState(false);
   const [hasLoadedFideData, setHasLoadedFideData] = useState(false);
-  const [_hasLoadedOverview, setHasLoadedOverview] = useState(false);
-  const [_hasLoadedRecentGames, setHasLoadedRecentGames] = useState(false);
-  const [_hasLoadedLichessGames, setHasLoadedLichessGames] = useState(false);
-  const [_hasLoadedChessComGames, setHasLoadedChessComGames] = useState(false);
-  const [_hasLoadedEventOptions, setHasLoadedEventOptions] = useState(false);
   const fideLoadRequestIdRef = useRef(0);
 
   const displayName = activeProfile?.displayName ?? "";
@@ -1096,7 +1233,6 @@ export default function DashboardPage() {
   const lichessUsernames = profileLichessUsernames;
   const chessComUsernames = profileChessComUsernames;
 
-  const [recentGames, setRecentGames] = useState<GameRecord[]>([]);
   const [gameHistoryLimit, setGameHistoryLimit] = useState(100);
   const [eventFilterId, setEventFilterId] = useState<number | null>(null);
   const [eventOptions, setEventOptions] = useState<Event[]>([]);
@@ -1107,7 +1243,53 @@ export default function DashboardPage() {
   const [selectedOpponentName, setSelectedOpponentName] = useState<string | null>(null);
   const [selectedOpponentId, setSelectedOpponentId] = useState<number | null>(null);
   const [timeControlCategory, setTimeControlCategory] = useState<TimeControlCategory | null>(null);
-  const [_isLoadingRecentGames, setIsLoadingRecentGames] = useState(false);
+  const lichessUsernamesKey = useMemo(() => [...lichessUsernames].sort().join("|"), [lichessUsernames]);
+  const chessComUsernamesKey = useMemo(() => [...chessComUsernames].sort().join("|"), [chessComUsernames]);
+  const profileUsernamesKey = useMemo(() => [...profileUsernames].sort().join("|"), [profileUsernames]);
+  const localGamesQueryKey = dashboardQueryKeys.profileGames(activeProfileId, "local", gameHistoryLimit);
+  const lichessGamesQueryKey = dashboardQueryKeys.profileGames(
+    activeProfileId,
+    "lichess",
+    gameHistoryLimit,
+    lichessUsernamesKey,
+  );
+  const chessComGamesQueryKey = dashboardQueryKeys.profileGames(
+    activeProfileId,
+    "chesscom",
+    gameHistoryLimit,
+    chessComUsernamesKey,
+  );
+  const dashboardOverviewQueryKey = dashboardQueryKeys.profileOverview(activeProfileId, profileUsernamesKey);
+
+  const recentGamesQuery = useQuery({
+    queryKey: localGamesQueryKey,
+    queryFn: () => loadDashboardLocalGames(activeProfileId, gameHistoryLimit),
+    staleTime: 10_000,
+  });
+  const lichessGamesQuery = useQuery({
+    queryKey: lichessGamesQueryKey,
+    queryFn: () => loadDashboardLichessGames({ activeProfileId, gameHistoryLimit, lichessUsernames }),
+    enabled: !!activeProfileId,
+    staleTime: 10_000,
+  });
+  const chessComGamesQuery = useQuery({
+    queryKey: chessComGamesQueryKey,
+    queryFn: () => loadDashboardChessComGames({ activeProfileId, gameHistoryLimit, chessComUsernames }),
+    enabled: !!activeProfileId,
+    staleTime: 10_000,
+  });
+  const dashboardOverviewQuery = useQuery({
+    queryKey: dashboardOverviewQueryKey,
+    queryFn: () => loadDashboardOverviewMetrics({ activeProfileId, profileUsernames }),
+    enabled: !!activeProfileId,
+    staleTime: 15_000,
+  });
+  const recentGames = recentGamesQuery.data ?? [];
+  const lichessGames = lichessGamesQuery.data ?? [];
+  const chessComGames = chessComGamesQuery.data ?? [];
+  const dashboardOverview = dashboardOverviewQuery.data ?? null;
+  const isLoadingLichessGames = lichessGamesQuery.isFetching;
+  const isLoadingChessComGames = chessComGamesQuery.isFetching;
 
   useEffect(() => {
     if (!activeProfileId) {
@@ -1247,7 +1429,6 @@ export default function DashboardPage() {
     if (!activeProfileId) {
       setEventOptions([]);
       setIsLoadingEventOptions(false);
-      setHasLoadedEventOptions(true);
       return;
     }
 
@@ -1277,7 +1458,6 @@ export default function DashboardPage() {
       } finally {
         if (!cancelled) {
           setIsLoadingEventOptions(false);
-          setHasLoadedEventOptions(true);
         }
       }
     };
@@ -1312,239 +1492,11 @@ export default function DashboardPage() {
     [getOrientationFromFen],
   );
 
-  const loadGames = useCallback(async () => {
-    setIsLoadingRecentGames(true);
-    try {
-      const games = await getRecentGames(activeProfileId, gameHistoryLimit);
-      // Filter out games with less than 5 moves (moves may be empty when loaded from profile DB; use pgn)
-      const filteredGames = games.filter((g) => {
-        if (g.moves?.length >= 5) return true;
-        if (g.pgn) {
-          const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-          const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
-          return moveCount >= 5;
-        }
-        return false;
-      });
-      setRecentGames(filteredGames);
-    } catch {
-    } finally {
-      setIsLoadingRecentGames(false);
-      setHasLoadedRecentGames(true);
-    }
-  }, [activeProfileId, gameHistoryLimit]);
-
-  useEffect(() => {
-    loadGames();
-
-    // Listen for games:updated event to refresh local games after analysis
-    const handleGamesUpdated = () => {
-      loadGames();
-    };
-    window.addEventListener("games:updated", handleGamesUpdated);
-
-    return () => {
-      window.removeEventListener("games:updated", handleGamesUpdated);
-    };
-  }, [loadGames]);
-
-  const [lichessGames, setLichessGames] = useState<DashboardLichessGame[]>([]);
-  const [isLoadingLichessGames, setIsLoadingLichessGames] = useState(false);
-  const lichessLoadRequestIdRef = useRef(0);
-  const hasEnoughMoves = useCallback((pgn?: string | null) => hasEnoughMovesInPgn(pgn, 5), []);
-  useEffect(() => {
-    let disposed = false;
-
-    const loadGamesFromProfileDatabase = async () => {
-      const requestId = lichessLoadRequestIdRef.current + 1;
-      lichessLoadRequestIdRef.current = requestId;
-      const isCurrentRequest = () => !disposed && lichessLoadRequestIdRef.current === requestId;
-
-      if (!activeProfileId) {
-        if (isCurrentRequest()) {
-          setLichessGames([]);
-          setIsLoadingLichessGames(false);
-          setHasLoadedLichessGames(true);
-        }
-        return;
-      }
-      if (lichessUsernames.length === 0) {
-        if (isCurrentRequest()) {
-          setLichessGames([]);
-          setIsLoadingLichessGames(false);
-          setHasLoadedLichessGames(true);
-        }
-        return;
-      }
-
-      if (isCurrentRequest()) {
-        setIsLoadingLichessGames(true);
-      }
-
-      try {
-        const dbPath = await getProfileDbPath(activeProfileId);
-        // Keep the online cache independent from table filters; scoped filtering is applied by
-        // dashboard_get_games_history_rows when rendering/analyzing rows.
-        const queryResult = await query_games(dbPath, {
-          options: {
-            page: 1,
-            pageSize: gameHistoryLimit,
-            sort: "date",
-            direction: "desc",
-            skipCount: true,
-          },
-        } as unknown as GameQuery);
-
-        const lichessRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("lichess.org"));
-        const analyzedGames = await getAnalyzedGamesBulk(
-          lichessRows.map((g) => String(g.id)),
-          activeProfileId,
-        );
-        const games = lichessRows
-          .map((g) => {
-            const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
-            const base = convertNormalizedToLichessGame(g);
-            return {
-              ...base,
-              eventId: g.event_id,
-              eventName: g.event ?? null,
-              ...(analyzedPgn ? { pgn: analyzedPgn } : {}),
-            };
-          })
-          .filter((g) => hasEnoughMoves(g.pgn))
-          .slice(0, gameHistoryLimit);
-
-        if (isCurrentRequest()) {
-          setLichessGames(games);
-        }
-      } catch {
-        if (isCurrentRequest()) {
-          setLichessGames([]);
-        }
-      } finally {
-        if (isCurrentRequest()) {
-          setIsLoadingLichessGames(false);
-          setHasLoadedLichessGames(true);
-        }
-      }
-    };
-
-    void loadGamesFromProfileDatabase();
-
-    const handleLichessGamesUpdated = () => {
-      void loadGamesFromProfileDatabase();
-    };
-
-    window.addEventListener("lichess:games:updated", handleLichessGamesUpdated);
-
-    return () => {
-      disposed = true;
-      window.removeEventListener("lichess:games:updated", handleLichessGamesUpdated);
-    };
-  }, [activeProfileId, gameHistoryLimit, hasEnoughMoves, lichessUsernames]);
-
-  const [chessComGames, setChessComGames] = useState<ChessComGameWithEvent[]>([]);
-  const [isLoadingChessComGames, setIsLoadingChessComGames] = useState(false);
-  const chessComLoadRequestIdRef = useRef(0);
-  useEffect(() => {
-    let disposed = false;
-
-    const loadGamesFromProfileDatabase = async () => {
-      const requestId = chessComLoadRequestIdRef.current + 1;
-      chessComLoadRequestIdRef.current = requestId;
-      const isCurrentRequest = () => !disposed && chessComLoadRequestIdRef.current === requestId;
-
-      if (!activeProfileId) {
-        if (isCurrentRequest()) {
-          setChessComGames([]);
-          setIsLoadingChessComGames(false);
-          setHasLoadedChessComGames(true);
-        }
-        return;
-      }
-      if (chessComUsernames.length === 0) {
-        if (isCurrentRequest()) {
-          setChessComGames([]);
-          setIsLoadingChessComGames(false);
-          setHasLoadedChessComGames(true);
-        }
-        return;
-      }
-
-      if (isCurrentRequest()) {
-        setIsLoadingChessComGames(true);
-      }
-
-      try {
-        const dbPath = await getProfileDbPath(activeProfileId);
-        // Keep the online cache independent from table filters; scoped filtering is applied by
-        // dashboard_get_games_history_rows when rendering/analyzing rows.
-        const queryResult = await query_games(dbPath, {
-          options: {
-            page: 1,
-            pageSize: gameHistoryLimit,
-            sort: "date",
-            direction: "desc",
-            skipCount: true,
-          },
-        } as unknown as GameQuery);
-
-        const chessComRows = (queryResult.data ?? []).filter((g) => g.site?.toLowerCase().includes("chess.com"));
-        const analyzedGames = await getAnalyzedGamesBulk(
-          chessComRows.map((g) => String(g.id)),
-          activeProfileId,
-        );
-        const games = chessComRows
-          .map((g) => {
-            const analyzedPgn = analyzedGames.get(String(g.id)) ?? null;
-            const base = convertNormalizedToChessComGame(g);
-            return {
-              ...base,
-              eventId: g.event_id,
-              eventName: g.event ?? null,
-              ...(analyzedPgn ? { pgn: analyzedPgn } : {}),
-            };
-          })
-          .filter((g) => hasEnoughMoves(g.pgn))
-          .slice(0, gameHistoryLimit);
-
-        if (isCurrentRequest()) {
-          setChessComGames(games);
-        }
-      } catch {
-        if (isCurrentRequest()) {
-          setChessComGames([]);
-        }
-      } finally {
-        if (isCurrentRequest()) {
-          setIsLoadingChessComGames(false);
-          setHasLoadedChessComGames(true);
-        }
-      }
-    };
-
-    void loadGamesFromProfileDatabase();
-
-    const handleChessComGamesUpdated = () => {
-      void loadGamesFromProfileDatabase();
-    };
-
-    window.addEventListener("chesscom:games:updated", handleChessComGamesUpdated);
-
-    return () => {
-      disposed = true;
-      window.removeEventListener("chesscom:games:updated", handleChessComGamesUpdated);
-    };
-  }, [activeProfileId, gameHistoryLimit, hasEnoughMoves, chessComUsernames]);
-
   const [puzzleStats, setPuzzleStats] = useState<PuzzleStats>(() => {
     const initial = getPuzzleStats();
     return normalizePuzzleStats(initial);
   });
   const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
-  const [dashboardOverview, setDashboardOverview] = useState<DashboardOverviewMetrics | null>(null);
-  const [_isProfileCardsLoading, setIsProfileCardsLoading] = useState(false);
-  const dashboardOverviewRequestRef = useRef(0);
   const [isDashboardLoadGateTimedOut, setIsDashboardLoadGateTimedOut] = useState(false);
 
   // Load favorite games
@@ -1556,19 +1508,8 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (!activeProfileId) {
-      setIsProfileCardsLoading(false);
-      setHasLoadedOverview(true);
-      return;
-    }
-    setIsProfileCardsLoading(true);
     setHasLoadedFideData(!activeFideId);
-    setHasLoadedOverview(false);
-    setHasLoadedRecentGames(false);
-    setHasLoadedLichessGames(false);
-    setHasLoadedChessComGames(false);
-    setHasLoadedEventOptions(false);
-  }, [activeProfileId, activeFideId]);
+  }, [activeFideId]);
 
   useEffect(() => {
     if (!activeProfileId) {
@@ -1585,40 +1526,6 @@ export default function DashboardPage() {
       window.clearTimeout(timeoutId);
     };
   }, [activeProfileId]);
-
-  const loadDashboardOverview = useCallback(async () => {
-    const requestId = dashboardOverviewRequestRef.current + 1;
-    dashboardOverviewRequestRef.current = requestId;
-
-    if (!activeProfileId) {
-      setDashboardOverview(null);
-      setIsProfileCardsLoading(false);
-      setHasLoadedOverview(true);
-      return;
-    }
-
-    try {
-      const res = await invoke<DashboardOverviewMetrics>("dashboard_get_overview_metrics", {
-        req: {
-          profileId: activeProfileId,
-          profileUsernames,
-          gameHistoryLimit: KPI_FETCH_LIMIT,
-          sampleSize: KPI_SAMPLE_SIZE,
-          trendWeeks: QUALITY_TREND_WEEKS,
-        },
-      });
-      if (requestId !== dashboardOverviewRequestRef.current) return;
-      setDashboardOverview(res);
-    } catch {
-      if (requestId !== dashboardOverviewRequestRef.current) return;
-      setDashboardOverview(null);
-    } finally {
-      if (requestId === dashboardOverviewRequestRef.current) {
-        setIsProfileCardsLoading(false);
-        setHasLoadedOverview(true);
-      }
-    }
-  }, [activeProfileId, profileUsernames]);
 
   const handleAnalyzeAll = useCallback(
     async ({ type, opponentContains, resultFilter, playerColor, minMoves }: AnalyzeAllOpenPayload) => {
@@ -1837,25 +1744,38 @@ export default function DashboardPage() {
     };
   }, [loadFavoriteGames]);
 
+  const invalidateDashboardSourceQueries = useCallback(
+    (source?: DashboardGameSource) => {
+      if (source) {
+        void queryClient.invalidateQueries({
+          queryKey: dashboardQueryKeys.profileGamesSource(activeProfileId, source),
+        });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.profileGamesRoot(activeProfileId) });
+      }
+      void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.profileOverviewRoot(activeProfileId) });
+    },
+    [activeProfileId, queryClient],
+  );
+
   useEffect(() => {
-    void loadDashboardOverview();
+    const refreshAll = () => invalidateDashboardSourceQueries();
+    const refreshLocal = () => invalidateDashboardSourceQueries("local");
+    const refreshChessCom = () => invalidateDashboardSourceQueries("chesscom");
+    const refreshLichess = () => invalidateDashboardSourceQueries("lichess");
 
-    const refresh = () => {
-      void loadDashboardOverview();
-    };
-
-    window.addEventListener("dashboard:games-history:refresh", refresh);
-    window.addEventListener("chesscom:games:updated", refresh);
-    window.addEventListener("lichess:games:updated", refresh);
-    window.addEventListener("games:updated", refresh);
+    window.addEventListener("dashboard:games-history:refresh", refreshAll);
+    window.addEventListener("chesscom:games:updated", refreshChessCom);
+    window.addEventListener("lichess:games:updated", refreshLichess);
+    window.addEventListener("games:updated", refreshLocal);
 
     return () => {
-      window.removeEventListener("dashboard:games-history:refresh", refresh);
-      window.removeEventListener("chesscom:games:updated", refresh);
-      window.removeEventListener("lichess:games:updated", refresh);
-      window.removeEventListener("games:updated", refresh);
+      window.removeEventListener("dashboard:games-history:refresh", refreshAll);
+      window.removeEventListener("chesscom:games:updated", refreshChessCom);
+      window.removeEventListener("lichess:games:updated", refreshLichess);
+      window.removeEventListener("games:updated", refreshLocal);
     };
-  }, [loadDashboardOverview]);
+  }, [invalidateDashboardSourceQueries]);
 
   useEffect(() => {
     const update = () => {
@@ -2395,17 +2315,15 @@ export default function DashboardPage() {
                 onAnalyzeAll={handleAnalyzeAll}
                 onDeleteLocalGame={async (gameId: string) => {
                   await deleteGameRecord(activeProfileId, gameId);
-                  const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
-                  const filteredGames = updatedGames.filter((g) => {
-                    if (g.moves?.length >= 5) return true;
-                    if (g.pgn) {
-                      const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                      const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
-                      return moveCount >= 5;
-                    }
-                    return false;
+                  queryClient.setQueryData<GameRecord[]>(localGamesQueryKey, (prev) =>
+                    (prev ?? []).filter((game) => game.id !== gameId),
+                  );
+                  void queryClient.invalidateQueries({
+                    queryKey: dashboardQueryKeys.profileGamesSource(activeProfileId, "local"),
                   });
-                  setRecentGames(filteredGames);
+                  void queryClient.invalidateQueries({
+                    queryKey: dashboardQueryKeys.profileOverviewRoot(activeProfileId),
+                  });
                   window.dispatchEvent(new Event("dashboard:games-history:refresh"));
                 }}
                 chessComGames={chessComGames}
@@ -2435,7 +2353,7 @@ export default function DashboardPage() {
                       ? "black"
                       : getOrientationFromFen(game.initialFen) || getOrientationFromPgn(pgn) || "white";
                   headers.orientation = orientation;
-                  createTab({
+                  void createTab({
                     tab: {
                       name: `${headers.white} - ${headers.black}`,
                       type: "analysis",
@@ -2447,11 +2365,11 @@ export default function DashboardPage() {
                     initialAnalysisTab: "analysis",
                     initialAnalysisSubTab: "report",
                     initialNotationView: "report",
-                  }).then((tabId) => {
-                    // Store the gameId in sessionStorage so we can update it when analysis completes
-                    if (tabId && typeof window !== "undefined") {
-                      sessionStorage.setItem(`${tabId}_localGameId`, game.id);
-                    }
+                    analysisContext: {
+                      source: "local",
+                      localGameId: game.id,
+                      profileId: game.profileId ?? activeProfileId ?? null,
+                    },
                   });
                 }}
                 onAnalyzeChessComGame={(game, meta) => {
@@ -2465,6 +2383,17 @@ export default function DashboardPage() {
                       ) || game.white.username;
                     const orientation = meta.playerColor;
                     headers.orientation = orientation;
+                    const resolvedProfileId = meta?.profileId ?? activeProfileId ?? null;
+                    const resolvedDbGameId =
+                      meta?.profileDbGameId ??
+                      (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`chesscom:${game.url}`) : undefined);
+                    const analysisContext: AnalysisNavigationContext = {
+                      source: "chesscom",
+                      gameKey: game.url,
+                      accountUsername,
+                      profileId: resolvedProfileId,
+                      profileDbGameId: resolvedDbGameId ?? null,
+                    };
                     createTab({
                       tab: {
                         name: `${game.white.username} - ${game.black.username}`,
@@ -2477,39 +2406,24 @@ export default function DashboardPage() {
                       initialAnalysisTab: "analysis",
                       initialAnalysisSubTab: "report",
                       initialNotationView: "report",
+                      analysisContext,
                     }).then((tabId) => {
-                      // Store the game URL and username in sessionStorage so we can save the analyzed PGN when analysis completes
-                      if (tabId && typeof window !== "undefined") {
-                        sessionStorage.setItem(`${tabId}_chessComGameUrl`, game.url);
-                        sessionStorage.setItem(`${tabId}_chessComUsername`, accountUsername);
-                        const resolvedProfileId = meta?.profileId ?? activeProfileId ?? null;
-                        const resolvedDbGameId =
-                          meta?.profileDbGameId ??
-                          (resolvedProfileId
-                            ? profileDbIdByExternalKeyRef.current.get(`chesscom:${game.url}`)
-                            : undefined);
-                        if (resolvedProfileId) {
-                          sessionStorage.setItem(`${tabId}_profileId`, resolvedProfileId);
-                        }
-                        if (resolvedProfileId && resolvedDbGameId) {
-                          sessionStorage.setItem(`${tabId}_profileDbGameId`, resolvedDbGameId);
-                        } else if (resolvedProfileId) {
-                          // Fallback (no race): resolve internal Games.ID on demand.
-                          invoke<string | null>("dashboard_resolve_profile_db_game_id", {
-                            profileId: resolvedProfileId,
-                            kind: "chesscom",
-                            gameKey: game.url,
+                      if (tabId && resolvedProfileId && !resolvedDbGameId) {
+                        // Fallback (no race): resolve internal Games.ID on demand.
+                        invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+                          profileId: resolvedProfileId,
+                          kind: "chesscom",
+                          gameKey: game.url,
+                        })
+                          .then((id) => {
+                            const v = (id ?? "").trim();
+                            if (!v) return;
+                            profileDbIdByExternalKeyRef.current.set(`chesscom:${game.url}`, v);
+                            updateAnalysisContextProfileGameIds(tabId, resolvedProfileId, v);
                           })
-                            .then((id) => {
-                              const v = (id ?? "").trim();
-                              if (!v) return;
-                              profileDbIdByExternalKeyRef.current.set(`chesscom:${game.url}`, v);
-                              sessionStorage.setItem(`${tabId}_profileDbGameId`, v);
-                            })
-                            .catch(() => {
-                              // ignore
-                            });
-                        }
+                          .catch(() => {
+                            // ignore
+                          });
                       }
                     });
                   }
@@ -2527,6 +2441,17 @@ export default function DashboardPage() {
                       ) || gameWhiteName;
                     const orientation = meta.playerColor;
                     headers.orientation = orientation;
+                    const resolvedProfileId = meta?.profileId ?? activeProfileId ?? null;
+                    const resolvedDbGameId =
+                      meta?.profileDbGameId ??
+                      (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`lichess:${game.id}`) : undefined);
+                    const analysisContext: AnalysisNavigationContext = {
+                      source: "lichess",
+                      gameKey: game.id,
+                      accountUsername,
+                      profileId: resolvedProfileId,
+                      profileDbGameId: resolvedDbGameId ?? null,
+                    };
                     createTab({
                       tab: {
                         name: `${headers.white} - ${headers.black}`,
@@ -2539,39 +2464,24 @@ export default function DashboardPage() {
                       initialAnalysisTab: "analysis",
                       initialAnalysisSubTab: "report",
                       initialNotationView: "report",
+                      analysisContext,
                     }).then((tabId) => {
-                      // Store the game ID and username in sessionStorage so we can save the analyzed PGN when analysis completes
-                      if (tabId && typeof window !== "undefined") {
-                        sessionStorage.setItem(`${tabId}_lichessGameId`, game.id);
-                        sessionStorage.setItem(`${tabId}_lichessUsername`, accountUsername);
-                        const resolvedProfileId = meta?.profileId ?? activeProfileId ?? null;
-                        const resolvedDbGameId =
-                          meta?.profileDbGameId ??
-                          (resolvedProfileId
-                            ? profileDbIdByExternalKeyRef.current.get(`lichess:${game.id}`)
-                            : undefined);
-                        if (resolvedProfileId) {
-                          sessionStorage.setItem(`${tabId}_profileId`, resolvedProfileId);
-                        }
-                        if (resolvedProfileId && resolvedDbGameId) {
-                          sessionStorage.setItem(`${tabId}_profileDbGameId`, resolvedDbGameId);
-                        } else if (resolvedProfileId) {
-                          // Fallback (no race): resolve internal Games.ID on demand.
-                          invoke<string | null>("dashboard_resolve_profile_db_game_id", {
-                            profileId: resolvedProfileId,
-                            kind: "lichess",
-                            gameKey: game.id,
+                      if (tabId && resolvedProfileId && !resolvedDbGameId) {
+                        // Fallback (no race): resolve internal Games.ID on demand.
+                        invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+                          profileId: resolvedProfileId,
+                          kind: "lichess",
+                          gameKey: game.id,
+                        })
+                          .then((id) => {
+                            const v = (id ?? "").trim();
+                            if (!v) return;
+                            profileDbIdByExternalKeyRef.current.set(`lichess:${game.id}`, v);
+                            updateAnalysisContextProfileGameIds(tabId, resolvedProfileId, v);
                           })
-                            .then((id) => {
-                              const v = (id ?? "").trim();
-                              if (!v) return;
-                              profileDbIdByExternalKeyRef.current.set(`lichess:${game.id}`, v);
-                              sessionStorage.setItem(`${tabId}_profileDbGameId`, v);
-                            })
-                            .catch(() => {
-                              // ignore
-                            });
-                        }
+                          .catch(() => {
+                            // ignore
+                          });
                       }
                     });
                   }
@@ -3484,9 +3394,8 @@ export default function DashboardPage() {
                         await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
                       }
 
-                      // Update the games array to trigger re-render and stats recalculation
-                      setChessComGames((prev) => {
-                        const updated = [...prev];
+                      queryClient.setQueryData<ChessComGameWithEvent[]>(chessComGamesQueryKey, (prev) => {
+                        const updated = [...(prev ?? [])];
                         const index = updated.findIndex((g) => g.url === chessComGame.url);
                         if (index >= 0) {
                           updated[index] = { ...updated[index], ...chessComGame };
@@ -3600,9 +3509,8 @@ export default function DashboardPage() {
                         await saveGameStats(gameIdToSave, stats, activeProfileId ?? null);
                       }
 
-                      // Update the games array to trigger re-render and stats recalculation
-                      setLichessGames((prev) => {
-                        const updated = [...prev];
+                      queryClient.setQueryData<DashboardLichessGame[]>(lichessGamesQueryKey, (prev) => {
+                        const updated = [...(prev ?? [])];
                         const index = updated.findIndex((g) => g.id === lichessGame.id);
                         if (index >= 0) {
                           updated[index] = { ...lichessGame };
@@ -3827,17 +3735,9 @@ export default function DashboardPage() {
 
                   // Refresh games to update stats
                   if (analyzeAllGameType === "local" || analyzeAllGameType === "all") {
-                    const updatedGames = await getRecentGames(activeProfileId, gameHistoryLimit);
-                    const filteredGames = updatedGames.filter((g) => {
-                      if (g.moves?.length >= 5) return true;
-                      if (g.pgn) {
-                        const movesSection = g.pgn.split(/\n\n/)[1] || g.pgn;
-                        const moveCount = (movesSection.match(/\d+\./g)?.length ?? 0) * 2;
-                        return moveCount >= 5;
-                      }
-                      return false;
+                    void queryClient.invalidateQueries({
+                      queryKey: dashboardQueryKeys.profileGamesSource(activeProfileId, "local"),
                     });
-                    setRecentGames(filteredGames);
                   }
                   if (analyzeAllGameType === "chesscom" || analyzeAllGameType === "all") {
                     // Trigger refresh for Chess.com games

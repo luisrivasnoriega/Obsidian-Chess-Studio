@@ -72,6 +72,7 @@ function Puzzles({ id }: { id: string }) {
 
   const [showingSolution, setShowingSolution] = useState(false);
   const isShowingSolutionRef = useRef<boolean>(false);
+  const autoStartedPuzzleVariantDbRef = useRef<string | null>(null);
   const [isGeneratingPuzzle, setIsGeneratingPuzzle] = useState(false);
   const [isLoadingFilterOptions, setIsLoadingFilterOptions] = useState(false);
   const [selectedDbIsPuzzleVariants, setSelectedDbIsPuzzleVariants] = useState(false);
@@ -93,6 +94,9 @@ function Puzzles({ id }: { id: string }) {
 
   // Computed values
   const currentPuzzleData = puzzles?.[currentPuzzle];
+  const isSolvingPuzzleVariants = Boolean(
+    selectedDb && selectedDbIsPuzzleVariants && puzzleUnsolvedOnlyDb === selectedDb,
+  );
   const turnToMove = useMemo(() => {
     if (!currentPuzzleData?.fen) return null;
     return positionFromFen(currentPuzzleData.fen)[0]?.turn ?? null;
@@ -143,38 +147,7 @@ function Puzzles({ id }: { id: string }) {
     [puzzles, selectedDbIsPuzzleVariants],
   );
 
-  // Event handlers
-  const handleGeneratePuzzle = async () => {
-    if (isGeneratingPuzzle) return;
-    if (!selectedDb) return;
-
-    const range = calculateAdaptiveRange();
-
-    setIsGeneratingPuzzle(true);
-    try {
-      const puzzle = await generatePuzzleFromDb(
-        selectedDb,
-        range,
-        inOrder,
-        themes.length > 0 ? themes : undefined,
-        openingTags.length > 0 ? openingTags : undefined,
-        puzzleSideToMove,
-      );
-      addPuzzle(puzzle);
-    } catch {
-    } finally {
-      setIsGeneratingPuzzle(false);
-    }
-  };
-
-  const handleSideToMoveChange = (value: "any" | "white" | "black") => {
-    setPuzzleSideToMove(value);
-    if (selectedDb) {
-      clearPuzzleCache(selectedDb);
-    }
-  };
-
-  const calculateAdaptiveRange = (): [number, number] => {
+  const calculateAdaptiveRange = useCallback((): [number, number] => {
     const completedResults = puzzles
       .filter((puzzle) => puzzle.completion !== "incomplete")
       .map((puzzle) => puzzle.completion)
@@ -191,7 +164,79 @@ function Puzzles({ id }: { id: string }) {
 
     setRatingRange([min, max]);
     return [min, max];
+  }, [adaptiveOffset, maxRating, minRating, playerRating, puzzles, setRatingRange]);
+
+  // Event handlers
+  const handleGeneratePuzzle = useCallback(async (): Promise<boolean> => {
+    if (isGeneratingPuzzle) return false;
+    if (!selectedDb) return false;
+
+    const range = calculateAdaptiveRange();
+    const effectiveSideToMove = selectedDbIsPuzzleVariants ? "any" : puzzleSideToMove;
+
+    setIsGeneratingPuzzle(true);
+    try {
+      const puzzle = await generatePuzzleFromDb(
+        selectedDb,
+        range,
+        inOrder,
+        themes.length > 0 ? themes : undefined,
+        openingTags.length > 0 ? openingTags : undefined,
+        effectiveSideToMove,
+      );
+      addPuzzle(puzzle);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setIsGeneratingPuzzle(false);
+    }
+  }, [
+    addPuzzle,
+    calculateAdaptiveRange,
+    generatePuzzleFromDb,
+    inOrder,
+    isGeneratingPuzzle,
+    openingTags,
+    puzzleSideToMove,
+    selectedDb,
+    selectedDbIsPuzzleVariants,
+    themes,
+  ]);
+
+  const handleSideToMoveChange = (value: "any" | "white" | "black") => {
+    setPuzzleSideToMove(value);
+    if (selectedDb) {
+      clearPuzzleCache(selectedDb);
+    }
   };
+
+  useEffect(() => {
+    autoStartedPuzzleVariantDbRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDb || !isSolvingPuzzleVariants || isGeneratingPuzzle || isLoadingPuzzleDbs) return;
+
+    const currentPuzzleSourcePath = currentPuzzleData?.source?.path ?? null;
+    if (currentPuzzleSourcePath === selectedDb && currentPuzzleData?.completion === "incomplete") {
+      autoStartedPuzzleVariantDbRef.current = selectedDb;
+      return;
+    }
+
+    if (autoStartedPuzzleVariantDbRef.current === selectedDb) return;
+    void handleGeneratePuzzle().finally(() => {
+      autoStartedPuzzleVariantDbRef.current = selectedDb;
+    });
+  }, [
+    currentPuzzleData?.completion,
+    currentPuzzleData?.source?.path,
+    handleGeneratePuzzle,
+    isGeneratingPuzzle,
+    isLoadingPuzzleDbs,
+    isSolvingPuzzleVariants,
+    selectedDb,
+  ]);
 
   const getCurrentAdaptiveRange = useCallback((): [number, number] => {
     const completedResults = puzzles

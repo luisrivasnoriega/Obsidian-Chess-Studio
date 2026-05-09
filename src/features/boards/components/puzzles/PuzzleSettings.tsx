@@ -145,18 +145,20 @@ export const PuzzleSettings = ({
           )}
           {showThemeFilters && <Divider my="sm" />}
           <Group align="end">
-            <Select
-              label={t("features.puzzle.sideToMove")}
-              data={[
-                { value: "any", label: t("features.puzzle.sideAny") },
-                { value: "white", label: t("features.puzzle.sideWhite") },
-                { value: "black", label: t("features.puzzle.sideBlack") },
-              ]}
-              value={sideToMove}
-              onChange={(value) => onSideToMoveChange((value as "any" | "white" | "black") ?? "any")}
-              allowDeselect={false}
-              flex={1}
-            />
+            {!isPuzzleVariantsMode ? (
+              <Select
+                label={t("features.puzzle.sideToMove")}
+                data={[
+                  { value: "any", label: t("features.puzzle.sideAny") },
+                  { value: "white", label: t("features.puzzle.sideWhite") },
+                  { value: "black", label: t("features.puzzle.sideBlack") },
+                ]}
+                value={sideToMove}
+                onChange={(value) => onSideToMoveChange((value as "any" | "white" | "black") ?? "any")}
+                allowDeselect={false}
+                flex={1}
+              />
+            ) : null}
             {!isPuzzleVariantsMode ? (
               <>
                 <NumberInput

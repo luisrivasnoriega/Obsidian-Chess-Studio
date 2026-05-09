@@ -220,6 +220,74 @@ fn normalize_opening_variant_key(value: &str) -> String {
         .to_lowercase()
 }
 
+fn is_eco_code(value: &str) -> bool {
+    let mut chars = value.trim().chars();
+    let Some(letter) = chars.next() else {
+        return false;
+    };
+    if !matches!(letter.to_ascii_uppercase(), 'A' | 'B' | 'C' | 'D' | 'E') {
+        return false;
+    }
+    let digits: String = chars.collect();
+    digits.len() == 2 && digits.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn opening_title_name_part(title: &str) -> &str {
+    let trimmed = title.trim();
+    if let Some((prefix, rest)) = trimmed.split_once(" - ") {
+        if is_eco_code(prefix) {
+            return rest.trim();
+        }
+    }
+    trimmed
+}
+
+fn normalize_repetitive_opening_name(title: &str) -> String {
+    let base = opening_title_name_part(title)
+        .split(',')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let without_variation = base
+        .strip_suffix(" Variation")
+        .or_else(|| base.strip_suffix(" variation"))
+        .unwrap_or(base);
+    normalize_opening_variant_key(without_variation)
+}
+
+fn has_more_descriptive_opening_name(title: &str) -> bool {
+    opening_title_name_part(title)
+        .split(',')
+        .skip(1)
+        .any(|part| !part.trim().is_empty())
+}
+
+fn descriptive_opening_title_candidates(
+    title_candidates: &[String],
+    repeated_base_names: &HashSet<String>,
+) -> Vec<String> {
+    let Some(first_title) = title_candidates.first() else {
+        return Vec::new();
+    };
+    let base = normalize_repetitive_opening_name(first_title);
+    if !repeated_base_names.contains(&base) {
+        return title_candidates.to_vec();
+    }
+
+    let mut out = Vec::new();
+    for candidate in title_candidates.iter().rev() {
+        if has_more_descriptive_opening_name(candidate) && !out.iter().any(|item| item == candidate) {
+            out.push(candidate.clone());
+        }
+    }
+    for candidate in title_candidates {
+        if !out.iter().any(|item| item == candidate) {
+            out.push(candidate.clone());
+        }
+    }
+    out
+}
+
 fn opening_title_candidates(info: &OpeningInfo) -> Vec<String> {
     let eco = info.eco.trim();
     let raw_name = if info.variation.trim().is_empty() {
@@ -947,8 +1015,22 @@ pub fn variants_create_opening_variants(
             reserved.insert(variant.name.to_lowercase());
         }
     }
+    let mut base_name_counts: HashMap<String, usize> = HashMap::new();
+    for group in &groups {
+        if let Some(first_title) = group.title_candidates.first() {
+            let base = normalize_repetitive_opening_name(first_title);
+            if !base.is_empty() {
+                *base_name_counts.entry(base).or_insert(0) += 1;
+            }
+        }
+    }
+    let repeated_base_names: HashSet<String> = base_name_counts
+        .into_iter()
+        .filter_map(|(base, count)| if count > 1 { Some(base) } else { None })
+        .collect();
     for group in &mut groups {
-        let (title, stem) = make_unique_opening_file_stem(&group.title_candidates, &mut reserved, "variant");
+        let title_candidates = descriptive_opening_title_candidates(&group.title_candidates, &repeated_base_names);
+        let (title, stem) = make_unique_opening_file_stem(&title_candidates, &mut reserved, "variant");
         group.title = title;
         group.file_stem = stem;
     }

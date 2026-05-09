@@ -137,6 +137,23 @@ function timingSafeStringEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+function getUnknownErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (typeof error === "string" && error.trim()) return error.trim();
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    // Ignore serialization errors.
+  }
+  return "Unknown error.";
+}
+
+function wrapCloudSyncError(phase: string, error: unknown): Error {
+  const message = getUnknownErrorMessage(error);
+  return new Error(message.startsWith(`${phase}:`) ? message : `${phase}: ${message}`);
+}
+
 function randomRevisionSuffix(): string {
   if (typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -386,14 +403,18 @@ export function saveProfileCloudLocalState(
 
 export async function getProfileCloudState(config: ProfileCloudSyncConfig): Promise<ProfileCloudRemoteState | null> {
   validateProfileCloudSyncConfig(config);
-  const response = await fetch(apiUrl(config, "/sync/profile/state", { userId: cloudSyncUserId() }), {
-    method: "GET",
-    headers: authHeaders(config),
-  });
-  if (response.status === 404) {
-    return null;
+  try {
+    const response = await fetch(apiUrl(config, "/sync/profile/state", { userId: cloudSyncUserId() }), {
+      method: "GET",
+      headers: authHeaders(config),
+    });
+    if (response.status === 404) {
+      return null;
+    }
+    return readJsonResponse<ProfileCloudRemoteState>(response);
+  } catch (error) {
+    throw wrapCloudSyncError("Load cloud profile state", error);
   }
-  return readJsonResponse<ProfileCloudRemoteState>(response);
 }
 
 async function uploadEncryptedProfile(input: {
@@ -405,22 +426,26 @@ async function uploadEncryptedProfile(input: {
   assertProfilePackageIsCloudSyncTarget(input.packageJson);
   const { encrypted, sha256 } = await encryptPackageJson(input.packageJson, input.config);
   const revision = `rev_${Date.now()}_${randomRevisionSuffix()}`;
-  const response = await fetch(apiUrl(input.config, "/sync/profile/upload", { userId: cloudSyncUserId() }), {
-    method: "POST",
-    headers: {
-      ...authHeaders(input.config),
-      "content-type": "application/octet-stream",
-      "x-ocs-base-revision": input.baseRevision ?? "",
-      "x-ocs-device-id": input.config.deviceId.trim(),
-      "x-ocs-revision": revision,
-      "x-ocs-sha256": sha256,
-      "x-ocs-size-bytes": String(encrypted.byteLength),
-    },
-    body: new Blob([bytesToArrayBuffer(encrypted)], { type: "application/octet-stream" }),
-  });
-  const state = await readJsonResponse<ProfileCloudRemoteState>(response);
-  saveProfileCloudLocalState(input.config, input.profileId, state);
-  return state;
+  try {
+    const response = await fetch(apiUrl(input.config, "/sync/profile/upload", { userId: cloudSyncUserId() }), {
+      method: "POST",
+      headers: {
+        ...authHeaders(input.config),
+        "content-type": "application/octet-stream",
+        "x-ocs-base-revision": input.baseRevision ?? "",
+        "x-ocs-device-id": input.config.deviceId.trim(),
+        "x-ocs-revision": revision,
+        "x-ocs-sha256": sha256,
+        "x-ocs-size-bytes": String(encrypted.byteLength),
+      },
+      body: new Blob([bytesToArrayBuffer(encrypted)], { type: "application/octet-stream" }),
+    });
+    const state = await readJsonResponse<ProfileCloudRemoteState>(response);
+    saveProfileCloudLocalState(input.config, input.profileId, state);
+    return state;
+  } catch (error) {
+    throw wrapCloudSyncError("Upload cloud profile", error);
+  }
 }
 
 export async function uploadProfilePackageToCloud(input: {
@@ -442,16 +467,33 @@ export async function downloadProfilePackageFromCloud(input: {
   if (!state) {
     throw new Error("No cloud profile has been uploaded yet.");
   }
-  const response = await fetch(apiUrl(input.config, "/sync/profile/download", { userId: cloudSyncUserId() }), {
-    method: "GET",
-    headers: authHeaders(input.config),
-  });
-  if (!response.ok) {
-    throw new Error((await response.text()) || `Cloud sync download failed (${response.status}).`);
+  let encrypted: Uint8Array;
+  try {
+    const response = await fetch(apiUrl(input.config, "/sync/profile/download", { userId: cloudSyncUserId() }), {
+      method: "GET",
+      headers: authHeaders(input.config),
+    });
+    if (!response.ok) {
+      throw new Error((await response.text()) || `Cloud sync download failed (${response.status}).`);
+    }
+    encrypted = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    throw wrapCloudSyncError("Download cloud profile payload", error);
   }
-  const encrypted = new Uint8Array(await response.arrayBuffer());
-  const packageJson = await decryptPackageJson(encrypted, input.config);
-  assertProfilePackageIsCloudSyncTarget(packageJson);
+
+  let packageJson: string;
+  try {
+    packageJson = await decryptPackageJson(encrypted, input.config);
+  } catch (error) {
+    throw wrapCloudSyncError("Decrypt cloud profile payload", error);
+  }
+
+  try {
+    assertProfilePackageIsCloudSyncTarget(packageJson);
+  } catch (error) {
+    throw wrapCloudSyncError("Validate cloud profile package", error);
+  }
+
   const plainSha256 = await sha256Hex(textEncoder.encode(packageJson));
   if (!timingSafeStringEqual(plainSha256, state.sha256)) {
     throw new Error("Downloaded cloud profile failed integrity verification.");

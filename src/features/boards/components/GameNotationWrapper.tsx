@@ -1,5 +1,5 @@
 import { Portal, Stack } from "@mantine/core";
-import { useAtomValue } from "jotai";
+import { useAtom } from "jotai";
 import React, { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import GameNotation from "@/components/GameNotation";
@@ -8,6 +8,7 @@ import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper"
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { currentTabAtom } from "@/state/atoms";
+import { getLegacyAnalysisInitialConfig, removeAnalysisInitialConfigField } from "@/utils/tabs";
 import { useSimulatedInit } from "./hooks/useSimulatedInit";
 
 interface GameNotationWrapperProps {
@@ -33,34 +34,43 @@ function GameNotationWrapper({
 }: GameNotationWrapperProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
-  const currentTab = useAtomValue(currentTabAtom);
+  const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
   const [initialVariationState, setInitialVariationState] = useState<"variations" | "repertoire" | "report">("report");
 
-  // Read initial configuration from sessionStorage and set notation view if configured
+  // Apply one-shot initial configuration attached to the tab. Legacy sessionStorage is only a fallback for old tabs.
   useEffect(() => {
-    if (currentTab?.value && typeof window !== "undefined") {
+    if (!currentTab?.value) return;
+
+    const typedConfig = currentTab.meta?.initialConfig;
+    const legacyConfig = typedConfig ? null : getLegacyAnalysisInitialConfig(currentTab.value);
+    const notationView = typedConfig?.notationView ?? legacyConfig?.notationView;
+    if (!notationView || !["variations", "repertoire", "report"].includes(notationView)) return;
+
+    setInitialVariationState(notationView);
+
+    if (typedConfig?.notationView) {
+      setCurrentTab((prev) => {
+        if (prev.value !== currentTab.value) return prev;
+        return removeAnalysisInitialConfigField(prev, "notationView");
+      });
+      return;
+    }
+
+    if (legacyConfig?.notationView && typeof window !== "undefined") {
       const configKey = `${currentTab.value}_initialConfig`;
-      const configJson = sessionStorage.getItem(configKey);
-      if (configJson) {
+      const updatedConfig = { ...legacyConfig };
+      delete updatedConfig.notationView;
+      if (Object.keys(updatedConfig).length === 0) {
+        sessionStorage.removeItem(configKey);
+      } else {
         try {
-          const config = JSON.parse(configJson);
-          if (config.notationView && ["variations", "repertoire", "report"].includes(config.notationView)) {
-            setInitialVariationState(config.notationView as "variations" | "repertoire" | "report");
-            // Remove notationView from config, or remove entire config if it's the only key
-            const updatedConfig = { ...config };
-            delete updatedConfig.notationView;
-            if (Object.keys(updatedConfig).length === 0) {
-              sessionStorage.removeItem(configKey);
-            } else {
-              sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
-            }
-          }
-        } catch (_e) {
-          // Ignore parsing errors
+          sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
+        } catch {
+          // Ignore storage errors
         }
       }
     }
-  }, [currentTab?.value]);
+  }, [currentTab?.value, currentTab?.meta?.initialConfig, setCurrentTab]);
 
   const { isInitializing, initializationError, retry } = useSimulatedInit({ onRetry });
 

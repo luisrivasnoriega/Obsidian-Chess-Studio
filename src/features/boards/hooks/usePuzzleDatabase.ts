@@ -406,7 +406,11 @@ export const usePuzzleDatabase = () => {
     random: boolean,
     sideToMove: PuzzleSideToMove,
   ): Promise<Puzzle | null> => {
-    const localPuzzleDb = PuzzleDbFromPgnCache.get(db);
+    let localPuzzleDb = PuzzleDbFromPgnCache.get(db);
+    if (!localPuzzleDb) {
+      await loadPgnRatingRange(db);
+      localPuzzleDb = PuzzleDbFromPgnCache.get(db);
+    }
     if (!localPuzzleDb) {
       throw new Error("Puzzle database not found in cache");
     }
@@ -660,10 +664,10 @@ export const usePuzzleDatabase = () => {
     sideToMove: PuzzleSideToMove = "any",
   ): Promise<Puzzle> => {
     const dbInfo = puzzleDbs.find((p) => p.path === db);
-    if (!dbInfo) {
+    if (!dbInfo && !db.toLowerCase().endsWith(".pgn")) {
       throw new Error("Database not found");
     }
-    if (dbInfo.path.endsWith(".db3")) {
+    if (dbInfo?.path.endsWith(".db3")) {
       const normalizedThemes = normalizeFilterListForKey(themes);
       const normalizedOpeningTags = normalizeFilterListForKey(openingTags);
       const normalizedSideToMove = sideToMove;

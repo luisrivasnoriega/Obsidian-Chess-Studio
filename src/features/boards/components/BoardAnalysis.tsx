@@ -24,7 +24,13 @@ import {
 import { keyMapAtom } from "@/state/keybindings";
 import { defaultPGN, getPGN } from "@/utils/chess";
 import { isTempImportFile } from "@/utils/files";
-import { reloadTab, saveTab, saveToFile } from "@/utils/tabs";
+import {
+  getLegacyAnalysisInitialConfig,
+  reloadTab,
+  removeAnalysisInitialConfigField,
+  saveTab,
+  saveToFile,
+} from "@/utils/tabs";
 import { getNodeAtPath } from "@/utils/treeReducer";
 import EditingCard from "./EditingCard";
 import EvalListener from "./EvalListener";
@@ -351,31 +357,42 @@ function BoardAnalysis({
   const isPuzzle = currentTab?.source?.type === "file" && currentTab.source.metadata.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
 
-  // Read initial configuration from sessionStorage and set analysis tab if configured
+  // Apply one-shot initial configuration attached to the tab. Legacy sessionStorage is only a fallback for old tabs.
   useEffect(() => {
-    if (currentTab?.value && typeof window !== "undefined") {
+    if (!currentTab?.value) return;
+
+    const typedConfig = currentTab.meta?.initialConfig;
+    const legacyConfig = typedConfig ? null : getLegacyAnalysisInitialConfig(currentTab.value);
+    const analysisTab = typedConfig?.analysisTab ?? legacyConfig?.analysisTab;
+    if (!analysisTab) return;
+
+    if (currentTabSelected !== analysisTab) {
+      setCurrentTabSelected(analysisTab);
+    }
+
+    if (typedConfig?.analysisTab) {
+      setCurrentTab((prev) => {
+        if (prev.value !== currentTab.value) return prev;
+        return removeAnalysisInitialConfigField(prev, "analysisTab");
+      });
+      return;
+    }
+
+    if (legacyConfig?.analysisTab && typeof window !== "undefined") {
       const configKey = `${currentTab.value}_initialConfig`;
-      const configJson = sessionStorage.getItem(configKey);
-      if (configJson) {
+      const updatedConfig = { ...legacyConfig };
+      delete updatedConfig.analysisTab;
+      if (Object.keys(updatedConfig).length === 0) {
+        sessionStorage.removeItem(configKey);
+      } else {
         try {
-          const config = JSON.parse(configJson);
-          if (config.analysisTab && currentTabSelected !== config.analysisTab) {
-            setCurrentTabSelected(config.analysisTab);
-            // Remove analysisTab from config, keep notationView for GameNotationWrapper
-            const updatedConfig = { ...config };
-            delete updatedConfig.analysisTab;
-            if (Object.keys(updatedConfig).length === 0) {
-              sessionStorage.removeItem(configKey);
-            } else {
-              sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
-            }
-          }
-        } catch (_e) {
-          // Ignore parsing errors
+          sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
+        } catch {
+          // Ignore storage errors
         }
       }
     }
-  }, [currentTab?.value, currentTabSelected, setCurrentTabSelected]);
+  }, [currentTab?.value, currentTab?.meta?.initialConfig, currentTabSelected, setCurrentTab, setCurrentTabSelected]);
 
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";

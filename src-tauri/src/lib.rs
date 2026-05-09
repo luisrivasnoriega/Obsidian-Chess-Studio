@@ -73,6 +73,7 @@ use crate::db::{
     calculate_player_game_stats, calculate_player_openings_stats, calculate_player_rating_timeline,
     calculate_player_sidebar_model,
     clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games, optimize_database,
+    replace_profile_db_file,
     delete_indexes, download_position_cache, export_position_games_to_pgn,
     export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
     get_players_game_info, get_profile_accounts_game_info, get_profile_sidebar_stats, get_profile_game_stats, get_profile_rating_timeline, get_tournaments, init_profile_db, merge_player_site_stats,
@@ -120,7 +121,9 @@ use crate::puzzle::{
     import_puzzle_file, validate_puzzle_database,
     download_puzzle_database,
 };
-use crate::puzzle_variants::generate_puzzle_variants_from_tree;
+use crate::puzzle_variants::{
+    generate_puzzle_variants_from_coverage_node, generate_puzzle_variants_from_tree,
+};
 use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
 use crate::variants_builder::build_variants_tree;
 use crate::variants_manager::{variants_delete_files, variants_list_fast, variants_validate_consistency};
@@ -269,6 +272,7 @@ pub async fn run() {
             merge_players,
             convert_pgn,
             init_profile_db,
+            replace_profile_db_file,
             save_profile_game_analysis_stats,
             get_profile_phase_outcomes,
             get_profile_phase_accuracy,
@@ -341,6 +345,7 @@ pub async fn run() {
             upsert_variant_position,
             get_variant_position_engine_eval,
             upsert_variant_position_engine_eval,
+            generate_puzzle_variants_from_coverage_node,
             generate_puzzle_variants_from_tree,
             build_variants_tree,
             variants_list_fast,

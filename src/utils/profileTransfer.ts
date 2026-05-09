@@ -1,5 +1,15 @@
+import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { exists, mkdir, readDir, readFile, readTextFile, writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import {
+  exists,
+  mkdir,
+  readDir,
+  readFile,
+  readTextFile,
+  remove,
+  writeFile,
+  writeTextFile,
+} from "@tauri-apps/plugin-fs";
 import type { Dispatch, SetStateAction } from "react";
 import { commands } from "@/bindings";
 import { type FileMetadata, normalizeFileInfoMetadata, processEntriesRecursively } from "@/features/files/utils/file";
@@ -234,6 +244,24 @@ export function validateProfileTransferPackage(raw: string): ProfileTransferPack
     throw new Error("Invalid profile package format.");
   }
   return parsed as ProfileTransferPackageV1;
+}
+
+async function replaceProfileDbFromPackage(profileDbPath: string, profileDbBytes: Uint8Array): Promise<void> {
+  const replacementPath = `${profileDbPath}.cloud-import-${Date.now()}.tmp`;
+  await writeFile(replacementPath, profileDbBytes);
+  try {
+    await invoke("replace_profile_db_file", {
+      target: profileDbPath,
+      replacement: replacementPath,
+    });
+  } catch (error) {
+    try {
+      await remove(replacementPath);
+    } catch {
+      // Ignore cleanup errors.
+    }
+    throw error;
+  }
 }
 
 async function collectAllProfileGameIds(profileId: string, profileUsernames: string[]) {
@@ -527,7 +555,7 @@ export async function importProfileTransferPackage(input: {
 
   const profileDbPath = await getProfileDbPath(targetProfileId);
   const profileDbBytes = base64ToBytes(input.pkg.profileDbBase64);
-  await writeFile(profileDbPath, profileDbBytes);
+  await replaceProfileDbFromPackage(profileDbPath, profileDbBytes);
   unwrap(await commands.initProfileDb(profileDbPath, targetProfileName, null));
 
   const appData = await appDataDir();

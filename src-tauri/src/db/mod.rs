@@ -4705,6 +4705,241 @@ pub async fn delete_database(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn replace_profile_db_file(
+    target: PathBuf,
+    replacement: PathBuf,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let target_file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .ok_or_else(|| Error::PackageManager("Invalid profile database path".to_string()))?;
+
+    if !target_file_name.starts_with("profile_") || !target_file_name.ends_with(".db3") {
+        return Err(Error::PackageManager(
+            "Cloud sync can only replace profile database files".to_string(),
+        ));
+    }
+
+    if !replacement.exists() {
+        return Err(Error::PackageManager(format!(
+            "Replacement profile database does not exist: {}",
+            replacement.display()
+        )));
+    }
+
+    let target_parent = target
+        .parent()
+        .ok_or_else(|| Error::PackageManager("Invalid profile database directory".to_string()))?;
+    let replacement_parent = replacement
+        .parent()
+        .ok_or_else(|| Error::PackageManager("Invalid replacement database directory".to_string()))?;
+    if target_parent != replacement_parent {
+        return Err(Error::PackageManager(
+            "Replacement profile database must be in the profile database directory".to_string(),
+        ));
+    }
+
+    let target_str = target.to_string_lossy().into_owned();
+    let canonical_target_str = std::fs::canonicalize(&target)
+        .ok()
+        .and_then(|path| path.to_str().map(|value| value.to_string()));
+
+    let same_path = |left: &str, right: &str| {
+        if cfg!(windows) {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    };
+
+    let remove_pool_entry = |state: &tauri::State<'_, AppState>, key: &str| {
+        if let Some((_, pool)) = state.connection_pool.remove(key) {
+            drop(pool);
+        }
+    };
+
+    let clear_readonly = |path: &PathBuf| {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let mut permissions = metadata.permissions();
+            if permissions.readonly() {
+                permissions.set_readonly(false);
+                let _ = std::fs::set_permissions(path, permissions);
+            }
+        }
+    };
+
+    let permits = state.new_request.clone();
+    let all_permits = permits.acquire_many(10).await.ok();
+
+    remove_pool_entry(&state, &target_str);
+    if let Some(canonical) = canonical_target_str.as_deref() {
+        if !same_path(&target_str, canonical) {
+            remove_pool_entry(&state, canonical);
+        }
+    }
+
+    let pool_keys_to_remove: Vec<String> = state
+        .connection_pool
+        .iter()
+        .filter_map(|entry| {
+            let key = entry.key();
+            let same_file_name = PathBuf::from(key.as_str())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| same_path(name, &target_file_name))
+                .unwrap_or(false);
+            if same_file_name {
+                Some(key.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    for key in pool_keys_to_remove {
+        remove_pool_entry(&state, &key);
+    }
+
+    let mut path_aliases: Vec<String> = vec![target_str.clone()];
+    if let Some(canonical) = canonical_target_str.as_ref() {
+        if !path_aliases.iter().any(|existing| same_path(existing, canonical)) {
+            path_aliases.push(canonical.clone());
+        }
+    }
+    let cache_keys_to_remove: Vec<_> = state
+        .line_cache
+        .iter()
+        .filter(|entry| {
+            let key_path = entry.key().1.to_string_lossy();
+            path_aliases.iter().any(|candidate| same_path(candidate, key_path.as_ref()))
+                || PathBuf::from(key_path.as_ref())
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| same_path(name, &target_file_name))
+                    .unwrap_or(false)
+        })
+        .map(|entry| entry.key().clone())
+        .collect();
+    for key in cache_keys_to_remove {
+        state.line_cache.remove(&key);
+    }
+
+    drop(all_permits);
+
+    let _ = crate::db::position_cache::clear_cache_for_database(&app, &target);
+
+    let sidecars = [
+        PathBuf::from(format!("{}-wal", target.display())),
+        PathBuf::from(format!("{}-shm", target.display())),
+    ];
+
+    let mut last_remove_error: Option<std::io::Error> = None;
+    for attempt in 0..8u64 {
+        if !target.exists() {
+            last_remove_error = None;
+            break;
+        }
+
+        clear_readonly(&target);
+        match std::fs::remove_file(&target) {
+            Ok(()) => {
+                last_remove_error = None;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                last_remove_error = None;
+                break;
+            }
+            Err(e) => {
+                last_remove_error = Some(e);
+                if attempt < 7 {
+                    tokio::time::sleep(Duration::from_millis(120 * (attempt + 1))).await;
+                }
+            }
+        }
+    }
+
+    if target.exists() {
+        return Err(Error::PackageManager(format!(
+            "Failed to replace profile database '{}': {}",
+            target.display(),
+            last_remove_error
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "unknown file lock error".to_string())
+        )));
+    }
+
+    for sidecar in sidecars {
+        let mut last_sidecar_error: Option<std::io::Error> = None;
+        for attempt in 0..6u64 {
+            if !sidecar.exists() {
+                last_sidecar_error = None;
+                break;
+            }
+
+            clear_readonly(&sidecar);
+            match std::fs::remove_file(&sidecar) {
+                Ok(()) => {
+                    last_sidecar_error = None;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    last_sidecar_error = None;
+                    break;
+                }
+                Err(e) => {
+                    last_sidecar_error = Some(e);
+                    if attempt < 5 {
+                        tokio::time::sleep(Duration::from_millis(80 * (attempt + 1))).await;
+                    }
+                }
+            }
+        }
+
+        if sidecar.exists() {
+            return Err(Error::PackageManager(format!(
+                "Failed to remove stale SQLite sidecar '{}': {}",
+                sidecar.display(),
+                last_sidecar_error
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "unknown file lock error".to_string())
+            )));
+        }
+    }
+
+    let mut last_finalize_error: Option<std::io::Error> = None;
+    for attempt in 0..6u64 {
+        match std::fs::rename(&replacement, &target) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_finalize_error = Some(e);
+                if attempt < 5 {
+                    tokio::time::sleep(Duration::from_millis(120 * (attempt + 1))).await;
+                }
+            }
+        }
+    }
+
+    match std::fs::copy(&replacement, &target) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&replacement);
+            Ok(())
+        }
+        Err(copy_error) => Err(Error::PackageManager(format!(
+            "Failed to finalize profile database replacement '{}': {}; copy fallback failed: {}",
+            target.display(),
+            last_finalize_error
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "unknown file lock error".to_string()),
+            copy_error
+        ))),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn delete_duplicated_games(
     file: PathBuf,
     state: tauri::State<'_, AppState>,

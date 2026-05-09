@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Obsidian Chess Studio",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "mainBinaryName": "obsidian-chess-studio",
   "identifier": "com.ocs",
   "bundle": {

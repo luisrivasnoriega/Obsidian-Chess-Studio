@@ -4,19 +4,20 @@ import { IconBook, IconBookOff, IconZoomCheck } from "@tabler/icons-react";
 import { invoke } from "@tauri-apps/api/core";
 import cx from "clsx";
 import equal from "fast-deep-equal";
-import { useAtomValue } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import { memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import EvalChart from "@/components/EvalChart";
 import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { activeTabAtom } from "@/state/atoms";
+import { activeTabAtom, currentTabAtom } from "@/state/atoms";
 import { saveAnalyzedGame, saveGameStats } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors } from "@/utils/annotation";
 import { getGameStats, getMainLine, getPGNFromReportView } from "@/utils/chess";
 import { calculateEstimatedElo } from "@/utils/eloEstimation";
 import { type GameStats, getGameRecordById, updateGameRecord } from "@/utils/gameRecords";
+import { getLegacyAnalysisNavigationContext, setAnalysisContextProfileGameIds } from "@/utils/tabs";
 import { label } from "./AnalysisPanel.css";
 import ReportModal from "./ReportModal";
 
@@ -24,6 +25,16 @@ function ReportPanel() {
   const { t } = useTranslation();
 
   const activeTab = useAtomValue(activeTabAtom);
+  const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
+  const analysisContext = useMemo(
+    () =>
+      currentTab?.value === activeTab
+        ? (currentTab.meta?.analysisContext ?? (activeTab ? getLegacyAnalysisNavigationContext(activeTab) : null))
+        : activeTab
+          ? getLegacyAnalysisNavigationContext(activeTab)
+          : null,
+    [activeTab, currentTab?.value, currentTab?.meta?.analysisContext],
+  );
 
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
@@ -55,10 +66,9 @@ function ReportPanel() {
     [root, headers],
   );
 
-  const profileIdFromTab =
-    typeof window !== "undefined" && activeTab ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
+  const profileIdFromTab = analysisContext?.profileId ?? null;
   const profileDbGameIdRaw =
-    typeof window !== "undefined" && activeTab ? sessionStorage.getItem(`${activeTab}_profileDbGameId`) : null;
+    analysisContext && analysisContext.source !== "local" ? (analysisContext.profileDbGameId ?? null) : null;
   const profileDbGameId = useMemo(() => {
     if (!profileDbGameIdRaw) return null;
     const n = Number.parseInt(profileDbGameIdRaw, 10);
@@ -236,7 +246,7 @@ function ReportPanel() {
           const reportStats = getGameStats(finalRoot);
 
           // Check if this tab is associated with a local game
-          const localGameId = typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_localGameId`) : null;
+          const localGameId = analysisContext?.source === "local" ? analysisContext.localGameId : null;
           const activeProfileId = typeof window !== "undefined" ? localStorage.getItem("activeProfileId") : null;
 
           if (localGameId) {
@@ -288,21 +298,18 @@ function ReportPanel() {
             }
           } else {
             // Check if this tab is associated with a Chess.com or Lichess game
-            const chessComGameUrl =
-              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_chessComGameUrl`) : null;
-            const lichessGameId =
-              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_lichessGameId`) : null;
+            const chessComGameUrl = analysisContext?.source === "chesscom" ? analysisContext.gameKey : null;
+            const lichessGameId = analysisContext?.source === "lichess" ? analysisContext.gameKey : null;
             const profileDbGameId =
-              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileDbGameId`) : null;
-            const profileIdFromTab =
-              typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_profileId`) : null;
+              analysisContext && analysisContext.source !== "local" ? (analysisContext.profileDbGameId ?? null) : null;
+            const profileIdFromTab = analysisContext?.profileId ?? null;
 
             // If this analysis tab was opened from a profile DB game, we always persist using (profileId, Games.ID)
             // so the dashboard LEFT JOIN can match exactly.
             const preferredProfileId = profileIdFromTab ?? activeProfileId ?? null;
             let preferredGameId = profileDbGameId ?? null;
 
-            // Safety net: if the tab didn't get `${tabId}_profileDbGameId` in time, resolve it now using the backend.
+            // Safety net: if the tab context did not receive the profile DB game ID in time, resolve it now.
             if (!preferredGameId && preferredProfileId) {
               try {
                 if (chessComGameUrl) {
@@ -320,9 +327,11 @@ function ReportPanel() {
                       gameKey: lichessGameId,
                     })) ?? null;
                 }
-                if (preferredGameId && typeof window !== "undefined") {
-                  sessionStorage.setItem(`${activeTab}_profileId`, preferredProfileId);
-                  sessionStorage.setItem(`${activeTab}_profileDbGameId`, preferredGameId);
+                if (preferredGameId) {
+                  setCurrentTab((prev) => {
+                    if (prev.value !== activeTab) return prev;
+                    return setAnalysisContextProfileGameIds(prev, preferredProfileId, preferredGameId);
+                  });
                 }
               } catch {
                 // ignore
@@ -335,9 +344,9 @@ function ReportPanel() {
 
               // Calculate and save stats using the stats already calculated in the report
               try {
-                // Get the username from sessionStorage to determine which color the user played
+                // Get the username from the tab context to determine which color the user played
                 const chessComUsername =
-                  typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_chessComUsername`) : null;
+                  analysisContext?.source === "chesscom" ? (analysisContext.accountUsername ?? null) : null;
 
                 if (chessComUsername) {
                   // Extract usernames from PGN headers
@@ -377,9 +386,9 @@ function ReportPanel() {
 
               // Calculate and save stats using the stats already calculated in the report
               try {
-                // Get the username from sessionStorage to determine which color the user played
+                // Get the username from the tab context to determine which color the user played
                 const lichessUsername =
-                  typeof window !== "undefined" ? sessionStorage.getItem(`${activeTab}_lichessUsername`) : null;
+                  analysisContext?.source === "lichess" ? (analysisContext.accountUsername ?? null) : null;
 
                 if (lichessUsername) {
                   // Extract usernames from PGN headers
@@ -434,7 +443,7 @@ function ReportPanel() {
     if (inProgress) {
       hasSavedPgnRef.current = false;
     }
-  }, [isCompleted, inProgress, activeTab, store]); // Removed root and headers from dependencies - we get them from store directly
+  }, [isCompleted, inProgress, activeTab, store, analysisContext, setCurrentTab]); // Removed root and headers from dependencies - we get them from store directly
 
   return (
     <Box style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>

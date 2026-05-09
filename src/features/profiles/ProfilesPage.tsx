@@ -125,6 +125,18 @@ function sessionMeta(session: { lichess?: { username: string }; chessCom?: { use
   return { platform: "unknown" as const, username: "-" };
 }
 
+function getUnknownErrorMessage(error: unknown): string | null {
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  if (typeof error === "string" && error.trim()) return error.trim();
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    // Ignore serialization errors.
+  }
+  return null;
+}
+
 function cleanFideId(value: string): string {
   return value.replace(/\D/g, "");
 }
@@ -1950,17 +1962,30 @@ export default function ProfilesPage() {
 
   const applyCloudProfilePackageJson = useCallback(
     async (packageJson: string) => {
-      const pkg = validateProfileTransferPackage(packageJson);
-      const summary = await importProfileTransferPackage({
-        pkg,
-        profiles,
-        mode: "replace-existing",
-        setProfiles,
-        setSessions,
-        setProfileStatsUiStateByProfile,
-        setProfilePawnUiStateByProfile,
-        setActiveProfileId,
-      });
+      let pkg: ReturnType<typeof validateProfileTransferPackage>;
+      try {
+        pkg = validateProfileTransferPackage(packageJson);
+      } catch (error) {
+        const reason = getUnknownErrorMessage(error) ?? "Invalid profile package format.";
+        throw new Error(`Validate downloaded profile package: ${reason}`);
+      }
+
+      let summary: Awaited<ReturnType<typeof importProfileTransferPackage>>;
+      try {
+        summary = await importProfileTransferPackage({
+          pkg,
+          profiles,
+          mode: "replace-existing",
+          setProfiles,
+          setSessions,
+          setProfileStatsUiStateByProfile,
+          setProfilePawnUiStateByProfile,
+          setActiveProfileId,
+        });
+      } catch (error) {
+        const reason = getUnknownErrorMessage(error) ?? "Unknown error.";
+        throw new Error(`Import downloaded profile package: ${reason}`);
+      }
       await loadDatabases();
       invalidateProfilePlayerStats(summary.profileId);
       return summary;
@@ -2045,12 +2070,15 @@ export default function ProfilesPage() {
         color: "yellow",
       });
     } catch (error) {
+      const reason = getUnknownErrorMessage(error);
       notifications.show({
         title: t("common.error", { defaultValue: "Error" }),
-        message:
-          error instanceof Error
-            ? error.message
-            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        message: reason
+          ? t("profiles.cloud.failedWithReason", {
+              defaultValue: "Cloud profile sync failed: {{reason}}",
+              reason,
+            })
+          : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
         color: "red",
       });
     } finally {
@@ -2071,12 +2099,15 @@ export default function ProfilesPage() {
         color: "green",
       });
     } catch (error) {
+      const reason = getUnknownErrorMessage(error);
       notifications.show({
         title: t("common.error", { defaultValue: "Error" }),
-        message:
-          error instanceof Error
-            ? error.message
-            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        message: reason
+          ? t("profiles.cloud.failedWithReason", {
+              defaultValue: "Cloud profile sync failed: {{reason}}",
+              reason,
+            })
+          : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
         color: "red",
       });
     } finally {
@@ -2101,12 +2132,15 @@ export default function ProfilesPage() {
         color: "green",
       });
     } catch (error) {
+      const reason = getUnknownErrorMessage(error);
       notifications.show({
         title: t("common.error", { defaultValue: "Error" }),
-        message:
-          error instanceof Error
-            ? error.message
-            : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
+        message: reason
+          ? t("profiles.cloud.failedWithReason", {
+              defaultValue: "Cloud profile sync failed: {{reason}}",
+              reason,
+            })
+          : t("profiles.cloud.failed", { defaultValue: "Cloud profile sync failed." }),
         color: "red",
       });
     } finally {

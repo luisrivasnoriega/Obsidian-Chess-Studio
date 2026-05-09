@@ -42,6 +42,7 @@ import {
   IconPlus,
   IconPuzzle,
   IconRefresh,
+  IconSearch,
   IconSettings,
   IconShieldCheck,
   IconSitemap,
@@ -81,7 +82,11 @@ import { getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
-import { generatePuzzleVariantsFromTree, type PuzzleTreeNodeDto } from "@/utils/puzzleVariants";
+import {
+  generatePuzzleVariantsFromCoverageNode,
+  generatePuzzleVariantsFromTree,
+  type PuzzleTreeNodeDto,
+} from "@/utils/puzzleVariants";
 import type { TreeNode } from "@/utils/treeReducer";
 import { PuzzleVariantsModal } from "../boards/components/PuzzleVariantsModal";
 import {
@@ -93,7 +98,7 @@ import {
 } from "./components/VariantCoverageGraph";
 import { VariantGridView } from "./components/VariantGridView";
 import type { VariantInfo } from "./types";
-import { repairVariantLinks } from "./utils/links";
+import { cleanupVariantLinksAfterDelete, repairVariantLinks } from "./utils/links";
 import { getPuzzleVariantsDirectory, getVariantsDirectory } from "./utils/profileDir";
 
 type VariantTreeNode = {
@@ -112,6 +117,21 @@ type VariantTableRow = VariantInfo & {
   hasChildren: boolean;
   expanded: boolean;
   isTransposition?: boolean;
+};
+
+type VariantSearchScope = "nameOpening" | "name" | "opening";
+
+type PersistedVariantsTableState = {
+  search?: string;
+  searchScope?: VariantSearchScope;
+  viewMode?: "grid" | "table";
+  sortStatus?: {
+    columnAccessor?: keyof VariantInfo | string;
+    direction?: "asc" | "desc";
+  };
+  page?: number;
+  pageSize?: number;
+  expandedKeys?: string[];
 };
 
 type VariantValidationMoveOccurrence = {
@@ -495,17 +515,6 @@ function coverageTierFileSuffix(tier: Exclude<CoverageTier, "root">): string {
   if (tier === "mainline") return "Mainline";
   if (tier === "secondary") return "Secondary";
   return "Alternative";
-}
-
-function formatCoverageEcoVariant(openingName: string | null | undefined): string | null {
-  const trimmed = `${openingName ?? ""}`.trim();
-  if (!trimmed) return null;
-  const match = trimmed.match(/^([A-E]\d{2})\s*[-:]\s*(.+)$/i);
-  if (!match) return trimmed;
-  const ecoCode = match[1]?.toUpperCase();
-  const opening = match[2]?.trim();
-  if (!ecoCode || !opening) return trimmed;
-  return `${ecoCode}: ${opening}`;
 }
 
 function buildCoverageEngineCacheSignature(input: {
@@ -1728,6 +1737,24 @@ async function loadVariants(variantsDir: string): Promise<VariantInfo[]> {
   return invoke<VariantInfo[]>("variants_list_fast", { variantsDir });
 }
 
+const VARIANTS_TABLE_STATE_STORAGE_KEY = "ocs.variants.tableState.v1";
+
+function readPersistedVariantsTableState(): PersistedVariantsTableState {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(VARIANTS_TABLE_STATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PersistedVariantsTableState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isVariantSearchScope(value: unknown): value is VariantSearchScope {
+  return value === "nameOpening" || value === "name" || value === "opening";
+}
+
 export default function VariantsPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -1741,16 +1768,27 @@ export default function VariantsPage() {
   const sessions = useAtomValue(sessionsAtom);
   const { layout } = useResponsiveLayout();
 
-  const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<"grid" | "table">("table");
-  const [repairingLinks, setRepairingLinks] = useState(false);
-  const [sortStatus, setSortStatus] = useState<DataTableSortStatus<VariantInfo>>({
-    columnAccessor: "name",
-    direction: "asc",
+  const [search, setSearch] = useState(() => readPersistedVariantsTableState().search ?? "");
+  const [searchScope, setSearchScope] = useState<VariantSearchScope>(() => {
+    const stored = readPersistedVariantsTableState().searchScope;
+    return isVariantSearchScope(stored) ? stored : "nameOpening";
   });
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"grid" | "table">(
+    () => readPersistedVariantsTableState().viewMode ?? "table",
+  );
+  const [repairingLinks, setRepairingLinks] = useState(false);
+  const [sortStatus, setSortStatus] = useState<DataTableSortStatus<VariantInfo>>(() => {
+    const stored = readPersistedVariantsTableState().sortStatus;
+    return {
+      columnAccessor: (stored?.columnAccessor as keyof VariantInfo | undefined) ?? "name",
+      direction: stored?.direction === "desc" ? "desc" : "asc",
+    };
+  });
+  const [page, setPage] = useState(() => Math.max(1, readPersistedVariantsTableState().page ?? 1));
+  const [pageSize, setPageSize] = useState(() => readPersistedVariantsTableState().pageSize ?? 25);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
+    () => new Set(readPersistedVariantsTableState().expandedKeys ?? []),
+  );
   const [transferBusy, setTransferBusy] = useState(false);
   const [puzzleModalOpened, setPuzzleModalOpened] = useState(false);
   const [puzzleDepth, setPuzzleDepth] = useState(1);
@@ -1825,6 +1863,30 @@ export default function VariantsPage() {
     masterUntil: null,
     includeChildren: true,
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextState: PersistedVariantsTableState = {
+      search,
+      searchScope,
+      viewMode,
+      sortStatus: {
+        columnAccessor: String(sortStatus.columnAccessor),
+        direction: sortStatus.direction,
+      },
+      page,
+      pageSize,
+      expandedKeys: Array.from(expandedKeys),
+    };
+    try {
+      window.localStorage.setItem(VARIANTS_TABLE_STATE_STORAGE_KEY, JSON.stringify(nextState));
+    } catch {}
+  }, [expandedKeys, page, pageSize, search, searchScope, sortStatus.columnAccessor, sortStatus.direction, viewMode]);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setSearch(value);
+    setPage(1);
+  }, []);
   const lichessAuthToken = useMemo(() => {
     const profileToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() ?? "";
     return profileToken.length > 0 ? profileToken : undefined;
@@ -2640,7 +2702,9 @@ export default function VariantsPage() {
             void (async () => {
               try {
                 const variantsDir = await getVariantsDirectory(activeProfileId);
-                await repairVariantLinks(variantsDir);
+                for (const deletedVariant of variantsToDelete) {
+                  await cleanupVariantLinksAfterDelete(deletedVariant.path, variantsDir);
+                }
                 try {
                   window.dispatchEvent(new Event("variants:links-updated"));
                 } catch {}
@@ -2782,18 +2846,17 @@ export default function VariantsPage() {
         selfMatches.set(key, true);
         continue;
       }
-      const matches =
-        variant.name.toLowerCase().includes(searchLower) ||
-        variant.opening?.toLowerCase().includes(searchLower) ||
-        variant.database?.toLowerCase().includes(searchLower) ||
-        variant.engine?.toLowerCase().includes(searchLower) ||
-        variant.parentLink?.name?.toLowerCase().includes(searchLower) ||
-        variant.childLinks?.some(
-          (link) => link.name.toLowerCase().includes(searchLower) || link.label?.toLowerCase().includes(searchLower),
-        ) ||
-        variant.comments?.toLowerCase().includes(searchLower) ||
-        (variant.engineMs !== null && String(variant.engineMs).includes(searchLower)) ||
-        (variant.variantsCount !== null && String(variant.variantsCount).includes(searchLower));
+      const nameMatches = variant.name.toLowerCase().includes(searchLower);
+      const openingMatches = variant.opening?.toLowerCase().includes(searchLower) ?? false;
+      if (searchScope === "name") {
+        selfMatches.set(key, nameMatches);
+        continue;
+      }
+      if (searchScope === "opening") {
+        selfMatches.set(key, openingMatches);
+        continue;
+      }
+      const matches = nameMatches || openingMatches;
       selfMatches.set(key, !!matches);
     }
 
@@ -2880,7 +2943,7 @@ export default function VariantsPage() {
     }
 
     return roots;
-  }, [variants, search, sortVariants]);
+  }, [variants, search, searchScope, sortVariants]);
 
   const variantLinkGraph = useMemo(() => {
     const variantByKey = new Map<string, VariantInfo>();
@@ -5032,95 +5095,15 @@ export default function VariantsPage() {
         return;
       }
 
-      const sourceNodePath = findCoverageNodePathById(coverageGraphRoot, coverageActionNode.id);
-      if (!sourceNodePath) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("features.board.variants.coverageNodeNotFound", {
-            defaultValue: "Could not locate the selected node in the current graph.",
-          }),
-          color: "red",
-        });
-        return;
-      }
-
-      const selectedNode = sourceNodePath[sourceNodePath.length - 1] ?? null;
-      if (!selectedNode) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("features.board.variants.coverageNodeNotFound", {
-            defaultValue: "Could not locate the selected node in the current graph.",
-          }),
-          color: "red",
-        });
-        return;
-      }
-      const selectedParentNode = sourceNodePath.length > 1 ? (sourceNodePath[sourceNodePath.length - 2] ?? null) : null;
-      const sourceNode = selectedNode.tier !== "root" && selectedParentNode ? selectedParentNode : selectedNode;
-      const directBranchOverrideKey = sourceNode === selectedParentNode ? (selectedNode.overrideKey ?? null) : null;
-      const directBranchSan = sourceNode === selectedParentNode ? extractSanFromCoverageNode(selectedNode) : null;
-      const directBranchMatches = (child: CoverageGraphNode): boolean => {
-        if (!directBranchOverrideKey && !directBranchSan) return true;
-        if (directBranchOverrideKey && child.overrideKey === directBranchOverrideKey) return true;
-        return Boolean(directBranchSan && extractSanFromCoverageNode(child) === directBranchSan);
-      };
-      const ecoVariant = formatCoverageEcoVariant(
-        coverageActionNode.openingName ?? selectedNode.openingName ?? sourceNode.openingName,
-      );
-
-      const startFen = sourceNode.fen;
-      if (!startFen) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("features.board.variants.coverageNodeMissingFen", {
-            defaultValue: "Selected node has no position context (FEN).",
-          }),
-          color: "red",
-        });
-        return;
-      }
-      const startFenKey = normalizeFenKey(startFen);
-
-      const transpositionSourceNodes: CoverageGraphNode[] = [];
-      const seenSourceIds = new Set<string>();
-      const collectTranspositionSourceNodes = (node: CoverageGraphNode) => {
-        const resolvedFen = `${node.fen ?? ""}`.trim();
-        if (resolvedFen.length > 0 && normalizeFenKey(resolvedFen) === startFenKey && !seenSourceIds.has(node.id)) {
-          seenSourceIds.add(node.id);
-          transpositionSourceNodes.push(node);
-        }
-        for (const child of node.children) {
-          collectTranspositionSourceNodes(child);
-        }
-      };
-      collectTranspositionSourceNodes(coverageGraphRoot);
-      if (transpositionSourceNodes.length === 0) {
-        transpositionSourceNodes.push(sourceNode);
-      }
-
-      const { commands } = await import("@/bindings");
-      const { unwrap } = await import("@/utils/unwrap");
-      const count = unwrap(await commands.countPgnGames(targetVariant.path));
-      if (count <= 0) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-          color: "red",
-        });
-        return;
-      }
-      const games = unwrap(await commands.readGames(targetVariant.path, 0, 0));
-      const firstGame = games[0];
-      if (!firstGame) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-          color: "red",
-        });
-        return;
-      }
-      const tree = await parsePGN(firstGame);
-      const orientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
+      const orientation = coverageGraphOrientation;
+      const generatedCoverage = await generatePuzzleVariantsFromCoverageNode({
+        graphRoot: coverageGraphRoot,
+        actionNodeId: coverageActionNode.id,
+        orientation,
+        selectedDepth,
+        tierFilter: coveragePuzzleTierFilter,
+        includeLowSample: coveragePuzzleIncludeLowSample,
+      });
 
       const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
       const variantsDir = await getVariantsDirectory(activeProfileId);
@@ -5130,123 +5113,14 @@ export default function VariantsPage() {
         variantPath: targetVariant.path,
       });
 
-      const hasTierInSubtree = (node: CoverageGraphNode, selectedTier: Exclude<CoverageTier, "root">): boolean => {
-        const isEligibleBySample = coveragePuzzleIncludeLowSample || !node.lowSample;
-        if (node.tier === selectedTier && isEligibleBySample) return true;
-        for (const child of node.children) {
-          if (hasTierInSubtree(child, selectedTier)) return true;
-        }
-        return false;
-      };
-
-      const toFilteredPuzzleChildren = (
-        parent: CoverageGraphNode,
-        selectedTier: Exclude<CoverageTier, "root">,
-        directChildFilter?: (child: CoverageGraphNode) => boolean,
-      ): PuzzleTreeNodeDto[] => {
-        const out: PuzzleTreeNodeDto[] = [];
-        for (const child of parent.children) {
-          if (directChildFilter && !directChildFilter(child)) {
-            continue;
-          }
-          if (child.tier !== "root") {
-            const isEligibleBySample = coveragePuzzleIncludeLowSample || !child.lowSample;
-            const isSelectedTier = child.tier === selectedTier && isEligibleBySample;
-            const connectsToSelectedTier = hasTierInSubtree(child, selectedTier);
-            // Keep connectors so selected-tier branches deeper in the tree remain reachable.
-            if (!isSelectedTier && !connectsToSelectedTier) {
-              continue;
-            }
-          }
-          const san = extractSanFromCoverageNode(child);
-          if (!san || !child.fen) {
-            continue;
-          }
-          out.push({
-            fen: child.fen,
-            san,
-            children: toFilteredPuzzleChildren(child, selectedTier),
-          });
-        }
-        return out;
-      };
-
-      const collectAllowedStartKeys = (
-        parent: CoverageGraphNode,
-        selectedTier: Exclude<CoverageTier, "root">,
-        allowedStartKeys: Set<string>,
-        directChildFilter?: (child: CoverageGraphNode) => boolean,
-      ) => {
-        for (const child of parent.children) {
-          if (directChildFilter && !directChildFilter(child)) {
-            continue;
-          }
-          if (
-            child.tier === selectedTier &&
-            child.overrideKey &&
-            (coveragePuzzleIncludeLowSample || !child.lowSample)
-          ) {
-            const hasPlayableReply = child.children.some((replyNode) => {
-              const replySan = extractSanFromCoverageNode(replyNode);
-              return Boolean(replySan && replyNode.fen);
-            });
-            if (hasPlayableReply) {
-              allowedStartKeys.add(child.overrideKey);
-            }
-          }
-          collectAllowedStartKeys(child, selectedTier, allowedStartKeys);
-        }
-      };
-
-      const buildPuzzleRootForTier = (selectedTier: Exclude<CoverageTier, "root">) => {
-        const allowedStartKeys = new Set<string>();
-        for (const transpositionSourceNode of transpositionSourceNodes) {
-          collectAllowedStartKeys(transpositionSourceNode, selectedTier, allowedStartKeys, directBranchMatches);
-        }
-
-        const mergedPuzzleChildren: PuzzleTreeNodeDto[] = [];
-        for (const transpositionSourceNode of transpositionSourceNodes) {
-          mergedPuzzleChildren.push(
-            ...toFilteredPuzzleChildren(transpositionSourceNode, selectedTier, directBranchMatches),
-          );
-        }
-
-        return {
-          root: {
-            fen: startFen,
-            san: null,
-            children: mergedPuzzleChildren,
-          },
-          allowedStartKeys,
-        };
-      };
-
-      const tiersToGenerate: Array<Exclude<CoverageTier, "root">> =
-        coveragePuzzleTierFilter === "all" ? ["mainline", "secondary", "alternative"] : [coveragePuzzleTierFilter];
       const now = formatFileTimestamp(new Date());
       let generatedFiles = 0;
       let totalPuzzles = 0;
-      const emptyTiers: string[] = [];
+      const emptyTiers = generatedCoverage.emptyTiers.map(coverageTierFileSuffix);
 
-      for (const selectedTier of tiersToGenerate) {
-        const { root: puzzleRoot, allowedStartKeys } = buildPuzzleRootForTier(selectedTier);
+      for (const result of generatedCoverage.results) {
+        const selectedTier = result.tier;
         const tierSuffix = coverageTierFileSuffix(selectedTier);
-        if (puzzleRoot.children.length === 0 || allowedStartKeys.size === 0) {
-          emptyTiers.push(tierSuffix);
-          continue;
-        }
-
-        const result = await generatePuzzleVariantsFromTree({
-          root: puzzleRoot,
-          orientation,
-          selectedDepth,
-          allowedStartKeys: Array.from(allowedStartKeys),
-        });
-
-        if (result.count <= 0 || result.pgn.trim().length === 0) {
-          emptyTiers.push(tierSuffix);
-          continue;
-        }
 
         const fileStemBase = sanitizeFileStem(
           coveragePuzzleTierFilter === "all"
@@ -5265,8 +5139,8 @@ export default function VariantsPage() {
           `depth:${selectedDepth}`,
           `orientation:${orientation}`,
         ];
-        if (ecoVariant) {
-          tags.push(`ecoVariant:${ecoVariant}`);
+        if (generatedCoverage.ecoVariant) {
+          tags.push(`ecoVariant:${generatedCoverage.ecoVariant}`);
         }
 
         const createResult = await createFile({
@@ -5331,6 +5205,7 @@ export default function VariantsPage() {
   }, [
     coverageActionNode,
     coverageGraphRoot,
+    coverageGraphOrientation,
     coverageGraphTargetKey,
     coveragePuzzleGenerating,
     coveragePuzzleIncludeLowSample,
@@ -6391,11 +6266,12 @@ export default function VariantsPage() {
   }, [variantTableRows, page, pageSize]);
 
   useEffect(() => {
+    if (isLoading) return;
     const maxPage = Math.max(1, Math.ceil(variantTableRows.length / pageSize));
     if (page > maxPage) {
       setPage(maxPage);
     }
-  }, [variantTableRows.length, page, pageSize]);
+  }, [isLoading, variantTableRows.length, page, pageSize]);
 
   const toggleRow = (rowKey: string) => {
     setExpandedKeys((prev) => {
@@ -6689,7 +6565,7 @@ export default function VariantsPage() {
         folder="variants"
         searchPlaceholder={t("features.board.variants.searchPlaceholder", { defaultValue: "Search variants..." })}
         query={search}
-        setQuery={setSearch}
+        setQuery={handleSearchChange}
         sortOptions={[
           { value: "name", label: t("features.board.variants.name", { defaultValue: "Name" }) },
           { value: "priority", label: t("features.board.variants.priority", { defaultValue: "Priority" }) },
@@ -6847,6 +6723,35 @@ export default function VariantsPage() {
               borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 20%, var(--mantine-color-dark-4))",
             }}
           >
+            <Group gap="sm" mb="sm" align="flex-end" wrap="wrap">
+              <TextInput
+                value={search}
+                onChange={(event) => handleSearchChange(event.currentTarget.value)}
+                placeholder={t("features.board.variants.tableFilterPlaceholder", {
+                  defaultValue: "Filter variants by name or opening",
+                })}
+                leftSection={<IconSearch size={16} />}
+                style={{ flex: "1 1 320px" }}
+              />
+              <Select
+                value={searchScope}
+                onChange={(value) => {
+                  setSearchScope(isVariantSearchScope(value) ? value : "nameOpening");
+                  setPage(1);
+                }}
+                label={t("features.board.variants.filterBy", { defaultValue: "Filter by" })}
+                data={[
+                  {
+                    value: "nameOpening",
+                    label: t("features.board.variants.filterNameOpening", { defaultValue: "Name + opening" }),
+                  },
+                  { value: "name", label: t("features.board.variants.filterName", { defaultValue: "Name" }) },
+                  { value: "opening", label: t("features.board.variants.filterOpening", { defaultValue: "Opening" }) },
+                ]}
+                allowDeselect={false}
+                style={{ flex: "0 1 220px" }}
+              />
+            </Group>
             {viewMode === "grid" ? (
               <VariantGridView
                 variants={visibleTreeVariants}

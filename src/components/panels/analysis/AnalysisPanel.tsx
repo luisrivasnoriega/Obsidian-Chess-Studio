@@ -28,6 +28,7 @@ import {
   allEnabledAtom,
   currentAnalysisTabAtom,
   currentExpandedEnginesAtom,
+  currentTabAtom,
   enableAllAtom,
   engineMovesFamily,
   enginesAtom,
@@ -36,6 +37,7 @@ import { getVariationLine } from "@/utils/chess";
 import { getPiecesCount, hasCaptures, positionFromFen } from "@/utils/chessops";
 import { buildEngineVariationCacheKey } from "@/utils/engineCacheKey";
 import type { Engine } from "@/utils/engines";
+import { getLegacyAnalysisInitialConfig, removeAnalysisInitialConfigField } from "@/utils/tabs";
 import type { TreeNode } from "@/utils/treeReducer";
 import BestMoves, { arrowColors } from "./BestMoves";
 import EngineSelection from "./EngineSelection";
@@ -48,6 +50,12 @@ type AnalysisPanelProps = {
   hideTabsList?: boolean;
   forceTab?: "engines" | "report" | "logs";
 };
+
+type AnalysisPanelTab = "engines" | "report" | "logs";
+
+function isAnalysisPanelTab(value: string | undefined): value is AnalysisPanelTab {
+  return value === "engines" || value === "report" || value === "logs";
+}
 
 function hasAnalysisContent(root: TreeNode): boolean {
   const stack: TreeNode[] = [root];
@@ -121,15 +129,15 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
   const allEnabledLoader = useAtomValue(allEnabledAtom);
   const allEnabled = allEnabledLoader.state === "hasData" && allEnabledLoader.data;
 
-  const activeTab = useAtomValue(activeTabAtom);
-  const [configTabOverride, setConfigTabOverride] = useState<"engines" | "report" | "logs" | null>(null);
+  const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
+  const [configTabOverride, setConfigTabOverride] = useState<AnalysisPanelTab | null>(null);
 
   const [tab, setTab] = useAtom(currentAnalysisTabAtom);
   const [expanded, setExpanded] = useAtom(currentExpandedEnginesAtom);
   const defaultAppliedRef = useRef(false);
 
   // Use forced tab when provided (embedded contexts), otherwise configured/atom tab.
-  const effectiveTab = (forceTab || configTabOverride || tab) as "engines" | "report" | "logs";
+  const effectiveTab = (forceTab || configTabOverride || tab) as AnalysisPanelTab;
 
   const hadPreexistingAnalysisRef = useRef<boolean | null>(null);
   if (hadPreexistingAnalysisRef.current === null) {
@@ -140,78 +148,83 @@ function AnalysisPanel({ hideTabsList = false, forceTab }: AnalysisPanelProps) {
 
   // Read initial configuration (per board tab) and apply it once.
   useEffect(() => {
-    if (!activeTab || typeof window === "undefined") {
+    if (!currentTab?.value) {
       setConfigTabOverride(null);
       return;
     }
 
-    const configKey = `${activeTab}_initialConfig`;
-    const configJson = sessionStorage.getItem(configKey);
-    if (!configJson) {
+    const typedConfig = currentTab.meta?.initialConfig;
+    const legacyConfig = typedConfig ? null : getLegacyAnalysisInitialConfig(currentTab.value);
+    const next = typedConfig?.analysisSubTab ?? legacyConfig?.analysisSubTab;
+    if (!isAnalysisPanelTab(next)) {
       setConfigTabOverride(null);
       return;
     }
 
-    try {
-      const config = JSON.parse(configJson);
-      const next = config.analysisSubTab;
-      if (next && ["engines", "report", "logs"].includes(next)) {
-        // IMPORTANT: decide based on analysis state at open time, not after engines start streaming scores.
-        const hadPreexistingAnalysis = hadPreexistingAnalysisRef.current ?? false;
-        if ((next === "report" && !hadPreexistingAnalysis) || (next === "engines" && hadPreexistingAnalysis)) {
-          // Clear the one-shot config so it doesn't re-apply later (e.g. when analysis scores appear).
+    // IMPORTANT: decide based on analysis state at open time, not after engines start streaming scores.
+    const hadPreexistingAnalysis = hadPreexistingAnalysisRef.current ?? false;
+    if ((next === "report" && !hadPreexistingAnalysis) || (next === "engines" && hadPreexistingAnalysis)) {
+      // Clear the one-shot config so it doesn't re-apply later (e.g. when analysis scores appear).
+      if (typedConfig?.analysisSubTab) {
+        setCurrentTab((prev) => {
+          if (prev.value !== currentTab.value) return prev;
+          return removeAnalysisInitialConfigField(prev, "analysisSubTab");
+        });
+      } else if (legacyConfig?.analysisSubTab && typeof window !== "undefined") {
+        const configKey = `${currentTab.value}_initialConfig`;
+        const updatedConfig = { ...legacyConfig };
+        delete updatedConfig.analysisSubTab;
+        if (Object.keys(updatedConfig).length === 0) {
+          sessionStorage.removeItem(configKey);
+        } else {
           try {
-            const updatedConfig = { ...config };
-            delete updatedConfig.analysisSubTab;
-            if (Object.keys(updatedConfig).length === 0) {
-              sessionStorage.removeItem(configKey);
-            } else {
-              sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
-            }
+            sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
           } catch {
-            // Ignore
+            // Ignore storage errors
           }
-          setConfigTabOverride(null);
-          return;
         }
-        setConfigTabOverride(next);
-        return;
       }
-    } catch {
-      // Ignore parsing errors
+      setConfigTabOverride(null);
+      return;
     }
 
-    setConfigTabOverride(null);
-  }, [activeTab]);
+    setConfigTabOverride(next);
+  }, [currentTab?.value, currentTab?.meta?.initialConfig, setCurrentTab]);
 
   useEffect(() => {
-    if (!activeTab || typeof window === "undefined") return;
+    if (!currentTab?.value) return;
     if (!configTabOverride) return;
 
     if (tab !== configTabOverride) {
       setTab(configTabOverride);
     }
 
-    const configKey = `${activeTab}_initialConfig`;
-    const configJson = sessionStorage.getItem(configKey);
-    if (configJson) {
-      try {
-        const config = JSON.parse(configJson);
-        const updatedConfig = { ...config };
+    if (currentTab.meta?.initialConfig?.analysisSubTab) {
+      setCurrentTab((prev) => {
+        if (prev.value !== currentTab.value) return prev;
+        return removeAnalysisInitialConfigField(prev, "analysisSubTab");
+      });
+    } else {
+      const legacyConfig = getLegacyAnalysisInitialConfig(currentTab.value);
+      if (legacyConfig?.analysisSubTab && typeof window !== "undefined") {
+        const configKey = `${currentTab.value}_initialConfig`;
+        const updatedConfig = { ...legacyConfig };
         delete updatedConfig.analysisSubTab;
         if (Object.keys(updatedConfig).length === 0) {
           sessionStorage.removeItem(configKey);
         } else {
-          sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
+          try {
+            sessionStorage.setItem(configKey, JSON.stringify(updatedConfig));
+          } catch {
+            // Ignore storage errors
+          }
         }
-      } catch {
-        // Ignore parsing errors
       }
     }
 
     // Allow the user to change tabs after applying the config once.
     setConfigTabOverride(null);
-  }, [activeTab, configTabOverride, setTab, tab]);
+  }, [configTabOverride, currentTab?.value, currentTab?.meta?.initialConfig, setCurrentTab, setTab, tab]);
 
   useEffect(() => {
     if (defaultAppliedRef.current) return;
