@@ -1,9 +1,9 @@
-use crate::chess::types::{EngineOption, EngineOptions, GoMode};
-use crate::db::{GameQueryJs, PositionStats, PositionQueryJs};
+use crate::chess::types::{BestMoves, EngineOption, EngineOptions, GoMode, ScoreValue};
+use crate::db::{GameQueryJs, PositionQueryJs, PositionStats};
 use crate::error::{Error, Result};
 use crate::variant_positions;
 use crate::AppState;
-use chrono::{Datelike, DateTime, FixedOffset};
+use chrono::{DateTime, Datelike, FixedOffset};
 use log;
 use once_cell::sync::Lazy;
 use reqwest::{Client, StatusCode};
@@ -80,7 +80,10 @@ fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-pub(crate) async fn fetch_explorer(url: reqwest::Url, lichess_token: Option<&str>) -> Result<ExplorerPositionData> {
+pub(crate) async fn fetch_explorer(
+    url: reqwest::Url,
+    lichess_token: Option<&str>,
+) -> Result<ExplorerPositionData> {
     // Retry/backoff on 429 and transient 5xx.
     const MAX_RETRIES: usize = 8;
     let mut backoff = Duration::from_millis(1000);
@@ -133,8 +136,7 @@ pub(crate) async fn fetch_explorer(url: reqwest::Url, lichess_token: Option<&str
             let body_preview = body.trim().chars().take(160).collect::<String>();
             return Err(Error::FenError(format!(
                 "Lichess explorer client error {}: {}",
-                status,
-                body_preview
+                status, body_preview
             )));
         }
 
@@ -266,6 +268,30 @@ pub struct EngineRequestDto {
     pub extra_options: Vec<EngineOption>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildVariantsMode {
+    Engine,
+    Smart,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SmartConfigDto {
+    #[serde(default)]
+    pub candidate_multi_pv: Option<u32>,
+    #[serde(default)]
+    pub validation_full_moves: Option<u32>,
+    #[serde(default)]
+    pub validation_plies: Option<u32>,
+    #[serde(default)]
+    pub playable_threshold_cp: Option<i32>,
+    #[serde(default)]
+    pub max_validation_opponent_branches: Option<u32>,
+    #[serde(default)]
+    pub validation_beam_width: Option<u32>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SplitConfigDto {
@@ -297,7 +323,9 @@ pub struct BuildVariantsTreeRequest {
     #[serde(default)]
     pub lichess_token: Option<String>,
 
-    pub mode: String, // "engine" | "winrate"
+    pub mode: BuildVariantsMode,
+    #[serde(default)]
+    pub smart_config: Option<SmartConfigDto>,
     #[serde(default)]
     pub engine: Option<EngineRequestDto>,
     pub engine_ms: u32,
@@ -315,7 +343,7 @@ pub struct MoveSpecDto {
     /// We now prefer SAN for stability with the frontend tree store.
     /// (Frontend still supports SAN or UCI, but SAN is the default here.)
     pub value: String,
-    /// "db" | "engine"
+    /// "db" | "engine" | "smart"
     #[serde(default)]
     pub source: Option<String>,
     /// Raw DB stats when the move is sourced from a database.
@@ -372,7 +400,10 @@ pub struct BuildVariantsTreeResponse {
 #[serde(rename_all = "camelCase")]
 struct VariantsBuilderProgressPayload {
     start_path: Vec<u32>,
+    #[serde(default)]
     moves: Vec<MoveSpecDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     segment_id: Option<String>,
 }
@@ -383,6 +414,24 @@ fn emit_variants_builder_progress(app: &AppHandle, start_path: &[u32], moves: &[
         VariantsBuilderProgressPayload {
             start_path: start_path.to_vec(),
             moves: moves.to_vec(),
+            phase: Some("applying".to_string()),
+            segment_id: None,
+        },
+    );
+}
+
+fn emit_variants_builder_phase(
+    app: &AppHandle,
+    start_path: &[u32],
+    moves: &[MoveSpecDto],
+    phase: &str,
+) {
+    let _ = app.emit(
+        "variants_builder_progress",
+        VariantsBuilderProgressPayload {
+            start_path: start_path.to_vec(),
+            moves: moves.to_vec(),
+            phase: Some(phase.to_string()),
             segment_id: None,
         },
     );
@@ -434,7 +483,12 @@ fn build_existing_moves_by_fen(root: &TreeNodeDto) -> HashMap<String, Vec<Explor
         if !map.contains_key(&key) {
             let mut moves: Vec<ExplorerMove> = Vec::new();
             for child in &node.children {
-                if let Some(san) = child.san.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                if let Some(san) = child
+                    .san
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
                     moves.push(ExplorerMove {
                         uci: String::new(),
                         san: san.to_string(),
@@ -480,7 +534,9 @@ impl Side {
 fn fen_turn(fen: &str) -> Result<Side> {
     let parts: Vec<&str> = fen.trim().split_whitespace().collect();
     if parts.len() < 2 {
-        return Err(Error::FenError(format!("Invalid FEN (missing turn): {fen}")));
+        return Err(Error::FenError(format!(
+            "Invalid FEN (missing turn): {fen}"
+        )));
     }
     match parts[1] {
         "w" => Ok(Side::White),
@@ -564,11 +620,21 @@ fn lichess_query_pairs(fen: &str, opt: &LichessGamesOptionsDto) -> Vec<(String, 
     let mut parts: Vec<(String, String)> = Vec::new();
     parts.push(("fen".to_string(), fen.to_string()));
 
-    if let Some(player) = opt.player.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+    if let Some(player) = opt
+        .player
+        .as_ref()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
         parts.push(("player".to_string(), player.to_string()));
         parts.push(("color".to_string(), opt.color.clone()));
     }
-    if let Some(v) = opt.variant.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(v) = opt
+        .variant
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         parts.push(("variant".to_string(), v.to_string()));
     }
     if let Some(speeds) = &opt.speeds {
@@ -636,9 +702,16 @@ fn masters_query_pairs(fen: &str, opt: &MasterGamesOptionsDto) -> Vec<(String, S
     parts
 }
 
-pub(crate) fn lichess_explorer_url(fen: &str, opt: &LichessGamesOptionsDto) -> Result<reqwest::Url> {
+pub(crate) fn lichess_explorer_url(
+    fen: &str,
+    opt: &LichessGamesOptionsDto,
+) -> Result<reqwest::Url> {
     let base = "https://explorer.lichess.ovh";
-    let is_player = opt.player.as_ref().map(|p| !p.trim().is_empty()).unwrap_or(false);
+    let is_player = opt
+        .player
+        .as_ref()
+        .map(|p| !p.trim().is_empty())
+        .unwrap_or(false);
     let path = if is_player { "player" } else { "lichess" };
 
     let mut url = reqwest::Url::parse(&format!("{base}/{path}"))
@@ -667,7 +740,11 @@ pub(crate) fn masters_explorer_url(fen: &str, opt: &MasterGamesOptionsDto) -> Re
     Ok(url)
 }
 
-fn select_coverage_moves(moves: &[ExplorerMove], coverage: u32, min_moves: u32) -> Vec<ExplorerMove> {
+fn select_coverage_moves(
+    moves: &[ExplorerMove],
+    coverage: u32,
+    min_moves: u32,
+) -> Vec<ExplorerMove> {
     let target_min = std::cmp::max(1, min_moves) as usize;
     let total: u32 = moves.iter().map(|m| m.white + m.black + m.draws).sum();
     if total == 0 {
@@ -720,85 +797,37 @@ fn select_coverage_moves(moves: &[ExplorerMove], coverage: u32, min_moves: u32) 
     selected
 }
 
-fn winrate_score(m: &ExplorerMove, side: Side) -> Option<f64> {
-    let total = (m.white + m.black + m.draws) as f64;
-    if total <= 0.0 {
-        return None;
-    }
-    let wins = match side {
-        Side::White => m.white as f64,
-        Side::Black => m.black as f64,
-    };
-    Some((wins + (m.draws as f64) * 0.5) / total)
-}
-
-fn rank_moves_by_winrate(moves: &[ExplorerMove], side: Side) -> Vec<ExplorerMove> {
-    let mut indexed: Vec<(usize, ExplorerMove, f64, u32)> = moves
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(idx, m)| {
-            let score = winrate_score(&m, side).unwrap_or(-1.0);
-            let total = m.white + m.black + m.draws;
-            (idx, m, score, total)
-        })
-        .collect();
-
-    indexed.sort_by(|a, b| {
-        b.2.partial_cmp(&a.2)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.3.cmp(&a.3))
-            .then_with(|| a.0.cmp(&b.0))
-    });
-
-    indexed.into_iter().map(|(_, m, _, _)| m).collect()
-}
-
-fn pick_best_winrate_move(moves: &[ExplorerMove], side: Side) -> Option<ExplorerMove> {
-    rank_moves_by_winrate(moves, side).into_iter().next()
-}
-
-fn pick_best_winrate_move_with_engine_constraint(
-    current_fen: &str,
-    moves: &[ExplorerMove],
-    side: Side,
-    engine_top_uci_moves: &[String],
-    is960: bool,
-) -> Option<ExplorerMove> {
-    let ranked = rank_moves_by_winrate(moves, side);
-    let fallback = pick_best_winrate_move(moves, side)?;
-
-    if engine_top_uci_moves.is_empty() {
-        return Some(fallback);
+fn visible_lichess_request_budget(req: &BuildVariantsTreeRequest) -> u32 {
+    if req.db_type == "local" {
+        return 0;
     }
 
-    let mut allowed_next_positions: HashSet<String> = HashSet::new();
-    for uci in engine_top_uci_moves {
-        if let Ok(next_fen) = apply_move_to_fen(current_fen, uci, is960) {
-            allowed_next_positions.insert(fen_identity_key(&next_fen));
-        }
+    const MAX_VISIBLE_OPPONENT_BRANCHES: u32 = 6;
+    const MIN_VISIBLE_LICHESS_REQUEST_BUDGET: u32 = 80;
+    const MAX_VISIBLE_LICHESS_REQUEST_BUDGET: u32 = 600;
+
+    let depth = req.depth.clamp(1, 5);
+    let mut budget = 0u32;
+    let mut frontier = 1u32;
+    for _ in 0..depth {
+        budget = budget.saturating_add(frontier);
+        frontier = frontier.saturating_mul(MAX_VISIBLE_OPPONENT_BRANCHES);
     }
 
-    if allowed_next_positions.is_empty() {
-        return Some(fallback);
-    }
-
-    for candidate in ranked {
-        let candidate_value = move_value_db(&candidate);
-        if let Ok(next_fen) = apply_move_to_fen(current_fen, &candidate_value, is960) {
-            if allowed_next_positions.contains(&fen_identity_key(&next_fen)) {
-                return Some(candidate);
-            }
-        }
-    }
-
-    Some(fallback)
+    budget.clamp(
+        MIN_VISIBLE_LICHESS_REQUEST_BUDGET,
+        MAX_VISIBLE_LICHESS_REQUEST_BUDGET,
+    )
 }
 
 /// Convert an engine UCI move into SAN for the given FEN.
 /// If conversion fails, caller can fall back to original UCI string.
 fn uci_to_san(fen: &str, uci: &str, is960: bool) -> Result<String> {
-    let castling = if is960 { CastlingMode::Chess960 } else { CastlingMode::Standard };
+    let castling = if is960 {
+        CastlingMode::Chess960
+    } else {
+        CastlingMode::Standard
+    };
     let pos: Chess = Fen::from_ascii(fen.as_bytes())?.into_position(castling)?;
     let uci_mv = UciMove::from_ascii(uci.as_bytes())?;
     let m = uci_mv.to_move(&pos)?;
@@ -839,6 +868,17 @@ fn move_spec_from_engine(value: String) -> MoveSpecDto {
     }
 }
 
+fn move_spec_from_smart(value: String) -> MoveSpecDto {
+    MoveSpecDto {
+        value,
+        source: Some("smart".to_string()),
+        white: None,
+        black: None,
+        draws: None,
+        total: None,
+    }
+}
+
 fn openings_from_local_stats(stats: &[PositionStats]) -> Vec<ExplorerMove> {
     stats
         .iter()
@@ -862,7 +902,7 @@ async fn get_opening_moves(
     explorer_cache: &mut HashMap<String, Vec<ExplorerMove>>,
 ) -> Result<Vec<ExplorerMove>> {
     // Keep existing-tree moves as fallback, but prefer fresh DB/explorer data.
-    // Existing tree moves do not include reliable counts for winrate/coverage.
+    // Existing tree moves do not include reliable counts for practical scoring or coverage.
     let k = fen_identity_key(fen);
     let existing_fallback = existing_moves_by_fen.get(&k).cloned();
 
@@ -899,7 +939,11 @@ async fn get_opening_moves(
                         data.moves
                     }
                     Err(e) => {
-                        log::warn!("Failed to fetch Lichess All explorer for FEN {}: {}", fen, e);
+                        log::warn!(
+                            "Failed to fetch Lichess All explorer for FEN {}: {}",
+                            fen,
+                            e
+                        );
                         vec![]
                     }
                 }
@@ -937,7 +981,11 @@ async fn get_opening_moves(
                         data.moves
                     }
                     Err(e) => {
-                        log::warn!("Failed to fetch Lichess Masters explorer for FEN {}: {}", fen, e);
+                        log::warn!(
+                            "Failed to fetch Lichess Masters explorer for FEN {}: {}",
+                            fen,
+                            e
+                        );
                         vec![]
                     }
                 }
@@ -1133,15 +1181,15 @@ async fn get_engine_best_move(
     }
 }
 
-async fn get_engine_top_moves(
+async fn get_engine_candidate_lines(
     fen: &str,
     req: &BuildVariantsTreeRequest,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     min_lines: usize,
-) -> Result<Vec<String>> {
+) -> Result<Vec<BestMoves>> {
     let engine = match req.engine.as_ref() {
-        None => return Ok(vec![]),
+        None => return Ok(Vec::new()),
         Some(e) => e,
     };
 
@@ -1185,7 +1233,7 @@ async fn get_engine_top_moves(
     let min_wait = Duration::from_millis(requested_ms_u32 as u64);
     let max_wait = Duration::from_millis(req.engine_ms.saturating_add(3000) as u64);
 
-    let mut last_top_moves: Vec<String> = Vec::new();
+    let mut last_lines: Vec<BestMoves> = Vec::new();
 
     loop {
         let result = crate::chess::get_best_moves(
@@ -1203,7 +1251,8 @@ async fn get_engine_top_moves(
             if !lines.is_empty() {
                 let mut sorted = lines;
                 sorted.sort_by_key(|bm| bm.multipv);
-                let mut top: Vec<String> = Vec::new();
+                let mut seen_first_moves: HashSet<String> = HashSet::new();
+                let mut top: Vec<BestMoves> = Vec::new();
                 for line in sorted {
                     if let Some(first) = line
                         .uci_moves
@@ -1212,8 +1261,8 @@ async fn get_engine_top_moves(
                         .filter(|s| !s.is_empty())
                         .map(ToString::to_string)
                     {
-                        if !top.iter().any(|m| m == &first) {
-                            top.push(first);
+                        if seen_first_moves.insert(first) {
+                            top.push(line);
                         }
                         if top.len() >= required_multipv as usize {
                             break;
@@ -1221,11 +1270,11 @@ async fn get_engine_top_moves(
                     }
                 }
                 if !top.is_empty() {
-                    last_top_moves = top;
+                    last_lines = top;
                 }
             }
 
-            if progress >= 99.9 && !last_top_moves.is_empty() && started_at.elapsed() >= min_wait {
+            if progress >= 99.9 && !last_lines.is_empty() && started_at.elapsed() >= min_wait {
                 break;
             }
         }
@@ -1237,7 +1286,7 @@ async fn get_engine_top_moves(
         sleep(Duration::from_millis(50)).await;
     }
 
-    Ok(last_top_moves)
+    Ok(last_lines)
 }
 
 fn apply_move_to_fen(fen: &str, mv: &str, is960: bool) -> Result<String> {
@@ -1274,6 +1323,867 @@ fn push_unique_line(lines: &mut Vec<LineDto>, seen: &mut HashSet<String>, line: 
     let key = move_line_key(&line.moves);
     if seen.insert(key) {
         lines.push(line);
+    }
+}
+
+mod smart {
+    use super::*;
+
+    const MATE_CP: i32 = 100_000;
+    const DEFAULT_VALIDATION_FULL_MOVES: u32 = 8;
+    const MIN_VALIDATION_PLIES: u32 = DEFAULT_VALIDATION_FULL_MOVES * 2;
+    const RELIABILITY_SAMPLE_SIZE: f64 = 120.0;
+    const PRACTICAL_WEIGHT: f64 = 0.45;
+    const SAFETY_WEIGHT: f64 = 0.25;
+    const ENGINE_QUALITY_WEIGHT: f64 = 0.20;
+    const RELIABILITY_WEIGHT: f64 = 0.10;
+    const CURRENT_BRANCH_WEIGHT: f64 = 0.55;
+    const FUTURE_BRANCH_WEIGHT: f64 = 0.45;
+    const SMART_VALIDATION_LICHESS_REQUEST_BUDGET: u32 = 32;
+
+    #[derive(Debug, Clone, Copy)]
+    pub(super) struct SmartConfig {
+        pub candidate_multi_pv: usize,
+        pub validation_full_moves: u32,
+        pub validation_plies: u32,
+        pub playable_threshold_cp: i32,
+        pub max_validation_opponent_branches: usize,
+        pub validation_beam_width: usize,
+    }
+
+    impl SmartConfig {
+        pub(super) fn from_request(req: &BuildVariantsTreeRequest) -> Self {
+            let dto = req.smart_config.as_ref();
+            let validation_full_moves = dto
+                .and_then(|cfg| cfg.validation_full_moves)
+                .unwrap_or(DEFAULT_VALIDATION_FULL_MOVES)
+                .clamp(DEFAULT_VALIDATION_FULL_MOVES, 20);
+            let requested_validation_plies = dto
+                .and_then(|cfg| cfg.validation_plies)
+                .unwrap_or(validation_full_moves.saturating_mul(2))
+                .clamp(1, 60);
+            let minimum_validation_plies = validation_full_moves
+                .saturating_mul(2)
+                .max(MIN_VALIDATION_PLIES);
+            let validation_plies = requested_validation_plies
+                .max(minimum_validation_plies)
+                .clamp(MIN_VALIDATION_PLIES, 60);
+
+            Self {
+                candidate_multi_pv: dto
+                    .and_then(|cfg| cfg.candidate_multi_pv)
+                    .unwrap_or(5)
+                    .clamp(1, 16) as usize,
+                validation_full_moves,
+                validation_plies,
+                playable_threshold_cp: dto
+                    .and_then(|cfg| cfg.playable_threshold_cp)
+                    .unwrap_or(-100),
+                max_validation_opponent_branches: dto
+                    .and_then(|cfg| cfg.max_validation_opponent_branches)
+                    .unwrap_or(4)
+                    .clamp(1, 12) as usize,
+                validation_beam_width: dto
+                    .and_then(|cfg| cfg.validation_beam_width)
+                    .unwrap_or(24)
+                    .clamp(1, 256) as usize,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub(super) struct SmartPick {
+        pub san: String,
+        pub used_fallback: bool,
+    }
+
+    #[derive(Debug, Clone)]
+    struct EngineCandidate {
+        uci: String,
+        san: String,
+        engine_rank: usize,
+        target_eval_cp: i32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct SmartOutcome {
+        valid: bool,
+        practical_score: f64,
+        sample_reliability: f64,
+        min_target_eval_cp: i32,
+    }
+
+    impl SmartOutcome {
+        fn neutral() -> Self {
+            Self {
+                valid: true,
+                practical_score: 0.5,
+                sample_reliability: 0.0,
+                min_target_eval_cp: MATE_CP,
+            }
+        }
+
+        fn invalid() -> Self {
+            Self {
+                valid: false,
+                practical_score: 0.0,
+                sample_reliability: 0.0,
+                min_target_eval_cp: -MATE_CP,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct CandidateScoreInput {
+        target_eval_cp: i32,
+        best_target_eval_cp: i32,
+        practical_score: f64,
+        sample_reliability: f64,
+        hidden_valid: bool,
+    }
+
+    #[derive(Debug, Clone)]
+    struct CandidateEvaluation {
+        candidate: EngineCandidate,
+        outcome: SmartOutcome,
+        final_score: f64,
+    }
+
+    pub(super) fn score_value_to_white_cp(value: &ScoreValue) -> i32 {
+        match value {
+            ScoreValue::Cp(cp) => *cp,
+            ScoreValue::Mate(mate) => {
+                let distance_penalty = ((*mate).unsigned_abs().min(999) as i32) * 10;
+                if *mate > 0 {
+                    MATE_CP.saturating_sub(distance_penalty)
+                } else if *mate < 0 {
+                    -MATE_CP.saturating_add(distance_penalty)
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    fn target_eval_cp_from_line(line: &BestMoves, target_side: Side) -> i32 {
+        let white_cp = score_value_to_white_cp(&line.score.value);
+        match target_side {
+            Side::White => white_cp,
+            Side::Black => -white_cp,
+        }
+    }
+
+    fn sample_reliability(total: u32) -> f64 {
+        let total = total as f64;
+        if total <= 0.0 {
+            return 0.0;
+        }
+        (total / (total + RELIABILITY_SAMPLE_SIZE)).clamp(0.0, 1.0)
+    }
+
+    fn target_expected_score(m: &ExplorerMove, target_side: Side) -> Option<f64> {
+        let total = m.white + m.black + m.draws;
+        if total == 0 {
+            return None;
+        }
+        let wins = match target_side {
+            Side::White => m.white,
+            Side::Black => m.black,
+        };
+        Some((wins as f64 + (m.draws as f64 * 0.5)) / total as f64)
+    }
+
+    fn shrink_practical_score(raw_score: f64, reliability: f64) -> f64 {
+        0.5 + (raw_score - 0.5) * reliability
+    }
+
+    fn blend_future_value(current: f64, future: f64) -> f64 {
+        (current * CURRENT_BRANCH_WEIGHT + future * FUTURE_BRANCH_WEIGHT).clamp(0.0, 1.0)
+    }
+
+    fn validation_lichess_request_budget() -> u32 {
+        SMART_VALIDATION_LICHESS_REQUEST_BUDGET
+    }
+
+    fn score_candidate_input(input: CandidateScoreInput, cfg: SmartConfig) -> Option<f64> {
+        if !input.hidden_valid || input.target_eval_cp < cfg.playable_threshold_cp {
+            return None;
+        }
+
+        let safety_margin =
+            ((input.target_eval_cp - cfg.playable_threshold_cp) as f64 / 300.0).clamp(0.0, 1.0);
+        let engine_drop = (input.best_target_eval_cp - input.target_eval_cp).max(0);
+        let engine_quality = (1.0 - (engine_drop as f64 / 220.0)).clamp(0.0, 1.0);
+
+        Some(
+            input.practical_score.clamp(0.0, 1.0) * PRACTICAL_WEIGHT
+                + safety_margin * SAFETY_WEIGHT
+                + engine_quality * ENGINE_QUALITY_WEIGHT
+                + input.sample_reliability.clamp(0.0, 1.0) * RELIABILITY_WEIGHT,
+        )
+    }
+
+    fn choose_candidate(
+        candidates: &[CandidateEvaluation],
+        engine_candidates: &[EngineCandidate],
+    ) -> Option<SmartPick> {
+        let best_scored = candidates.iter().max_by(|a, b| {
+            a.final_score
+                .partial_cmp(&b.final_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    a.outcome
+                        .min_target_eval_cp
+                        .cmp(&b.outcome.min_target_eval_cp)
+                })
+                .then_with(|| b.candidate.engine_rank.cmp(&a.candidate.engine_rank))
+        });
+
+        if let Some(best) = best_scored {
+            return Some(SmartPick {
+                san: best.candidate.san.clone(),
+                used_fallback: false,
+            });
+        }
+
+        engine_candidates
+            .iter()
+            .min_by_key(|candidate| candidate.engine_rank)
+            .map(|candidate| SmartPick {
+                san: candidate.san.clone(),
+                used_fallback: true,
+            })
+    }
+
+    struct SmartRuntime<'a> {
+        req: &'a BuildVariantsTreeRequest,
+        app: AppHandle,
+        state: tauri::State<'a, AppState>,
+        target_side: Side,
+        cfg: SmartConfig,
+        existing_moves_by_fen: &'a HashMap<String, Vec<ExplorerMove>>,
+        explorer_cache: &'a mut HashMap<String, Vec<ExplorerMove>>,
+        lichess_requests_left: &'a mut u32,
+        engine_cache: HashMap<String, Vec<EngineCandidate>>,
+        memo: HashMap<String, SmartOutcome>,
+    }
+
+    impl<'a> SmartRuntime<'a> {
+        async fn engine_candidates(&mut self, fen: &str) -> Result<Vec<EngineCandidate>> {
+            let cache_key = format!(
+                "{}|multipv={}",
+                fen_identity_key(fen),
+                self.cfg.candidate_multi_pv
+            );
+            if let Some(cached) = self.engine_cache.get(&cache_key) {
+                return Ok(cached.clone());
+            }
+
+            let lines = get_engine_candidate_lines(
+                fen,
+                self.req,
+                self.app.clone(),
+                self.state.clone(),
+                self.cfg.candidate_multi_pv,
+            )
+            .await?;
+
+            let mut candidates: Vec<EngineCandidate> = Vec::new();
+            let mut seen_uci: HashSet<String> = HashSet::new();
+
+            for line in lines {
+                let Some(first_uci) = line
+                    .uci_moves
+                    .first()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                else {
+                    continue;
+                };
+                if !seen_uci.insert(first_uci.clone()) {
+                    continue;
+                }
+
+                let san = line
+                    .san_moves
+                    .first()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| uci_to_san(fen, &first_uci, self.req.is960).ok())
+                    .unwrap_or_else(|| first_uci.clone());
+
+                candidates.push(EngineCandidate {
+                    uci: first_uci,
+                    san,
+                    engine_rank: line.multipv.saturating_sub(1) as usize,
+                    target_eval_cp: target_eval_cp_from_line(&line, self.target_side),
+                });
+            }
+
+            candidates.sort_by(|a, b| {
+                a.engine_rank
+                    .cmp(&b.engine_rank)
+                    .then_with(|| b.target_eval_cp.cmp(&a.target_eval_cp))
+            });
+            self.engine_cache.insert(cache_key, candidates.clone());
+            Ok(candidates)
+        }
+
+        async fn opening_moves(&mut self, fen: &str) -> Result<Vec<ExplorerMove>> {
+            get_opening_moves(
+                fen,
+                self.req,
+                self.existing_moves_by_fen,
+                self.lichess_requests_left,
+                &self.app,
+                self.state.clone(),
+                self.explorer_cache,
+            )
+            .await
+        }
+
+        async fn pick_root(&mut self, fen: &str) -> Result<Option<SmartPick>> {
+            let engine_candidates = self.engine_candidates(fen).await?;
+            if engine_candidates.is_empty() {
+                return Ok(None);
+            }
+            let best_target_eval_cp = engine_candidates
+                .iter()
+                .map(|candidate| candidate.target_eval_cp)
+                .max()
+                .unwrap_or(-MATE_CP);
+
+            let mut scored: Vec<CandidateEvaluation> = Vec::new();
+            for candidate in engine_candidates.clone() {
+                let mut nodes_left = self.cfg.validation_beam_width;
+                if let Some(evaluation) = Box::pin(self.score_candidate(
+                    fen.to_string(),
+                    candidate,
+                    best_target_eval_cp,
+                    self.cfg.validation_plies,
+                    &mut nodes_left,
+                ))
+                .await?
+                {
+                    scored.push(evaluation);
+                }
+            }
+
+            Ok(choose_candidate(&scored, &engine_candidates))
+        }
+
+        async fn evaluate_position(
+            &mut self,
+            fen: String,
+            plies_left: u32,
+            nodes_left: &mut usize,
+        ) -> Result<SmartOutcome> {
+            if plies_left == 0 || *nodes_left == 0 {
+                return Ok(SmartOutcome::neutral());
+            }
+
+            let memo_key = format!("{}|plies={}", fen_identity_key(&fen), plies_left);
+            if let Some(cached) = self.memo.get(&memo_key) {
+                return Ok(*cached);
+            }
+
+            let castling = if self.req.is960 {
+                CastlingMode::Chess960
+            } else {
+                CastlingMode::Standard
+            };
+            let pos: Chess = Fen::from_ascii(fen.as_bytes())?.into_position(castling)?;
+            if pos.is_game_over() {
+                return Ok(SmartOutcome::neutral());
+            }
+
+            let outcome = if fen_turn(&fen)? == self.target_side {
+                Box::pin(self.evaluate_target_turn(fen.clone(), plies_left, nodes_left)).await?
+            } else {
+                Box::pin(self.evaluate_opponent_turn(fen.clone(), plies_left, nodes_left)).await?
+            };
+
+            self.memo.insert(memo_key, outcome);
+            Ok(outcome)
+        }
+
+        async fn evaluate_target_turn(
+            &mut self,
+            fen: String,
+            plies_left: u32,
+            nodes_left: &mut usize,
+        ) -> Result<SmartOutcome> {
+            let engine_candidates = self.engine_candidates(&fen).await?;
+            if engine_candidates.is_empty() {
+                return Ok(SmartOutcome::invalid());
+            }
+            let best_target_eval_cp = engine_candidates
+                .iter()
+                .map(|candidate| candidate.target_eval_cp)
+                .max()
+                .unwrap_or(-MATE_CP);
+
+            let mut best: Option<CandidateEvaluation> = None;
+            for candidate in engine_candidates {
+                if *nodes_left == 0 {
+                    break;
+                }
+                let Some(evaluation) = Box::pin(self.score_candidate(
+                    fen.clone(),
+                    candidate,
+                    best_target_eval_cp,
+                    plies_left,
+                    nodes_left,
+                ))
+                .await?
+                else {
+                    continue;
+                };
+                if best
+                    .as_ref()
+                    .map(|current| evaluation.final_score > current.final_score)
+                    .unwrap_or(true)
+                {
+                    best = Some(evaluation);
+                }
+            }
+
+            Ok(best
+                .map(|evaluation| evaluation.outcome)
+                .unwrap_or_else(SmartOutcome::invalid))
+        }
+
+        async fn score_candidate(
+            &mut self,
+            fen: String,
+            candidate: EngineCandidate,
+            best_target_eval_cp: i32,
+            plies_left: u32,
+            nodes_left: &mut usize,
+        ) -> Result<Option<CandidateEvaluation>> {
+            if candidate.target_eval_cp < self.cfg.playable_threshold_cp {
+                return Ok(None);
+            }
+            if *nodes_left == 0 {
+                return Ok(None);
+            }
+            *nodes_left = nodes_left.saturating_sub(1);
+
+            let next_fen = match apply_move_to_fen(&fen, &candidate.uci, self.req.is960) {
+                Ok(value) => value,
+                Err(err) => {
+                    log::warn!(
+                        "SMART failed to apply engine candidate {} from fen_key={}: {}",
+                        candidate.uci,
+                        fen_identity_key(&fen),
+                        err
+                    );
+                    return Ok(None);
+                }
+            };
+
+            let child = if plies_left <= 1 {
+                SmartOutcome::neutral()
+            } else {
+                Box::pin(self.evaluate_position(next_fen, plies_left.saturating_sub(1), nodes_left))
+                    .await?
+            };
+
+            if !child.valid || child.min_target_eval_cp < self.cfg.playable_threshold_cp {
+                return Ok(None);
+            }
+
+            let min_target_eval_cp = candidate.target_eval_cp.min(child.min_target_eval_cp);
+            let outcome = SmartOutcome {
+                valid: true,
+                practical_score: child.practical_score,
+                sample_reliability: child.sample_reliability,
+                min_target_eval_cp,
+            };
+            let input = CandidateScoreInput {
+                target_eval_cp: candidate.target_eval_cp,
+                best_target_eval_cp,
+                practical_score: outcome.practical_score,
+                sample_reliability: outcome.sample_reliability,
+                hidden_valid: outcome.valid && min_target_eval_cp >= self.cfg.playable_threshold_cp,
+            };
+            let Some(final_score) = score_candidate_input(input, self.cfg) else {
+                return Ok(None);
+            };
+
+            Ok(Some(CandidateEvaluation {
+                candidate,
+                outcome,
+                final_score,
+            }))
+        }
+
+        async fn evaluate_opponent_turn(
+            &mut self,
+            fen: String,
+            plies_left: u32,
+            nodes_left: &mut usize,
+        ) -> Result<SmartOutcome> {
+            let opening_moves = self.opening_moves(&fen).await?;
+            let mut selected =
+                select_coverage_moves(&opening_moves, self.req.coverage, self.req.min_moves);
+            if selected.len() > self.cfg.max_validation_opponent_branches {
+                selected.truncate(self.cfg.max_validation_opponent_branches);
+            }
+            if selected.is_empty() {
+                return Ok(SmartOutcome::neutral());
+            }
+
+            let total_counts: u32 = selected.iter().map(|m| m.white + m.black + m.draws).sum();
+            let equal_weight = 1.0 / selected.len() as f64;
+            let mut weighted_practical = 0.0;
+            let mut weighted_reliability = 0.0;
+            let mut min_target_eval_cp = MATE_CP;
+            let mut applied_any = false;
+
+            for m in selected {
+                let total = m.white + m.black + m.draws;
+                let weight = if total_counts > 0 {
+                    total as f64 / total_counts as f64
+                } else {
+                    equal_weight
+                };
+                let reliability = sample_reliability(total);
+                let raw_practical = target_expected_score(&m, self.target_side).unwrap_or(0.5);
+                let practical_now = shrink_practical_score(raw_practical, reliability);
+                let next_fen = match apply_move_to_fen(&fen, &move_value_db(&m), self.req.is960) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+
+                let child = if plies_left <= 1 {
+                    SmartOutcome::neutral()
+                } else {
+                    Box::pin(self.evaluate_position(
+                        next_fen,
+                        plies_left.saturating_sub(1),
+                        nodes_left,
+                    ))
+                    .await?
+                };
+
+                if !child.valid || child.min_target_eval_cp < self.cfg.playable_threshold_cp {
+                    return Ok(SmartOutcome::invalid());
+                }
+
+                let branch_practical = if plies_left <= 1 {
+                    practical_now
+                } else {
+                    blend_future_value(practical_now, child.practical_score)
+                };
+                let branch_reliability = if plies_left <= 1 {
+                    reliability
+                } else {
+                    blend_future_value(reliability, child.sample_reliability)
+                };
+
+                weighted_practical += branch_practical * weight;
+                weighted_reliability += branch_reliability * weight;
+                min_target_eval_cp = min_target_eval_cp.min(child.min_target_eval_cp);
+                applied_any = true;
+            }
+
+            if !applied_any {
+                return Ok(SmartOutcome::neutral());
+            }
+
+            Ok(SmartOutcome {
+                valid: true,
+                practical_score: weighted_practical.clamp(0.0, 1.0),
+                sample_reliability: weighted_reliability.clamp(0.0, 1.0),
+                min_target_eval_cp,
+            })
+        }
+    }
+
+    pub(super) async fn pick_smart_move(
+        req: &BuildVariantsTreeRequest,
+        app: AppHandle,
+        state: tauri::State<'_, AppState>,
+        target_side: Side,
+        fen: &str,
+        existing_moves_by_fen: &HashMap<String, Vec<ExplorerMove>>,
+        explorer_cache: &mut HashMap<String, Vec<ExplorerMove>>,
+        _visible_lichess_requests_left: &mut u32,
+    ) -> Result<Option<SmartPick>> {
+        let cfg = SmartConfig::from_request(req);
+        let mut validation_lichess_requests_left = validation_lichess_request_budget();
+        log::debug!(
+            "SMART build candidate selection: fen_key={} multipv={} validation_full_moves={} validation_plies={} threshold_cp={} opponent_branches={} beam={} validation_lichess_budget={}",
+            fen_identity_key(fen),
+            cfg.candidate_multi_pv,
+            cfg.validation_full_moves,
+            cfg.validation_plies,
+            cfg.playable_threshold_cp,
+            cfg.max_validation_opponent_branches,
+            cfg.validation_beam_width,
+            validation_lichess_requests_left
+        );
+        let mut runtime = SmartRuntime {
+            req,
+            app,
+            state,
+            target_side,
+            cfg,
+            existing_moves_by_fen,
+            explorer_cache,
+            lichess_requests_left: &mut validation_lichess_requests_left,
+            engine_cache: HashMap::new(),
+            memo: HashMap::new(),
+        };
+        runtime.pick_root(fen).await
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn cfg() -> SmartConfig {
+            SmartConfig {
+                candidate_multi_pv: 5,
+                validation_full_moves: 8,
+                validation_plies: 16,
+                playable_threshold_cp: -100,
+                max_validation_opponent_branches: 4,
+                validation_beam_width: 24,
+            }
+        }
+
+        fn request_with_smart_config(
+            smart_config: Option<SmartConfigDto>,
+        ) -> BuildVariantsTreeRequest {
+            BuildVariantsTreeRequest {
+                root: TreeNodeDto {
+                    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+                    san: None,
+                    children: Vec::new(),
+                },
+                start_path: Vec::new(),
+                orientation: "white".to_string(),
+                is960: false,
+                db_type: "local".to_string(),
+                local_db_path: Some("test.db".to_string()),
+                lichess_options: None,
+                master_options: None,
+                lichess_token: None,
+                mode: BuildVariantsMode::Smart,
+                smart_config,
+                engine: None,
+                engine_ms: 800,
+                coverage: 90,
+                min_moves: 2,
+                depth: 2,
+                split_config: None,
+            }
+        }
+
+        #[test]
+        fn config_defaults_to_hidden_eight_full_move_validation() {
+            let req = request_with_smart_config(None);
+            let config = SmartConfig::from_request(&req);
+            assert_eq!(config.validation_full_moves, 8);
+            assert_eq!(config.validation_plies, 16);
+        }
+
+        #[test]
+        fn config_does_not_allow_shallow_hidden_validation() {
+            let req = request_with_smart_config(Some(SmartConfigDto {
+                candidate_multi_pv: Some(0),
+                validation_full_moves: Some(1),
+                validation_plies: Some(1),
+                playable_threshold_cp: Some(-100),
+                max_validation_opponent_branches: Some(0),
+                validation_beam_width: Some(0),
+            }));
+            let config = SmartConfig::from_request(&req);
+            assert_eq!(config.candidate_multi_pv, 1);
+            assert_eq!(config.validation_full_moves, 8);
+            assert_eq!(config.validation_plies, 16);
+            assert_eq!(config.max_validation_opponent_branches, 1);
+            assert_eq!(config.validation_beam_width, 1);
+        }
+
+        #[test]
+        fn config_uses_full_moves_to_raise_validation_plies() {
+            let req = request_with_smart_config(Some(SmartConfigDto {
+                candidate_multi_pv: Some(5),
+                validation_full_moves: Some(12),
+                validation_plies: Some(16),
+                playable_threshold_cp: Some(-100),
+                max_validation_opponent_branches: Some(4),
+                validation_beam_width: Some(24),
+            }));
+            let config = SmartConfig::from_request(&req);
+            assert_eq!(config.validation_full_moves, 12);
+            assert_eq!(config.validation_plies, 24);
+        }
+
+        #[test]
+        fn target_eval_conversion_uses_target_side_perspective() {
+            let mut line = BestMoves::default();
+            line.score.value = ScoreValue::Cp(80);
+            assert_eq!(target_eval_cp_from_line(&line, Side::White), 80);
+            assert_eq!(target_eval_cp_from_line(&line, Side::Black), -80);
+        }
+
+        #[test]
+        fn mate_scores_convert_without_overflow_or_zero_bias() {
+            assert!(score_value_to_white_cp(&ScoreValue::Mate(3)) > 90_000);
+            assert!(score_value_to_white_cp(&ScoreValue::Mate(-3)) < -90_000);
+            assert_eq!(score_value_to_white_cp(&ScoreValue::Mate(0)), 0);
+            assert!(score_value_to_white_cp(&ScoreValue::Mate(i32::MIN)) < -90_000);
+        }
+
+        #[test]
+        fn score_rejects_candidates_below_playable_threshold() {
+            let input = CandidateScoreInput {
+                target_eval_cp: -101,
+                best_target_eval_cp: 20,
+                practical_score: 0.8,
+                sample_reliability: 0.9,
+                hidden_valid: true,
+            };
+            assert!(score_candidate_input(input, cfg()).is_none());
+        }
+
+        #[test]
+        fn score_allows_non_best_engine_move_with_better_practical_score() {
+            let config = cfg();
+            let engine_best = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 35,
+                    best_target_eval_cp: 35,
+                    practical_score: 0.50,
+                    sample_reliability: 0.8,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            let practical_alt = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 0,
+                    best_target_eval_cp: 35,
+                    practical_score: 0.72,
+                    sample_reliability: 0.8,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            assert!(practical_alt > engine_best);
+        }
+
+        #[test]
+        fn low_sample_scores_are_shrunk_toward_neutral() {
+            let low = shrink_practical_score(0.9, sample_reliability(5));
+            let high = shrink_practical_score(0.9, sample_reliability(500));
+            assert!(low > 0.5);
+            assert!(low < high);
+            assert!(high < 0.9);
+        }
+
+        #[test]
+        fn future_reliability_blend_does_not_overstate_current_low_sample_branch() {
+            let blended = blend_future_value(0.0, 1.0);
+            assert!(blended > 0.0);
+            assert!(blended < 0.5);
+        }
+
+        #[test]
+        fn validation_budget_is_dedicated_to_hidden_smart_search() {
+            assert_eq!(validation_lichess_request_budget(), 32);
+        }
+
+        #[test]
+        fn score_rejects_hidden_validation_failures() {
+            let input = CandidateScoreInput {
+                target_eval_cp: 30,
+                best_target_eval_cp: 30,
+                practical_score: 0.9,
+                sample_reliability: 1.0,
+                hidden_valid: false,
+            };
+            assert!(score_candidate_input(input, cfg()).is_none());
+        }
+
+        #[test]
+        fn choose_candidate_falls_back_to_engine_best_when_all_scored_fail() {
+            let engine_candidates = vec![
+                EngineCandidate {
+                    uci: "e2e4".to_string(),
+                    san: "e4".to_string(),
+                    engine_rank: 0,
+                    target_eval_cp: -120,
+                },
+                EngineCandidate {
+                    uci: "d2d4".to_string(),
+                    san: "d4".to_string(),
+                    engine_rank: 1,
+                    target_eval_cp: -140,
+                },
+            ];
+            let pick = choose_candidate(&[], &engine_candidates).unwrap();
+            assert!(pick.used_fallback);
+            assert_eq!(pick.san, "e4");
+        }
+
+        #[test]
+        fn choose_candidate_prefers_engine_rank_when_scores_tie() {
+            let engine_candidates = vec![
+                EngineCandidate {
+                    uci: "e2e4".to_string(),
+                    san: "e4".to_string(),
+                    engine_rank: 0,
+                    target_eval_cp: 30,
+                },
+                EngineCandidate {
+                    uci: "d2d4".to_string(),
+                    san: "d4".to_string(),
+                    engine_rank: 1,
+                    target_eval_cp: 30,
+                },
+            ];
+            let scored = vec![
+                CandidateEvaluation {
+                    candidate: engine_candidates[1].clone(),
+                    outcome: SmartOutcome {
+                        valid: true,
+                        practical_score: 0.6,
+                        sample_reliability: 0.8,
+                        min_target_eval_cp: 30,
+                    },
+                    final_score: 0.7,
+                },
+                CandidateEvaluation {
+                    candidate: engine_candidates[0].clone(),
+                    outcome: SmartOutcome {
+                        valid: true,
+                        practical_score: 0.6,
+                        sample_reliability: 0.8,
+                        min_target_eval_cp: 30,
+                    },
+                    final_score: 0.7,
+                },
+            ];
+            let pick = choose_candidate(&scored, &engine_candidates).unwrap();
+            assert!(!pick.used_fallback);
+            assert_eq!(pick.san, "e4");
+        }
+
+        #[test]
+        fn build_mode_rejects_removed_highest_win_rate_mode() {
+            let parsed: std::result::Result<BuildVariantsMode, _> =
+                serde_json::from_value(serde_json::json!("highest_win_rate"));
+            assert!(parsed.is_err());
+        }
     }
 }
 
@@ -1421,7 +2331,9 @@ fn build_segmented_response(
             .entry(segment_id.clone())
             .or_insert_with(HashSet::new);
         if seen.insert(key) {
-            segments[segment_idx].lines.push(LineDto { moves: tail_moves });
+            segments[segment_idx]
+                .lines
+                .push(LineDto { moves: tail_moves });
         }
     }
 
@@ -1438,7 +2350,11 @@ fn build_segmented_response(
         return (
             lines.to_vec(),
             None,
-            if warnings.is_empty() { None } else { Some(warnings) },
+            if warnings.is_empty() {
+                None
+            } else {
+                Some(warnings)
+            },
         );
     }
 
@@ -1449,7 +2365,11 @@ fn build_segmented_response(
             parent_lines
         },
         Some(non_empty_segments),
-        if warnings.is_empty() { None } else { Some(warnings) },
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
     )
 }
 
@@ -1471,10 +2391,12 @@ async fn build_variants_tree_impl(
     let mut path_stack: Vec<String> = Vec::new();
     let mut explorer_cache: HashMap<String, Vec<ExplorerMove>> = HashMap::new();
     let existing_moves_by_fen = build_existing_moves_by_fen(&req.root);
-    // Hard cap for external requests per run to avoid runaway branching saturating explorer.lichess.ovh.
-    let mut lichess_requests_left: u32 = 80;
+    // Bound external requests by visible depth so deep visible branches are not starved by a flat cap.
+    let mut lichess_requests_left = visible_lichess_request_budget(req);
 
     let mut lines: Vec<LineDto> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    emit_variants_builder_phase(&app, &req.start_path, &[], "starting");
 
     async fn rec(
         req: &BuildVariantsTreeRequest,
@@ -1491,6 +2413,7 @@ async fn build_variants_tree_impl(
         current_line: &mut Vec<MoveSpecDto>,
         my_moves_left: u32,
         lines: &mut Vec<LineDto>,
+        warnings: &mut Vec<String>,
     ) -> Result<()> {
         if my_moves_left == 0 {
             if !current_line.is_empty() {
@@ -1535,48 +2458,52 @@ async fn build_variants_tree_impl(
 
             if is_my_turn {
                 // MY TURN: choose exactly one move.
-                let picked: Option<MoveSpecDto> = if req.mode == "engine" {
-                    get_engine_best_move(&current_fen, req, app.clone(), state.clone())
+                emit_variants_builder_phase(
+                    &app,
+                    start_path,
+                    current_line,
+                    match req.mode {
+                        BuildVariantsMode::Engine => "engine",
+                        BuildVariantsMode::Smart => "smart",
+                    },
+                );
+                let picked: Option<MoveSpecDto> = match req.mode {
+                    BuildVariantsMode::Engine => get_engine_best_move(&current_fen, req, app.clone(), state.clone())
                         .await?
-                        .map(move_spec_from_engine)
-                } else {
-                    let opening_moves = get_opening_moves(
-                        &current_fen,
-                        req,
-                        existing_moves_by_fen,
-                        lichess_requests_left,
-                        &app,
-                        state.clone(),
-                        explorer_cache,
-                    )
-                    .await?;
-                    let engine_top_moves = match get_engine_top_moves(
-                        &current_fen,
-                        req,
-                        app.clone(),
-                        state.clone(),
-                        3,
-                    )
-                    .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => {
-                            log::warn!(
-                                "winrate+engine validation failed for fen_key={} error={}",
-                                fen_identity_key(&current_fen),
-                                e
-                            );
-                            vec![]
+                        .map(move_spec_from_engine),
+                    BuildVariantsMode::Smart => {
+                        let smart_pick = smart::pick_smart_move(
+                            req,
+                            app.clone(),
+                            state.clone(),
+                            my_side,
+                            &current_fen,
+                            existing_moves_by_fen,
+                            explorer_cache,
+                            lichess_requests_left,
+                        )
+                        .await?;
+
+                        if smart_pick.as_ref().map(|pick| pick.used_fallback).unwrap_or(false) {
+                            let warning = "SMART could not find a fully validated move and fell back to the best engine move.".to_string();
+                            if !warnings.iter().any(|item| item == &warning) {
+                                warnings.push(warning);
+                            }
                         }
-                    };
-                    pick_best_winrate_move_with_engine_constraint(
-                        &current_fen,
-                        &opening_moves,
-                        my_side,
-                        &engine_top_moves,
-                        req.is960,
-                    )
-                    .map(|m| move_spec_from_db(&m))
+
+                        match smart_pick {
+                            Some(pick) => Some(move_spec_from_smart(pick.san)),
+                            None => {
+                                let warning = "SMART could not produce a candidate in at least one visible branch and fell back to the best engine move.".to_string();
+                                if !warnings.iter().any(|item| item == &warning) {
+                                    warnings.push(warning);
+                                }
+                                get_engine_best_move(&current_fen, req, app.clone(), state.clone())
+                                    .await?
+                                    .map(move_spec_from_smart)
+                            }
+                        }
+                    }
                 };
 
                 let Some(step) = picked else {
@@ -1617,6 +2544,7 @@ async fn build_variants_tree_impl(
                     current_line,
                     my_moves_left.saturating_sub(1),
                     lines,
+                    warnings,
                 ))
                 .await?;
                 current_line.pop();
@@ -1624,6 +2552,7 @@ async fn build_variants_tree_impl(
                 // OPPONENT TURN: expand DB replies based on coverage/minMoves.
                 // To avoid runaway branching + huge external request volume, we hard-cap branching.
                 const MAX_OPPONENT_BRANCHES: usize = 6;
+                emit_variants_builder_phase(&app, start_path, current_line, "database");
                 let opening_moves = get_opening_moves(
                     &current_fen,
                     req,
@@ -1640,48 +2569,58 @@ async fn build_variants_tree_impl(
                 }
 
                 if selected.is_empty() {
+                    if req.db_type != "local" && *lichess_requests_left == 0 {
+                        let warning = "Lichess explorer request budget was exhausted before all visible branches reached the requested depth.".to_string();
+                        if !warnings.iter().any(|item| item == &warning) {
+                            warnings.push(warning);
+                        }
+                    }
                     // If the selected DB is unavailable (e.g. 429 / empty), allow an engine fallback
-                    // so we still make progress and the UI can move pieces.
-                    if let Some(engine_move) =
-                        get_engine_best_move(&current_fen, req, app.clone(), state.clone()).await?
-                    {
-                        log::warn!(
-                            "Opponent DB returned no moves; falling back to engine move for fen_key={}",
-                            fen_identity_key(&current_fen)
-                        );
-                        let step = move_spec_from_engine(engine_move);
-                        let next_fen = match apply_move_to_fen(&current_fen, &step.value, req.is960) {
-                            Ok(f) => f,
-                            Err(_) => {
-                                if !current_line.is_empty() {
-                                    lines.push(LineDto {
-                                        moves: current_line.clone(),
-                                    });
+                    // for ENGINE mode so existing behavior remains unchanged. SMART must model
+                    // opponent replies from human/statistical data only.
+                    if matches!(req.mode, BuildVariantsMode::Engine) {
+                        if let Some(engine_move) =
+                            get_engine_best_move(&current_fen, req, app.clone(), state.clone()).await?
+                        {
+                            log::warn!(
+                                "Opponent DB returned no moves; falling back to engine move for fen_key={}",
+                                fen_identity_key(&current_fen)
+                            );
+                            let step = move_spec_from_engine(engine_move);
+                            let next_fen = match apply_move_to_fen(&current_fen, &step.value, req.is960) {
+                                Ok(f) => f,
+                                Err(_) => {
+                                    if !current_line.is_empty() {
+                                        lines.push(LineDto {
+                                            moves: current_line.clone(),
+                                        });
+                                    }
+                                    return Ok(());
                                 }
-                                return Ok(());
-                            }
-                        };
-                        current_line.push(step);
-                        emit_variants_builder_progress(&app, start_path, current_line);
-                        Box::pin(rec(
-                            req,
-                            app.clone(),
-                            state.clone(),
-                            start_path,
-                            my_side,
-                            fen_owners,
-                            path_stack,
-                            explorer_cache,
-                            existing_moves_by_fen,
-                            lichess_requests_left,
-                            next_fen,
-                            current_line,
-                            my_moves_left,
-                            lines,
-                        ))
-                        .await?;
-                        current_line.pop();
-                        return Ok(());
+                            };
+                            current_line.push(step);
+                            emit_variants_builder_progress(&app, start_path, current_line);
+                            Box::pin(rec(
+                                req,
+                                app.clone(),
+                                state.clone(),
+                                start_path,
+                                my_side,
+                                fen_owners,
+                                path_stack,
+                                explorer_cache,
+                                existing_moves_by_fen,
+                                lichess_requests_left,
+                                next_fen,
+                                current_line,
+                                my_moves_left,
+                                lines,
+                                warnings,
+                            ))
+                            .await?;
+                            current_line.pop();
+                            return Ok(());
+                        }
                     }
                     if !current_line.is_empty() {
                         lines.push(LineDto {
@@ -1715,6 +2654,7 @@ async fn build_variants_tree_impl(
                         current_line,
                         my_moves_left,
                         lines,
+                        warnings,
                     ))
                     .await?;
                     current_line.pop();
@@ -1732,7 +2672,7 @@ async fn build_variants_tree_impl(
     let mut line_buf: Vec<MoveSpecDto> = Vec::new();
     rec(
         req,
-        app,
+        app.clone(),
         state,
         &req.start_path,
         my_side,
@@ -1745,15 +2685,28 @@ async fn build_variants_tree_impl(
         &mut line_buf,
         std::cmp::max(1, req.depth),
         &mut lines,
+        &mut warnings,
     )
     .await?;
+    emit_variants_builder_phase(&app, &req.start_path, &line_buf, "finishing");
 
-    let (parent_lines, segments, warnings) = build_segmented_response(req, start_fen, &lines);
+    let (parent_lines, segments, split_warnings) = build_segmented_response(req, start_fen, &lines);
+    if let Some(split_warnings) = split_warnings {
+        for warning in split_warnings {
+            if !warnings.iter().any(|item| item == &warning) {
+                warnings.push(warning);
+            }
+        }
+    }
 
     Ok(BuildVariantsTreeResponse {
         lines: parent_lines,
         segments,
-        warnings,
+        warnings: if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings)
+        },
     })
 }
 
@@ -1834,28 +2787,6 @@ mod tests {
     }
 
     #[test]
-    fn pick_best_winrate_prefers_higher_score() {
-        let moves = vec![
-            ExplorerMove {
-                uci: "".into(),
-                san: "a".into(),
-                white: 10,
-                black: 10,
-                draws: 0,
-            },
-            ExplorerMove {
-                uci: "".into(),
-                san: "b".into(),
-                white: 9,
-                black: 0,
-                draws: 10,
-            },
-        ];
-        let best = pick_best_winrate_move(&moves, Side::White).unwrap();
-        assert_eq!(best.san, "b");
-    }
-
-    #[test]
     fn select_coverage_moves_falls_back_when_counts_are_missing() {
         let moves = vec![
             ExplorerMove {
@@ -1886,92 +2817,49 @@ mod tests {
         assert_eq!(selected[1].san, "b");
     }
 
-    #[test]
-    fn pick_best_winrate_falls_back_to_first_when_counts_are_missing() {
-        let moves = vec![
-            ExplorerMove {
-                uci: "".into(),
-                san: "a".into(),
-                white: 0,
-                black: 0,
-                draws: 0,
+    fn request_for_budget(db_type: &str, depth: u32) -> BuildVariantsTreeRequest {
+        BuildVariantsTreeRequest {
+            root: TreeNodeDto {
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+                san: None,
+                children: Vec::new(),
             },
-            ExplorerMove {
-                uci: "".into(),
-                san: "b".into(),
-                white: 0,
-                black: 0,
-                draws: 0,
-            },
-        ];
-        let best = pick_best_winrate_move(&moves, Side::White).unwrap();
-        assert_eq!(best.san, "a");
+            start_path: Vec::new(),
+            orientation: "white".to_string(),
+            is960: false,
+            db_type: db_type.to_string(),
+            local_db_path: None,
+            lichess_options: None,
+            master_options: None,
+            lichess_token: None,
+            mode: BuildVariantsMode::Smart,
+            smart_config: None,
+            engine: None,
+            engine_ms: 800,
+            coverage: 90,
+            min_moves: 2,
+            depth,
+            split_config: None,
+        }
     }
 
     #[test]
-    fn winrate_with_engine_constraint_prefers_top_winrate_if_in_engine_top3() {
-        let moves = vec![
-            ExplorerMove {
-                uci: "e2e4".into(),
-                san: "e4".into(),
-                white: 60,
-                black: 30,
-                draws: 10,
-            },
-            ExplorerMove {
-                uci: "d2d4".into(),
-                san: "d4".into(),
-                white: 55,
-                black: 35,
-                draws: 10,
-            },
-        ];
-        let engine_top = vec!["e2e4".to_string(), "c2c4".to_string(), "g1f3".to_string()];
-        let picked = pick_best_winrate_move_with_engine_constraint(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            &moves,
-            Side::White,
-            &engine_top,
-            false,
-        )
-        .unwrap();
-        assert_eq!(picked.san, "e4");
-    }
-
-    #[test]
-    fn winrate_with_engine_constraint_falls_to_next_when_top_not_in_engine_top3() {
-        let moves = vec![
-            ExplorerMove {
-                uci: "e2e4".into(),
-                san: "e4".into(),
-                white: 60,
-                black: 30,
-                draws: 10,
-            },
-            ExplorerMove {
-                uci: "d2d4".into(),
-                san: "d4".into(),
-                white: 58,
-                black: 32,
-                draws: 10,
-            },
-            ExplorerMove {
-                uci: "g1f3".into(),
-                san: "Nf3".into(),
-                white: 57,
-                black: 33,
-                draws: 10,
-            },
-        ];
-        let engine_top = vec!["d2d4".to_string(), "g1f3".to_string(), "c2c4".to_string()];
-        let picked = pick_best_winrate_move_with_engine_constraint(
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            &moves,
-            Side::White,
-            &engine_top,
-            false,
-        )
-        .unwrap();
-        assert_eq!(picked.san, "d4");
+    fn visible_lichess_budget_scales_with_requested_depth() {
+        assert_eq!(
+            visible_lichess_request_budget(&request_for_budget("local", 4)),
+            0
+        );
+        assert_eq!(
+            visible_lichess_request_budget(&request_for_budget("lch_all", 1)),
+            80
+        );
+        assert_eq!(
+            visible_lichess_request_budget(&request_for_budget("lch_all", 4)),
+            259
+        );
+        assert_eq!(
+            visible_lichess_request_budget(&request_for_budget("lch_all", 8)),
+            600
+        );
     }
 }

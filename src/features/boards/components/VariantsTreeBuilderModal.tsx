@@ -1,5 +1,8 @@
 import { Button, Group, Modal, NumberInput, SegmentedControl, Select, Stack, Text } from "@mantine/core";
 import { useTranslation } from "react-i18next";
+import type { BuildVariantsMode } from "@/utils/variantsBuilder";
+import type { TreeBuilderProgressState } from "./variants/useVariantsBuilder";
+import { VariantsBuilderProgress } from "./variants/VariantsBuilderProgress";
 
 type EngineOption = { value: string; label: string };
 
@@ -11,12 +14,12 @@ type Props = {
   setDbType: (next: "local" | "lch_all" | "lch_master") => void;
   localDbLabel: string | null;
 
-  treeBuilderMode: "engine" | "winrate";
-  setTreeBuilderMode: (next: "engine" | "winrate") => void;
-
   engineOptions: EngineOption[];
   selectedEngineValue: string | null;
   setSelectedEngineValue: (next: string | null) => void;
+
+  treeBuilderMode: BuildVariantsMode;
+  setTreeBuilderMode: (next: BuildVariantsMode) => void;
 
   treeBuilderEngineMs: number;
   setTreeBuilderEngineMs: (next: number) => void;
@@ -29,6 +32,7 @@ type Props = {
   setTreeBuilderDepth: (next: number) => void;
 
   treeBuilderRunning: boolean;
+  treeBuilderProgress: TreeBuilderProgressState;
   onRun: () => void;
   onCancel: () => void;
   runDisabled: boolean;
@@ -42,11 +46,11 @@ export function VariantsTreeBuilderModal(props: Props) {
     dbType,
     setDbType,
     localDbLabel,
-    treeBuilderMode,
-    setTreeBuilderMode,
     engineOptions,
     selectedEngineValue,
     setSelectedEngineValue,
+    treeBuilderMode,
+    setTreeBuilderMode,
     treeBuilderEngineMs,
     setTreeBuilderEngineMs,
     treeBuilderCoverage,
@@ -56,6 +60,7 @@ export function VariantsTreeBuilderModal(props: Props) {
     treeBuilderDepth,
     setTreeBuilderDepth,
     treeBuilderRunning,
+    treeBuilderProgress,
     onRun,
     onCancel,
     runDisabled,
@@ -66,6 +71,7 @@ export function VariantsTreeBuilderModal(props: Props) {
       <Stack gap="md">
         <Stack gap="xs">
           <Text size="sm">{t("features.board.variants.treeBuilder.syncHint")}</Text>
+          {treeBuilderRunning && <VariantsBuilderProgress progress={treeBuilderProgress} />}
           <SegmentedControl
             data={[
               { label: t("features.board.database.local"), value: "local" },
@@ -88,30 +94,30 @@ export function VariantsTreeBuilderModal(props: Props) {
           <SegmentedControl
             data={[
               { label: t("features.board.variants.treeBuilder.engine"), value: "engine" },
-              { label: t("features.board.variants.treeBuilder.winrate"), value: "winrate" },
+              { label: t("features.board.variants.treeBuilder.smart"), value: "smart" },
             ]}
             value={treeBuilderMode}
-            onChange={(value) => setTreeBuilderMode(value as "engine" | "winrate")}
+            onChange={(value) => setTreeBuilderMode(value as BuildVariantsMode)}
             fullWidth
           />
-          {treeBuilderMode === "engine" && (
-            <Stack gap="xs">
-              <Select
-                data={engineOptions}
-                value={selectedEngineValue}
-                onChange={setSelectedEngineValue}
-                placeholder={t("features.board.variants.treeBuilder.engineSelect")}
-                disabled={!engineOptions.length}
-                searchable
-              />
-              <NumberInput
-                label={t("features.board.variants.treeBuilder.engineTime")}
-                value={treeBuilderEngineMs}
-                onChange={(value) => setTreeBuilderEngineMs(Number(value) || 0)}
-                min={1}
-              />
-            </Stack>
-          )}
+        </Stack>
+
+        <Stack gap="xs">
+          <Text size="sm">{t("common.engine")}</Text>
+          <Select
+            data={engineOptions}
+            value={selectedEngineValue}
+            onChange={setSelectedEngineValue}
+            placeholder={t("features.board.variants.treeBuilder.engineSelect")}
+            disabled={!engineOptions.length}
+            searchable
+          />
+          <NumberInput
+            label={t("features.board.variants.treeBuilder.engineTime")}
+            value={treeBuilderEngineMs}
+            onChange={(value) => setTreeBuilderEngineMs(Number(value) || 0)}
+            min={1}
+          />
         </Stack>
 
         <Stack gap="xs">

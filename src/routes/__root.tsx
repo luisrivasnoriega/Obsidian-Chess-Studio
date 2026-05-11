@@ -28,6 +28,7 @@ import {
 import { getVersionCheckConfig } from "@/config";
 import { getRouteForTab } from "@/features/boards/BoardsRouteEntry";
 import ImportModal from "@/features/boards/components/ImportModal";
+import { DetachedVariantsNotationPanel } from "@/features/boards/components/variants/DetachedVariantsNotationPanel";
 import { useTabManagement } from "@/features/boards/hooks/useTabManagement";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { downloadApkToTemp, openApkInstaller } from "@/services/apk-updater";
@@ -101,7 +102,28 @@ export const Route = createRootRouteWithContext<{
   component: RootLayout,
 });
 
+function getDetachedPanelParams() {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const panel = params.get("detachedPanel");
+  if (panel !== "variantsNotation") return null;
+  return {
+    panel,
+    payloadId: params.get("payload"),
+    tabId: params.get("tab"),
+  };
+}
+
 function RootLayout() {
+  const detachedPanel = getDetachedPanelParams();
+  if (detachedPanel?.panel === "variantsNotation") {
+    return <DetachedVariantsNotationPanel payloadId={detachedPanel.payloadId} tabId={detachedPanel.tabId} />;
+  }
+
+  return <MainRootLayout />;
+}
+
+function MainRootLayout() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();

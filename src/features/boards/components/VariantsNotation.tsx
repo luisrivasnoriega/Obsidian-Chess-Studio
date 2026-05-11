@@ -26,11 +26,21 @@ import {
   IconEyeOff,
   IconPointFilled,
   IconTarget,
+  IconWindowMaximize,
 } from "@tabler/icons-react";
 import { join } from "@tauri-apps/api/path";
 import { exists } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { Comment } from "@/components/Comment";
@@ -75,7 +85,24 @@ type VariantLinksState = {
   children: VariantLinkRef[];
 };
 
-function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean }) {
+const notationPanelSurface: CSSProperties = {
+  border: "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 10%, var(--mantine-color-dark-4))",
+  borderRadius: 8,
+  background:
+    "linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-8) 92%, var(--mantine-color-dark-6) 8%), var(--mantine-color-dark-8))",
+  boxShadow: "0 18px 40px rgba(0, 0, 0, 0.18)",
+};
+
+function VariantsNotation({
+  topBar,
+  forceDesktopLayout = false,
+  onDetach,
+}: {
+  topBar?: boolean;
+  editingMode?: boolean;
+  forceDesktopLayout?: boolean;
+  onDetach?: () => void;
+}) {
   const store = useContext(TreeStateContext);
   if (!store) {
     throw new Error("VariantsNotation must be used within a TreeStateProvider");
@@ -140,7 +167,7 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
 
   const currentMoveRef = useRef<HTMLSpanElement | null>(null);
   const { layout } = useResponsiveLayout();
-  const isMobileLayout = layout.chessBoard.layoutType === "mobile";
+  const isMobileLayout = !forceDesktopLayout && layout.chessBoard.layoutType === "mobile";
   const _currentPathKey = position.join(".");
 
   const focusCurrentMove = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -359,10 +386,10 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
 
   return (
     <Paper
-      withBorder
       p="md"
       flex={isMobileLayout ? undefined : 1}
       style={{
+        ...(!isMobileLayout ? notationPanelSurface : {}),
         position: "relative",
         overflow: isMobileLayout ? "visible" : "hidden",
         touchAction: isMobileLayout ? "pan-y" : undefined,
@@ -381,6 +408,7 @@ function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean 
             collapseAllBranches={collapseAllBranches}
             expandAllBranches={expandAllBranches}
             maxVariationDepth={maxVariationDepth}
+            onDetach={onDetach}
           />
         )}
         {(variantLinks.parent || sortedChildLinks.length > 0) && (
@@ -415,6 +443,7 @@ function NotationHeader({
   collapseAllBranches,
   expandAllBranches,
   maxVariationDepth,
+  onDetach,
 }: {
   showComments: boolean;
   toggleComments: () => void;
@@ -426,6 +455,7 @@ function NotationHeader({
   collapseAllBranches: () => void;
   expandAllBranches: () => void;
   maxVariationDepth: number;
+  onDetach?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -471,6 +501,13 @@ function NotationHeader({
               <IconChevronsDown size="1rem" />
             </ActionIcon>
           </Tooltip>
+          {onDetach && (
+            <Tooltip label={t("features.gameNotation.openNotationWindow")}>
+              <ActionIcon onClick={onDetach}>
+                <IconWindowMaximize size="1rem" />
+              </ActionIcon>
+            </Tooltip>
+          )}
           <Text size="xs" c="dimmed">
             D{maxVariationDepth}
           </Text>

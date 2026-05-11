@@ -570,6 +570,32 @@ export const tabEngineSettingsFamily = atomFamily(
   (a, b) => a.tab === b.tab && a.engineName === b.engineName,
 );
 
+export const activeEngineAnalysisAtom = loadable(
+  atom(async (get) => {
+    const tab = get(activeTabAtom);
+    if (!tab) return null;
+
+    const engines = await get(enginesAtom);
+    for (const engine of engines.filter((entry) => entry.loaded)) {
+      const settingsAtom = tabEngineSettingsFamily({
+        tab,
+        engineName: engine.name,
+        defaultSettings: engine.type === "local" ? engine.settings || [] : undefined,
+        defaultGo: engine.go ?? undefined,
+      });
+
+      if (get(settingsAtom).enabled) {
+        return {
+          engineName: engine.name,
+          moves: get(engineMovesFamily({ tab, engine: engine.name })),
+        };
+      }
+    }
+
+    return null;
+  }),
+);
+
 export const allEnabledAtom = loadable(
   atom(async (get) => {
     const engines = await get(enginesAtom);

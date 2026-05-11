@@ -423,10 +423,10 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 20.88% |
-| **Branches** | 14.24% |
-| **Functions** | 16.59% |
-| **Lines** | 22.04% |
+| **Statements** | 20.73% |
+| **Branches** | 14.14% |
+| **Functions** | 16.39% |
+| **Lines** | 21.89% |
 
 **Test Statistics:**
 - ✅ **180 test files** passing
@@ -589,8 +589,8 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 | 🇷🇺 **Русский (Russian)** | 🟡 57% | [View](./src/locales/ru) |
 | 🇺🇦 **Українська (Ukrainian)** | 🟡 57% | [View](./src/locales/uk) |
 | 🇨🇳 **中文 (Chinese)** | 🟡 57% | [View](./src/locales/zh) |
-| 🇸🇦 **العربية (Arabic)** | 🟡 55% | [View](./src/locales/ar) |
-| 🇹🇷 **Türkçe (Turkish)** | 🔴 44% | [View](./src/locales/tr) |
+| 🇸🇦 **العربية (Arabic)** | 🟡 54% | [View](./src/locales/ar) |
+| 🇹🇷 **Türkçe (Turkish)** | 🔴 43% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->
 
 Want to help translate? See [CONTRIBUTING.md](./CONTRIBUTING.md).

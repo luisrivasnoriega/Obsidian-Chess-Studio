@@ -32,6 +32,17 @@ export type EngineRequestDto = {
   extraOptions: Array<{ name: string; value: string }>;
 };
 
+export type BuildVariantsMode = "engine" | "smart";
+
+export type SmartConfigDto = {
+  candidateMultiPv?: number;
+  validationFullMoves?: number;
+  validationPlies?: number;
+  playableThresholdCp?: number;
+  maxValidationOpponentBranches?: number;
+  validationBeamWidth?: number;
+};
+
 export type VariantsSplitMode = "none" | "manual" | "auto";
 
 export type BuildVariantsSplitConfigDto = {
@@ -44,7 +55,7 @@ export type BuildVariantsSplitConfigDto = {
 
 export type MoveSpecDto = {
   value: string;
-  source?: "db" | "engine";
+  source?: "db" | "engine" | "smart";
   white?: number;
   black?: number;
   draws?: number;
@@ -79,7 +90,8 @@ export type BuildVariantsTreeRequest = {
   lichessOptions?: LichessGamesOptionsDto;
   masterOptions?: MasterGamesOptionsDto;
   lichessToken?: string | null;
-  mode: "engine" | "winrate";
+  mode: BuildVariantsMode;
+  smartConfig?: SmartConfigDto;
   engine?: EngineRequestDto | null;
   engineMs: number;
   coverage: number;

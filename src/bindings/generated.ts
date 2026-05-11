@@ -1946,7 +1946,8 @@ export type BookEdge = { from: bigint; to: bigint; uci: string; prob: number; ki
 export type BookErrorEntry = { ply: bigint; playedMove: string; expectedMove: string | null; expectedMoves: string[] }
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
 export type BookUnknownEntry = { ply: bigint; playedMove: string; expectedMove: string | null; expectedMoves: string[] }
-export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: string; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; splitConfig?: SplitConfigDto | null }
+export type BuildVariantsMode = "engine" | "smart"
+export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: BuildVariantsMode; smartConfig?: SmartConfigDto | null; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; splitConfig?: SplitConfigDto | null }
 export type BuildVariantsTreeResponse = { lines: LineDto[]; segments?: SegmentDto[] | null; warnings?: string[] | null }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
 export type ChessbaseDownloadResult = { pgn: string; games: number }
@@ -2242,7 +2243,7 @@ export type MoveSpecDto = {
  */
 value: string; 
 /**
- * "db" | "engine"
+ * "db" | "engine" | "smart"
  */
 source?: string | null; 
 /**
@@ -2394,6 +2395,7 @@ export type SegmentDto = { id: string; anchorPly: number; anchorFen: string; anc
 export type SegmentStatsDto = { lineCount: number }
 export type Sides = "BlackWhite" | "WhiteBlack" | "Any"
 export type SiteStatsData = { site: string; player: string; data: StatsData[] }
+export type SmartConfigDto = { candidateMultiPv?: number | null; validationFullMoves?: number | null; validationPlies?: number | null; playableThresholdCp?: number | null; maxValidationOpponentBranches?: number | null; validationBeamWidth?: number | null }
 export type SortDirection = "asc" | "desc"
 export type SplitConfigDto = { enabled: boolean; mode: string; splitAtPly?: number | null; maxSegments?: number | null; maxLinesPerSegment?: number | null }
 export type StatsData = { date: string; time: string | null; is_player_white: boolean; player_elo: number; opponent_elo: number | null; result: GameOutcome; time_control: string; opening: string }

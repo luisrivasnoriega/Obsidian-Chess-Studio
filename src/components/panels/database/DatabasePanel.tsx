@@ -1,16 +1,5 @@
-import {
-  Alert,
-  Box,
-  Group,
-  LoadingOverlay,
-  ScrollArea,
-  SegmentedControl,
-  Select,
-  Stack,
-  Tabs,
-  Text,
-} from "@mantine/core";
-import { useDebouncedValue, useElementSize } from "@mantine/hooks";
+import { Alert, Box, Group, LoadingOverlay, ScrollArea, SegmentedControl, Select, Stack, Text } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { useAtom, useAtomValue } from "jotai";
@@ -141,9 +130,11 @@ async function fetchOpening(
 function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { ref: tabsContainerRef, width: tabsContainerWidth } = useElementSize();
 
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("DatabasePanel must be used within a TreeStateProvider");
+  }
   const [db, setDb] = useAtom(currentDbTypeAtom);
   const [lichessOptions] = useAtom(lichessOptionsAtom);
   const [masterOptions] = useAtom(masterOptionsAtom);
@@ -440,125 +431,94 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     0,
   );
   const isSearching = isLoading || isFetching;
-  const useHorizontalTabs = tabsContainerWidth > 0 && tabsContainerWidth < 520;
+  const matches = Math.max(grandTotal || 0, openingData?.games.length || 0);
 
   return (
-    <Stack h="100%" gap={0} style={{ minHeight: 0, minWidth: 0 }}>
-      <Group justify="space-between" w="100%">
-        <SegmentedControl
-          data={[
-            { label: t("features.board.database.local"), value: "local" },
-            { label: t("features.board.database.lichessAll"), value: "lch_all" },
-            { label: t("features.board.database.lichessMaster"), value: "lch_master" },
-          ]}
-          value={db}
-          onChange={(value) => setDb(value as "local" | "lch_all" | "lch_master")}
-        />
+    <Stack h="100%" gap="xs" style={{ minHeight: 0, minWidth: 0 }}>
+      <Stack gap="xs" style={{ flexShrink: 0 }}>
+        <Group justify="space-between" gap="xs" wrap="wrap">
+          <SegmentedControl
+            size="sm"
+            data={[
+              { label: t("features.board.database.local"), value: "local" },
+              { label: t("features.board.database.lichessAll"), value: "lch_all" },
+              { label: t("features.board.database.lichessMaster"), value: "lch_master" },
+            ]}
+            value={db}
+            onChange={(value) => setDb(value as "local" | "lch_all" | "lch_master")}
+          />
 
-        {tabType !== "options" && (
-          <Text>
-            {t("features.board.database.matches", {
-              matches: Math.max(grandTotal || 0, openingData?.games.length || 0),
-            })}
-          </Text>
+          <Group gap="xs" wrap="wrap" justify="flex-end">
+            {tabType !== "options" && (
+              <Text size="md" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {t("features.board.database.matches", { matches })}
+              </Text>
+            )}
+            <SegmentedControl
+              size="sm"
+              data={[
+                {
+                  label: t("features.board.database.stats"),
+                  value: "stats",
+                  disabled:
+                    dbType.type === "local" &&
+                    dbType.options.type === "partial" &&
+                    !isChessbaseDatabasePath(dbType.options.path),
+                },
+                { label: t("features.board.database.games"), value: "games" },
+                { label: t("features.board.database.options"), value: "options" },
+              ]}
+              value={tabType}
+              onChange={(value) => setTabType(value)}
+            />
+          </Group>
+        </Group>
+
+        {db === "local" && (
+          <Select
+            data={localDatabaseOptions}
+            value={localOptions.path ?? defaultLocalDbPath}
+            onChange={(value) => {
+              if (value) {
+                const currentFenFromStore = store.getState().currentNode().fen;
+                const isChessbase = isChessbaseDatabasePath(value);
+                setLocalOptions((prev) => ({
+                  ...prev,
+                  path: value,
+                  fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                  players: isChessbase ? [] : prev.players,
+                }));
+                void queryClient.invalidateQueries({ queryKey: ["database-opening"] }).catch(() => {});
+              }
+            }}
+            placeholder={t("features.board.database.selectDatabase")}
+            searchable
+            clearable={false}
+          />
         )}
-      </Group>
+      </Stack>
 
       <DatabaseLoader isLoading={isSearching} tab={tab?.value ?? null} />
 
-      {db === "local" && (
-        <Select
-          data={localDatabaseOptions}
-          value={localOptions.path ?? defaultLocalDbPath}
-          onChange={(value) => {
-            if (value) {
-              const currentFenFromStore = store.getState().currentNode().fen;
-              const isChessbase = isChessbaseDatabasePath(value);
-              setLocalOptions((prev) => ({
-                ...prev,
-                path: value,
-                fen: currentFenFromStore || prev.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-                players: isChessbase ? [] : prev.players,
-              }));
-              // Invalidate queries to trigger new search with new database
-              void queryClient.invalidateQueries({ queryKey: ["database-opening"] }).catch(() => {});
-            }
-          }}
-          placeholder={t("features.board.database.selectDatabase")}
-          searchable
-          clearable={false}
-          style={{ minWidth: 200 }}
-          mb="xs"
-        />
-      )}
-
-      <Box
-        ref={tabsContainerRef}
-        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}
-      >
-        <Tabs
-          defaultValue="stats"
-          orientation={useHorizontalTabs ? "horizontal" : "vertical"}
-          placement={useHorizontalTabs ? undefined : "right"}
-          value={tabType}
-          onChange={(v) => setTabType(v!)}
-          display="flex"
-          h="100%"
-          flex={1}
-          style={{ overflow: "hidden", minWidth: 0, minHeight: 0 }}
-          styles={{
-            list: useHorizontalTabs
-              ? {
-                  minWidth: 0,
-                  width: "100%",
-                  flexShrink: 0,
-                  overflow: "hidden",
-                }
-              : {
-                  width: "max-content",
-                  minWidth: 176,
-                  flexShrink: 0,
-                  overflow: "hidden",
-                },
-            tabLabel: {
-              whiteSpace: "nowrap",
-              overflow: "visible",
-              textOverflow: "clip",
-            },
-          }}
-        >
-          <Tabs.List grow={useHorizontalTabs}>
-            <Tabs.Tab
-              value="stats"
-              disabled={
-                dbType.type === "local" &&
-                dbType.options.type === "partial" &&
-                !isChessbaseDatabasePath(dbType.options.path)
-              }
-            >
-              {t("features.board.database.stats")}
-            </Tabs.Tab>
-            <Tabs.Tab value="games">{t("features.board.database.games")}</Tabs.Tab>
-            <Tabs.Tab value="options">{t("features.board.database.options")}</Tabs.Tab>
-          </Tabs.List>
-
+      <Box style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {tabType === "stats" && (
           <PanelWithError
             value="stats"
             error={error}
             type={db}
             hasLocalDatabase={!!localOptions.path}
             loading={isSearching}
-            activeValue={tabType}
           >
             <OpeningsTable openings={openingData?.openings || []} loading={false} />
           </PanelWithError>
+        )}
+        {tabType === "games" && (
           <PanelWithError
             value="games"
             error={error}
             type={db}
             hasLocalDatabase={!!localOptions.path}
             loading={isSearching}
-            activeValue={tabType}
           >
             <GamesTable
               games={openingData?.games || []}
@@ -571,13 +531,14 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
               }
             />
           </PanelWithError>
+        )}
+        {tabType === "options" && (
           <PanelWithError
             value="options"
             error={error}
             type={db}
             hasLocalDatabase={!!localOptions.path}
             loading={isSearching}
-            activeValue={tabType}
           >
             <ScrollArea h="100%" offsetScrollbars>
               {match(db)
@@ -587,7 +548,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
                 .exhaustive()}
             </ScrollArea>
           </PanelWithError>
-        </Tabs>
+        )}
       </Box>
     </Stack>
   );
@@ -595,7 +556,6 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
 
 function PanelWithError(props: {
   value: string;
-  activeValue: string;
   error: Error | null;
   type: string;
   hasLocalDatabase: boolean;
@@ -612,15 +572,13 @@ function PanelWithError(props: {
   }
 
   return (
-    <Tabs.Panel
-      pt="xs"
-      value={props.value}
+    <Box
       flex={1}
       pos="relative"
       style={{ minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}
     >
       <LoadingOverlay
-        visible={props.loading && props.value !== "options" && props.value === props.activeValue}
+        visible={props.loading && props.value !== "options"}
         zIndex={30}
         overlayProps={{ blur: 1 }}
         loaderProps={{ size: "md" }}
@@ -628,7 +586,7 @@ function PanelWithError(props: {
       <Box style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {children}
       </Box>
-    </Tabs.Panel>
+    </Box>
   );
 }
 
