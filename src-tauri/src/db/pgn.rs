@@ -226,6 +226,7 @@ pub struct TempGame {
     pub time_control: Option<String>,
     pub eco: Option<String>,
     pub fen: Option<String>,
+    pub orientation: Option<String>,
     pub moves: Vec<u8>,
     pub position: Chess,
     pub material_count: ByColor<u8>,
@@ -320,6 +321,8 @@ impl Visitor for Importer {
                     self.skip = true;
                 }
             }
+        } else if key == b"Orientation" {
+            self.game.orientation = Some(value.decode_utf8_lossy().into_owned());
         }
     }
 

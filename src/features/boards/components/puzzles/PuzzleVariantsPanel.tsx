@@ -21,11 +21,13 @@ type PuzzleVariantsInfo = {
   mainline: string | null;
   coverageNode: string | null;
   coverageTier: "mainline" | "secondary" | "alternative" | null;
+  ecoVariant: string | null;
   puzzleCount: number;
 };
 
 const PUZZLE_VARIANTS_UPDATED_EVENT = "puzzle-variants:updated";
 const solutionCache = new Map<string, string[]>();
+const openingCache = new Map<string, string[]>();
 const PUZZLE_SOLUTION_CACHE_LIMIT = 12;
 
 function getCachedSolutions(dbPath: string): string[] | null {
@@ -45,6 +47,26 @@ function setCachedSolutions(dbPath: string, solutions: string[]) {
     const oldest = solutionCache.keys().next().value;
     if (oldest === undefined) break;
     solutionCache.delete(oldest);
+  }
+}
+
+function getCachedOpenings(dbPath: string): string[] | null {
+  const cached = openingCache.get(dbPath) ?? null;
+  if (!cached) return null;
+  openingCache.delete(dbPath);
+  openingCache.set(dbPath, cached);
+  return cached;
+}
+
+function setCachedOpenings(dbPath: string, openings: string[]) {
+  if (openingCache.has(dbPath)) {
+    openingCache.delete(dbPath);
+  }
+  openingCache.set(dbPath, openings);
+  while (openingCache.size > PUZZLE_SOLUTION_CACHE_LIMIT) {
+    const oldest = openingCache.keys().next().value;
+    if (oldest === undefined) break;
+    openingCache.delete(oldest);
   }
 }
 
@@ -86,18 +108,33 @@ function extractSolutionHeader(pgn: string): string | null {
   return match?.[1]?.trim() || null;
 }
 
+function extractTagHeader(pgn: string, tag: string): string | null {
+  const match = pgn.match(new RegExp(`\\[${tag}\\s+"([^"]*)"\\]`, "i"));
+  return match?.[1]?.trim() || null;
+}
+
+function extractOpeningHeader(pgn: string): string | null {
+  const eco = extractTagHeader(pgn, "ECO");
+  const opening = extractTagHeader(pgn, "Opening");
+  if (eco && opening) return `${eco}: ${opening}`;
+  return opening || eco || null;
+}
+
 export function PuzzleVariantsPanel({
   selectedDb,
   sessionPuzzles = [],
+  currentPuzzle = null,
 }: {
   selectedDb: string | null;
   sessionPuzzles?: Puzzle[];
+  currentPuzzle?: Puzzle | null;
 }) {
   const { t } = useTranslation();
   const [info, setInfo] = useState<PuzzleVariantsInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [_progressVersion, setProgressVersion] = useState(0);
   const [solutionHeaders, setSolutionHeaders] = useState<string[]>([]);
+  const [openingHeaders, setOpeningHeaders] = useState<string[]>([]);
 
   const isPgn = selectedDb?.toLowerCase().endsWith(".pgn") ?? false;
 
@@ -120,6 +157,7 @@ export function PuzzleVariantsPanel({
       if (!selectedDb || !isPgn) {
         setInfo(null);
         setSolutionHeaders([]);
+        setOpeningHeaders([]);
         return;
       }
 
@@ -130,6 +168,7 @@ export function PuzzleVariantsPanel({
         if (!(await exists(metadataPath))) {
           setInfo(null);
           setSolutionHeaders([]);
+          setOpeningHeaders([]);
           return;
         }
 
@@ -138,6 +177,7 @@ export function PuzzleVariantsPanel({
         if (metadata.type !== "puzzle") {
           setInfo(null);
           setSolutionHeaders([]);
+          setOpeningHeaders([]);
           return;
         }
 
@@ -147,6 +187,7 @@ export function PuzzleVariantsPanel({
         if (!tags.includes(PUZZLE_VARIANTS_TAG)) {
           setInfo(null);
           setSolutionHeaders([]);
+          setOpeningHeaders([]);
           return;
         }
 
@@ -165,12 +206,14 @@ export function PuzzleVariantsPanel({
           mainline: parsed.mainline,
           coverageNode: parsed.coverageNode,
           coverageTier: parsed.coverageTier,
+          ecoVariant: parsed.ecoVariant,
           puzzleCount,
         });
       } catch {
         if (!cancelled) {
           setInfo(null);
           setSolutionHeaders([]);
+          setOpeningHeaders([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -189,24 +232,33 @@ export function PuzzleVariantsPanel({
     const loadSolutionHeaders = async () => {
       if (!selectedDb || !info) {
         setSolutionHeaders([]);
+        setOpeningHeaders([]);
         return;
       }
 
       const cached = getCachedSolutions(selectedDb);
-      if (cached) {
+      const cachedOpenings = getCachedOpenings(selectedDb);
+      if (cached && cachedOpenings) {
         setSolutionHeaders(cached);
+        setOpeningHeaders(cachedOpenings);
         return;
       }
 
       try {
         const games = unwrap(await commands.readGames(selectedDb, 0, Math.max(0, info.puzzleCount - 1)));
         const solutions = games.map((game) => extractSolutionHeader(game) ?? "");
+        const openings = games.map((game) => extractOpeningHeader(game) ?? "");
         setCachedSolutions(selectedDb, solutions);
+        setCachedOpenings(selectedDb, openings);
 
         if (cancelled) return;
         setSolutionHeaders(solutions);
+        setOpeningHeaders(openings);
       } catch {
-        if (!cancelled) setSolutionHeaders([]);
+        if (!cancelled) {
+          setSolutionHeaders([]);
+          setOpeningHeaders([]);
+        }
       }
     };
 
@@ -244,6 +296,13 @@ export function PuzzleVariantsPanel({
     if (!info || solveTimeStats.averageMs == null) return "--";
     return t("units.duration", { duration: solveTimeStats.averageMs });
   }, [info, solveTimeStats.averageMs, t]);
+  const currentPuzzleOpening = useMemo(() => {
+    if (!selectedDb || !currentPuzzle || currentPuzzle.source?.type !== "pgn") return null;
+    if (normalizePath(currentPuzzle.source.path) !== normalizePath(selectedDb)) return null;
+    const opening = openingHeaders[currentPuzzle.source.index];
+    return opening && opening.trim().length > 0 ? opening : null;
+  }, [currentPuzzle, openingHeaders, selectedDb]);
+  const displayedEcoVariant = currentPuzzleOpening ?? info?.ecoVariant ?? null;
   const recentIncorrectSubvariants = useMemo(() => {
     if (!selectedDb || !info || solutionHeaders.length === 0) return [];
     const activePath = normalizePath(selectedDb);
@@ -299,6 +358,11 @@ export function PuzzleVariantsPanel({
               ) : info.coverageTier === "alternative" ? (
                 <Badge size="sm" variant="filled" color="red">
                   {t("features.board.variants.alternativeShort", { defaultValue: "Alternative" })}
+                </Badge>
+              ) : null}
+              {displayedEcoVariant ? (
+                <Badge size="sm" variant="light" color="cyan">
+                  {t("features.puzzle.eco", { defaultValue: "ECO" })}: {displayedEcoVariant}
                 </Badge>
               ) : null}
               <Badge size="sm" variant="light">

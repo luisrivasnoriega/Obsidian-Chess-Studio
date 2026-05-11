@@ -10,6 +10,9 @@ pub struct TreeNodeDto {
     pub fen: String,
     #[serde(default)]
     pub san: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(optional)]
+    pub opening_name: Option<String>,
     #[serde(default)]
     pub children: Vec<TreeNodeDto>,
 }
@@ -148,7 +151,7 @@ fn format_coverage_eco_variant(opening_name: Option<&str>) -> Option<String> {
         return None;
     }
 
-    let re = regex::Regex::new(r"(?i)^([A-E]\d{2})\s*[-:]\s*(.+)$").unwrap();
+    let re = regex::Regex::new(r"(?i)^([A-E]\d{2})(?:\s*[-:]\s*|\s+)(.+)$").unwrap();
     if let Some(captures) = re.captures(trimmed) {
         let eco_code = captures.get(1).map(|m| m.as_str().to_uppercase());
         let opening = captures.get(2).map(|m| m.as_str().trim().to_string());
@@ -160,6 +163,38 @@ fn format_coverage_eco_variant(opening_name: Option<&str>) -> Option<String> {
     }
 
     Some(trimmed.to_string())
+}
+
+#[derive(Debug, Clone)]
+struct PgnOpeningHeaders {
+    eco: Option<String>,
+    opening: Option<String>,
+}
+
+fn parse_pgn_opening_headers(opening_name: Option<&str>) -> Option<PgnOpeningHeaders> {
+    let trimmed = opening_name?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let re = regex::Regex::new(r"(?i)^([A-E]\d{2})(?:\s*[-:]\s*|\s+)(.+)$").unwrap();
+    if let Some(captures) = re.captures(trimmed) {
+        let eco = captures.get(1).map(|m| m.as_str().to_uppercase());
+        let opening = captures
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|value| !value.is_empty());
+        return Some(PgnOpeningHeaders { eco, opening });
+    }
+
+    Some(PgnOpeningHeaders {
+        eco: None,
+        opening: Some(trimmed.to_string()),
+    })
+}
+
+fn escape_pgn_tag_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn extract_san_from_coverage_label(label: &str) -> Option<String> {
@@ -262,6 +297,7 @@ fn to_filtered_puzzle_children(
     include_low_sample: bool,
     direct_branch_override_key: Option<&str>,
     direct_branch_san: Option<&str>,
+    inherited_opening_name: Option<&str>,
 ) -> Vec<TreeNodeDto> {
     let mut out = Vec::new();
 
@@ -292,15 +328,25 @@ fn to_filtered_puzzle_children(
             continue;
         };
 
+        let opening_name = child
+            .opening_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or(inherited_opening_name)
+            .map(str::to_string);
+
         out.push(TreeNodeDto {
             fen: fen.to_string(),
             san: Some(san),
+            opening_name: opening_name.clone(),
             children: to_filtered_puzzle_children(
                 child,
                 selected_tier,
                 include_low_sample,
                 None,
                 None,
+                opening_name.as_deref(),
             ),
         });
     }
@@ -467,6 +513,11 @@ fn generate_puzzle_variants_from_coverage_node_impl(
                 request.include_low_sample,
                 direct_branch_override_key,
                 direct_branch_san.as_deref(),
+                transposition_source_node
+                    .opening_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
             ));
         }
 
@@ -478,6 +529,12 @@ fn generate_puzzle_variants_from_coverage_node_impl(
         let puzzle_root = TreeNodeDto {
             fen: start_fen.to_string(),
             san: None,
+            opening_name: source_node
+                .opening_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
             children: merged_puzzle_children,
         };
         let generated = generate_puzzle_variants_from_tree_impl(
@@ -583,11 +640,24 @@ fn max_moves_from_node(
     Ok(best)
 }
 
+#[derive(Debug, Clone)]
+struct PuzzleLine {
+    sans: Vec<String>,
+    opening_name: Option<String>,
+}
+
+fn normalize_opening_name(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn collect_lines_from_position(
     start: &TreeNodeDto,
     puzzle_side: Side,
     selected_depth: u32,
-) -> Result<Vec<Vec<String>>> {
+) -> Result<Vec<PuzzleLine>> {
     if selected_depth == 0 {
         return Ok(vec![]);
     }
@@ -598,7 +668,7 @@ fn collect_lines_from_position(
         return Ok(vec![]);
     }
 
-    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut out: Vec<PuzzleLine> = Vec::new();
 
     fn step(
         node: &TreeNodeDto,
@@ -606,18 +676,25 @@ fn collect_lines_from_position(
         selected_depth: u32,
         memo: &mut std::collections::HashMap<*const TreeNodeDto, u32>,
         moves: &mut Vec<String>,
+        opening_name: Option<String>,
         puzzle_moves: u32,
         depth: u32,
-        out: &mut Vec<Vec<String>>,
+        out: &mut Vec<PuzzleLine>,
     ) -> Result<()> {
         const MAX_DEPTH: u32 = 80;
         if depth > MAX_DEPTH {
             return Ok(());
         }
 
+        let current_opening_name =
+            normalize_opening_name(node.opening_name.as_deref()).or(opening_name);
+
         if puzzle_moves == selected_depth {
             if !moves.is_empty() {
-                out.push(moves.clone());
+                out.push(PuzzleLine {
+                    sans: moves.clone(),
+                    opening_name: current_opening_name,
+                });
             }
             return Ok(());
         }
@@ -648,6 +725,7 @@ fn collect_lines_from_position(
                 selected_depth,
                 memo,
                 moves,
+                current_opening_name.clone(),
                 next_puzzle_moves,
                 depth + 1,
                 out,
@@ -665,6 +743,7 @@ fn collect_lines_from_position(
         selected_depth,
         &mut memo,
         &mut moves,
+        None,
         0,
         0,
         &mut out,
@@ -747,9 +826,10 @@ fn generate_puzzle_variants_from_tree_impl(
                                 let lines =
                                     collect_lines_from_position(node, puzzle_side, selected_depth)?;
                                 for line in lines {
-                                    let mut sans: Vec<String> = Vec::with_capacity(line.len() + 1);
+                                    let mut sans: Vec<String> =
+                                        Vec::with_capacity(line.sans.len() + 1);
                                     sans.push(normalize_san_token(forced_system_move));
-                                    sans.extend(line);
+                                    sans.extend(line.sans);
 
                                     let solution = build_solution_text(&parent.fen, &sans)?;
                                     if solution.is_empty() {
@@ -770,6 +850,11 @@ fn generate_puzzle_variants_from_tree_impl(
                                         Side::White => ("Puzzle", "?"),
                                         Side::Black => ("?", "Puzzle"),
                                     };
+                                    let opening_headers = parse_pgn_opening_headers(
+                                        line.opening_name
+                                            .as_deref()
+                                            .or(node.opening_name.as_deref()),
+                                    );
 
                                     out.push_str(&format!(
                                         r#"[Event "Mini puzzle {n}"]"#,
@@ -788,6 +873,22 @@ fn generate_puzzle_variants_from_tree_impl(
                                     out.push('\n');
                                     out.push_str(r#"[Result "*"]"#);
                                     out.push('\n');
+                                    if let Some(headers) = opening_headers {
+                                        if let Some(eco) = headers.eco {
+                                            out.push_str(&format!(
+                                                r#"[ECO "{}"]"#,
+                                                escape_pgn_tag_value(&eco)
+                                            ));
+                                            out.push('\n');
+                                        }
+                                        if let Some(opening) = headers.opening {
+                                            out.push_str(&format!(
+                                                r#"[Opening "{}"]"#,
+                                                escape_pgn_tag_value(&opening)
+                                            ));
+                                            out.push('\n');
+                                        }
+                                    }
                                     out.push_str(r#"[SetUp "1"]"#);
                                     out.push('\n');
                                     out.push_str(&format!(r#"[FEN "{fen}"]"#, fen = parent.fen));
@@ -900,6 +1001,7 @@ mod tests {
         TreeNodeDto {
             fen: fen.to_string(),
             san: san.map(|s| s.to_string()),
+            opening_name: None,
             children,
         }
     }
@@ -933,6 +1035,7 @@ mod tests {
             active_loss_rate: None,
             profile_win_rate: None,
             profile_loss_rate: None,
+            complete_line: None,
             engine_advantage: None,
             engine_ms: None,
             engine_name: None,

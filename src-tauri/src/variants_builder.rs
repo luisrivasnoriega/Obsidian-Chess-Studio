@@ -80,7 +80,7 @@ fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-async fn fetch_explorer(url: reqwest::Url, lichess_token: Option<&str>) -> Result<ExplorerPositionData> {
+pub(crate) async fn fetch_explorer(url: reqwest::Url, lichess_token: Option<&str>) -> Result<ExplorerPositionData> {
     // Retry/backoff on 429 and transient 5xx.
     const MAX_RETRIES: usize = 8;
     let mut backoff = Duration::from_millis(1000);
@@ -394,32 +394,32 @@ fn emit_variants_builder_progress(app: &AppHandle, start_path: &[u32], moves: &[
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ExplorerMove {
-    uci: String,
-    san: String,
-    white: u32,
-    black: u32,
-    draws: u32,
+pub(crate) struct ExplorerMove {
+    pub(crate) uci: String,
+    pub(crate) san: String,
+    pub(crate) white: u32,
+    pub(crate) black: u32,
+    pub(crate) draws: u32,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
-struct ExplorerOpening {
+pub(crate) struct ExplorerOpening {
     #[serde(default)]
-    eco: Option<String>,
+    pub(crate) eco: Option<String>,
     #[serde(default)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
-struct ExplorerPositionData {
+pub(crate) struct ExplorerPositionData {
     #[serde(default)]
-    moves: Vec<ExplorerMove>,
+    pub(crate) moves: Vec<ExplorerMove>,
     #[serde(default)]
-    opening: Option<ExplorerOpening>,
+    pub(crate) opening: Option<ExplorerOpening>,
 }
 
 // -----------------------------------------------------------------------------
@@ -530,13 +530,34 @@ fn node_at_path<'a>(root: &'a TreeNodeDto, path: &[u32]) -> Option<&'a TreeNodeD
 }
 
 fn parse_date_to_year_month(s: &str) -> Option<String> {
+    if let Some((year, month)) = parse_year_month_text(s) {
+        return Some(format!("{year}-{month}"));
+    }
     let dt: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(s).ok()?;
     Some(format!("{}-{}", dt.year(), dt.month()))
 }
 
 fn parse_date_to_year(s: &str) -> Option<String> {
+    if let Some((year, _)) = parse_year_month_text(s) {
+        return Some(year);
+    }
     let dt: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(s).ok()?;
     Some(dt.year().to_string())
+}
+
+fn parse_year_month_text(s: &str) -> Option<(String, String)> {
+    let value = s.trim();
+    let mut parts = value.split(['-', '.', '/']);
+    let year = parts.next()?.trim();
+    let month = parts.next()?.trim();
+    if year.len() != 4 || !year.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let month_num = month.parse::<u32>().ok()?;
+    if !(1..=12).contains(&month_num) {
+        return None;
+    }
+    Some((year.to_string(), month_num.to_string()))
 }
 
 fn lichess_query_pairs(fen: &str, opt: &LichessGamesOptionsDto) -> Vec<(String, String)> {
@@ -615,7 +636,7 @@ fn masters_query_pairs(fen: &str, opt: &MasterGamesOptionsDto) -> Vec<(String, S
     parts
 }
 
-fn lichess_explorer_url(fen: &str, opt: &LichessGamesOptionsDto) -> Result<reqwest::Url> {
+pub(crate) fn lichess_explorer_url(fen: &str, opt: &LichessGamesOptionsDto) -> Result<reqwest::Url> {
     let base = "https://explorer.lichess.ovh";
     let is_player = opt.player.as_ref().map(|p| !p.trim().is_empty()).unwrap_or(false);
     let path = if is_player { "player" } else { "lichess" };
@@ -632,7 +653,7 @@ fn lichess_explorer_url(fen: &str, opt: &LichessGamesOptionsDto) -> Result<reqwe
     Ok(url)
 }
 
-fn masters_explorer_url(fen: &str, opt: &MasterGamesOptionsDto) -> Result<reqwest::Url> {
+pub(crate) fn masters_explorer_url(fen: &str, opt: &MasterGamesOptionsDto) -> Result<reqwest::Url> {
     let base = "https://explorer.lichess.ovh";
     let mut url = reqwest::Url::parse(&format!("{base}/masters"))
         .map_err(|e| Error::FenError(format!("Invalid masters URL: {e}")))?;
@@ -1101,7 +1122,7 @@ async fn get_engine_best_move(
                 fen_for_write,
                 engine_for_write,
                 mv_for_write,
-                requested_ms_i64,
+                requested_ms_u32,
             )
         })
         .await;

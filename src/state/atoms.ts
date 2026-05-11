@@ -355,6 +355,8 @@ export const reportTypeAtom = atom<"CP" | "WDL">("CP");
 
 export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
+export const coverageEngineAnalysisActiveAtom = atom(false);
+
 // Per tab settings
 
 const threatFamily = atomFamily((_tab: string) => atom(false));

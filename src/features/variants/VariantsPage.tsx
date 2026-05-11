@@ -10,10 +10,12 @@
   Code,
   Group,
   Loader,
+  Menu,
   Modal,
   MultiSelect,
   NumberInput,
   Popover,
+  Progress,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -26,7 +28,7 @@
 } from "@mantine/core";
 import { MonthPickerInput } from "@mantine/dates";
 import { useForm } from "@mantine/form";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
@@ -51,11 +53,10 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { join } from "@tauri-apps/api/path";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { exists, mkdir, readDir, readTextFile, rename, writeTextFile } from "@tauri-apps/plugin-fs";
-import { makeFen } from "chessops/fen";
-import { parseSan } from "chessops/san";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -69,17 +70,24 @@ import {
   processEntriesRecursively,
 } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { activeProfileIdAtom, activeTabAtom, enginesAtom, profilesAtom, sessionsAtom, tabsAtom } from "@/state/atoms";
+import {
+  activeProfileIdAtom,
+  activeTabAtom,
+  coverageEngineAnalysisActiveAtom,
+  enginesAtom,
+  profilesAtom,
+  sessionsAtom,
+  tabsAtom,
+} from "@/state/atoms";
 import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
 import { defaultPGN, getMoveText, getPGNFromReportView, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import { setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
-import { getDatabases, type Opening, query_players, searchPosition } from "@/utils/db";
+import { getDatabases, query_players } from "@/utils/db";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN, parseDate } from "@/utils/format";
-import { getLichessGames, getMasterGames } from "@/utils/lichess/api";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
+import { logger } from "@/utils/logger";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
 import {
@@ -201,20 +209,6 @@ type VariantCoverageBuildConfigPatchDto = {
   masterUntil: string | null;
 };
 
-type VariantCoverageBuildConfigDto = {
-  dbType: VariantBuildConfig["dbType"];
-  localDatabasePath: string | null;
-  lichessSpeeds: LichessGameSpeed[];
-  lichessRatings: LichessRating[];
-  lichessSince: string | null;
-  lichessUntil: string | null;
-  lichessPlayer: string;
-  lichessColor: "white" | "black";
-  masterSince: string | null;
-  masterUntil: string | null;
-  includeChildren: boolean;
-};
-
 type CoverageMoveEntry = {
   san: string;
   games: number;
@@ -238,15 +232,6 @@ type CoveragePositionCacheEntry = {
   moves: CoverageMoveEntry[];
 };
 
-type CoverageRawMoveEntry = {
-  san: string;
-  games: number;
-  white?: number;
-  black?: number;
-  draw?: number;
-  nextFen?: string | null;
-};
-
 type VariantCoverageCache = {
   version: 6;
   sourceSignature: string;
@@ -260,24 +245,34 @@ type VariantCoverageCache = {
   generatedAt: string;
 };
 
-type LegacyVariantCoverageCache = {
-  version: 3 | 4;
-  sourceSignature: string;
-  maxMoves: number;
-  positions: Record<string, CoveragePositionCacheEntry>;
-  tierOverrides?: Record<string, Exclude<CoverageTier, "root">>;
-  labelOverrides?: Record<string, string>;
-  graphRoot?: CoverageGraphNode;
-  repertoireColor?: "white" | "black";
-  generatedAt: string;
-};
-
 type CoverageBuildProgress = {
   phase: "preparing" | "building";
   variantsDone: number;
   variantsTotal: number;
   positionsProcessed: number;
   positionsPending: number;
+};
+
+type CoverageGraphBuildProgressPayload = {
+  runId?: string | null;
+  phase: CoverageBuildProgress["phase"];
+  variantsDone: number;
+  variantsTotal: number;
+  positionsProcessed: number;
+  positionsPending: number;
+};
+
+type CoverageGraphBackendBuildResult = {
+  graphRoot: CoverageGraphNode;
+  positions: Record<string, CoveragePositionCacheEntry>;
+  repertoireColor: "white" | "black";
+  sourceSignature: string;
+  cachePath?: string | null;
+  cacheWritten: boolean;
+  loadedFromCache: boolean;
+  priorityMetadataUpdated: boolean;
+  criticalLineDismissedFenKeys: string[];
+  maxMoves: number;
 };
 
 type CoverageProfileTimeControlCategory =
@@ -296,28 +291,108 @@ type CoverageGamesHistoryFilterMetaResponse = {
 
 type CoverageActionTab = "edit" | "puzzles" | "board" | "engine";
 type CoveragePuzzleTierFilter = Exclude<CoverageTier, "root"> | "all";
-
-type CoverageEngineBestLine = {
-  score: { value: { type: "cp" | "mate"; value: number } };
-  sanMoves?: string[] | null;
-  uciMoves?: string[] | null;
-  multipv?: number | null;
+type CoverageEngineProgress = {
+  total: number;
+  completed: number;
+  saved: number;
+  cached: number;
+  failed: number;
+  currentLabel: string;
 };
 
-type CachedVariantPositionEngineEval = {
+type CoverageEngineSessionProgressPayload = {
+  runId?: string | null;
+  sessionId: string;
+  index: number;
+  total: number;
+  completed: number;
+  saved: number;
+  cached: number;
+  failed: number;
   fen: string;
-  engine: string;
-  recommended_move: string;
-  engine_advantage?: string | null;
-  ms: number | bigint;
+  label: string;
+  error?: string | null;
+  hasScore: boolean;
+};
+
+type CoverageEngineBackendResultEntry = {
+  fen: string;
+  label: string;
+  advantage?: string | null;
+  engineName: string;
+  engineMs: number;
+  bestMove?: string | null;
+  cached: boolean;
+  error?: string | null;
+};
+
+type CoverageEngineBackendRunResult = {
+  total: number;
+  completed: number;
+  saved: number;
+  cached: number;
+  failed: number;
+  applied: number;
+  failedDetails: string[];
+  results: CoverageEngineBackendResultEntry[];
+  updatedGraphRoot?: CoverageGraphNode | null;
+  updatedActionNode?: CoverageGraphNode | null;
+  graphCacheWritten?: boolean;
+  resolvedGraphCachePath?: string | null;
 };
 
 const ABSOLUTE_PATH_RE = /^(?:[A-Za-z]:[\\/]|\/|\\\\)/;
 const COVERAGE_GRAPH_CACHE_VERSION = 6;
-const COVERAGE_BUILD_FETCH_CONCURRENCY = 4;
-const COVERAGE_BUILD_OPENING_LOOKUP_CONCURRENCY = 8;
 const COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS = 3;
-const COVERAGE_PROFILE_STATS_MAX_ACTIVE_DEPTH = COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS;
+const COVERAGE_ENGINE_SESSION_PROGRESS_EVENT = "coverage_engine_session_progress";
+const COVERAGE_GRAPH_BUILD_PROGRESS_EVENT = "variant_coverage_graph_build_progress";
+const COVERAGE_ENGINE_DEBUG_STORAGE_PREFIX = "ocs.coverageEngine.";
+
+function readCoverageEngineDebugFlag(flag: string) {
+  try {
+    return localStorage.getItem(`${COVERAGE_ENGINE_DEBUG_STORAGE_PREFIX}${flag}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function createCoverageEngineRunId() {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  if (randomId) return randomId;
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function _summarizeCoverageFen(fen: string | null | undefined) {
+  return `${fen ?? ""}`.trim().split(/\s+/).slice(0, 4).join(" ");
+}
+
+function formatCoverageEngineUnknownError(error: unknown) {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
+
+function trackCoverageEngine(runId: string, phase: string, details: Record<string, unknown> = {}) {
+  const enableConsoleLog = readCoverageEngineDebugFlag("enableTrackConsoleLog");
+  const enableNativeLog = readCoverageEngineDebugFlag("enableTrackNativeLog");
+  if (!enableConsoleLog && !enableNativeLog) return;
+
+  const payload = {
+    ...details,
+    runId,
+    phase,
+    at: new Date().toISOString(),
+    performanceMs: Math.round(globalThis.performance?.now?.() ?? 0),
+  };
+  if (enableConsoleLog) {
+    console.debug("[coverageEngineTrack]", payload);
+  }
+  if (enableNativeLog) {
+    void logger.debug("coverageEngineTrack", payload).catch(() => {});
+  }
+}
+
 const COVERAGE_CONTROL_INPUT_STYLE = {
   minHeight: 38,
   background:
@@ -470,7 +545,7 @@ function normalizeFenKey(fen: string): string {
   return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}`;
 }
 
-function buildFenMatchKeys(fen: string | null | undefined): string[] {
+function _buildFenMatchKeys(fen: string | null | undefined): string[] {
   const trimmed = `${fen ?? ""}`.trim();
   if (!trimmed) return [];
   const parts = trimmed.split(/\s+/);
@@ -485,7 +560,7 @@ function buildFenMatchKeys(fen: string | null | undefined): string[] {
   return Array.from(keys);
 }
 
-function buildCriticalLineCoverageCachePath(cacheFilePath: string): string {
+function _buildCriticalLineCoverageCachePath(cacheFilePath: string): string {
   if (/\.json$/i.test(cacheFilePath)) {
     return cacheFilePath.replace(/\.json$/i, "-critical-lines.json");
   }
@@ -515,19 +590,6 @@ function coverageTierFileSuffix(tier: Exclude<CoverageTier, "root">): string {
   if (tier === "mainline") return "Mainline";
   if (tier === "secondary") return "Secondary";
   return "Alternative";
-}
-
-function buildCoverageEngineCacheSignature(input: {
-  name?: string | null;
-  path?: string | null;
-  extraOptions: Array<{ name: string; value: string }>;
-  is960?: boolean;
-}): string {
-  const extraSignature = [...input.extraOptions]
-    .sort((a, b) => a.name.localeCompare(b.name) || a.value.localeCompare(b.value))
-    .map((option) => `${option.name.trim()}=${option.value.trim()}`)
-    .join(";");
-  return `${`${input.name ?? ""}`.trim()}|${`${input.path ?? ""}`.trim()}|is960=${input.is960 === true}|${extraSignature}`;
 }
 
 function normalizeCoverageIdentityName(value: string | null | undefined): string {
@@ -727,7 +789,7 @@ function CoverageTimeControlSelector({
   );
 }
 
-function formatOpeningNameForCoverageNode(
+function _formatOpeningNameForCoverageNode(
   info: { eco: string; opening: string; variation: string } | null,
 ): string | null {
   if (!info) return null;
@@ -786,107 +848,11 @@ async function parseVariantBuildConfigFromTags(tags: string[]): Promise<Partial<
   };
 }
 
-async function buildSourceSignature(config: VariantBuildConfig): Promise<string> {
-  const payload: VariantCoverageBuildConfigDto = {
-    dbType: config.dbType,
-    localDatabasePath: config.localDatabasePath,
-    lichessSpeeds: config.lichessSpeeds,
-    lichessRatings: config.lichessRatings,
-    lichessSince: formatMonthTag(config.lichessSince),
-    lichessUntil: formatMonthTag(config.lichessUntil),
-    lichessPlayer: config.lichessPlayer,
-    lichessColor: config.lichessColor,
-    masterSince: formatMonthTag(config.masterSince),
-    masterUntil: formatMonthTag(config.masterUntil),
-    includeChildren: config.includeChildren,
-  };
-  return await invoke<string>("variant_coverage_build_source_signature", { config: payload });
-}
-
-type CoverageOpeningRow = {
-  san: string;
-  games: number;
-  white: number;
-  black: number;
-  draw: number;
-};
-
-type CoveragePositionFetchResult = {
-  moves: CoverageOpeningRow[];
-  white?: number;
-  black?: number;
-  draw?: number;
-};
-
-function toCoverageOpenings(openings: Opening[]): CoverageOpeningRow[] {
-  return openings
-    .map((opening) => ({
-      san: opening.move,
-      games: opening.white + opening.black + opening.draw,
-      white: opening.white,
-      black: opening.black,
-      draw: opening.draw,
-    }))
-    .filter((row) => row.san.trim().length > 0 && row.games > 0)
-    .sort((a, b) => b.games - a.games);
-}
-
-function formatEngineAdvantage(
-  score: { value: { type: "cp" | "mate"; value: number } } | null | undefined,
-): string | null {
-  if (!score?.value || typeof score.value.value !== "number") return null;
-  if (score.value.type === "mate") {
-    const mate = Math.trunc(score.value.value);
-    const prefix = mate > 0 ? "+" : "";
-    return `M${prefix}${mate}`;
-  }
-  const cp = score.value.value;
-  const pawns = cp / 100;
-  const prefix = pawns > 0 ? "+" : "";
-  return `${prefix}${pawns.toFixed(2)}`;
-}
-
-function isCoverageEngineBestLine(value: unknown): value is CoverageEngineBestLine {
-  if (!value || typeof value !== "object") return false;
-  const score = (value as { score?: unknown }).score;
-  if (!score || typeof score !== "object") return false;
-  const scoreValue = (score as { value?: unknown }).value;
-  if (!scoreValue || typeof scoreValue !== "object") return false;
-  const type = (scoreValue as { type?: unknown }).type;
-  const rawValue = (scoreValue as { value?: unknown }).value;
-  return (type === "cp" || type === "mate") && typeof rawValue === "number" && Number.isFinite(rawValue);
-}
-
-function getNextFenFromSan(fen: string, san: string): string | null {
-  const [position, error] = positionFromFen(fen);
-  if (error || !position) return null;
-  const move = parseSan(position, san);
-  if (!move) return null;
-  position.play(move);
-  return makeFen(position.toSetup());
-}
-
-function buildCoverageTierOverrideKey(fen: string, san: string): string {
-  return `${normalizeFenKey(fen)}|${san.trim()}`;
-}
-
 async function getCoverageGraphCacheFilePath(variantPath: string, sourceSignature: string): Promise<string> {
   return await invoke<string>("variant_coverage_graph_cache_path", {
     variantPath,
     sourceSignature,
   });
-}
-
-function parseLegacyCoverageCacheFromMetadata(rawMetadata: unknown): LegacyVariantCoverageCache | null {
-  if (!rawMetadata || typeof rawMetadata !== "object") return null;
-  const candidate = (rawMetadata as Record<string, unknown>).coverageGraphCache;
-  if (!candidate || typeof candidate !== "object") return null;
-  const cache = candidate as Record<string, unknown>;
-  if (cache.version !== 3 && cache.version !== 4) return null;
-  if (typeof cache.sourceSignature !== "string") return null;
-  if (typeof cache.maxMoves !== "number") return null;
-  if (!cache.positions || typeof cache.positions !== "object") return null;
-  return cache as LegacyVariantCoverageCache;
 }
 
 async function readCoverageGraphCache(filePath: string): Promise<VariantCoverageCache | null> {
@@ -899,25 +865,6 @@ async function readCoverageGraphCache(filePath: string): Promise<VariantCoverage
 
 async function writeCoverageGraphCache(filePath: string, cache: VariantCoverageCache): Promise<void> {
   await invoke("variant_coverage_write_graph_cache", { filePath, cache });
-}
-
-async function trimCoverageGraphByDepth(root: CoverageGraphNode, maxActiveMoves: number): Promise<CoverageGraphNode> {
-  return await invoke<CoverageGraphNode>("variant_coverage_trim_graph_by_depth", {
-    root,
-    maxActiveMoves,
-  });
-}
-
-async function applyLowSampleFlagsToGraph(
-  root: CoverageGraphNode,
-  positions: Record<string, CoveragePositionCacheEntry>,
-  repertoireColor: "white" | "black",
-): Promise<CoverageGraphNode> {
-  return await invoke<CoverageGraphNode>("variant_coverage_apply_position_flags", {
-    root,
-    positions,
-    repertoireColor,
-  });
 }
 
 async function applyProfileFlagsToCoverageGraph(
@@ -938,51 +885,17 @@ async function applyProfileFlagsToCoverageGraph(
   });
 }
 
-function serializeCoverageTierOverrides(
-  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
-): Record<string, Exclude<CoverageTier, "root">> {
-  const record: Record<string, Exclude<CoverageTier, "root">> = {};
-  for (const [key, tier] of tierOverrides.entries()) {
-    record[key] = tier;
-  }
-  return record;
-}
-
-async function classifyCoveragePosition(
-  fen: string,
-  moves: CoverageRawMoveEntry[],
-  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
-  repertoireColor: "white" | "black",
-): Promise<CoveragePositionCacheEntry> {
-  return await invoke<CoveragePositionCacheEntry>("variant_coverage_classify_position", {
-    fen,
-    moves,
-    tierOverrides: serializeCoverageTierOverrides(tierOverrides),
-    repertoireColor,
-  });
-}
-
-async function getCachedCoveragePosition(
-  sourceSignature: string,
-  fen: string,
-  tierOverrides: Map<string, Exclude<CoverageTier, "root">>,
-  repertoireColor: "white" | "black",
-): Promise<CoveragePositionCacheEntry | null> {
-  return await invoke<CoveragePositionCacheEntry | null>("variant_coverage_get_cached_position", {
-    sourceSignature,
-    fen,
-    tierOverrides: serializeCoverageTierOverrides(tierOverrides),
-    repertoireColor,
-  });
-}
-
 async function getCoverageCriticalLineReport(
   root: CoverageGraphNode,
   activeColor: "white" | "black",
+  completeLinesOnly: boolean,
+  dismissedKeys: Set<string>,
 ): Promise<CriticalLineReport> {
   return await invoke<CriticalLineReport>("variant_coverage_critical_line_report", {
     root,
     activeColor,
+    completeLinesOnly,
+    dismissedKeys: Array.from(dismissedKeys),
   });
 }
 
@@ -1024,38 +937,6 @@ function setCoverageLabelByOverrideKey(
     ...node,
     children: nextChildren,
   };
-}
-
-function setCoverageEngineInfoByFenMap(
-  node: CoverageGraphNode,
-  engineInfoByFen: Map<string, { advantage: string; engineName: string; engineMs: number }>,
-): CoverageGraphNode {
-  const nodeFen = `${node.fen ?? ""}`.trim();
-  const nodeFenKey = nodeFen ? normalizeFenKey(nodeFen) : null;
-  const nextChildren = node.children.map((child) => setCoverageEngineInfoByFenMap(child, engineInfoByFen));
-  const engineInfo = nodeFenKey ? engineInfoByFen.get(nodeFenKey) : null;
-  if (engineInfo) {
-    return {
-      ...node,
-      engineAdvantage: engineInfo.advantage,
-      engineName: engineInfo.engineName,
-      engineMs: engineInfo.engineMs,
-      children: nextChildren,
-    };
-  }
-  return {
-    ...node,
-    children: nextChildren,
-  };
-}
-
-function collectCoverageSubtreeFens(node: CoverageGraphNode, output: string[] = []): string[] {
-  const fen = `${node.fen ?? ""}`.trim();
-  if (fen) output.push(fen);
-  for (const child of node.children) {
-    collectCoverageSubtreeFens(child, output);
-  }
-  return output;
 }
 
 function extractCoverageEditableLabel(label: string): string {
@@ -1116,7 +997,7 @@ type CoverageEngineAnnotation = {
   engineMs?: number | null;
 };
 
-function collectCoverageEngineAnnotationsByFen(
+function _collectCoverageEngineAnnotationsByFen(
   root: CoverageGraphNode | null | undefined,
 ): Map<string, CoverageEngineAnnotation> {
   const byFen = new Map<string, CoverageEngineAnnotation>();
@@ -1139,11 +1020,11 @@ function collectCoverageEngineAnnotationsByFen(
   return byFen;
 }
 
-function applyCoverageEngineAnnotationsByFen(
+function _applyCoverageEngineAnnotationsByFen(
   node: CoverageGraphNode,
   annotationsByFen: Map<string, CoverageEngineAnnotation>,
 ): CoverageGraphNode {
-  const nextChildren = node.children.map((child) => applyCoverageEngineAnnotationsByFen(child, annotationsByFen));
+  const nextChildren = node.children.map((child) => _applyCoverageEngineAnnotationsByFen(child, annotationsByFen));
   const fen = `${node.fen ?? ""}`.trim();
   if (!fen) {
     return {
@@ -1493,100 +1374,6 @@ function formatCoverageWinLoss(winRate: number | null | undefined, lossRate: num
   return `W ${formatCoverageRate(winRate)} / L ${formatCoverageRate(lossRate)}`;
 }
 
-function parseCoverageEngineAdvantageSide(value: string | null | undefined): "white" | "black" | null {
-  const text = `${value ?? ""}`.trim();
-  if (!text) return null;
-  const scoreText = text.replace(/^M/i, "");
-  const match = scoreText.match(/^([+-]?\d+(?:\.\d+)?)/);
-  if (!match) return null;
-  const score = Number.parseFloat(match[1]);
-  if (!Number.isFinite(score) || Math.abs(score) < 0.01) return null;
-  return score > 0 ? "white" : "black";
-}
-
-function buildCoverageCriticalLineReport(
-  root: CoverageGraphNode,
-  activeColor: "white" | "black",
-  positions: Record<string, CoveragePositionCacheEntry> = {},
-  options: { completeLinesOnly?: boolean; dismissedKeys?: Set<string> } = {},
-): CriticalLineReport {
-  const nodes: CriticalLineReportItem[] = [];
-  const path: string[] = [];
-  const activeOpponent = activeColor === "white" ? "black" : "white";
-
-  const labelPathSegment = (label: string) => {
-    const value = label.split("|")[0]?.split(" - ")[0]?.trim();
-    return value || "--";
-  };
-
-  const walk = (node: CoverageGraphNode, parentActiveMovesUsed: number) => {
-    path.push(labelPathSegment(node.label));
-    const activeMovesUsed = typeof node.activeMovesUsed === "number" ? node.activeMovesUsed : parentActiveMovesUsed;
-    const sideToMove = getFenSideToMove(node.fen);
-    const nodeEndsAfterActiveMove = sideToMove === activeOpponent;
-    const isActivePlayerNode =
-      (activeMovesUsed > 0 || nodeEndsAfterActiveMove) &&
-      node.unmappedResponse !== true &&
-      (node.tier === "root" || activeMovesUsed > parentActiveMovesUsed || nodeEndsAfterActiveMove);
-
-    const nodeFenKey = node.fen ? normalizeFenKey(node.fen) : null;
-    const nodePosition = nodeFenKey ? positions[nodeFenKey] : undefined;
-    const sourceRates = getCoveragePositionWinLossRatesForResultFen(nodePosition, node.fen, activeColor);
-    const sourceWinRate = sourceRates.winRate ?? node.activeWinRate ?? null;
-    const sourceLossRate = sourceRates.lossRate ?? node.activeLossRate ?? null;
-
-    const reasons: Array<"source" | "engine"> = [];
-    const isCompleteLineNode = node.completeLine === true || node.children.length === 0;
-    const hasSufficientSample = node.lowSample !== true;
-    if (isActivePlayerNode && hasSufficientSample && (!options.completeLinesOnly || isCompleteLineNode)) {
-      if (
-        typeof sourceWinRate === "number" &&
-        Number.isFinite(sourceWinRate) &&
-        typeof sourceLossRate === "number" &&
-        Number.isFinite(sourceLossRate) &&
-        sourceLossRate > sourceWinRate
-      ) {
-        reasons.push("source");
-      }
-
-      const engineSide = parseCoverageEngineAdvantageSide(node.engineAdvantage);
-      if (engineSide === activeOpponent) {
-        reasons.push("engine");
-      }
-    }
-
-    const dismissalKey = getCriticalLineDismissalKey(node.fen, node.id);
-    if (reasons.length > 0 && !options.dismissedKeys?.has(dismissalKey)) {
-      nodes.push({
-        id: node.id,
-        label: node.label,
-        node: {
-          ...node,
-          activeWinRate: sourceWinRate,
-          activeLossRate: sourceLossRate,
-        },
-        path: [...path],
-        openingName: node.openingName ?? null,
-        fen: node.fen ?? null,
-        sourceWinRate,
-        sourceLossRate,
-        profileWinRate: node.profileWinRate ?? null,
-        profileLossRate: node.profileLossRate ?? null,
-        engineAdvantage: node.engineAdvantage ?? null,
-        reasons,
-      });
-    }
-
-    for (const child of node.children) {
-      walk(child, activeMovesUsed);
-    }
-    path.pop();
-  };
-
-  walk(root, 0);
-  return { activeColor, nodes };
-}
-
 function getCoveragePositionWinLossRates(
   entry: CoveragePositionCacheEntry | null | undefined,
   repertoireColor: "white" | "black",
@@ -1655,7 +1442,7 @@ function isRetriableCoverageError(message: string): boolean {
   );
 }
 
-async function withCoverageRetry<T>(run: () => Promise<T>): Promise<T> {
+async function _withCoverageRetry<T>(run: () => Promise<T>): Promise<T> {
   const maxAttempts = 3;
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1681,7 +1468,7 @@ function isAbortError(error: unknown): boolean {
   return false;
 }
 
-async function withCoverageRequestTimeout<T>(run: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+async function _withCoverageRequestTimeout<T>(run: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -1696,7 +1483,7 @@ async function withCoverageRequestTimeout<T>(run: (signal: AbortSignal) => Promi
   }
 }
 
-function createAsyncLimiter(maxConcurrent: number) {
+function _createAsyncLimiter(maxConcurrent: number) {
   const limit = Math.max(1, Math.floor(maxConcurrent));
   let active = 0;
   const queue: Array<() => void> = [];
@@ -1721,7 +1508,7 @@ function createAsyncLimiter(maxConcurrent: number) {
     });
 }
 
-function fenTurnColor(fen: string): "white" | "black" {
+function _fenTurnColor(fen: string): "white" | "black" {
   const parts = fen.trim().split(/\s+/);
   return parts[1] === "b" ? "black" : "white";
 }
@@ -1762,11 +1549,13 @@ export default function VariantsPage() {
   const navigate = useNavigate();
   const [_tabs, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
+  const setCoverageEngineAnalysisActive = useSetAtom(coverageEngineAnalysisActiveAtom);
   const engines = useAtomValue(enginesAtom);
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const profiles = useAtomValue(profilesAtom);
   const sessions = useAtomValue(sessionsAtom);
   const { layout } = useResponsiveLayout();
+  const useWideVariantsTable = useMediaQuery("(min-width: 135em)");
 
   const [search, setSearch] = useState(() => readPersistedVariantsTableState().search ?? "");
   const [searchScope, setSearchScope] = useState<VariantSearchScope>(() => {
@@ -1830,6 +1619,9 @@ export default function VariantsPage() {
   const [_coverageProfileStatsRefreshing, setCoverageProfileStatsRefreshing] = useState(false);
   const [coverageEngineMs, setCoverageEngineMs] = useState(1000);
   const [coverageEngineEvaluating, setCoverageEngineEvaluating] = useState(false);
+  const [coverageEngineProgress, setCoverageEngineProgress] = useState<CoverageEngineProgress | null>(null);
+  const coverageEngineAbortRef = useRef(false);
+  const coverageEngineRunIdRef = useRef<string | null>(null);
   const [criticalLineModalOpened, setCriticalLineModalOpened] = useState(false);
   const [criticalLineReport, setCriticalLineReport] = useState<CriticalLineReport | null>(null);
   const [criticalLineLoading, setCriticalLineLoading] = useState(false);
@@ -1846,6 +1638,7 @@ export default function VariantsPage() {
   const [criticalLineMappedOnly, setCriticalLineMappedOnly] = useState(false);
   const [criticalLineDismissedFenKeys, setCriticalLineDismissedFenKeys] = useState<Set<string>>(new Set());
   const coverageGraphPositionsRef = useRef<Record<string, CoveragePositionCacheEntry>>({});
+  const coverageGraphBuildRunIdRef = useRef<string | null>(null);
   const criticalLineCompleteOnlyRef = useRef(false);
   const [configureBuildModalOpened, setConfigureBuildModalOpened] = useState(false);
   const [configureBuildTargetKey, setConfigureBuildTargetKey] = useState<string | null>(null);
@@ -1891,6 +1684,37 @@ export default function VariantsPage() {
     const profileToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() ?? "";
     return profileToken.length > 0 ? profileToken : undefined;
   }, [activeProfileId, profiles]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen<CoverageGraphBuildProgressPayload>(COVERAGE_GRAPH_BUILD_PROGRESS_EVENT, (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      const activeRunId = coverageGraphBuildRunIdRef.current;
+      if (activeRunId && payload.runId && payload.runId !== activeRunId) return;
+      setCoverageBuildProgress({
+        phase: payload.phase,
+        variantsDone: payload.variantsDone,
+        variantsTotal: payload.variantsTotal,
+        positionsProcessed: payload.positionsProcessed,
+        positionsPending: payload.positionsPending,
+      });
+    }).then((nextUnlisten) => {
+      if (disposed) {
+        nextUnlisten();
+        return;
+      }
+      unlisten = nextUnlisten;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -2066,6 +1890,7 @@ export default function VariantsPage() {
 
   // Calculate responsive grid columns
   const isMobile = layout.files?.layoutType === "mobile" || false;
+  const useCompactVariantsTable = !useWideVariantsTable;
   const gridCols = isMobile ? 1 : { base: 1, md: 2, lg: 3 };
   const variantsQueryKey = useMemo(() => ["variants", activeProfileId ?? "global"] as const, [activeProfileId]);
 
@@ -3338,80 +3163,6 @@ export default function VariantsPage() {
     [openCoverageGraphForKey, validateVariantConsistencyBeforeAction],
   );
 
-  const fetchCoverageOpenings = useCallback(
-    async (fen: string, config: VariantBuildConfig, signal?: AbortSignal): Promise<CoveragePositionFetchResult> => {
-      if (config.dbType === "local") {
-        if (!config.localDatabasePath) return { moves: [] };
-        const [openings] = await searchPosition(
-          {
-            path: config.localDatabasePath,
-            fen,
-            type: "exact",
-            players: [],
-            color: "any",
-            result: "any",
-          },
-          "variants-coverage",
-          signal,
-        );
-        return { moves: toCoverageOpenings(openings) };
-      }
-
-      if (config.dbType === "lch_all") {
-        const payload = await getLichessGames(
-          fen,
-          {
-            speeds: config.lichessSpeeds,
-            ratings: config.lichessRatings,
-            color: config.lichessColor,
-            player: config.lichessPlayer.trim() || undefined,
-            since: config.lichessSince ?? undefined,
-            until: config.lichessUntil ?? undefined,
-          },
-          lichessAuthToken,
-          signal,
-        );
-        return {
-          moves: toCoverageOpenings(
-            payload.moves.map((move) => ({
-              move: move.san,
-              white: move.white,
-              black: move.black,
-              draw: move.draws,
-            })),
-          ),
-          white: payload.white,
-          black: payload.black,
-          draw: payload.draws,
-        };
-      }
-
-      const payload = await getMasterGames(
-        fen,
-        {
-          since: config.masterSince ?? undefined,
-          until: config.masterUntil ?? undefined,
-        },
-        lichessAuthToken,
-        signal,
-      );
-      return {
-        moves: toCoverageOpenings(
-          payload.moves.map((move) => ({
-            move: move.san,
-            white: move.white,
-            black: move.black,
-            draw: move.draws,
-          })),
-        ),
-        white: payload.white,
-        black: payload.black,
-        draw: payload.draws,
-      };
-    },
-    [lichessAuthToken],
-  );
-
   const handleBuildCoverageGraph = useCallback(
     async (options?: {
       forceRebuild?: boolean;
@@ -3442,6 +3193,10 @@ export default function VariantsPage() {
         });
         return;
       }
+      const runId =
+        globalThis.crypto?.randomUUID?.() ??
+        `coverage-graph-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      coverageGraphBuildRunIdRef.current = runId;
       try {
         setCoverageGraphLoading(true);
         setCoveragePrioritySyncing(false);
@@ -3453,1207 +3208,53 @@ export default function VariantsPage() {
           positionsPending: 0,
         });
 
-        const targetVariant = variantLinkGraph.variantByKey.get(coverageGraphTargetKey);
-        if (!targetVariant) return;
+        const backendResult = await invoke<CoverageGraphBackendBuildResult>("variant_coverage_build_graph", {
+          request: {
+            targetKey: coverageGraphTargetKey,
+            variants,
+            buildConfig: {
+              dbType: buildConfig.dbType,
+              localDatabasePath: buildConfig.localDatabasePath,
+              lichessSpeeds: buildConfig.lichessSpeeds,
+              lichessRatings: buildConfig.lichessRatings,
+              lichessSince: formatMonthTag(buildConfig.lichessSince),
+              lichessUntil: formatMonthTag(buildConfig.lichessUntil),
+              lichessPlayer: buildConfig.lichessPlayer,
+              lichessColor: buildConfig.lichessColor,
+              masterSince: formatMonthTag(buildConfig.masterSince),
+              masterUntil: formatMonthTag(buildConfig.masterUntil),
+              includeChildren: buildConfig.includeChildren,
+            },
+            requestedDepth,
+            forceRebuild,
+            bypassPositionCache,
+            persistResults,
+            mappedOnly,
+            lichessToken: lichessAuthToken ?? null,
+            activeProfileId: activeProfileId ?? null,
+            profileIdentityNames: activeProfileCoverageIdentityNames,
+            profileTimeControlCategories: selectedProfileTimeControls,
+            runId,
+          },
+        });
 
-        const targetMetadata = await readInfoMetadata(targetVariant.path, "variants");
-        const targetTags = Array.isArray(targetMetadata.tags) ? targetMetadata.tags : [];
-        const parsedConfig = await parseVariantBuildConfigFromTags(targetTags);
-        const resolvedConfig: VariantBuildConfig = {
-          ...buildConfig,
-          ...parsedConfig,
-          dbType: parsedConfig.dbType ?? buildConfig.dbType,
-          localDatabasePath: parsedConfig.localDatabasePath ?? buildConfig.localDatabasePath,
-          lichessSpeeds: parsedConfig.lichessSpeeds ?? buildConfig.lichessSpeeds,
-          lichessRatings: parsedConfig.lichessRatings ?? buildConfig.lichessRatings,
-          lichessSince: parsedConfig.lichessSince ?? buildConfig.lichessSince,
-          lichessUntil: parsedConfig.lichessUntil ?? buildConfig.lichessUntil,
-          lichessPlayer: parsedConfig.lichessPlayer ?? buildConfig.lichessPlayer,
-          lichessColor: parsedConfig.lichessColor ?? buildConfig.lichessColor,
-          masterSince: parsedConfig.masterSince ?? buildConfig.masterSince,
-          masterUntil: parsedConfig.masterUntil ?? buildConfig.masterUntil,
-        };
-        if (resolvedConfig.dbType !== "local" && !lichessAuthToken) {
-          throw new Error(
-            t("features.board.variants.coverageGraphMissingToken", {
-              defaultValue:
-                "Lichess token not found for the active profile. Add a token in Profiles before building a graph with Lichess sources.",
-            }),
-          );
-        }
-
-        const sourceSignature = await buildSourceSignature(resolvedConfig);
-        const subtreeKeys = collectSubtreeKeys(coverageGraphTargetKey);
-        if (subtreeKeys.length === 0) return;
-        const variantsTotal = subtreeKeys.length;
-        const baseCacheFilePath = await getCoverageGraphCacheFilePath(targetVariant.path, sourceSignature);
-        const cacheFilePath = mappedOnly ? buildCriticalLineCoverageCachePath(baseCacheFilePath) : baseCacheFilePath;
-        const existingCache = await readCoverageGraphCache(cacheFilePath);
-        let resolvedProfileStatsDbPath = `${activeProfileCoverageDbPath ?? ""}`.trim();
-        if (!resolvedProfileStatsDbPath && activeProfileId) {
-          try {
-            resolvedProfileStatsDbPath = await getProfileDbPath(activeProfileId);
-          } catch {
-            resolvedProfileStatsDbPath = "";
-          }
-        }
-        const resolvedProfilePlayerIds = await resolveActiveProfileCoveragePlayerIds(resolvedProfileStatsDbPath);
-        const legacyCache = existingCache ? null : parseLegacyCoverageCacheFromMetadata(targetMetadata);
-        const { commands } = await import("@/bindings");
-        const runCoverageFetch = createAsyncLimiter(COVERAGE_BUILD_FETCH_CONCURRENCY);
-        const runOpeningLookup = createAsyncLimiter(COVERAGE_BUILD_OPENING_LOOKUP_CONCURRENCY);
-        const openingNameByFenKey = new Map<string, string | null>();
-        const openingNameInFlightByFenKey = new Map<string, Promise<string | null>>();
-        const seedOpeningNamesFromGraph = (node?: CoverageGraphNode | null) => {
-          if (!node) return;
-          const stack: CoverageGraphNode[] = [node];
-          while (stack.length > 0) {
-            const current = stack.pop();
-            if (!current) continue;
-            const currentFen = `${current.fen ?? ""}`.trim();
-            const currentFenKey = currentFen ? normalizeFenKey(currentFen) : null;
-            if (currentFenKey && typeof current.openingName === "string") {
-              openingNameByFenKey.set(currentFenKey, current.openingName);
-            }
-            for (const child of current.children) {
-              stack.push(child);
-            }
-          }
-        };
-        if (existingCache?.sourceSignature === sourceSignature) {
-          seedOpeningNamesFromGraph(existingCache.graphRoot);
-        }
-
-        const getOpeningNameByFen = async (fen?: string | null): Promise<string | null> => {
-          const normalizedFen = `${fen ?? ""}`.trim();
-          if (!normalizedFen) return null;
-          const fenKey = normalizeFenKey(normalizedFen);
-          if (openingNameByFenKey.has(fenKey)) {
-            return openingNameByFenKey.get(fenKey) ?? null;
-          }
-          const pending = openingNameInFlightByFenKey.get(fenKey);
-          if (pending) {
-            return await pending;
-          }
-
-          const request = runOpeningLookup(async () => {
-            try {
-              const result = await commands.getOpeningInfoFromFen(normalizedFen);
-              if (result.status !== "ok") {
-                openingNameByFenKey.set(fenKey, null);
-                return null;
-              }
-              const openingName = formatOpeningNameForCoverageNode(result.data) ?? null;
-              openingNameByFenKey.set(fenKey, openingName);
-              return openingName;
-            } catch {
-              openingNameByFenKey.set(fenKey, null);
-              return null;
-            }
-          });
-          openingNameInFlightByFenKey.set(fenKey, request);
-          try {
-            return await request;
-          } finally {
-            openingNameInFlightByFenKey.delete(fenKey);
-          }
-        };
-        const resolveCoverageOpeningName = async (
-          fen: string | null | undefined,
-          fallbackOpeningName: string | null | undefined,
-        ): Promise<string | null> => {
-          return (await getOpeningNameByFen(fen)) ?? fallbackOpeningName ?? null;
-        };
-
-        const enrichCoverageGraphNodeOpenings = async (
-          node: CoverageGraphNode,
-          inheritedOpeningName: string | null = null,
-        ): Promise<CoverageGraphNode> => {
-          const openingName = await resolveCoverageOpeningName(node.fen, inheritedOpeningName);
-          const children = await Promise.all(
-            node.children.map((child) => enrichCoverageGraphNodeOpenings(child, openingName)),
-          );
-          return {
-            ...node,
-            openingName,
-            children,
-          };
-        };
-
-        if (
-          !forceRebuild &&
-          existingCache &&
-          existingCache.sourceSignature === sourceSignature &&
-          (mappedOnly || existingCache.maxMoves >= requestedDepth)
-        ) {
-          setCoverageGraphOrientation(existingCache.repertoireColor);
-          setCriticalLineDismissedFenKeys(new Set(existingCache.criticalLineDismissedFenKeys ?? []));
-          const graphWithOpenings = await enrichCoverageGraphNodeOpenings(existingCache.graphRoot);
-          const graphWithPositionFlags = await applyLowSampleFlagsToGraph(
-            graphWithOpenings,
-            existingCache.positions,
-            existingCache.repertoireColor,
-          );
-          const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
-            graphWithPositionFlags,
-            existingCache.positions,
-            resolvedProfileStatsDbPath || null,
-            resolvedProfilePlayerIds,
-            existingCache.repertoireColor,
-            selectedProfileTimeControls,
-          );
-          const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
-            graphWithProfileFlags,
-            existingCache.positions,
-            existingCache.repertoireColor,
-          );
-          coverageGraphPositionsRef.current = existingCache.positions;
-          const trimmedGraph = mappedOnly
-            ? graphWithResultFenRates
-            : await trimCoverageGraphByDepth(graphWithResultFenRates, requestedDepth);
-          setCoverageGraphRoot(trimmedGraph);
-          setCoverageCollapsedNodeIds(
-            buildCoverageDefaultCollapsedIds(trimmedGraph, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
-          );
-          setCoverageGraphCachePath(cacheFilePath);
-          setCoverageGraphSourceSignature(sourceSignature);
-          setCoverageBuildProgress(null);
-          return;
-        }
-
-        let variantsDone = 0;
-        let positionsProcessed = 0;
-        let positionsPending = 0;
-        let lastProgressUpdate = 0;
-        const pushProgress = (phase: CoverageBuildProgress["phase"], force = false) => {
-          const now = Date.now();
-          if (!force && now - lastProgressUpdate < 120) return;
-          lastProgressUpdate = now;
-          setCoverageBuildProgress({
-            phase,
-            variantsDone,
-            variantsTotal,
-            positionsProcessed,
-            positionsPending,
-          });
-        };
-        pushProgress("preparing", true);
-
-        const sourceCompatibleCache =
-          existingCache && existingCache.sourceSignature === sourceSignature
-            ? existingCache
-            : legacyCache && legacyCache.sourceSignature === sourceSignature
-              ? legacyCache
-              : null;
-        const profileStatsDbPath = resolvedProfileStatsDbPath;
-        const shouldFetchProfileStats = profileStatsDbPath.length > 0;
-        let resolvedProfilePlayerIdsPromise: Promise<number[]> | null = Promise.resolve(resolvedProfilePlayerIds);
-        const getResolvedProfilePlayerIds = async (): Promise<number[]> => {
-          if (!shouldFetchProfileStats || !profileStatsDbPath) return [];
-          if (resolvedProfilePlayerIdsPromise) return await resolvedProfilePlayerIdsPromise;
-          resolvedProfilePlayerIdsPromise = resolveActiveProfileCoveragePlayerIds(profileStatsDbPath);
-          return await resolvedProfilePlayerIdsPromise;
-        };
-        const preservedEngineAnnotations = collectCoverageEngineAnnotationsByFen(sourceCompatibleCache?.graphRoot);
-        const positionCache = new Map<string, CoveragePositionCacheEntry>();
-        const tierOverrides = new Map<string, Exclude<CoverageTier, "root">>();
-        const labelOverrides = new Map<string, string>();
-        if (sourceCompatibleCache?.tierOverrides && typeof sourceCompatibleCache.tierOverrides === "object") {
-          for (const [overrideKey, tier] of Object.entries(sourceCompatibleCache.tierOverrides)) {
-            if (tier === "mainline" || tier === "secondary" || tier === "alternative") {
-              tierOverrides.set(overrideKey, tier);
-            }
-          }
-        }
-        const sourceLabelOverrides = sourceCompatibleCache?.labelOverrides;
-        if (sourceLabelOverrides && typeof sourceLabelOverrides === "object") {
-          for (const [overrideKey, rawLabel] of Object.entries(sourceLabelOverrides)) {
-            const normalized = `${rawLabel ?? ""}`.trim();
-            if (normalized.length > 0) {
-              labelOverrides.set(overrideKey, normalized);
-            }
-          }
-        }
-        if (!forceRebuild && sourceCompatibleCache) {
-          for (const [fenKey, entry] of Object.entries(sourceCompatibleCache.positions)) {
-            positionCache.set(fenKey, entry);
-          }
-        }
-        const positionEntryInFlightByFenKey = new Map<string, Promise<CoveragePositionCacheEntry>>();
-
-        const getPositionEntry = async (fen: string): Promise<CoveragePositionCacheEntry> => {
-          const fenKey = normalizeFenKey(fen);
-          const cached = positionCache.get(fenKey);
-          if (cached) {
-            const needsHydration = cached.moves.some(
-              (move) => move.lowSample == null || move.activeWinRate == null || move.activeLossRate == null,
-            );
-            if (!needsHydration) return cached;
-            const hydrated = await classifyCoveragePosition(
-              cached.fen || fen,
-              cached.moves,
-              tierOverrides,
-              repertoireColor,
-            );
-            positionCache.set(fenKey, hydrated);
-            return hydrated;
-          }
-          const existingInFlight = positionEntryInFlightByFenKey.get(fenKey);
-          if (existingInFlight) {
-            return await existingInFlight;
-          }
-
-          const request = runCoverageFetch(async () => {
-            let persistedPosition: CoveragePositionCacheEntry | null = null;
-            if (!bypassPositionCache) {
-              try {
-                persistedPosition = await getCachedCoveragePosition(
-                  sourceSignature,
-                  fen,
-                  tierOverrides,
-                  repertoireColor,
-                );
-              } catch {
-                persistedPosition = null;
-              }
-            }
-            if (persistedPosition) {
-              positionCache.set(fenKey, persistedPosition);
-              return persistedPosition;
-            }
-
-            const positionResult = await withCoverageRetry(
-              async () =>
-                await withCoverageRequestTimeout(
-                  async (signal) => await fetchCoverageOpenings(fen, resolvedConfig, signal),
-                  12_000,
-                ),
-            );
-            if (!bypassPositionCache && resolvedConfig.dbType === "local") {
-              try {
-                await setCoverageExplorerCache(sourceSignature, fen, positionResult.moves);
-              } catch {
-                // Cache write is best effort; the build should continue even if persistence fails.
-              }
-            }
-            const entry = await classifyCoveragePosition(fen, positionResult.moves, tierOverrides, repertoireColor);
-            entry.white = positionResult.white;
-            entry.black = positionResult.black;
-            entry.draw = positionResult.draw;
-            positionCache.set(fenKey, entry);
-            return entry;
-          });
-
-          positionEntryInFlightByFenKey.set(fenKey, request);
-          try {
-            return await request;
-          } finally {
-            positionEntryInFlightByFenKey.delete(fenKey);
-          }
-        };
-
-        const profilePositionCache = new Map<string, CoveragePositionCacheEntry>();
-        const profilePositionEntryInFlightByFenKey = new Map<string, Promise<CoveragePositionCacheEntry | null>>();
-        const getActiveProfilePositionEntry = async (
-          fen: string,
-          options?: { activeMovesUsed?: number },
-        ): Promise<CoveragePositionCacheEntry | null> => {
-          if (!shouldFetchProfileStats) return null;
-          const activeMovesUsed = options?.activeMovesUsed ?? 0;
-          if (activeMovesUsed > COVERAGE_PROFILE_STATS_MAX_ACTIVE_DEPTH) {
-            return null;
-          }
-          const fenKey = normalizeFenKey(fen);
-          const cached = profilePositionCache.get(fenKey);
-          if (cached) return cached;
-          const existingInFlight = profilePositionEntryInFlightByFenKey.get(fenKey);
-          if (existingInFlight) {
-            return await existingInFlight;
-          }
-
-          const request = runCoverageFetch(async () => {
-            const profilePlayerIds = await getResolvedProfilePlayerIds();
-            if (profilePlayerIds.length === 0) {
-              const emptyEntry: CoveragePositionCacheEntry = { fen, totalGames: 0, moves: [] };
-              profilePositionCache.set(fenKey, emptyEntry);
-              return emptyEntry;
-            }
-            if (!profileStatsDbPath) {
-              const emptyEntry: CoveragePositionCacheEntry = { fen, totalGames: 0, moves: [] };
-              profilePositionCache.set(fenKey, emptyEntry);
-              return emptyEntry;
-            }
-            const entry = await withCoverageRetry(
-              async () =>
-                await withCoverageRequestTimeout(
-                  async () =>
-                    await invoke<CoveragePositionCacheEntry>("variant_coverage_get_profile_position", {
-                      dbPath: profileStatsDbPath,
-                      fen,
-                      playerIds: profilePlayerIds,
-                      repertoireColor,
-                      timeControlCategories: selectedProfileTimeControls,
-                    }),
-                  12_000,
-                ),
-            );
-            profilePositionCache.set(fenKey, entry);
-            return entry;
-          });
-
-          profilePositionEntryInFlightByFenKey.set(fenKey, request);
-          try {
-            return await request;
-          } catch {
-            return null;
-          } finally {
-            profilePositionEntryInFlightByFenKey.delete(fenKey);
-          }
-        };
-
-        const variantRootFenByKey = new Map<string, string>();
-        const variantRootFensByKey = new Map<string, string[]>();
-        const variantTreesByKey = new Map<string, Array<Awaited<ReturnType<typeof parsePGN>>>>();
-        const { unwrap } = await import("@/utils/unwrap");
-        for (const key of subtreeKeys) {
-          const variant = variantLinkGraph.variantByKey.get(key);
-          if (!variant) continue;
-          try {
-            const count = unwrap(await commands.countPgnGames(variant.path));
-            if (count <= 0) continue;
-            const endIndex = Math.max(0, count - 1);
-            const games = unwrap(await commands.readGames(variant.path, 0, endIndex));
-            const trees: Array<Awaited<ReturnType<typeof parsePGN>>> = [];
-            for (const game of games) {
-              if (!game) continue;
-              try {
-                const tree = await parsePGN(game);
-                trees.push(tree);
-              } catch {
-                // Ignore malformed games while building coverage graph context.
-              }
-            }
-            if (trees.length === 0) continue;
-            variantTreesByKey.set(key, trees);
-            const rootFens = [
-              ...trees.map((tree) => tree.root.fen).filter((fen) => `${fen ?? ""}`.trim().length > 0),
-              ...(variant.fen?.trim() ? [variant.fen.trim()] : []),
-            ];
-            variantRootFenByKey.set(key, trees[0].root.fen);
-            variantRootFensByKey.set(key, Array.from(new Set(rootFens)));
-          } catch {
-            // Ignore invalid variant files in coverage graph.
-          } finally {
-            variantsDone += 1;
-            pushProgress("preparing");
-          }
-        }
-        pushProgress("preparing", true);
-
-        const variantNamesByFen = new Map<string, string[]>();
-        for (const key of subtreeKeys) {
-          const variant = variantLinkGraph.variantByKey.get(key);
-          const rootFens = variantRootFensByKey.get(key) ?? [];
-          if (!variant || rootFens.length === 0) continue;
-          for (const rootFen of rootFens) {
-            for (const fenKey of buildFenMatchKeys(rootFen)) {
-              const current = variantNamesByFen.get(fenKey) ?? [];
-              if (!current.includes(variant.name)) {
-                current.push(variant.name);
-                variantNamesByFen.set(fenKey, current);
-              }
-            }
-          }
-        }
-        const getVariantNamesForFen = (fen: string | null | undefined): string[] | undefined => {
-          const names: string[] = [];
-          for (const fenKey of buildFenMatchKeys(fen)) {
-            for (const name of variantNamesByFen.get(fenKey) ?? []) {
-              if (!names.includes(name)) {
-                names.push(name);
-              }
-            }
-          }
-          return names.length > 0 ? names : undefined;
-        };
-
-        const formatCoverageNodeLabel = (san: string, percent: number, variantNames: string[] | undefined) => {
-          if (!variantNames || variantNames.length === 0) return `${san} ${percent}%`;
-          return `${san} ${percent}% - ${variantNames.join(" / ")}`;
-        };
-
-        const targetTrees = variantTreesByKey.get(coverageGraphTargetKey) ?? [];
-        const targetTree = targetTrees[0];
-        const repertoireColor: "white" | "black" = targetTree?.headers.orientation === "black" ? "black" : "white";
-        const targetChildLinks = targetVariant.childLinks ?? [];
-        const compareAnchorPath = (aPath: number[], bPath: number[]) => {
-          const max = Math.max(aPath.length, bPath.length);
-          for (let i = 0; i < max; i += 1) {
-            const aValue = aPath[i];
-            const bValue = bPath[i];
-            if (aValue == null && bValue == null) return 0;
-            if (aValue == null) return -1;
-            if (bValue == null) return 1;
-            if (aValue !== bValue) return aValue - bValue;
-          }
-          return 0;
-        };
-        const findTreeBranchAnchor = (
-          node: TreeNode,
-          path: number[],
-        ): {
-          anchorFen: string;
-          anchorPath: number[];
-          anchorPly: number;
-          labels: Set<string>;
-        } | null => {
-          const children = Array.isArray(node.children) ? node.children : [];
-          if (children.length === 0) return null;
-
-          const sideToMove = fenTurnColor(node.fen);
-          const isOpponentTurn = sideToMove !== repertoireColor;
-          if (isOpponentTurn && children.length > 1) {
-            const labels = new Set<string>();
-            for (const child of children) {
-              const san = child.san?.trim();
-              if (san) labels.add(san);
-            }
-            return {
-              anchorFen: node.fen,
-              anchorPath: [...path],
-              anchorPly: path.length,
-              labels,
-            };
-          }
-
-          if (children.length === 1) {
-            return findTreeBranchAnchor(children[0], [...path, 0]);
-          }
-
-          if (!isOpponentTurn && children.length > 1) {
-            const labels = new Set<string>();
-            for (const child of children) {
-              const san = child.san?.trim();
-              if (san) labels.add(san);
-            }
-            return {
-              anchorFen: node.fen,
-              anchorPath: [...path],
-              anchorPly: path.length,
-              labels,
-            };
-          }
-
-          return null;
-        };
-
-        const treeBranchCandidatesByFen = new Map<
-          string,
-          {
-            anchorFen: string;
-            anchorPath: number[];
-            anchorPly: number;
-            labels: Set<string>;
-          }
-        >();
-        const collectTreeBranchCandidates = (node: TreeNode, path: number[]) => {
-          const children = Array.isArray(node.children) ? node.children : [];
-          if (children.length === 0) return;
-          const sideToMove = fenTurnColor(node.fen);
-          if (sideToMove !== repertoireColor) {
-            const fenKey = normalizeFenKey(node.fen);
-            const labels = new Set<string>();
-            for (const child of children) {
-              const san = child.san?.trim();
-              if (san) labels.add(san);
-            }
-            if (labels.size > 0) {
-              const existing = treeBranchCandidatesByFen.get(fenKey);
-              if (!existing) {
-                treeBranchCandidatesByFen.set(fenKey, {
-                  anchorFen: node.fen,
-                  anchorPath: [...path],
-                  anchorPly: path.length,
-                  labels,
-                });
-              } else {
-                for (const label of labels) existing.labels.add(label);
-                if (
-                  path.length < existing.anchorPath.length ||
-                  (path.length === existing.anchorPath.length && compareAnchorPath(path, existing.anchorPath) < 0)
-                ) {
-                  existing.anchorPath = [...path];
-                  existing.anchorPly = path.length;
-                  existing.anchorFen = node.fen;
-                }
-              }
-            }
-          }
-          for (let i = 0; i < children.length; i += 1) {
-            collectTreeBranchCandidates(children[i], [...path, i]);
-          }
-        };
-        for (const tree of targetTrees) {
-          collectTreeBranchCandidates(tree.root, []);
-        }
-
-        const anchorGroups = new Map<
-          string,
-          {
-            anchorFen: string;
-            anchorPath: number[];
-            anchorPly: number;
-            labels: Set<string>;
-          }
-        >();
-        for (const link of targetChildLinks) {
-          const fenKey = normalizeFenKey(link.anchorFen);
-          const label = (link.label ?? "").trim();
-          const existing = anchorGroups.get(fenKey);
-          if (!existing) {
-            const labels = new Set<string>();
-            if (label) labels.add(label);
-            anchorGroups.set(fenKey, {
-              anchorFen: link.anchorFen,
-              anchorPath: Array.isArray(link.anchorPath) ? [...link.anchorPath] : [],
-              anchorPly: link.anchorPly,
-              labels,
-            });
-            continue;
-          }
-          if (label) existing.labels.add(label);
-          if (link.anchorPly < existing.anchorPly) {
-            existing.anchorPly = link.anchorPly;
-          }
-          if (Array.isArray(link.anchorPath) && link.anchorPath.length < existing.anchorPath.length) {
-            existing.anchorPath = [...link.anchorPath];
-          }
-        }
-        const multiGameBranchCandidates = Array.from(treeBranchCandidatesByFen.values()).filter(
-          (candidate) => candidate.labels.size >= 2,
+        coverageGraphPositionsRef.current = backendResult.positions;
+        setCoverageGraphRoot(backendResult.graphRoot);
+        setCoverageCollapsedNodeIds(
+          buildCoverageDefaultCollapsedIds(backendResult.graphRoot, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
         );
-        const orderedTreeBranchCandidates = multiGameBranchCandidates.sort((a, b) => {
-          if (a.anchorPly !== b.anchorPly) return a.anchorPly - b.anchorPly;
-          const pathCompare = compareAnchorPath(a.anchorPath, b.anchorPath);
-          if (pathCompare !== 0) return pathCompare;
-          return b.labels.size - a.labels.size;
-        });
-        const treeBranchAnchor =
-          orderedTreeBranchCandidates[0] ?? (targetTree ? findTreeBranchAnchor(targetTree.root, []) : null);
-        const anchorCandidates = treeBranchAnchor ? [treeBranchAnchor] : Array.from(anchorGroups.values());
-        const orderedAnchors = anchorCandidates.sort((a, b) => {
-          if (a.anchorPly !== b.anchorPly) return a.anchorPly - b.anchorPly;
-          const pathCompare = compareAnchorPath(a.anchorPath, b.anchorPath);
-          if (pathCompare !== 0) return pathCompare;
-          return b.labels.size - a.labels.size;
-        });
-        const firstBranchAnchor = orderedAnchors[0];
+        setCoverageGraphOrientation(backendResult.repertoireColor);
+        setCoverageGraphCachePath(backendResult.cachePath ?? null);
+        setCoverageGraphSourceSignature(persistResults ? backendResult.sourceSignature : null);
+        setCriticalLineDismissedFenKeys(new Set(backendResult.criticalLineDismissedFenKeys ?? []));
+        setCoverageBuildProgress(null);
 
-        const orientationMovesByFen = new Map<string, Set<string>>();
-        const collectOrientationMoves = (node: TreeNode) => {
-          const sideToMove = fenTurnColor(node.fen);
-          if (sideToMove === repertoireColor) {
-            const fenKey = normalizeFenKey(node.fen);
-            const moves = orientationMovesByFen.get(fenKey) ?? new Set<string>();
-            for (const child of node.children) {
-              const san = child.san?.trim();
-              if (!san) continue;
-              moves.add(san);
-            }
-            orientationMovesByFen.set(fenKey, moves);
-          }
-          for (const child of node.children) {
-            collectOrientationMoves(child);
-          }
-        };
-        for (const [treeKey, trees] of variantTreesByKey.entries()) {
-          for (const tree of trees) {
-            const variantOrientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-            if (variantOrientation !== repertoireColor && treeKey !== coverageGraphTargetKey) {
-              continue;
-            }
-            collectOrientationMoves(tree.root);
-          }
-        }
-
-        const formatOrientationNodeLabel = (san: string, variantNames: string[] | undefined) => {
-          if (!variantNames || variantNames.length === 0) return san;
-          return `${san} - ${variantNames.join(" / ")}`;
-        };
-
-        const prioritySyncKeys = new Set(subtreeKeys.filter((key) => key !== coverageGraphTargetKey));
-        const variantKeysByRootFen = new Map<string, Set<string>>();
-        const variantKeysByIdentity = new Map<string, Set<string>>();
-        const addVariantIdentity = (identity: string | null | undefined, key: string) => {
-          const identityKey = normalizeCoverageIdentityName(identity);
-          if (!identityKey) return;
-          const keys = variantKeysByIdentity.get(identityKey) ?? new Set<string>();
-          keys.add(key);
-          variantKeysByIdentity.set(identityKey, keys);
-        };
-        for (const key of prioritySyncKeys) {
-          const variant = variantLinkGraph.variantByKey.get(key);
-          addVariantIdentity(variant?.name, key);
-          addVariantIdentity(variant?.opening, key);
-          const rootFens = variantRootFensByKey.get(key) ?? [];
-          for (const rootFen of rootFens) {
-            for (const fenKey of buildFenMatchKeys(rootFen)) {
-              const keys = variantKeysByRootFen.get(fenKey) ?? new Set<string>();
-              keys.add(key);
-              variantKeysByRootFen.set(fenKey, keys);
-            }
-          }
-        }
-
-        const collectPriorityUpdatesFromGraph = (graphRoot: CoverageGraphNode): Map<string, number> => {
-          const priorityUpdates = new Map<string, { priority: number; depth: number }>();
-          const collectIdentityKeysFromNode = (node: CoverageGraphNode): Set<string> => {
-            const identities = new Set<string>();
-            const openingKey = normalizeCoverageIdentityName(node.openingName);
-            if (openingKey) identities.add(openingKey);
-            const separator = node.label.indexOf(" - ");
-            if (separator >= 0) {
-              const suffix = node.label.slice(separator + 3);
-              for (const name of suffix.split(" / ")) {
-                const nameKey = normalizeCoverageIdentityName(name);
-                if (nameKey) identities.add(nameKey);
-              }
-            }
-            return identities;
-          };
-          const visit = (node: CoverageGraphNode, depth: number, inheritedPriority: number | null) => {
-            const nodePriority = coverageTierPriority(node.tier);
-            const effectivePriority = nodePriority ?? inheritedPriority;
-            if (effectivePriority) {
-              const keys = new Set<string>();
-              for (const fenKey of buildFenMatchKeys(node.fen)) {
-                for (const key of variantKeysByRootFen.get(fenKey) ?? []) {
-                  keys.add(key);
-                }
-              }
-              for (const identityKey of collectIdentityKeysFromNode(node)) {
-                for (const key of variantKeysByIdentity.get(identityKey) ?? []) {
-                  keys.add(key);
-                }
-              }
-              for (const key of keys) {
-                const current = priorityUpdates.get(key);
-                if (!current || depth < current.depth) {
-                  priorityUpdates.set(key, { priority: effectivePriority, depth });
-                }
-              }
-            }
-            const nextInheritedPriority = nodePriority ?? inheritedPriority;
-            for (const child of node.children) {
-              visit(child, depth + 1, nextInheritedPriority);
-            }
-          };
-          visit(graphRoot, 0, null);
-          return new Map(Array.from(priorityUpdates.entries()).map(([key, value]) => [key, value.priority]));
-        };
-        const syncVariantPriorityMetadata = async (graphRoot: CoverageGraphNode) => {
-          if (!persistResults) return false;
-          const priorityUpdates = collectPriorityUpdatesFromGraph(graphRoot);
-          if (prioritySyncKeys.size === 0) return false;
-
-          let updated = 0;
-          for (const key of prioritySyncKeys) {
-            const variant = variantLinkGraph.variantByKey.get(key);
-            if (!variant) continue;
-            const priority = priorityUpdates.get(key) ?? null;
-            const metadata = await readInfoMetadata(variant.path, "variants");
-            metadata.tags = (metadata.tags || []).filter((tag) => !tag.startsWith("priority:"));
-            if (priority !== null) {
-              metadata.tags.push(`priority:${priority}`);
-            }
-            await writeInfoMetadata(variant.path, metadata);
-            updated += 1;
-          }
-          if (updated > 0) {
-            setCoveragePrioritySyncing(true);
-            try {
-              window.dispatchEvent(new Event("variants:updated"));
-            } catch {}
-          }
-
-          return updated > 0;
-        };
-
-        const getSourcePositionRates = async (fen: string | null | undefined) => {
-          if (!fen) return {};
-          try {
-            return getCoveragePositionWinLossRatesForResultFen(await getPositionEntry(fen), fen, repertoireColor);
-          } catch {
-            return {};
-          }
-        };
-        const getProfilePositionRates = async (
-          fen: string | null | undefined,
-          options?: { activeMovesUsed?: number },
-        ) => {
-          if (!fen) return {};
-          try {
-            return getCoveragePositionWinLossRatesForResultFen(
-              await getActiveProfilePositionEntry(fen, options),
-              fen,
-              repertoireColor,
-            );
-          } catch {
-            return {};
-          }
-        };
-
-        type MappedLineMove = {
-          san: string;
-          nextFen: string;
-        };
-
-        const buildMappedLineGraph = async (rootNode: CoverageGraphNode, targetRootFen: string) => {
-          const mappedMovesByFen = new Map<string, Map<string, MappedLineMove>>();
-          const addMappedMove = (sourceFen: string, san: string, nextFen: string) => {
-            const sourceFenKey = normalizeFenKey(sourceFen);
-            const nextFenKey = normalizeFenKey(nextFen);
-            const moves = mappedMovesByFen.get(sourceFenKey) ?? new Map<string, MappedLineMove>();
-            const moveKey = `${san}|${nextFenKey}`;
-            if (!moves.has(moveKey)) {
-              moves.set(moveKey, { san, nextFen });
-              mappedMovesByFen.set(sourceFenKey, moves);
-            }
-          };
-          const collectMappedMoves = (node: TreeNode) => {
-            for (const child of node.children) {
-              const san = child.san?.trim();
-              if (san && child.fen) {
-                addMappedMove(node.fen, san, child.fen);
-              }
-              collectMappedMoves(child);
-            }
-          };
-
-          for (const [treeKey, trees] of variantTreesByKey.entries()) {
-            for (const tree of trees) {
-              const variantOrientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-              if (variantOrientation !== repertoireColor && treeKey !== coverageGraphTargetKey) {
-                continue;
-              }
-              collectMappedMoves(tree.root);
-            }
-          }
-
-          const buildChildren = async (
-            fen: string,
-            parentNode: CoverageGraphNode,
-            activeMovesUsed: number,
-            pathEdges: Set<string>,
-          ) => {
-            const moves = Array.from(mappedMovesByFen.get(normalizeFenKey(fen))?.values() ?? []);
-            if (moves.length === 0) {
-              parentNode.completeLine = true;
-              return;
-            }
-
-            positionsProcessed += 1;
-            positionsPending = Math.max(0, positionsPending - 1);
-            pushProgress("building");
-
-            const sideToMove = fenTurnColor(fen);
-            const isActiveMove = sideToMove === repertoireColor;
-            let sourceEntry: CoveragePositionCacheEntry | null = null;
-            try {
-              sourceEntry = await getPositionEntry(fen);
-            } catch {
-              sourceEntry = null;
-            }
-
-            const childExpansions: Array<Promise<void>> = [];
-            for (const move of moves) {
-              const nextFenKey = normalizeFenKey(move.nextFen);
-              const edgeKey = `${normalizeFenKey(fen)}|${move.san}|${nextFenKey}`;
-              if (pathEdges.has(edgeKey)) continue;
-
-              const sourceMove = sourceEntry?.moves.find((entryMove) => {
-                if (entryMove.nextFen && normalizeFenKey(entryMove.nextFen) === nextFenKey) return true;
-                return entryMove.san === move.san;
-              });
-              const nextActiveMovesUsed = activeMovesUsed + (isActiveMove ? 1 : 0);
-              const destinationVariantNames = getVariantNamesForFen(move.nextFen);
-              const resultSourceRates = await getSourcePositionRates(move.nextFen);
-              const resultProfileRates = await getProfilePositionRates(move.nextFen, {
-                activeMovesUsed: nextActiveMovesUsed,
-              });
-              const label =
-                !isActiveMove && typeof sourceMove?.percent === "number"
-                  ? formatCoverageNodeLabel(move.san, sourceMove.percent, destinationVariantNames)
-                  : formatOrientationNodeLabel(move.san, destinationVariantNames);
-              const childNode: CoverageGraphNode = {
-                id: `${parentNode.id}|mapped:${move.san}|${nextFenKey}`,
-                label,
-                openingName: await resolveCoverageOpeningName(move.nextFen, parentNode.openingName ?? null),
-                tier: isActiveMove ? "root" : (sourceMove?.tier ?? "mainline"),
-                percent: sourceMove?.percent,
-                lowSample: sourceMove?.lowSample ?? false,
-                fen: move.nextFen,
-                overrideKey: buildCoverageTierOverrideKey(fen, move.san),
-                activeMovesUsed: nextActiveMovesUsed,
-                activeWinRate: resultSourceRates.winRate ?? sourceMove?.activeWinRate ?? undefined,
-                activeLossRate: resultSourceRates.lossRate ?? sourceMove?.activeLossRate ?? undefined,
-                profileWinRate: resultProfileRates.winRate ?? undefined,
-                profileLossRate: resultProfileRates.lossRate ?? undefined,
-                completeLine: false,
-                children: [],
-              };
-              parentNode.children.push(childNode);
-
-              const nextPathEdges = new Set(pathEdges);
-              nextPathEdges.add(edgeKey);
-              positionsPending += 1;
-              pushProgress("building");
-              childExpansions.push(
-                buildChildren(move.nextFen, childNode, nextActiveMovesUsed, nextPathEdges).then(() => {
-                  childNode.completeLine = childNode.children.length === 0;
-                }),
-              );
-            }
-
-            if (childExpansions.length > 0) {
-              await Promise.all(childExpansions);
-            }
-            parentNode.completeLine = parentNode.children.length === 0;
-          };
-
-          await buildChildren(targetRootFen, rootNode, 0, new Set<string>());
-        };
-
-        const maxCoverageActiveMoves = (node: CoverageGraphNode): number => {
-          const own =
-            typeof node.activeMovesUsed === "number" && Number.isFinite(node.activeMovesUsed)
-              ? node.activeMovesUsed
-              : 0;
-          return node.children.reduce((max, child) => Math.max(max, maxCoverageActiveMoves(child)), own);
-        };
-
-        const expandNode = async (
-          fen: string,
-          parentNode: CoverageGraphNode,
-          remainingMoves: number,
-          activeMovesUsed: number,
-        ) => {
-          if (remainingMoves <= 0) return;
-          positionsProcessed += 1;
-          positionsPending = Math.max(0, positionsPending - 1);
-          pushProgress("building");
-
-          const sideToMove = fenTurnColor(fen);
-          if (sideToMove === repertoireColor) {
-            const orientationMoves = Array.from(orientationMovesByFen.get(normalizeFenKey(fen)) ?? []);
-            if (orientationMoves.length === 0) {
-              // No mapped repertoire response from this position: stop branch early without extra API calls.
-              return;
-            }
-
-            const entry = await getPositionEntry(fen);
-            const percentBySan = new Map<string, number>();
-            for (const move of entry.moves) {
-              percentBySan.set(move.san, move.percent);
-            }
-            const profileMoveBySan = new Map<string, CoverageMoveEntry>();
-            const profileEntry = await getActiveProfilePositionEntry(fen, { activeMovesUsed });
-            for (const move of profileEntry?.moves ?? []) {
-              profileMoveBySan.set(move.san, move);
-            }
-            const childExpansions: Array<Promise<void>> = [];
-            for (const san of orientationMoves) {
-              const nextFen = getNextFenFromSan(fen, san);
-              const destinationVariantNames = getVariantNamesForFen(nextFen);
-              const responsePercent = percentBySan.get(san);
-              const responseMove = entry.moves.find((move) => move.san === san);
-              const profileMove = profileMoveBySan.get(san);
-              const resultSourceRates = await getSourcePositionRates(nextFen);
-              const resultProfileRates = await getProfilePositionRates(nextFen, {
-                activeMovesUsed: activeMovesUsed + 1,
-              });
-              const overrideKey = buildCoverageTierOverrideKey(fen, san);
-              const openingName = await resolveCoverageOpeningName(nextFen, parentNode.openingName ?? null);
-              const childNode: CoverageGraphNode = {
-                id: `${parentNode.id}|forced:${san}|${remainingMoves}`,
-                label: formatOrientationNodeLabel(san, destinationVariantNames),
-                openingName,
-                tier: "root",
-                percent: typeof responsePercent === "number" ? responsePercent : undefined,
-                fen: nextFen ?? null,
-                overrideKey,
-                activeMovesUsed: activeMovesUsed + 1,
-                activeWinRate: resultSourceRates.winRate ?? responseMove?.activeWinRate ?? undefined,
-                activeLossRate: resultSourceRates.lossRate ?? responseMove?.activeLossRate ?? undefined,
-                profileWinRate: resultProfileRates.winRate ?? profileMove?.activeWinRate ?? undefined,
-                profileLossRate: resultProfileRates.lossRate ?? profileMove?.activeLossRate ?? undefined,
-                children: [],
-              };
-              parentNode.children.push(childNode);
-              if (nextFen && remainingMoves >= 1) {
-                positionsPending += 1;
-                pushProgress("building");
-                childExpansions.push(expandNode(nextFen, childNode, remainingMoves - 1, activeMovesUsed + 1));
-              }
-            }
-            if (childExpansions.length > 0) {
-              await Promise.all(childExpansions);
-            }
-            return;
-          }
-
-          const entry = await getPositionEntry(fen);
-          const visibleMoves = entry.moves.filter((move) => {
-            const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
-            const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
-            if (move.tier === "alternative" && !hasMappedResponse) return false;
-            return true;
-          });
-          const profileMoveBySan = new Map<string, CoverageMoveEntry>();
-          if (visibleMoves.length > 0) {
-            const profileEntry = await getActiveProfilePositionEntry(fen, { activeMovesUsed });
-            for (const move of profileEntry?.moves ?? []) {
-              profileMoveBySan.set(move.san, move);
-            }
-          }
-          const childExpansions: Array<Promise<void>> = [];
-          for (const move of visibleMoves) {
-            const nextFenKey = move.nextFen ? normalizeFenKey(move.nextFen) : null;
-            const hasMappedResponse = nextFenKey ? (orientationMovesByFen.get(nextFenKey)?.size ?? 0) > 0 : false;
-
-            const destinationVariantNames = getVariantNamesForFen(move.nextFen);
-            const overrideKey = buildCoverageTierOverrideKey(fen, move.san);
-            const customLabel = labelOverrides.get(overrideKey);
-            const profileMove = profileMoveBySan.get(move.san);
-            const resultSourceRates = await getSourcePositionRates(move.nextFen);
-            const resultProfileRates = await getProfilePositionRates(move.nextFen, { activeMovesUsed });
-            const sourceWinRate = resultSourceRates.winRate ?? move.activeWinRate ?? undefined;
-            const sourceLossRate = resultSourceRates.lossRate ?? move.activeLossRate ?? undefined;
-            const profileWinRate = resultProfileRates.winRate ?? profileMove?.activeWinRate ?? undefined;
-            const profileLossRate = resultProfileRates.lossRate ?? profileMove?.activeLossRate ?? undefined;
-            const openingName = await resolveCoverageOpeningName(move.nextFen, parentNode.openingName ?? null);
-            const childNode: CoverageGraphNode = {
-              id: `${parentNode.id}|${move.san}|${remainingMoves}`,
-              label: formatCoverageNodeLabel(customLabel ?? move.san, move.percent, destinationVariantNames),
-              openingName,
-              tier: move.tier,
-              percent: move.percent,
-              lowSample: move.lowSample ?? false,
-              fen: move.nextFen,
-              overrideKey,
-              activeMovesUsed,
-              activeWinRate: sourceWinRate,
-              activeLossRate: sourceLossRate,
-              profileWinRate,
-              profileLossRate,
-              children: [],
-            };
-            parentNode.children.push(childNode);
-            if (move.nextFen && remainingMoves >= 1 && hasMappedResponse) {
-              positionsPending += 1;
-              pushProgress("building");
-              childExpansions.push(expandNode(move.nextFen, childNode, remainingMoves, activeMovesUsed));
-            }
-          }
-          if (childExpansions.length > 0) {
-            await Promise.all(childExpansions);
-          }
-        };
-
-        const rootNode: CoverageGraphNode = {
-          id: `coverage:${coverageGraphTargetKey}`,
-          label: targetVariant.name,
-          openingName: null,
-          tier: "root",
-          fen: null,
-          activeMovesUsed: 0,
-          children: [],
-        };
-        const targetRootFen = variantRootFenByKey.get(coverageGraphTargetKey) ?? targetVariant.fen ?? null;
-        if (!targetRootFen) {
-          throw new Error(
-            t("features.board.variants.coverageGraphMissingRootFen", {
-              defaultValue: "Could not determine root FEN for the selected variant.",
-            }),
-          );
-        }
-        rootNode.fen = targetRootFen;
-        rootNode.openingName = await getOpeningNameByFen(targetRootFen);
-        if (mappedOnly) {
-          positionsPending += 1;
-          pushProgress("building");
-          await buildMappedLineGraph(rootNode, targetRootFen);
-          positionsPending = 0;
-          pushProgress("building", true);
-
-          const positionsRecord: Record<string, CoveragePositionCacheEntry> = {};
-          for (const [fenKey, value] of positionCache.entries()) {
-            positionsRecord[fenKey] = value;
-          }
-          const tierOverridesRecord: Record<string, Exclude<CoverageTier, "root">> = {};
-          for (const [overrideKey, tier] of tierOverrides.entries()) {
-            tierOverridesRecord[overrideKey] = tier;
-          }
-          const labelOverridesRecord: Record<string, string> = {};
-          for (const [overrideKey, label] of labelOverrides.entries()) {
-            labelOverridesRecord[overrideKey] = label;
-          }
-          const rootNodeWithEngineAnnotations =
-            preservedEngineAnnotations.size > 0
-              ? applyCoverageEngineAnnotationsByFen(rootNode, preservedEngineAnnotations)
-              : rootNode;
-          const graphWithWinrate = await applyLowSampleFlagsToGraph(
-            rootNodeWithEngineAnnotations,
-            positionsRecord,
-            repertoireColor,
-          );
-          const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
-            graphWithWinrate,
-            positionsRecord,
-            profileStatsDbPath || null,
-            resolvedProfilePlayerIds,
-            repertoireColor,
-            selectedProfileTimeControls,
-          );
-          const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
-            graphWithProfileFlags,
-            positionsRecord,
-            repertoireColor,
-          );
-          const criticalCache: VariantCoverageCache = {
-            version: COVERAGE_GRAPH_CACHE_VERSION,
-            sourceSignature,
-            maxMoves: maxCoverageActiveMoves(graphWithResultFenRates),
-            positions: positionsRecord,
-            tierOverrides: tierOverridesRecord,
-            labelOverrides: labelOverridesRecord,
-            criticalLineDismissedFenKeys: [],
-            graphRoot: graphWithResultFenRates,
-            repertoireColor,
-            generatedAt: new Date().toISOString(),
-          };
-          if (persistResults) {
-            await writeCoverageGraphCache(cacheFilePath, criticalCache);
-            setCoverageGraphCachePath(cacheFilePath);
-            setCoverageGraphSourceSignature(sourceSignature);
-          } else {
-            setCoverageGraphCachePath(null);
-            setCoverageGraphSourceSignature(null);
-          }
-          setCriticalLineDismissedFenKeys(new Set());
-          coverageGraphPositionsRef.current = positionsRecord;
-          setCoverageGraphRoot(graphWithResultFenRates);
-          setCoverageCollapsedNodeIds(
-            buildCoverageDefaultCollapsedIds(graphWithResultFenRates, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
-          );
-          setCoverageGraphOrientation(repertoireColor);
-          if (await syncVariantPriorityMetadata(graphWithResultFenRates)) {
-            void refetch();
-          }
-          pushProgress("building", true);
-          return;
-        }
-        const branchStartFen = firstBranchAnchor?.anchorFen ?? targetRootFen;
-        let branchParentNode = rootNode;
-        if (firstBranchAnchor && targetTree && firstBranchAnchor.anchorPath.length > 0) {
-          const sanSequence: string[] = [];
-          let node: TreeNode | null = targetTree.root;
-          for (const index of firstBranchAnchor.anchorPath) {
-            const nextNode: TreeNode | undefined = node ? node.children[index] : undefined;
-            if (!nextNode) {
-              node = null;
-              break;
-            }
-            if (nextNode.san) sanSequence.push(nextNode.san);
-            node = nextNode;
-          }
-          if (node && sanSequence.length > 0) {
-            branchParentNode = {
-              id: `${rootNode.id}|prelude`,
-              label: sanSequence.join(" "),
-              openingName: await resolveCoverageOpeningName(branchStartFen, rootNode.openingName),
-              tier: "root",
-              fen: branchStartFen,
-              activeMovesUsed: 0,
-              children: [],
-            };
-            rootNode.children.push(branchParentNode);
-          }
-        }
-        positionsPending += 1;
-        pushProgress("building");
-        await expandNode(branchStartFen, branchParentNode, requestedDepth, 0);
-        positionsPending = 0;
-        pushProgress("building", true);
-
-        const positionsRecord: Record<string, CoveragePositionCacheEntry> = {};
-        for (const [fenKey, value] of positionCache.entries()) {
-          positionsRecord[fenKey] = value;
-        }
-        const tierOverridesRecord: Record<string, Exclude<CoverageTier, "root">> = {};
-        for (const [overrideKey, tier] of tierOverrides.entries()) {
-          tierOverridesRecord[overrideKey] = tier;
-        }
-        const labelOverridesRecord: Record<string, string> = {};
-        for (const [overrideKey, label] of labelOverrides.entries()) {
-          labelOverridesRecord[overrideKey] = label;
-        }
-        const rootNodeWithEngineAnnotations =
-          preservedEngineAnnotations.size > 0
-            ? applyCoverageEngineAnnotationsByFen(rootNode, preservedEngineAnnotations)
-            : rootNode;
-        const nextCache: VariantCoverageCache = {
-          version: COVERAGE_GRAPH_CACHE_VERSION,
-          sourceSignature,
-          maxMoves: requestedDepth,
-          positions: positionsRecord,
-          tierOverrides: tierOverridesRecord,
-          labelOverrides: labelOverridesRecord,
-          graphRoot: rootNodeWithEngineAnnotations,
-          repertoireColor,
-          generatedAt: new Date().toISOString(),
-        };
-        if (persistResults) {
-          await writeCoverageGraphCache(cacheFilePath, nextCache);
-          setCoverageGraphCachePath(cacheFilePath);
-          setCoverageGraphSourceSignature(sourceSignature);
-
+        if (backendResult.cacheWritten || backendResult.priorityMetadataUpdated) {
           try {
             window.dispatchEvent(new Event("variants:updated"));
           } catch {}
           await refetch();
-        } else {
-          setCoverageGraphCachePath(null);
-          setCoverageGraphSourceSignature(null);
         }
-        const graphWithWinrate = await applyLowSampleFlagsToGraph(
-          rootNodeWithEngineAnnotations,
-          positionsRecord,
-          repertoireColor,
-        );
-        const graphWithProfileFlags = await applyProfileFlagsToCoverageGraph(
-          graphWithWinrate,
-          positionsRecord,
-          profileStatsDbPath || null,
-          resolvedProfilePlayerIds,
-          repertoireColor,
-          selectedProfileTimeControls,
-        );
-        const graphWithResultFenRates = normalizeCoverageGraphSourceRatesByResultFen(
-          graphWithProfileFlags,
-          positionsRecord,
-          repertoireColor,
-        );
-        if (await syncVariantPriorityMetadata(graphWithResultFenRates)) {
-          void refetch();
-        }
-        coverageGraphPositionsRef.current = positionsRecord;
-        setCoverageGraphRoot(graphWithResultFenRates);
-        setCoverageCollapsedNodeIds(
-          buildCoverageDefaultCollapsedIds(graphWithResultFenRates, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
-        );
-        setCoverageGraphOrientation(repertoireColor);
-        pushProgress("building", true);
       } catch (error) {
         console.error("Coverage graph build failed", error);
         const reason = getErrorMessage(error);
@@ -4670,6 +3271,7 @@ export default function VariantsPage() {
         setCriticalLineReportRequestKey(null);
         setCriticalLineRegenerating(false);
       } finally {
+        coverageGraphBuildRunIdRef.current = null;
         setCoverageGraphLoading(false);
         setCoverageBuildProgress((prev) => {
           if (!prev) return prev;
@@ -4678,21 +3280,18 @@ export default function VariantsPage() {
       }
     },
     [
+      activeProfileCoverageIdentityNames,
+      activeProfileId,
       buildConfig,
-      collectSubtreeKeys,
       coverageGraphDepth,
       coverageGraphLoading,
       coverageGraphTargetKey,
       coverageProfileTimeControlFilters,
       coverageProfileTimeControlOptions,
-      fetchCoverageOpenings,
-      activeProfileId,
-      activeProfileCoverageDbPath,
       lichessAuthToken,
       refetch,
-      resolveActiveProfileCoveragePlayerIds,
       t,
-      variantLinkGraph.variantByKey,
+      variants,
     ],
   );
 
@@ -4701,29 +3300,15 @@ export default function VariantsPage() {
       setCriticalLineLoading(true);
       try {
         const completeLinesOnly = criticalLineCompleteOnlyRef.current;
-        const localReport = buildCoverageCriticalLineReport(root, activeColor, coverageGraphPositionsRef.current, {
+        const backendReport = await getCoverageCriticalLineReport(
+          root,
+          activeColor,
           completeLinesOnly,
-          dismissedKeys: criticalLineDismissedFenKeys,
-        });
-        if (completeLinesOnly || localReport.nodes.length > 0) {
-          setCriticalLineReport(localReport);
-          setCriticalLineModalOpened(true);
-          return;
-        }
-
-        const backendReport = await getCoverageCriticalLineReport(root, activeColor);
+          criticalLineDismissedFenKeys,
+        );
         setCriticalLineReport(backendReport);
         setCriticalLineModalOpened(true);
       } catch (error) {
-        const localReport = buildCoverageCriticalLineReport(root, activeColor, coverageGraphPositionsRef.current, {
-          completeLinesOnly: criticalLineCompleteOnlyRef.current,
-          dismissedKeys: criticalLineDismissedFenKeys,
-        });
-        if (localReport.nodes.length > 0) {
-          setCriticalLineReport(localReport);
-          setCriticalLineModalOpened(true);
-          return;
-        }
         notifications.show({
           title: t("common.error"),
           message: t("features.board.variants.criticalLineReportFailed", {
@@ -5523,24 +4108,68 @@ export default function VariantsPage() {
     variantLinkGraph.variantByKey,
   ]);
 
+  useEffect(() => {
+    if (!coverageEngineProgress) return;
+    trackCoverageEngine(coverageEngineRunIdRef.current ?? "unknown", "front.progress.rendered", {
+      total: coverageEngineProgress.total,
+      completed: coverageEngineProgress.completed,
+      saved: coverageEngineProgress.saved,
+      cached: coverageEngineProgress.cached,
+      failed: coverageEngineProgress.failed,
+      currentLabel: coverageEngineProgress.currentLabel,
+    });
+  }, [coverageEngineProgress]);
+
   const runCoverageNodeEngineEval = useCallback(async () => {
     if (!coverageActionNode || !coverageGraphTargetKey) return;
-    const sourceNode = coverageGraphRoot
-      ? (findCoverageNodeById(coverageGraphRoot, coverageActionNode.id) ?? coverageActionNode)
-      : coverageActionNode;
-    const nodeFens = [
-      ...new Map(collectCoverageSubtreeFens(sourceNode).map((fen) => [normalizeFenKey(fen), fen])).values(),
-    ];
-    if (nodeFens.length === 0) {
-      notifications.show({
-        title: t("common.error"),
-        message: t("features.board.variants.coverageNodeBranchMissingFen", {
-          defaultValue: "Selected node and its children have no position context (FEN).",
-        }),
-        color: "red",
+    const runId = createCoverageEngineRunId();
+    coverageEngineRunIdRef.current = runId;
+    const disableProgressEvents = readCoverageEngineDebugFlag("disableProgressEvents");
+    const disableProgressUi = readCoverageEngineDebugFlag("disableProgressUi");
+    const disableNotifications = readCoverageEngineDebugFlag("disableNotifications");
+    const disableGraphCacheWrites = readCoverageEngineDebugFlag("disableGraphCacheWrites");
+    const updateCoverageProgress = (
+      phase: string,
+      updater: CoverageEngineProgress | null | ((prev: CoverageEngineProgress | null) => CoverageEngineProgress | null),
+    ) => {
+      trackCoverageEngine(runId, "front.progress.update.requested", { phase, disabled: disableProgressUi });
+      if (disableProgressUi) return;
+      setCoverageEngineProgress(updater);
+    };
+    const showCoverageEngineNotification = (phase: string, options: Parameters<typeof notifications.show>[0]) => {
+      trackCoverageEngine(runId, "front.notification.before", {
+        phase,
+        disabled: disableNotifications,
+        color: options.color ?? null,
       });
-      return;
-    }
+      if (disableNotifications) return null;
+      try {
+        const notificationId = notifications.show(options);
+        trackCoverageEngine(runId, "front.notification.after", { phase, notificationId: notificationId ?? null });
+        return notificationId;
+      } catch (error) {
+        trackCoverageEngine(runId, "front.notification.error", {
+          phase,
+          error: formatCoverageEngineUnknownError(error),
+        });
+        throw error;
+      }
+    };
+
+    trackCoverageEngine(runId, "front.run.requested", {
+      nodeId: coverageActionNode.id,
+      nodeLabel: coverageActionNode.label,
+      targetKey: coverageGraphTargetKey,
+      disableProgressEvents,
+      disableProgressUi,
+      disableNotifications,
+      disableGraphCacheWrites,
+    });
+    const sourceNode = coverageActionNode;
+    trackCoverageEngine(runId, "front.source.ready", {
+      sourceNodeId: sourceNode.id,
+      sourceLabel: sourceNode.label,
+    });
 
     const localEngines = engines.filter((engine): engine is Extract<(typeof engines)[number], { type: "local" }> => {
       return engine.type === "local" && `${engine.path ?? ""}`.trim().length > 0;
@@ -5553,7 +4182,8 @@ export default function VariantsPage() {
       localEngines[0] ??
       null;
     if (!selectedEngine) {
-      notifications.show({
+      trackCoverageEngine(runId, "front.engine.missing", { localEngineCount: localEngines.length });
+      showCoverageEngineNotification("missing-engine", {
         title: t("common.error"),
         message: t("features.board.variants.coverageEngineMissing", {
           defaultValue: "No local engine available. Configure an engine first.",
@@ -5563,167 +4193,221 @@ export default function VariantsPage() {
       return;
     }
 
-    const safeMs = Math.max(100, Math.min(60_000, Math.floor(coverageEngineMs || targetVariant?.engineMs || 1000)));
-    const engineTabPrefix = `coverage-node-eval-${Date.now()}`;
+    const requestedMs = coverageEngineMs || targetVariant?.engineMs || 1000;
+    trackCoverageEngine(runId, "front.engine.selected", {
+      engineName: selectedEngine.name,
+      requestedMs,
+      targetVariantPath: targetVariant?.path ?? null,
+    });
     try {
+      trackCoverageEngine(runId, "front.run.state.begin");
+      coverageEngineAbortRef.current = false;
+      setCoverageEngineAnalysisActive(true);
+      trackCoverageEngine(runId, "front.database.cancel.before");
+      await queryClient.cancelQueries({ queryKey: ["database-opening"] }).catch(() => {});
+      trackCoverageEngine(runId, "front.database.cancel.after");
       setCoverageEngineEvaluating(true);
-      const { commands } = await import("@/bindings");
-      const { unwrap } = await import("@/utils/unwrap");
-      const extraOptions = (selectedEngine.settings ?? []).map((option) => ({
-        name: option.name,
-        value: option.value == null ? "" : String(option.value),
-      }));
-      const engineCacheSignature = buildCoverageEngineCacheSignature({
-        name: selectedEngine.name,
-        path: selectedEngine.path,
-        extraOptions,
+      updateCoverageProgress("initialize", {
+        total: 0,
+        completed: 0,
+        saved: 0,
+        cached: 0,
+        failed: 0,
+        currentLabel: "",
       });
-      const engineInfoByFen = new Map<string, { advantage: string; engineName: string; engineMs: number }>();
+      const engineSettings = (selectedEngine.settings ?? []).map((setting) => ({
+        name: `${setting.name ?? ""}`,
+        value: setting.value == null ? "" : String(setting.value),
+      }));
+      trackCoverageEngine(runId, "front.engine.options.ready", {
+        engineSettingsCount: engineSettings.length,
+      });
+      trackCoverageEngine(runId, "front.graph-cache.path.ready", {
+        graphCachePath: coverageGraphCachePath ?? null,
+        writeGraphCache: !disableGraphCacheWrites,
+      });
+      let appliedCount = 0;
       let failedCount = 0;
+      let savedCount = 0;
+      let cachedCount = 0;
+      let completedCount = 0;
+      let totalCount = 0;
+      let graphCacheWritten = false;
+      const failedDetails: string[] = [];
 
-      for (let index = 0; index < nodeFens.length; index += 1) {
-        const nodeFen = nodeFens[index];
-        if (!nodeFen) continue;
-        const engineTabId = `${engineTabPrefix}-${index}`;
-        try {
-          const cached = await invoke<CachedVariantPositionEngineEval | null>("get_variant_position_engine_eval", {
-            fen: nodeFen,
-            engine: engineCacheSignature,
-          }).catch(() => null);
-          const cachedAdvantage = `${cached?.engine_advantage ?? ""}`.trim();
-          const cachedMs = Number(cached?.ms ?? 0);
-          if (cachedAdvantage && Number.isFinite(cachedMs) && cachedMs >= safeMs) {
-            engineInfoByFen.set(normalizeFenKey(nodeFen), {
-              advantage: cachedAdvantage,
-              engineName: selectedEngine.name,
-              engineMs: cachedMs,
-            });
-            continue;
-          }
+      showCoverageEngineNotification("started", {
+        title: t("features.board.variants.coverageEngineRun", { defaultValue: "Analyze branch" }),
+        message: t("features.board.variants.coverageEnginePreparing", {
+          defaultValue: "Preparing branch analysis.",
+        }),
+        color: "blue",
+      });
 
-          const startedAt = Date.now();
-          const maxWaitMs = safeMs + 3000;
-          let bestLine: CoverageEngineBestLine | null = null;
+      let unlistenProgress: (() => void) | null = null;
+      try {
+        if (!disableProgressEvents) {
+          unlistenProgress = await listen<CoverageEngineSessionProgressPayload>(
+            COVERAGE_ENGINE_SESSION_PROGRESS_EVENT,
+            (event) => {
+              const payload = event.payload;
+              if (payload.runId && payload.runId !== runId) return;
+              updateCoverageProgress("backend-progress", (prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      total: payload.total,
+                      completed: Math.max(prev.completed, payload.completed),
+                      saved: payload.saved,
+                      cached: payload.cached,
+                      failed: payload.failed,
+                      currentLabel: payload.label,
+                    }
+                  : prev,
+              );
+            },
+          );
+        }
 
-          while (Date.now() - startedAt <= maxWaitMs) {
-            const result = unwrap(
-              await commands.getBestMoves(
-                selectedEngine.name,
-                selectedEngine.path,
-                engineTabId,
-                { t: "Time", c: safeMs },
-                {
-                  fen: nodeFen,
-                  moves: [],
-                  extraOptions,
-                },
-              ),
-            );
-            const lines = Array.isArray(result?.[1]) ? [...result[1]] : [];
-            const candidate =
-              lines.filter(isCoverageEngineBestLine).sort((a, b) => (a.multipv ?? 1) - (b.multipv ?? 1))[0] ?? null;
-            if (candidate) {
-              bestLine = candidate;
-            }
-            const progress = typeof result?.[0] === "number" ? result[0] : 0;
-            if (bestLine && progress >= 99.9 && Date.now() - startedAt >= safeMs) {
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 80));
-          }
-
-          const baseAdvantage = formatEngineAdvantage(bestLine?.score);
-          if (!baseAdvantage) {
-            failedCount += 1;
-            continue;
-          }
-
-          const bestSan = `${bestLine?.sanMoves?.[0] ?? ""}`.trim();
-          const bestMove = bestSan || `${bestLine?.uciMoves?.[0] ?? ""}`.trim() || "best";
-          const advantageText = bestSan.length > 0 ? `${baseAdvantage} (${bestSan})` : baseAdvantage;
-          engineInfoByFen.set(normalizeFenKey(nodeFen), {
-            advantage: advantageText,
+        const backendResult = await invoke<CoverageEngineBackendRunResult>("run_coverage_engine_analysis", {
+          request: {
             engineName: selectedEngine.name,
-            engineMs: safeMs,
-          });
-          await invoke("upsert_variant_position_engine_eval", {
-            fen: nodeFen,
-            engine: engineCacheSignature,
-            recommendedMove: bestMove,
-            engineAdvantage: advantageText,
-            ms: safeMs,
-          }).catch(() => undefined);
-        } catch (error) {
-          console.error("Failed to evaluate coverage node position", error);
-          failedCount += 1;
-        } finally {
-          try {
-            await commands.stopEngine(selectedEngine.path, engineTabId);
-          } catch {
-            // Best effort cleanup.
-          }
+            enginePath: selectedEngine.path,
+            sourceNodeId: sourceNode.id,
+            sourceNode,
+            graphRoot: coverageGraphRoot,
+            graphCachePath: coverageGraphCachePath,
+            variantPath: targetVariant?.path ?? null,
+            coverageGraphSourceSignature,
+            ms: requestedMs,
+            engineSettings,
+            emitProgress: !disableProgressEvents,
+            writeGraphCache: !disableGraphCacheWrites,
+            runId,
+          },
+        });
+
+        savedCount = backendResult.saved;
+        cachedCount = backendResult.cached;
+        failedCount = backendResult.failed;
+        completedCount = backendResult.completed;
+        totalCount = backendResult.total;
+        graphCacheWritten = backendResult.graphCacheWritten === true;
+        appliedCount = backendResult.applied;
+        failedDetails.push(...(backendResult.failedDetails ?? []));
+
+        if (backendResult.updatedGraphRoot) {
+          setCoverageGraphRoot(backendResult.updatedGraphRoot);
+        }
+        if (backendResult.updatedActionNode) {
+          setCoverageActionNode(backendResult.updatedActionNode);
+        }
+        if (backendResult.graphCacheWritten && backendResult.resolvedGraphCachePath) {
+          setCoverageGraphCachePath(backendResult.resolvedGraphCachePath);
+        }
+
+        updateCoverageProgress("backend-done", (prev) =>
+          prev
+            ? {
+                ...prev,
+                total: backendResult.total,
+                completed: completedCount,
+                saved: savedCount,
+                cached: cachedCount,
+                failed: failedCount,
+                currentLabel: "",
+              }
+            : prev,
+        );
+      } finally {
+        if (unlistenProgress) {
+          unlistenProgress();
         }
       }
 
-      if (engineInfoByFen.size === 0) {
-        notifications.show({
+      if (coverageEngineAbortRef.current) {
+        trackCoverageEngine(runId, "front.run.cancelled", { savedCount, cachedCount, failedCount });
+        updateCoverageProgress("cancelled", (prev) => (prev ? { ...prev, currentLabel: "" } : prev));
+        showCoverageEngineNotification("cancelled", {
           title: t("common.warning"),
-          message: t("features.board.variants.coverageEngineNoScore", {
-            defaultValue: "Engine score not available for this node or its children.",
+          message: t("features.board.variants.coverageEngineCancelled", {
+            defaultValue: "Engine analysis stopped. Saved: {{saved}}, cached: {{cached}}, failed: {{failed}}.",
+            saved: savedCount,
+            cached: cachedCount,
+            failed: failedCount,
           }),
           color: "yellow",
         });
         return;
       }
 
-      setCoverageGraphRoot((prev) => {
-        if (!prev) return prev;
-        return setCoverageEngineInfoByFenMap(prev, engineInfoByFen);
-      });
-      setCoverageActionNode((prev) => {
-        if (!prev) return prev;
-        const prevFen = `${prev.fen ?? ""}`.trim();
-        const nextEngineInfo = prevFen ? engineInfoByFen.get(normalizeFenKey(prevFen)) : null;
-        if (!nextEngineInfo) return prev;
-        return {
-          ...prev,
-          engineAdvantage: nextEngineInfo.advantage,
-          engineName: nextEngineInfo.engineName,
-          engineMs: nextEngineInfo.engineMs,
-        };
-      });
-
-      const resolvedCachePath =
-        coverageGraphCachePath ??
-        (coverageGraphSourceSignature && targetVariant
-          ? await getCoverageGraphCacheFilePath(targetVariant.path, coverageGraphSourceSignature)
-          : null);
-      if (resolvedCachePath) {
-        const existingCache = await readCoverageGraphCache(resolvedCachePath);
-        if (existingCache) {
-          const nextCache: VariantCoverageCache = {
-            ...existingCache,
-            version: COVERAGE_GRAPH_CACHE_VERSION,
-            graphRoot: setCoverageEngineInfoByFenMap(existingCache.graphRoot, engineInfoByFen),
-            generatedAt: new Date().toISOString(),
-          };
-          await writeCoverageGraphCache(resolvedCachePath, nextCache);
-          setCoverageGraphCachePath(resolvedCachePath);
-        }
+      if (totalCount === 0) {
+        showCoverageEngineNotification("no-targets", {
+          title: t("common.error"),
+          message: t("features.board.variants.coverageNodeBranchMissingFen", {
+            defaultValue: "Selected node and its direct children have no completed mapped response positions.",
+          }),
+          color: "red",
+        });
+        return;
       }
 
-      notifications.show({
-        title: t("common.success"),
-        message: t("features.board.variants.coverageEngineEvalApplied", {
-          defaultValue: "Engine advantage saved for this node and its children.",
-          count: engineInfoByFen.size,
-          failed: failedCount,
-        }),
-        color: "green",
+      if (appliedCount === 0) {
+        trackCoverageEngine(runId, "front.run.no-engine-info", {
+          savedCount,
+          cachedCount,
+          failedCount,
+          failedLabels: failedDetails.slice(0, 3),
+        });
+        showCoverageEngineNotification("no-engine-info", {
+          title: t("common.warning"),
+          message:
+            failedCount > 0
+              ? t("features.board.variants.coverageEngineEvalPartiallyApplied", {
+                  defaultValue:
+                    "Engine analysis completed with warnings. Saved: {{saved}}, cached: {{cached}}, failed: {{failed}}. Failed nodes: {{failedLabels}}.",
+                  saved: savedCount,
+                  cached: cachedCount,
+                  failed: failedCount,
+                  failedLabels: failedDetails.slice(0, 3).join("; "),
+                })
+              : t("features.board.variants.coverageEngineNoScore", {
+                  defaultValue: "Engine score not available for this node or its direct children.",
+                }),
+          color: "yellow",
+        });
+        return;
+      }
+
+      trackCoverageEngine(runId, "front.backend.apply.done", {
+        savedCount,
+        cachedCount,
+        failedCount,
+        appliedCount,
+        graphCacheWritten,
       });
+
+      const completionMessageKey =
+        failedCount > 0
+          ? "features.board.variants.coverageEngineEvalPartiallyApplied"
+          : "features.board.variants.coverageEngineEvalApplied";
+      showCoverageEngineNotification("completed", {
+        title: failedCount > 0 ? t("common.warning") : t("common.success"),
+        message: t(completionMessageKey, {
+          defaultValue: "Engine analysis completed. Saved: {{saved}}, cached: {{cached}}, failed: {{failed}}.",
+          saved: savedCount,
+          cached: cachedCount,
+          failed: failedCount,
+          failedLabels: failedDetails.slice(0, 3).join("; "),
+        }),
+        color: failedCount > 0 ? "yellow" : "green",
+      });
+      trackCoverageEngine(runId, "front.run.completed", { savedCount, cachedCount, failedCount, completedCount });
     } catch (error) {
+      trackCoverageEngine(runId, "front.run.error", {
+        error: formatCoverageEngineUnknownError(error),
+      });
       console.error("Failed to evaluate coverage node", error);
-      notifications.show({
+      showCoverageEngineNotification("failed", {
         title: t("common.error"),
         message: t("features.board.variants.coverageEngineEvalFailed", {
           defaultValue: "Failed to evaluate node with engine.",
@@ -5731,7 +4415,11 @@ export default function VariantsPage() {
         color: "red",
       });
     } finally {
+      trackCoverageEngine(runId, "front.run.finally.begin");
       setCoverageEngineEvaluating(false);
+      setCoverageEngineAnalysisActive(false);
+      coverageEngineAbortRef.current = false;
+      trackCoverageEngine(runId, "front.run.finally.after");
     }
   }, [
     coverageActionNode,
@@ -5741,6 +4429,8 @@ export default function VariantsPage() {
     coverageGraphSourceSignature,
     coverageGraphTargetKey,
     engines,
+    queryClient,
+    setCoverageEngineAnalysisActive,
     t,
     variantLinkGraph.variantByKey,
   ]);
@@ -5779,6 +4469,19 @@ export default function VariantsPage() {
     (coverageActionTab === "edit" && coverageActionLabel.trim().length === 0) ||
     (coverageActionTab === "engine" && coverageEngineMs < 100);
   const showCoverageActionPrimary = coverageActionTab !== "board";
+  const requestCoverageEngineAbort = useCallback((origin: string) => {
+    coverageEngineAbortRef.current = true;
+    trackCoverageEngine(coverageEngineRunIdRef.current ?? "unknown", "front.abort.requested", { origin });
+  }, []);
+  const closeCoverageActionModal = useCallback(() => {
+    if (coverageEngineEvaluating) {
+      trackCoverageEngine(coverageEngineRunIdRef.current ?? "unknown", "front.modal.close.blocked", {
+        reason: "engine-evaluating",
+      });
+      return;
+    }
+    setCoverageActionNode(null);
+  }, [coverageEngineEvaluating]);
   const coverageActionTabs = useMemo(() => {
     const tabs: Array<{ value: CoverageActionTab; label: string }> = [];
     if (coverageActionNode?.tier !== "root") {
@@ -5806,6 +4509,12 @@ export default function VariantsPage() {
     const [, error] = positionFromFen(coverageActionBoardFen);
     return error ? "invalid" : null;
   }, [coverageActionBoardFen]);
+
+  useEffect(() => {
+    if (!coverageEngineEvaluating) {
+      setCoverageEngineProgress(null);
+    }
+  }, [coverageEngineEvaluating]);
 
   const handleOpenGeneratePuzzles = useCallback(
     async (row: VariantTableRow) => {
@@ -6285,14 +4994,169 @@ export default function VariantsPage() {
     });
   };
 
+  const renderVariantActions = (row: VariantTableRow) => {
+    const isBusyCriticalLine = criticalLineReportRequestKey === (row.canonicalKey ?? row.key);
+    const isBusyOpeningVariants = openingVariantsTargetKey === (row.canonicalKey ?? row.key);
+
+    if (useCompactVariantsTable) {
+      return (
+        <Menu position="bottom-end" withinPortal shadow="md">
+          <Menu.Target>
+            <Button size="xs" variant="light" radius="md" rightSection={<IconChevronDown size={14} />}>
+              {t("common.actions", { defaultValue: "Actions" })}
+            </Button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<IconShieldCheck size={16} />}
+              onClick={() => void handleValidateVariantTree(row)}
+              disabled={validatingVariants}
+            >
+              {t("features.board.variants.validateConsistency", { defaultValue: "Validate consistency" })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconPuzzle size={16} />}
+              onClick={() => void handleOpenGeneratePuzzles(row)}
+              disabled={generatingPuzzles || validatingVariants}
+            >
+              {t("common.generatePuzzles", { defaultValue: "Generate Puzzles" })}
+            </Menu.Item>
+            <Menu.Item leftSection={<IconEye size={16} />} onClick={() => handleEdit(row.variant)}>
+              {t("common.view", { defaultValue: "View" })}
+            </Menu.Item>
+            <Menu.Item leftSection={<IconEdit size={16} />} onClick={() => handleEditComments(row.variant)}>
+              {t("features.board.variants.editComments", { defaultValue: "Edit Comments / References" })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconSettings size={16} />}
+              onClick={() => void handleOpenConfigureBuild(row.variant)}
+            >
+              {t("features.board.variants.configureBuild", { defaultValue: "Configure data source" })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={isBusyOpeningVariants ? <Loader size={14} /> : <IconSitemap size={16} />}
+              onClick={() => void handleCreateOpeningVariants(row)}
+              disabled={openingVariantsTargetKey !== null || validatingVariants}
+            >
+              {t("features.board.variants.createOpeningVariants", {
+                defaultValue: "Create ECO opening variants",
+              })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconGitBranch size={16} />}
+              onClick={() => void handleOpenCoverageGraph(row)}
+              disabled={validatingVariants}
+            >
+              {t("features.board.variants.coverageGraph", { defaultValue: "Open coverage graph" })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={isBusyCriticalLine ? <Loader size={14} /> : <IconExclamationCircle size={16} />}
+              onClick={() => void handleOpenCriticalLinesFromRow(row)}
+              disabled={validatingVariants || coverageGraphLoading || criticalLineLoading}
+            >
+              {t("features.board.variants.criticalLineNodes", { defaultValue: "Critical lines" })}
+            </Menu.Item>
+            <Menu.Divider />
+            <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={() => handleDelete(row.variant)}>
+              {t("common.delete", { defaultValue: "Delete" })}
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      );
+    }
+
+    return (
+      <Group gap={4} justify="flex-end" wrap="nowrap">
+        <Tooltip label={t("features.board.variants.validateConsistency", { defaultValue: "Validate consistency" })}>
+          <ActionIcon
+            variant="subtle"
+            color="teal"
+            onClick={() => void handleValidateVariantTree(row)}
+            disabled={validatingVariants}
+          >
+            <IconShieldCheck size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("common.generatePuzzles", { defaultValue: "Generate Puzzles" })}>
+          <ActionIcon
+            variant="subtle"
+            color="yellow"
+            onClick={() => void handleOpenGeneratePuzzles(row)}
+            disabled={generatingPuzzles || validatingVariants}
+          >
+            <IconPuzzle size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("common.view", { defaultValue: "View" })}>
+          <ActionIcon variant="subtle" color="blue" onClick={() => handleEdit(row.variant)}>
+            <IconEye size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("features.board.variants.editComments", { defaultValue: "Edit Comments / References" })}>
+          <ActionIcon variant="subtle" color="grape" onClick={() => handleEditComments(row.variant)}>
+            <IconEdit size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("features.board.variants.configureBuild", { defaultValue: "Configure data source" })}>
+          <ActionIcon variant="subtle" color="cyan" onClick={() => void handleOpenConfigureBuild(row.variant)}>
+            <IconSettings size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip
+          label={t("features.board.variants.createOpeningVariants", {
+            defaultValue: "Create ECO opening variants",
+          })}
+        >
+          <ActionIcon
+            variant="subtle"
+            color="indigo"
+            onClick={() => void handleCreateOpeningVariants(row)}
+            disabled={openingVariantsTargetKey !== null || validatingVariants}
+          >
+            {isBusyOpeningVariants ? <Loader size={14} /> : <IconSitemap size={16} />}
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("features.board.variants.coverageGraph", { defaultValue: "Open coverage graph" })}>
+          <ActionIcon
+            variant="subtle"
+            color="blue"
+            onClick={() => void handleOpenCoverageGraph(row)}
+            disabled={validatingVariants}
+          >
+            <IconGitBranch size={16} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("features.board.variants.criticalLineNodes", { defaultValue: "Critical lines" })}>
+          <ActionIcon
+            variant="subtle"
+            color="pink"
+            onClick={() => void handleOpenCriticalLinesFromRow(row)}
+            disabled={validatingVariants || coverageGraphLoading || criticalLineLoading}
+          >
+            {isBusyCriticalLine ? <Loader size={14} /> : <IconExclamationCircle size={16} />}
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={t("common.delete", { defaultValue: "Delete" })}>
+          <ActionIcon variant="subtle" color="red" onClick={() => handleDelete(row.variant)}>
+            <IconTrash size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+    );
+  };
+
+  const variantsTableMinWidth = useCompactVariantsTable ? 980 : 1280;
+
   const columns = [
     {
       accessor: "name",
       title: t("features.board.variants.name", { defaultValue: "Name" }),
       sortable: true,
+      width: useCompactVariantsTable ? "28%" : "18%",
+      ellipsis: true,
       render: (row: VariantTableRow) => (
         <Group wrap="nowrap" gap="sm">
-          <Group wrap="nowrap" gap={6} style={{ marginLeft: row.depth * 16 }}>
+          <Group wrap="nowrap" gap={6} style={{ marginLeft: row.depth * (useCompactVariantsTable ? 10 : 16) }}>
             {row.hasChildren ? (
               <ActionIcon variant="subtle" size="sm" color="gray" onClick={() => toggleRow(row.key)}>
                 {row.expanded ? <IconChevronDown size="0.9rem" /> : <IconChevronRight size="0.9rem" />}
@@ -6327,9 +5191,11 @@ export default function VariantsPage() {
       accessor: "opening",
       title: t("features.board.variants.opening", { defaultValue: "Opening" }),
       sortable: true,
+      width: useCompactVariantsTable ? "22%" : "21%",
+      ellipsis: true,
       render: (row: VariantTableRow) =>
         row.variant.opening ? (
-          <Text size="sm" truncate style={{ maxWidth: 250 }}>
+          <Text size="sm" truncate style={{ width: "100%" }}>
             {row.variant.opening}
           </Text>
         ) : (
@@ -6342,6 +5208,7 @@ export default function VariantsPage() {
       accessor: "priority",
       title: t("features.board.variants.priority", { defaultValue: "Priority" }),
       sortable: true,
+      width: useCompactVariantsTable ? "7%" : "6%",
       render: (row: VariantTableRow) =>
         row.variant.priority !== null ? (
           <Badge variant="light" color={variantPriorityColor(row.variant.priority)} size="sm">
@@ -6354,51 +5221,16 @@ export default function VariantsPage() {
         ),
     },
     {
-      accessor: "fen",
-      title: t("features.board.variants.fen", { defaultValue: "FEN" }),
-      sortable: true,
-      render: (row: VariantTableRow) =>
-        row.variant.fen ? (
-          <Code
-            fz="xs"
-            style={{
-              maxWidth: 300,
-              display: "block",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {row.variant.fen}
-          </Code>
-        ) : (
-          <Text size="sm" c="dimmed" fs="italic">
-            -
-          </Text>
-        ),
-    },
-    {
       accessor: "engine",
       title: t("features.board.variants.engine", { defaultValue: "Engine" }),
       sortable: true,
+      width: useCompactVariantsTable ? "12%" : "10%",
       render: (row: VariantTableRow) =>
         row.variant.engine ? (
           <Badge variant="outline" size="sm" style={{ textTransform: "none" }}>
             {row.variant.engine}
+            {row.variant.engineMs !== null ? ` (${row.variant.engineMs}ms)` : ""}
           </Badge>
-        ) : (
-          <Text size="sm" c="dimmed" fs="italic">
-            -
-          </Text>
-        ),
-    },
-    {
-      accessor: "engineMs",
-      title: t("features.board.variants.engineMs", { defaultValue: "Engine Time (ms)" }),
-      sortable: true,
-      render: (row: VariantTableRow) =>
-        row.variant.engineMs !== null ? (
-          <Text size="sm">{row.variant.engineMs}</Text>
         ) : (
           <Text size="sm" c="dimmed" fs="italic">
             -
@@ -6409,6 +5241,7 @@ export default function VariantsPage() {
       accessor: "variantsCount",
       title: t("features.board.variants.variantsCount", { defaultValue: "Variants" }),
       sortable: true,
+      width: useCompactVariantsTable ? "8%" : "7%",
       render: (row: VariantTableRow) =>
         row.variant.variantsCount !== null ? (
           <Badge variant="light" color="blue" size="sm">
@@ -6424,6 +5257,7 @@ export default function VariantsPage() {
       accessor: "links",
       title: t("features.board.variants.links", { defaultValue: "Links" }),
       sortable: false,
+      width: useCompactVariantsTable ? "12%" : "12%",
       render: (row: VariantTableRow) => (
         <Group gap={6} wrap="wrap">
           {row.isTransposition ? (
@@ -6454,9 +5288,12 @@ export default function VariantsPage() {
       accessor: "comments",
       title: t("features.board.variants.comments", { defaultValue: "Comments / References" }),
       sortable: true,
+      hidden: useCompactVariantsTable,
+      width: "13%",
+      ellipsis: true,
       render: (row: VariantTableRow) =>
         row.variant.comments ? (
-          <Text size="sm" truncate style={{ maxWidth: 300 }}>
+          <Text size="sm" truncate style={{ width: "100%" }}>
             {row.variant.comments}
           </Text>
         ) : (
@@ -6469,92 +5306,8 @@ export default function VariantsPage() {
       accessor: "actions",
       title: t("common.actions", { defaultValue: "Actions" }),
       textAlign: "right" as const,
-      render: (row: VariantTableRow) => (
-        <Group gap="xs" justify="flex-end">
-          <Tooltip label={t("features.board.variants.validateConsistency", { defaultValue: "Validate consistency" })}>
-            <ActionIcon
-              variant="subtle"
-              color="teal"
-              onClick={() => void handleValidateVariantTree(row)}
-              disabled={validatingVariants}
-            >
-              <IconShieldCheck size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("common.generatePuzzles", { defaultValue: "Generate Puzzles" })}>
-            <ActionIcon
-              variant="subtle"
-              color="yellow"
-              onClick={() => void handleOpenGeneratePuzzles(row)}
-              disabled={generatingPuzzles || validatingVariants}
-            >
-              <IconPuzzle size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("common.view", { defaultValue: "View" })}>
-            <ActionIcon variant="subtle" color="blue" onClick={() => handleEdit(row.variant)}>
-              <IconEye size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("features.board.variants.editComments", { defaultValue: "Edit Comments / References" })}>
-            <ActionIcon variant="subtle" color="grape" onClick={() => handleEditComments(row.variant)}>
-              <IconEdit size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("features.board.variants.configureBuild", { defaultValue: "Configure data source" })}>
-            <ActionIcon variant="subtle" color="cyan" onClick={() => void handleOpenConfigureBuild(row.variant)}>
-              <IconSettings size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip
-            label={t("features.board.variants.createOpeningVariants", {
-              defaultValue: "Create ECO opening variants",
-            })}
-          >
-            <ActionIcon
-              variant="subtle"
-              color="indigo"
-              onClick={() => void handleCreateOpeningVariants(row)}
-              disabled={openingVariantsTargetKey !== null || validatingVariants}
-            >
-              {openingVariantsTargetKey === (row.canonicalKey ?? row.key) ? (
-                <Loader size={14} />
-              ) : (
-                <IconSitemap size={16} />
-              )}
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("features.board.variants.coverageGraph", { defaultValue: "Open coverage graph" })}>
-            <ActionIcon
-              variant="subtle"
-              color="blue"
-              onClick={() => void handleOpenCoverageGraph(row)}
-              disabled={validatingVariants}
-            >
-              <IconGitBranch size={16} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("features.board.variants.criticalLineNodes", { defaultValue: "Critical lines" })}>
-            <ActionIcon
-              variant="subtle"
-              color="pink"
-              onClick={() => void handleOpenCriticalLinesFromRow(row)}
-              disabled={validatingVariants || coverageGraphLoading || criticalLineLoading}
-            >
-              {criticalLineReportRequestKey === (row.canonicalKey ?? row.key) ? (
-                <Loader size={14} />
-              ) : (
-                <IconExclamationCircle size={16} />
-              )}
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={t("common.delete", { defaultValue: "Delete" })}>
-            <ActionIcon variant="subtle" color="red" onClick={() => handleDelete(row.variant)}>
-              <IconTrash size={16} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
-      ),
+      width: useCompactVariantsTable ? "11%" : "13%",
+      render: renderVariantActions,
     },
   ];
 
@@ -6630,7 +5383,7 @@ export default function VariantsPage() {
       />
       <Box px="md" pb="md" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
-          <SimpleGrid cols={{ base: 2, sm: 3, lg: 5 }} spacing="sm">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: useWideVariantsTable ? 5 : 3 }} spacing="sm">
             <Card withBorder radius="lg" p="sm" style={{ background: "var(--mantine-color-dark-7)" }}>
               <Group justify="space-between" wrap="nowrap">
                 <Stack gap={2}>
@@ -6717,7 +5470,7 @@ export default function VariantsPage() {
               minHeight: 0,
               display: "flex",
               flexDirection: "column",
-              overflow: "hidden",
+              overflow: "auto",
               background:
                 "radial-gradient(120% 170% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 17%, transparent) 0%, transparent 58%), linear-gradient(160deg, color-mix(in srgb, var(--mantine-color-dark-7) 88%, var(--mantine-color-dark-5) 12%), var(--mantine-color-dark-7))",
               borderColor: "color-mix(in srgb, var(--mantine-color-blue-8) 20%, var(--mantine-color-dark-4))",
@@ -6799,8 +5552,11 @@ export default function VariantsPage() {
                 highlightOnHover
                 striped
                 minHeight={200}
+                horizontalSpacing="xs"
+                verticalAlign="center"
                 noRecordsText={t("common.noRecordsFound", { defaultValue: "No records found" })}
-                style={{ flex: 1 }}
+                style={{ width: "100%", minWidth: variantsTableMinWidth }}
+                styles={{ table: { tableLayout: "fixed", width: "100%", minWidth: variantsTableMinWidth } }}
                 totalRecords={variantTableRows.length}
                 recordsPerPage={pageSize}
                 page={page}
@@ -7397,10 +6153,13 @@ export default function VariantsPage() {
 
       <Modal
         opened={coverageActionNode !== null}
-        onClose={() => setCoverageActionNode(null)}
+        onClose={closeCoverageActionModal}
         title={t("features.board.variants.coverageNodeActions", { defaultValue: "Node actions" })}
         centered
         size="lg"
+        closeOnClickOutside={!coverageEngineEvaluating}
+        closeOnEscape={!coverageEngineEvaluating}
+        withCloseButton={!coverageEngineEvaluating}
       >
         <Stack gap="md">
           <SegmentedControl
@@ -7499,6 +6258,46 @@ export default function VariantsPage() {
                   max={60000}
                   step={100}
                 />
+                {coverageEngineProgress ? (
+                  <Stack gap={6}>
+                    <Progress
+                      value={
+                        coverageEngineProgress.total > 0
+                          ? (coverageEngineProgress.completed / coverageEngineProgress.total) * 100
+                          : 0
+                      }
+                      animated={coverageEngineEvaluating}
+                    />
+                    <Text size="xs" c="dimmed">
+                      {t("features.board.variants.coverageEngineProgress", {
+                        defaultValue: "Analyzing {{completed}}/{{total}}. Current: {{current}}.",
+                        completed: coverageEngineProgress.completed,
+                        total: coverageEngineProgress.total,
+                        current: coverageEngineProgress.currentLabel || "--",
+                      })}
+                    </Text>
+                    <Group gap="xs">
+                      <Badge color="green" variant="light">
+                        {t("features.board.variants.coverageEngineSaved", {
+                          defaultValue: "Saved {{count}}",
+                          count: coverageEngineProgress.saved,
+                        })}
+                      </Badge>
+                      <Badge color="blue" variant="light">
+                        {t("features.board.variants.coverageEngineCached", {
+                          defaultValue: "Cached {{count}}",
+                          count: coverageEngineProgress.cached,
+                        })}
+                      </Badge>
+                      <Badge color="red" variant="light">
+                        {t("features.board.variants.coverageEngineFailed", {
+                          defaultValue: "Failed {{count}}",
+                          count: coverageEngineProgress.failed,
+                        })}
+                      </Badge>
+                    </Group>
+                  </Stack>
+                ) : null}
               </Stack>
             ) : coverageActionBoardError ? (
               <Text size="sm" c="dimmed">
@@ -7536,7 +6335,7 @@ export default function VariantsPage() {
                 : coverageActionTab === "engine"
                   ? t("features.board.variants.coverageEngineHint", {
                       defaultValue:
-                        "Run engine analysis for this node and its children, then store the advantage labels in the graph.",
+                        "Run engine analysis for this node and its direct children, then store the advantage labels in the graph.",
                     })
                   : t("features.board.variants.coverageBoardHint", {
                       defaultValue: "Board preview after this move using active side orientation.",
@@ -7548,9 +6347,14 @@ export default function VariantsPage() {
                 {t("features.board.variants.coverageGoToVariant", { defaultValue: "Go to variant" })}
               </Button>
             ) : null}
-            <Button variant="default" onClick={() => setCoverageActionNode(null)}>
+            <Button variant="default" onClick={closeCoverageActionModal} disabled={coverageEngineEvaluating}>
               {t("common.cancel")}
             </Button>
+            {coverageEngineEvaluating ? (
+              <Button variant="light" color="red" onClick={() => requestCoverageEngineAbort("stop-button")}>
+                {t("common.stop", { defaultValue: "Stop" })}
+              </Button>
+            ) : null}
             {showCoverageActionPrimary ? (
               <Button
                 onClick={() => void runCoverageActionPrimary()}

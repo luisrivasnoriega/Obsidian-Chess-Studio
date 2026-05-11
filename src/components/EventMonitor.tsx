@@ -10,6 +10,7 @@ import {
 import {
   activeTabAtom,
   bestMovesFamily,
+  coverageEngineAnalysisActiveAtom,
   engineMovesFamily,
   engineProgressFamily,
   tabEngineSettingsFamily,
@@ -137,6 +138,8 @@ export function EventMonitor() {
   const store = useStore();
   const tabs = useAtomValue(tabsAtom);
   const activeTab = useAtomValue(activeTabAtom);
+  const coverageEngineAnalysisActive = useAtomValue(coverageEngineAnalysisActiveAtom);
+  const coverageEngineAnalysisActiveRef = useRef(coverageEngineAnalysisActive);
   const openTabIds = useMemo(() => tabs.map((tab) => tab.value), [tabs]);
   const telemetryEnabled = useMemo(() => isMemoryTelemetryEnabled(), []);
   const previousSnapshotRef = useRef<{
@@ -150,6 +153,10 @@ export function EventMonitor() {
   const compactionInFlightRef = useRef(false);
 
   useEffect(() => {
+    coverageEngineAnalysisActiveRef.current = coverageEngineAnalysisActive;
+  }, [coverageEngineAnalysisActive]);
+
+  useEffect(() => {
     if (!IS_DEV) return;
 
     let active = true;
@@ -160,6 +167,7 @@ export function EventMonitor() {
 
     events.bestMovesPayload
       .listen(({ payload }) => {
+        if (coverageEngineAnalysisActiveRef.current) return;
         logger.debug("EventMonitor bestMovesPayload", {
           engine: payload.engine,
           tab: payload.tab,
@@ -183,6 +191,7 @@ export function EventMonitor() {
 
     events.reportProgress
       .listen(({ payload }) => {
+        if (coverageEngineAnalysisActiveRef.current) return;
         logger.debug("EventMonitor reportProgress", {
           id: payload.id,
           progress: payload.progress,
@@ -202,6 +211,7 @@ export function EventMonitor() {
 
     events.databaseProgress
       .listen(({ payload }) => {
+        if (coverageEngineAnalysisActiveRef.current) return;
         logger.debug("EventMonitor databaseProgress", {
           id: payload.id,
           progress: payload.progress,
@@ -220,6 +230,7 @@ export function EventMonitor() {
 
     events.downloadProgress
       .listen(({ payload }) => {
+        if (coverageEngineAnalysisActiveRef.current) return;
         logger.debug("EventMonitor downloadProgress", {
           id: payload.id,
           progress: payload.progress,
@@ -355,6 +366,10 @@ export function EventMonitor() {
   );
 
   const sampleMemoryUsage = useCallback(async () => {
+    if (coverageEngineAnalysisActive) {
+      return;
+    }
+
     const processRssMb = bigintToNumber(await commands.processMemoryRssMb().catch(() => null));
     const heap = readHeapMemoryMb();
 
@@ -464,7 +479,7 @@ export function EventMonitor() {
     } else {
       logger.debug("EventMonitor memoryTelemetry", payload);
     }
-  }, [activeTab, compactRuntimeCaches, store, tabs.length]);
+  }, [activeTab, compactRuntimeCaches, coverageEngineAnalysisActive, store, tabs.length]);
 
   useEffect(() => {
     if (!telemetryEnabled) {

@@ -162,6 +162,11 @@ impl EngineProcess {
         self.write_with_timeout(&msg, Error::EngineTimeout).await
     }
 
+    /// Ask the engine to report when it has processed all pending commands.
+    pub async fn request_ready(&mut self) -> Result<(), Error> {
+        self.write_with_timeout("isready\n", Error::EngineTimeout).await
+    }
+
     /// Set all engine options, including FEN, moves, and extra UCI options.
     /// Updates multipv and resets best-move tracking.
     pub async fn set_options(&mut self, options: EngineOptions) -> Result<(), Error> {

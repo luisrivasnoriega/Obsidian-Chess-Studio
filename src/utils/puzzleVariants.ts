@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type PuzzleTreeNodeDto = {
   fen: string;
   san?: string | null;
+  openingName?: string | null;
   children: PuzzleTreeNodeDto[];
 };
 

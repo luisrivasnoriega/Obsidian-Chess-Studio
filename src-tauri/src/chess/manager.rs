@@ -131,7 +131,10 @@ impl<'a> EngineManager<'a> {
                 nonzero_ext::nonzero!(10u32),
             ));
             while let Ok(Some(line)) = reader.next_line().await {
-                if let Some(proc_arc) = engines_map.get(&key_cloned) {
+                if let Some(proc_arc) = engines_map
+                    .get(&key_cloned)
+                    .map(|entry| entry.value().clone())
+                {
                     let mut proc = proc_arc.lock().await;
                     match vampirc_uci::parse_one(&line) {
                         vampirc_uci::UciMessage::Info(attrs) => {
@@ -172,8 +175,7 @@ impl<'a> EngineManager<'a> {
                                         // Only emit if all lines are at the same depth and rate limit allows.
                                         let all_same_depth = proc.best_moves.iter().all(|x| x.depth == cur_depth);
                                         let depth_ok = cur_depth >= proc.last_depth;
-                                        let rate_limit_ok = lim.check().is_ok();
-                                        if all_same_depth && depth_ok && rate_limit_ok {
+                                        if all_same_depth && depth_ok {
                                             let (progress, should_emit) = match proc.go_mode {
                                                 GoMode::Depth(depth) => (
                                                     (cur_depth as f64 / depth as f64) * 100.0,
@@ -196,7 +198,11 @@ impl<'a> EngineManager<'a> {
                                                         || proc.last_progress < 99.0,
                                                 ),
                                             };
-                                            if should_emit {
+                                            proc.last_depth = cur_depth;
+                                            proc.last_best_moves = proc.best_moves.clone();
+                                            proc.last_progress = progress as f32;
+
+                                            if should_emit && lim.check().is_ok() {
                                                 super::types::BestMovesPayload {
                                                     best_lines: proc.best_moves.clone(),
                                                     engine: id_cloned.clone(),
@@ -207,9 +213,6 @@ impl<'a> EngineManager<'a> {
                                                 }
                                                 .emit(&app_cloned)
                                                 .ok();
-                                                proc.last_depth = cur_depth;
-                                                proc.last_best_moves = proc.best_moves.clone();
-                                                proc.last_progress = progress as f32;
                                             }
                                         }
                                         proc.best_moves.clear();

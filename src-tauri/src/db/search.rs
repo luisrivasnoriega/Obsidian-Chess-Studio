@@ -25,6 +25,7 @@ use shakmaty::{
 };
 use specta::Type;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -649,6 +650,36 @@ pub struct PositionStats {
     pub white: i32,
     pub draw: i32,
     pub black: i32,
+}
+
+#[derive(Clone)]
+pub(crate) struct CoverageSearchDataset {
+    games: Arc<Vec<CoverageSearchGame>>,
+    use_end_reachability: bool,
+}
+
+#[derive(Clone)]
+struct CoverageSearchGame {
+    white_id: i32,
+    black_id: i32,
+    date: Option<String>,
+    result: Option<String>,
+    moves: Vec<u8>,
+    fen: Option<String>,
+    pawn_home: Option<i32>,
+    white_material: Option<i32>,
+    black_material: Option<i32>,
+    time_control: Option<String>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CoverageSearchFilters<'a> {
+    pub player1: Option<i32>,
+    pub player2: Option<i32>,
+    pub start_date: Option<&'a str>,
+    pub end_date: Option<&'a str>,
+    pub wanted_result: Option<&'a str>,
+    pub time_control_category: Option<&'a str>,
 }
 
 /// Parses chess moves from binary format one at a time
@@ -1786,6 +1817,257 @@ pub(crate) fn search_position_online_internal(
     let ids: Vec<i32> = sample_games.into_inner().unwrap();
     
     (openings_vec, ids)
+}
+
+pub(crate) fn load_coverage_search_dataset(
+    file: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<CoverageSearchDataset, Error> {
+    let file_str = file
+        .to_str()
+        .ok_or_else(|| Error::FenError("Invalid database path".to_string()))?;
+    let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
+    let use_end_reachability = !is_online_database(&file) && !local_reachability_metadata_missing(db);
+
+    let games = if use_end_reachability {
+        games::table
+            .select((
+                games::white_id,
+                games::black_id,
+                games::date,
+                games::result,
+                games::moves,
+                games::fen,
+                games::pawn_home,
+                games::white_material,
+                games::black_material,
+                games::time_control,
+            ))
+            .load::<(
+                i32,
+                i32,
+                Option<String>,
+                Option<String>,
+                Vec<u8>,
+                Option<String>,
+                i32,
+                i32,
+                i32,
+                Option<String>,
+            )>(db)?
+            .into_iter()
+            .map(
+                |(
+                    white_id,
+                    black_id,
+                    date,
+                    result,
+                    moves,
+                    fen,
+                    pawn_home,
+                    white_material,
+                    black_material,
+                    time_control,
+                )| CoverageSearchGame {
+                    white_id,
+                    black_id,
+                    date,
+                    result,
+                    moves,
+                    fen,
+                    pawn_home: Some(pawn_home),
+                    white_material: Some(white_material),
+                    black_material: Some(black_material),
+                    time_control,
+                },
+            )
+            .collect()
+    } else {
+        games::table
+            .select((
+                games::white_id,
+                games::black_id,
+                games::date,
+                games::result,
+                games::moves,
+                games::fen,
+                games::time_control,
+            ))
+            .load::<(
+                i32,
+                i32,
+                Option<String>,
+                Option<String>,
+                Vec<u8>,
+                Option<String>,
+                Option<String>,
+            )>(db)?
+            .into_iter()
+            .map(
+                |(white_id, black_id, date, result, moves, fen, time_control)| CoverageSearchGame {
+                    white_id,
+                    black_id,
+                    date,
+                    result,
+                    moves,
+                    fen,
+                    pawn_home: None,
+                    white_material: None,
+                    black_material: None,
+                    time_control,
+                },
+            )
+            .collect()
+    };
+
+    Ok(CoverageSearchDataset {
+        games: Arc::new(games),
+        use_end_reachability,
+    })
+}
+
+fn coverage_wanted_result(value: Option<&str>) -> Option<&str> {
+    match value {
+        Some("whitewon") => Some("1-0"),
+        Some("blackwon") => Some("0-1"),
+        Some("draw") => Some("1/2-1/2"),
+        Some("1-0") => Some("1-0"),
+        Some("0-1") => Some("0-1"),
+        Some("1/2-1/2") => Some("1/2-1/2"),
+        _ => None,
+    }
+}
+
+fn coverage_game_matches_filters(game: &CoverageSearchGame, filters: &CoverageSearchFilters<'_>) -> bool {
+    if let Some(white) = filters.player1 {
+        if game.white_id != white {
+            return false;
+        }
+    }
+    if let Some(black) = filters.player2 {
+        if game.black_id != black {
+            return false;
+        }
+    }
+    if let Some(expected_result) = coverage_wanted_result(filters.wanted_result) {
+        if game.result.as_deref() != Some(expected_result) {
+            return false;
+        }
+    }
+    if !time_control_matches_category(game.time_control.as_deref(), filters.time_control_category) {
+        return false;
+    }
+    if let (Some(start_date), Some(date)) = (filters.start_date, game.date.as_deref()) {
+        if date < start_date {
+            return false;
+        }
+    }
+    if let (Some(end_date), Some(date)) = (filters.end_date, game.date.as_deref()) {
+        if date > end_date {
+            return false;
+        }
+    }
+    true
+}
+
+fn coverage_game_can_reach(
+    game: &CoverageSearchGame,
+    position_query: &PositionQuery,
+    use_end_reachability: bool,
+) -> bool {
+    if !use_end_reachability {
+        return true;
+    }
+    let (Some(pawn_home), Some(white_material), Some(black_material)) =
+        (game.pawn_home, game.white_material, game.black_material)
+    else {
+        return true;
+    };
+    let end_material: MaterialCount = ByColor {
+        white: white_material as u8,
+        black: black_material as u8,
+    };
+    position_query.can_reach(&end_material, pawn_home as u16)
+}
+
+fn add_coverage_stat(openings: &mut HashMap<String, PositionStats>, san: String, result: Option<&str>) {
+    let entry = openings.entry(san.clone()).or_insert_with(|| PositionStats {
+        move_: san,
+        white: 0,
+        draw: 0,
+        black: 0,
+    });
+    match result {
+        Some("1-0") => entry.white += 1,
+        Some("0-1") => entry.black += 1,
+        Some("1/2-1/2") => entry.draw += 1,
+        _ => {}
+    }
+}
+
+pub(crate) fn coverage_search_position_stats(
+    dataset: &CoverageSearchDataset,
+    fen: &str,
+    filters: CoverageSearchFilters<'_>,
+) -> Result<Vec<PositionStats>, Error> {
+    const PARALLEL_MIN_GAMES: usize = 50_000;
+
+    let position_query = PositionQuery::exact_from_fen(fen)?;
+    let games = dataset.games.as_ref();
+    if games.len() >= PARALLEL_MIN_GAMES {
+        let openings: DashMap<String, PositionStats> = DashMap::with_capacity(128);
+        games.par_iter().for_each(|game| {
+            if !coverage_game_matches_filters(game, &filters)
+                || !coverage_game_can_reach(game, &position_query, dataset.use_end_reachability)
+            {
+                return;
+            }
+            let Ok(Some(san)) = get_move_after_match(&game.moves, &game.fen, &position_query) else {
+                return;
+            };
+            let entry = openings.entry(san);
+            match entry {
+                Entry::Occupied(mut e) => {
+                    let opening = e.get_mut();
+                    match game.result.as_deref() {
+                        Some("1-0") => opening.white += 1,
+                        Some("0-1") => opening.black += 1,
+                        Some("1/2-1/2") => opening.draw += 1,
+                        _ => {}
+                    }
+                }
+                Entry::Vacant(e) => {
+                    let move_str = e.key().clone();
+                    let (white, black, draw) = match game.result.as_deref() {
+                        Some("1-0") => (1, 0, 0),
+                        Some("0-1") => (0, 1, 0),
+                        Some("1/2-1/2") => (0, 0, 1),
+                        _ => (0, 0, 0),
+                    };
+                    e.insert(PositionStats {
+                        move_: move_str,
+                        white,
+                        draw,
+                        black,
+                    });
+                }
+            }
+        });
+        return Ok(openings.into_iter().map(|(_, value)| value).collect());
+    }
+
+    let mut openings: HashMap<String, PositionStats> = HashMap::with_capacity(64);
+    for game in games {
+        if !coverage_game_matches_filters(game, &filters)
+            || !coverage_game_can_reach(game, &position_query, dataset.use_end_reachability)
+        {
+            continue;
+        }
+        if let Ok(Some(san)) = get_move_after_match(&game.moves, &game.fen, &position_query) {
+            add_coverage_stat(&mut openings, san, game.result.as_deref());
+        }
+    }
+    Ok(openings.into_values().collect())
 }
 
 /// ============================================================================

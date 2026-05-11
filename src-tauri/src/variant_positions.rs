@@ -152,7 +152,7 @@ fn fetch_variant_position_conn(
     Ok(entry)
 }
 
-fn fetch_variant_position(
+pub(crate) fn fetch_variant_position(
     app: &AppHandle,
     fen: &str,
     engine: &str,
@@ -210,7 +210,7 @@ fn upsert_variant_position_conn(
     Ok(())
 }
 
-fn upsert_variant_position_entry(
+pub(crate) fn upsert_variant_position_entry(
     app: &AppHandle,
     fen: &str,
     engine: &str,
@@ -244,7 +244,7 @@ pub fn upsert_variant_position(
     fen: String,
     engine: String,
     recommended_move: String,
-    ms: i64,
+    ms: u32,
 ) -> Result<()> {
     let fen = fen.trim();
     let engine = engine.trim();
@@ -252,7 +252,7 @@ pub fn upsert_variant_position(
     if fen.is_empty() || engine.is_empty() || recommended_move.is_empty() {
         return Ok(());
     }
-    upsert_variant_position_entry(&app, fen, engine, recommended_move, None, ms)
+    upsert_variant_position_entry(&app, fen, engine, recommended_move, None, i64::from(ms))
 }
 
 #[tauri::command]
@@ -273,7 +273,7 @@ pub fn upsert_variant_position_engine_eval(
     engine: String,
     recommended_move: String,
     engine_advantage: String,
-    ms: i64,
+    ms: u32,
 ) -> Result<()> {
     let fen = fen.trim();
     let engine = engine.trim();
@@ -288,7 +288,7 @@ pub fn upsert_variant_position_engine_eval(
         engine,
         recommended_move,
         Some(engine_advantage),
-        ms,
+        i64::from(ms),
     )
 }
 

@@ -80,6 +80,10 @@ pub use self::schema::puzzles;
 pub use self::search::{
     is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
 };
+pub(crate) use self::search::{
+    coverage_search_position_stats, load_coverage_search_dataset, CoverageSearchDataset,
+    CoverageSearchFilters,
+};
 
 pub(crate) const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
 pub(crate) const ADDITIONAL_INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_additional_indexes.sql");

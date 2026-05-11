@@ -23,6 +23,7 @@ import type { NormalizedGame } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import {
   activeProfileIdAtom,
+  coverageEngineAnalysisActiveAtom,
   currentDbTabAtom,
   currentDbTypeAtom,
   currentLocalOptionsAtom,
@@ -153,6 +154,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   const currentTabSelected = useAtomValue(currentTabSelectedAtom);
   const activeProfileId = useAtomValue(activeProfileIdAtom);
   const profiles = useAtomValue(profilesAtom);
+  const coverageEngineAnalysisActive = useAtomValue(coverageEngineAnalysisActiveAtom);
   const tabValue = tab?.value ?? "analysis";
   const lichessAuthToken = useMemo(() => {
     const profileToken = profiles.find((p) => p.id === activeProfileId)?.lichessToken?.trim() || "";
@@ -253,7 +255,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   // Only search when we're in the database tab and viewing stats or games
   const isDatabaseTabActive = currentTabSelected === "database";
   const isStatsOrGamesTab = tabType === "stats" || tabType === "games";
-  const shouldSearch = (forceActive || isDatabaseTabActive) && isStatsOrGamesTab;
+  const shouldSearch = !coverageEngineAnalysisActive && (forceActive || isDatabaseTabActive) && isStatsOrGamesTab;
 
   // Always get FEN from store to ensure we have the current position
   // Use a ref to track the last FEN to prevent unnecessary re-renders when not searching
@@ -289,6 +291,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   // Always load 1000 games sorted by elo when FEN changes
   // Update FEN whenever it changes, not just when searching
   useEffect(() => {
+    if (coverageEngineAnalysisActive) return;
     if (db === "local" && localOptions.path && fen) {
       const fenChanged = fen !== prevFenRef.current;
       if (fenChanged) {
@@ -296,7 +299,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
 
         // Cancel any ongoing queries immediately when FEN changes
         if (shouldSearch) {
-          queryClient.cancelQueries({ queryKey: ["database-opening"] });
+          void queryClient.cancelQueries({ queryKey: ["database-opening"] }).catch(() => {});
         }
 
         setLocalOptions((q) => {
@@ -314,7 +317,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
         }
       }
     }
-  }, [fen, setLocalOptions, db, queryClient, shouldSearch, localOptions.path]);
+  }, [coverageEngineAnalysisActive, fen, setLocalOptions, db, queryClient, shouldSearch, localOptions.path]);
 
   // Handle debounced FEN for final query invalidation
   // This ensures we don't trigger too many queries during rapid FEN changes
@@ -322,7 +325,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   useEffect(() => {
     if (db === "local" && debouncedFen === fen && shouldSearch && localOptions.path) {
       // Only invalidate when debounce settles and matches current FEN
-      queryClient.invalidateQueries({ queryKey: ["database-opening"] });
+      void queryClient.invalidateQueries({ queryKey: ["database-opening"] }).catch(() => {});
     }
   }, [debouncedFen, fen, db, queryClient, shouldSearch, localOptions.path]);
 
@@ -478,7 +481,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
                 players: isChessbase ? [] : prev.players,
               }));
               // Invalidate queries to trigger new search with new database
-              queryClient.invalidateQueries({ queryKey: ["database-opening"] });
+              void queryClient.invalidateQueries({ queryKey: ["database-opening"] }).catch(() => {});
             }
           }}
           placeholder={t("features.board.database.selectDatabase")}

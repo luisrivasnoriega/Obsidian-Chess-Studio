@@ -36,7 +36,7 @@ mod variant_positions;
 use std::process::Command;
 use std::sync::Arc;
 
-use chess::{BestMovesPayload, EngineProcess, ReportProgress};
+use chess::{BestMovesPayload, CoverageEngineSession, EngineProcess, ReportProgress};
 use dashmap::DashMap;
 use db::{DatabaseProgress, GameQueryJs, NormalizedGame, PositionStats};
 use derivative::Derivative;
@@ -64,8 +64,10 @@ use crate::dashboard_games_history::{
 };
 use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::chess::{
-    analyze_game, analyze_game_human_report, build_human_strategic_live_report, get_best_moves, get_engine_config,
-    get_engine_logs, kill_engine, kill_engines, pick_human_strategic_move, stop_engine,
+    analyze_game, analyze_game_human_report, build_human_strategic_live_report,
+    evaluate_coverage_engine_session_position, evaluate_engine_position_once, evaluate_engine_positions_batch,
+    get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines, pick_human_strategic_move,
+    run_coverage_engine_analysis, start_coverage_engine_session, stop_coverage_engine_session, stop_engine,
     dashboard_analyze_all_run, dashboard_analyze_all_cancel,
 };
 use crate::db::{
@@ -131,7 +133,7 @@ use crate::variants_opening::variants_create_opening_variants;
 use crate::variant_coverage_graph::{
     variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
     variant_coverage_apply_profile_position_flags, variant_coverage_build_source_signature,
-    variant_coverage_classify_position, variant_coverage_get_cached_position,
+    variant_coverage_build_graph, variant_coverage_classify_position, variant_coverage_get_cached_position,
     variant_coverage_get_profile_position, variant_coverage_graph_cache_path,
     variant_coverage_parse_build_config_tags, variant_coverage_read_graph_cache,
     variant_coverage_critical_line_report,
@@ -194,6 +196,7 @@ pub struct AppState {
     pgn_offsets: DashMap<String, Vec<u64>>,
     fide_players: RwLock<Vec<FidePlayer>>,
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
+    coverage_engine_sessions: DashMap<String, Arc<tokio::sync::Mutex<CoverageEngineSession>>>,
     dashboard_analyze_all_cancellations: DashMap<String, bool>,
     // Key: (run_id, analysis_id), Value: engine path.
     dashboard_analyze_all_active: DashMap<(String, String), String>,
@@ -224,6 +227,12 @@ pub async fn run() {
             find_fide_player,
             fetch_fide_profile_html,
             save_fide_photo,
+            evaluate_engine_position_once,
+            evaluate_engine_positions_batch,
+            run_coverage_engine_analysis,
+            start_coverage_engine_session,
+            evaluate_coverage_engine_session_position,
+            stop_coverage_engine_session,
             get_best_moves,
             pick_human_strategic_move,
             analyze_game,
@@ -254,6 +263,7 @@ pub async fn run() {
             coverage_cache_get,
             coverage_cache_set,
             variant_coverage_parse_build_config_tags,
+            variant_coverage_build_graph,
             variant_coverage_build_source_signature,
             variant_coverage_graph_cache_path,
             variant_coverage_read_graph_cache,
@@ -726,7 +736,9 @@ fn process_memory_rss_mb() -> Option<u64> {
     let mut system = sysinfo::System::new_all();
     let pid = sysinfo::Pid::from_u32(std::process::id());
     system.refresh_process(pid);
-    system.process(pid).map(|process| process.memory() / 1024)
+    system
+        .process(pid)
+        .map(|process| process.memory() / (1024 * 1024))
 }
 
 #[cfg(target_os = "windows")]

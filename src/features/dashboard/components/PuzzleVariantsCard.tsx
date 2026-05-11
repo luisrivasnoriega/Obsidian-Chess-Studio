@@ -684,7 +684,7 @@ export function PuzzleVariantsCard() {
           </Box>
         ) : (
           <ScrollArea.Autosize mah={620} offsetScrollbars>
-            <Stack gap="lg">
+            <Stack gap="md">
               {filteredRows.map((row) => {
                 const tierLabel = getTierDisplayLabel(t, row.coverageTier);
                 return (
@@ -698,28 +698,29 @@ export function PuzzleVariantsCard() {
                       background:
                         "radial-gradient(90% 120% at 0% 50%, rgba(14, 165, 233, 0.1), transparent 52%), linear-gradient(145deg, rgba(8, 19, 34, 0.94), rgba(6, 13, 25, 0.96))",
                       boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.04)",
-                      padding: "22px",
+                      padding: "18px",
                     }}
                   >
-                    <Box style={{ display: "flex", gap: 26, alignItems: "center", flexWrap: "wrap" }}>
-                      <Group gap="lg" wrap="nowrap" style={{ flex: "1 1 300px", minWidth: 0 }}>
+                    <Box style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+                      <Group gap="md" wrap="nowrap" style={{ flex: "1.25 1 360px", minWidth: 0 }}>
                         <ThemeIcon
                           radius="50%"
                           variant="light"
                           color="cyan"
-                          size={76}
+                          size={64}
                           style={{
                             border: "2px solid rgba(34, 211, 238, 0.84)",
                             background: "radial-gradient(circle, rgba(14, 165, 233, 0.24), rgba(2, 8, 23, 0.92))",
-                            boxShadow: "0 0 0 10px rgba(14, 165, 233, 0.08), 0 0 34px rgba(34, 211, 238, 0.28)",
+                            boxShadow: "0 0 0 8px rgba(14, 165, 233, 0.08), 0 0 30px rgba(34, 211, 238, 0.24)",
+                            flexShrink: 0,
                           }}
                         >
-                          <IconCrown size={34} />
+                          <IconCrown size={28} />
                         </ThemeIcon>
 
-                        <Stack gap={8} style={{ minWidth: 0, flex: 1 }}>
+                        <Stack gap={6} style={{ minWidth: 0, flex: 1 }}>
                           <Group gap="xs" wrap="nowrap">
-                            <Text fw={800} fz={24} lh={1.1} truncate>
+                            <Text fw={800} fz={22} lh={1.1} truncate>
                               {row.displayName}
                             </Text>
                             <Badge
@@ -762,16 +763,16 @@ export function PuzzleVariantsCard() {
 
                       <Box
                         style={{
-                          flex: "1 1 430px",
-                          minWidth: "min(340px, 100%)",
+                          flex: "1 1 390px",
+                          minWidth: "min(320px, 100%)",
                           borderLeft: "1px solid rgba(148, 163, 184, 0.18)",
                           borderRight: "1px solid rgba(148, 163, 184, 0.18)",
-                          padding: "6px 28px",
+                          padding: "4px 22px",
                         }}
                       >
                         <Group grow gap={0} wrap="nowrap">
                           <Stack gap={2} align="center">
-                            <Text fw={800} fz={28}>
+                            <Text fw={800} fz={25}>
                               {row.coverage}%
                             </Text>
                             <Text size="xs" c="dimmed">
@@ -779,7 +780,7 @@ export function PuzzleVariantsCard() {
                             </Text>
                           </Stack>
                           <Stack gap={2} align="center">
-                            <Text fw={800} fz={28}>
+                            <Text fw={800} fz={25}>
                               {row.solvedCount}
                               <Text span fz={16} c="dimmed" fw={500}>
                                 /{row.puzzleCount}
@@ -790,7 +791,7 @@ export function PuzzleVariantsCard() {
                             </Text>
                           </Stack>
                           <Stack gap={2} align="center">
-                            <Text fw={800} fz={28}>
+                            <Text fw={800} fz={25}>
                               {row.accuracy}%
                             </Text>
                             <Text size="xs" c="dimmed" ta="center">
@@ -800,7 +801,7 @@ export function PuzzleVariantsCard() {
                             </Text>
                           </Stack>
                           <Stack gap={2} align="center">
-                            <Text fw={800} fz={24}>
+                            <Text fw={800} fz={22}>
                               {row.averageSolveTime}
                             </Text>
                             <Text size="xs" c="dimmed" ta="center">
@@ -811,7 +812,7 @@ export function PuzzleVariantsCard() {
                           </Stack>
                         </Group>
 
-                        <Group gap="sm" mt="xl" wrap="nowrap">
+                        <Group gap="sm" mt="lg" wrap="nowrap">
                           <Progress
                             value={row.coverage}
                             size="sm"
@@ -828,13 +829,13 @@ export function PuzzleVariantsCard() {
                         </Group>
                       </Box>
 
-                      <Stack gap="md" style={{ flex: "0 1 240px", minWidth: 210, marginLeft: "auto" }}>
+                      <Stack gap="sm" style={{ flex: "0 1 220px", minWidth: 190, marginLeft: "auto" }}>
                         <Button
-                          size="md"
+                          size="sm"
                           radius="md"
                           fullWidth
-                          rightSection={<IconChevronRight size={20} />}
-                          leftSection={<IconPuzzle size={20} />}
+                          rightSection={<IconChevronRight size={18} />}
+                          leftSection={<IconPuzzle size={18} />}
                           onClick={(event) => {
                             event.stopPropagation();
                             openPuzzles(row.path, true);

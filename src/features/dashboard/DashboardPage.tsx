@@ -14,7 +14,7 @@ import {
   Text,
   ThemeIcon,
 } from "@mantine/core";
-import { useDebouncedValue } from "@mantine/hooks";
+import { useDebouncedValue, useMediaQuery } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
   IconChartBar,
@@ -545,6 +545,7 @@ async function loadDashboardOverviewMetrics(input: {
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+  const useSplitPuzzleCards = useMediaQuery("(min-width: 135em)");
   const [isFirstOpen, setIsFirstOpen] = useState(false);
   useEffect(() => {
     const key = "obsidian-chess-studio.firstOpen";
@@ -2519,7 +2520,7 @@ export default function DashboardPage() {
           </Grid>
 
           <Grid>
-            <Grid.Col span={{ base: 12, md: 6 }}>
+            <Grid.Col span={{ base: 12, md: useSplitPuzzleCards ? 6 : 12 }}>
               <PuzzleStatsCard
                 stats={puzzleStats}
                 onStartPuzzles={() => {
@@ -2532,7 +2533,7 @@ export default function DashboardPage() {
                 }}
               />
             </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 6 }}>
+            <Grid.Col span={{ base: 12, md: useSplitPuzzleCards ? 6 : 12 }}>
               <PuzzleVariantsCard />
             </Grid.Col>
           </Grid>

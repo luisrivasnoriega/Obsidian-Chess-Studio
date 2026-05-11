@@ -598,7 +598,7 @@ function Puzzles({ id }: { id: string }) {
             </Paper>
 
             <Paper withBorder p="md">
-              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} />
+              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} currentPuzzle={currentPuzzleData} />
               <Divider my="sm" />
 
               <ChallengeHistory
@@ -701,7 +701,7 @@ function Puzzles({ id }: { id: string }) {
         <Grid.Col span={{ base: 12, md: 3 }} style={{ minHeight: 0, display: "flex" }}>
           <Paper h="100%" w="100%" withBorder p="md" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
             <ScrollArea h="100%" offsetScrollbars>
-              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} />
+              <PuzzleVariantsPanel selectedDb={selectedDb} sessionPuzzles={puzzles} currentPuzzle={currentPuzzleData} />
               <Divider my="sm" />
 
               <ChallengeHistory

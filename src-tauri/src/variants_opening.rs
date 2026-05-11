@@ -967,12 +967,7 @@ pub fn variants_create_opening_variants(
     }
 
     let output_dir = parent_dir(Path::new(&root_variant.path));
-    let descendant_keys: Vec<String> = source_keys.iter().filter(|key| *key != &root_key).cloned().collect();
-    let mut cleanup_keys: HashSet<String> = descendant_keys
-        .iter()
-        .filter_map(|key| variant_by_key.get(key))
-        .map(|variant| normalize_path_key(&variant.path))
-        .collect();
+    let mut cleanup_keys: HashSet<String> = HashSet::new();
     for variant in &variants {
         let variant_key = normalize_path_key(&variant.path);
         if variant_key == root_key || cleanup_keys.contains(&variant_key) {
@@ -988,12 +983,7 @@ pub fn variants_create_opening_variants(
             .as_deref()
             .map(|path| normalize_path_key(path) == normalize_path_key(&root_variant.path))
             .unwrap_or(false);
-        let candidate_fen = tag_value(&tags, "fen:").or_else(|| variant.fen.clone());
-        let belongs = candidate_fen
-            .as_deref()
-            .and_then(|fen| find_first_path_by_fen(&aggregate_root, fen))
-            .is_some();
-        if generated_for_current_root || belongs {
+        if generated_for_current_root {
             cleanup_keys.insert(variant_key);
         }
     }
@@ -1216,20 +1206,8 @@ pub fn variants_create_opening_variants(
     };
 
     fs::create_dir_all(&output_dir)?;
-    let mut root_path = PathBuf::from(&root_variant.path);
+    let root_path = PathBuf::from(&root_variant.path);
     if let Some(root_group) = groups.iter_mut().find(|group| group.id == root_replacement_id) {
-        let requested_root = output_dir.join(format!("{}.pgn", root_group.file_stem));
-        if normalize_path_key(&requested_root.to_string_lossy()) != normalize_path_key(&root_variant.path) {
-            if requested_root.exists() {
-                return Err(Error::InvalidInput("File already exists".to_string()));
-            }
-            fs::rename(&root_variant.path, &requested_root)?;
-            let old_info = info_path(Path::new(&root_variant.path));
-            if old_info.exists() {
-                fs::rename(old_info, info_path(&requested_root))?;
-            }
-            root_path = requested_root;
-        }
         root_group.file_path = Some(root_path.clone());
     }
 
@@ -1262,14 +1240,6 @@ pub fn variants_create_opening_variants(
         });
         write_metadata(&path, &metadata)?;
         group.file_path = Some(path);
-    }
-
-    if let Some(root_group) = groups.iter().find(|group| group.id == root_replacement_id) {
-        let tree = group_trees
-            .get(&root_group.id)
-            .ok_or_else(|| Error::InvalidInput("Missing generated root opening tree".to_string()))?;
-        let pgn = render_pgn(tree, &root_group.title, parse_eco_from_title(&root_group.title).as_deref(), orientation);
-        fs::write(&root_path, pgn)?;
     }
 
     group_by_id = groups.iter().cloned().map(|group| (group.id.clone(), group)).collect();
@@ -1336,24 +1306,59 @@ pub fn variants_create_opening_variants(
             })
         };
 
-        let mut tags = metadata_tags(&metadata)
-            .into_iter()
-            .filter(|tag| {
-                !tag.starts_with("opening:")
-                    && !tag.starts_with("fen:")
-                    && !tag.starts_with("generatedBy:opening-variants")
-                    && !tag.starts_with("generatedRoot:")
-                    && !tag.starts_with("generatedAt:")
-            })
-            .collect::<Vec<_>>();
-        tags.push(format!("opening:{}", group.title));
-        tags.push(format!("fen:{tree_fen}"));
-        tags.push("generatedBy:opening-variants".to_string());
-        tags.push(format!("generatedRoot:{}", root_path.to_string_lossy()));
-        tags.push(format!("generatedAt:{created_at}"));
-        metadata["tags"] = json!(tags);
         metadata["schemaVersion"] = json!(2);
-        metadata["links"] = json!({ "children": child_links });
+        if group.id == root_replacement_id {
+            let root_dir = parent_dir(&root_path);
+            let mut merged_children = metadata
+                .get("links")
+                .and_then(|links| links.get("children"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|child| {
+                    let Some(child_path) = child.get("path").and_then(Value::as_str) else {
+                        return true;
+                    };
+                    let child_key = if Path::new(child_path).is_absolute() {
+                        normalize_path_key(child_path)
+                    } else {
+                        let resolved_child_path = root_dir.join(child_path);
+                        normalize_path_key(resolved_child_path.to_string_lossy().as_ref())
+                    };
+                    !cleanup_keys.contains(&child_key)
+                })
+                .collect::<Vec<_>>();
+            let mut existing_child_keys: HashSet<String> = merged_children
+                .iter()
+                .filter_map(|child| child.get("path").and_then(Value::as_str))
+                .map(|path| path.to_lowercase())
+                .collect();
+            for child in child_links {
+                if existing_child_keys.insert(child.path.to_lowercase()) {
+                    merged_children.push(json!(child));
+                }
+            }
+            metadata["links"]["children"] = json!(merged_children);
+        } else {
+            let mut tags = metadata_tags(&metadata)
+                .into_iter()
+                .filter(|tag| {
+                    !tag.starts_with("opening:")
+                        && !tag.starts_with("fen:")
+                        && !tag.starts_with("generatedBy:opening-variants")
+                        && !tag.starts_with("generatedRoot:")
+                        && !tag.starts_with("generatedAt:")
+                })
+                .collect::<Vec<_>>();
+            tags.push(format!("opening:{}", group.title));
+            tags.push(format!("fen:{tree_fen}"));
+            tags.push("generatedBy:opening-variants".to_string());
+            tags.push(format!("generatedRoot:{}", root_path.to_string_lossy()));
+            tags.push(format!("generatedAt:{created_at}"));
+            metadata["tags"] = json!(tags);
+            metadata["links"] = json!({ "children": child_links });
+        }
         if let Some(parent) = parent_link {
             metadata["links"]["parent"] = parent;
         }
@@ -1361,7 +1366,8 @@ pub fn variants_create_opening_variants(
     }
 
     Ok(CreateOpeningVariantsResult {
-        created: u32::try_from(groups.len()).unwrap_or(u32::MAX),
+        created: u32::try_from(groups.iter().filter(|group| group.id != root_replacement_id).count())
+            .unwrap_or(u32::MAX),
         removed,
         root_path: root_path.to_string_lossy().to_string(),
     })
