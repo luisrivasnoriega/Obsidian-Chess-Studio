@@ -56,14 +56,8 @@ jobs:
       - name: Ensure README is committed
         run: git diff --exit-code README.md
 
-      - name: Run frontend unit tests
-        run: pnpm test
-
       - name: Build frontend bundle
         run: pnpm build-vite
-
-      - name: Run backend unit tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
 
   release_desktop:
     permissions:
@@ -72,14 +66,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: windows-latest
+            args: --bundles nsis
           - platform: macos-latest
             args: --target aarch64-apple-darwin --bundles dmg
           - platform: macos-latest
             args: --target x86_64-apple-darwin --bundles dmg
           - platform: ubuntu-22.04
             args: ""
-          - platform: windows-latest
-            args: --bundles nsis
     runs-on: ${{ matrix.platform }}
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')

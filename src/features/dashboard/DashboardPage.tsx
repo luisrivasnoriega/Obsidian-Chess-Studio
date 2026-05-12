@@ -76,7 +76,8 @@ import {
 } from "@/utils/gameRecords";
 import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import {
-  isProfileCloudSyncTarget,
+  configForProfileCloudSyncTarget,
+  getProfileCloudSyncTarget,
   loadProfileCloudSyncConfig,
   saveProfileCloudLocalState,
   syncProfilePackageWithCloud,
@@ -629,16 +630,23 @@ export default function DashboardPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
-  const isActiveProfileCloudSyncTarget = useMemo(
-    () => isProfileCloudSyncTarget(activeProfile, sessions),
+  const activeProfileCloudSyncTarget = useMemo(
+    () => getProfileCloudSyncTarget(activeProfile, sessions),
     [activeProfile, sessions],
+  );
+  const isActiveProfileCloudSyncTarget = useMemo(
+    () => activeProfileCloudSyncTarget !== null,
+    [activeProfileCloudSyncTarget],
   );
 
   useEffect(() => {
-    if (!activeProfile || !isActiveProfileCloudSyncTarget) return;
+    if (!activeProfile || !activeProfileCloudSyncTarget || !isActiveProfileCloudSyncTarget) return;
     if (autoCloudSyncProfileRef.current === activeProfile.id) return;
 
-    const config = loadProfileCloudSyncConfig();
+    const config = configForProfileCloudSyncTarget(
+      loadProfileCloudSyncConfig(activeProfileCloudSyncTarget),
+      activeProfileCloudSyncTarget,
+    );
     if (!config.endpoint.trim() || !config.syncSecret.trim() || !config.deviceId.trim()) {
       return;
     }
@@ -697,6 +705,7 @@ export default function DashboardPage() {
     };
   }, [
     activeProfile,
+    activeProfileCloudSyncTarget,
     isActiveProfileCloudSyncTarget,
     profilePawnUiStateByProfile,
     profileStatsUiStateByProfile,

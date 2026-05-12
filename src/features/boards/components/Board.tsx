@@ -11,7 +11,7 @@ import { INITIAL_FEN } from "chessops/fen";
 import { makeSan } from "chessops/san";
 import domtoimage from "dom-to-image";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
@@ -95,6 +95,7 @@ interface ChessboardProps {
   // Hide eval bar and footer controls for game mode (e.g., PlayVsEngineBoard)
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
+  desktopFooterContent?: ReactNode;
   allowPremove?: boolean;
 }
 
@@ -135,6 +136,7 @@ function Board({
   hideClockSpaces = false,
   hideEvalBar = false,
   hideFooterControls = false,
+  desktopFooterContent,
   allowPremove = false,
 }: ChessboardProps) {
   const { t } = useTranslation();
@@ -175,7 +177,10 @@ function Board({
     };
   }, []);
 
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("Board must be used within a TreeStateProvider");
+  }
 
   const rootFen = useStore(store, (s) => s.root.fen);
   const position = useStore(store, (s) => s.position);
@@ -521,8 +526,13 @@ function Board({
     .with({ san: "O-O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "c1" : "c8"))
     .otherwise((node) => node?.move?.to);
 
-  const lastMove =
-    currentNode?.move && square !== undefined ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!] : undefined;
+  let lastMove: [SquareName, SquareName] | undefined;
+  if (currentNode?.move && square !== undefined) {
+    const destination = makeSquare(square);
+    if (destination) {
+      lastMove = [chessgroundMove(currentNode.move)[0], destination];
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Performance: keep Chessground config object references stable across frequent
@@ -802,13 +812,17 @@ function Board({
           </Portal>
         )}
         {!hideFooterControls && (
-          <Group justify="space-between" h={hideClockSpaces ? "auto" : "2.125rem"}>
-            {!hideClockSpaces && materialDiff && (
+          <Group justify="space-between" h={hideClockSpaces ? "auto" : "2.125rem"} wrap="nowrap">
+            {desktopFooterContent ? (
+              <Box ml={hideClockSpaces ? 0 : "2.5rem"} style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }}>
+                {desktopFooterContent}
+              </Box>
+            ) : !hideClockSpaces && materialDiff ? (
               <Group ml="2.5rem">
                 {hasClock && <Clock color={orientation} turn={turn} whiteTime={whiteTime} blackTime={blackTime} />}
                 <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={orientation} />
               </Group>
-            )}
+            ) : null}
 
             {error && (
               <Text ta="center" c="red">

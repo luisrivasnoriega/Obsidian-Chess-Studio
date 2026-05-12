@@ -50,8 +50,22 @@ function DetachedVariantsNotationContent({ tabId }: { tabId: string }) {
   });
 
   return (
-    <Box h="100vh" w="100vw" p="xs" style={{ minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-      <VariantsNotation topBar forceDesktopLayout />
+    <Box
+      h="100vh"
+      w="100vw"
+      p="xs"
+      style={{
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
+    >
+      <Box style={{ flex: "1 1 0", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+        <VariantsNotation topBar forceDesktopLayout />
+      </Box>
     </Box>
   );
 }

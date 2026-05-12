@@ -6,9 +6,29 @@ const KDF_ITERATIONS = 150_000;
 
 export const PROFILE_CLOUD_SYNC_TARGET = {
   profileName: "Isabella",
-  lichessUsername: "bethfisher94",
+  platform: "lichess",
+  username: "bethfisher94",
   userId: "bethfisher94",
-} as const;
+} as const satisfies ProfileCloudSyncTarget;
+
+export type ProfileCloudSyncPlatform = "lichess" | "chesscom";
+
+export type ProfileCloudSyncTarget = {
+  profileName: string;
+  platform: ProfileCloudSyncPlatform;
+  username: string;
+  userId: string;
+};
+
+export const PROFILE_CLOUD_SYNC_TARGETS = [
+  PROFILE_CLOUD_SYNC_TARGET,
+  {
+    profileName: "Kevin",
+    platform: "chesscom",
+    username: "kevin09877",
+    userId: "kevin09877",
+  },
+] as const satisfies readonly ProfileCloudSyncTarget[];
 
 export type ProfileCloudSyncConfig = {
   endpoint: string;
@@ -66,30 +86,56 @@ type ProfileCloudSyncTargetSession = {
   lichess?: {
     username: string;
   };
+  chessCom?: {
+    username: string;
+  };
 };
 
 function normalizeTargetValue(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? "";
 }
 
+function targetSessionUsername(session: ProfileCloudSyncTargetSession, target: ProfileCloudSyncTarget): string | null {
+  if (target.platform === "lichess") return session.lichess?.username ?? null;
+  return session.chessCom?.username ?? null;
+}
+
+export function profileCloudSyncPlatformLabel(target: ProfileCloudSyncTarget): string {
+  return target.platform === "chesscom" ? "Chess.com" : "Lichess";
+}
+
+export function describeProfileCloudSyncTarget(target: ProfileCloudSyncTarget): string {
+  return `${target.profileName} / ${profileCloudSyncPlatformLabel(target)} ${target.username}`;
+}
+
+export function getProfileCloudSyncTarget(
+  profile: ProfileCloudSyncTargetProfile | null | undefined,
+  sessions: ProfileCloudSyncTargetSession[],
+): ProfileCloudSyncTarget | null {
+  if (!profile) return null;
+
+  return (
+    PROFILE_CLOUD_SYNC_TARGETS.find((target) => {
+      if (normalizeTargetValue(profile.name) !== normalizeTargetValue(target.profileName)) {
+        return false;
+      }
+      return sessions.some(
+        (session) =>
+          session.profileId === profile.id &&
+          normalizeTargetValue(targetSessionUsername(session, target)) === normalizeTargetValue(target.username),
+      );
+    }) ?? null
+  );
+}
+
 export function isProfileCloudSyncTarget(
   profile: ProfileCloudSyncTargetProfile | null | undefined,
   sessions: ProfileCloudSyncTargetSession[],
 ): boolean {
-  if (!profile) return false;
-  if (normalizeTargetValue(profile.name) !== normalizeTargetValue(PROFILE_CLOUD_SYNC_TARGET.profileName)) {
-    return false;
-  }
-
-  return sessions.some(
-    (session) =>
-      session.profileId === profile.id &&
-      normalizeTargetValue(session.lichess?.username) ===
-        normalizeTargetValue(PROFILE_CLOUD_SYNC_TARGET.lichessUsername),
-  );
+  return getProfileCloudSyncTarget(profile, sessions) !== null;
 }
 
-function assertProfilePackageIsCloudSyncTarget(packageJson: string): void {
+function getProfilePackageCloudSyncTarget(packageJson: string): ProfileCloudSyncTarget {
   const parsed = JSON.parse(packageJson) as {
     profile?: ProfileCloudSyncTargetProfile;
     sessions?: ProfileCloudSyncTargetSession[];
@@ -97,11 +143,24 @@ function assertProfilePackageIsCloudSyncTarget(packageJson: string): void {
 
   const rawSessions = parsed?.sessions;
   const sessions = Array.isArray(rawSessions) ? rawSessions : [];
-  if (!isProfileCloudSyncTarget(parsed?.profile, sessions)) {
+  const target = getProfileCloudSyncTarget(parsed?.profile, sessions);
+  if (!target) {
     throw new Error(
-      `Cloud sync is currently limited to profile ${PROFILE_CLOUD_SYNC_TARGET.profileName} linked to Lichess account ${PROFILE_CLOUD_SYNC_TARGET.lichessUsername}.`,
+      `Cloud sync is currently limited to ${PROFILE_CLOUD_SYNC_TARGETS.map(describeProfileCloudSyncTarget).join(" or ")}.`,
     );
   }
+  return target;
+}
+
+function assertProfilePackageMatchesConfig(
+  packageJson: string,
+  config: ProfileCloudSyncConfig,
+): ProfileCloudSyncTarget {
+  const target = getProfilePackageCloudSyncTarget(packageJson);
+  if (normalizeTargetValue(target.userId) !== normalizeTargetValue(cloudSyncUserId(config))) {
+    throw new Error(`Cloud sync config is for ${cloudSyncUserId(config)}, but the package is for ${target.userId}.`);
+  }
+  return target;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -287,8 +346,13 @@ function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, "");
 }
 
-function cloudSyncUserId(): string {
-  return PROFILE_CLOUD_SYNC_TARGET.userId;
+function normalizeKnownCloudSyncUserId(value: string | null | undefined): string {
+  const normalized = normalizeTargetValue(value);
+  return PROFILE_CLOUD_SYNC_TARGETS.find((target) => normalizeTargetValue(target.userId) === normalized)?.userId ?? "";
+}
+
+function cloudSyncUserId(config?: { userId?: string | null }): string {
+  return normalizeKnownCloudSyncUserId(config?.userId) || PROFILE_CLOUD_SYNC_TARGET.userId;
 }
 
 function apiUrl(config: ProfileCloudSyncConfig, path: string, query: Record<string, string | null | undefined> = {}) {
@@ -327,12 +391,12 @@ export function generateProfileCloudDeviceId(): string {
   return id;
 }
 
-export function loadProfileCloudSyncConfig(): ProfileCloudSyncConfig {
+export function loadProfileCloudSyncConfig(target?: ProfileCloudSyncTarget | null): ProfileCloudSyncConfig {
   try {
     const parsed = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY) ?? "{}") as Partial<ProfileCloudSyncConfig>;
     return {
       endpoint: typeof parsed.endpoint === "string" ? parsed.endpoint : "",
-      userId: cloudSyncUserId(),
+      userId: target?.userId ?? cloudSyncUserId(parsed),
       syncSecret: typeof parsed.syncSecret === "string" ? parsed.syncSecret : "",
       deviceId:
         typeof parsed.deviceId === "string" && parsed.deviceId ? parsed.deviceId : generateProfileCloudDeviceId(),
@@ -341,7 +405,7 @@ export function loadProfileCloudSyncConfig(): ProfileCloudSyncConfig {
   } catch {
     return {
       endpoint: "",
-      userId: cloudSyncUserId(),
+      userId: target?.userId ?? cloudSyncUserId(),
       syncSecret: "",
       deviceId: generateProfileCloudDeviceId(),
       authToken: "",
@@ -354,7 +418,7 @@ export function saveProfileCloudSyncConfig(config: ProfileCloudSyncConfig): void
     CONFIG_STORAGE_KEY,
     JSON.stringify({
       endpoint: normalizeEndpoint(config.endpoint),
-      userId: cloudSyncUserId(),
+      userId: cloudSyncUserId(config),
       syncSecret: config.syncSecret,
       deviceId: config.deviceId.trim() || generateProfileCloudDeviceId(),
       authToken: config.authToken?.trim() ?? "",
@@ -368,16 +432,27 @@ export function validateProfileCloudSyncConfig(config: ProfileCloudSyncConfig): 
   if (!config.deviceId.trim()) throw new Error("Cloud sync device ID is required.");
 }
 
-function localStateKey(profileId: string): string {
-  return `${STATE_STORAGE_PREFIX}:${cloudSyncUserId()}:${profileId}`;
+export function configForProfileCloudSyncTarget(
+  config: ProfileCloudSyncConfig,
+  target: ProfileCloudSyncTarget,
+): ProfileCloudSyncConfig {
+  return { ...config, userId: target.userId };
 }
 
-export function loadProfileCloudLocalState(profileId: string): ProfileCloudLocalState | null {
+function localStateKey(profileId: string, userId: string): string {
+  return `${STATE_STORAGE_PREFIX}:${userId}:${profileId}`;
+}
+
+export function loadProfileCloudLocalState(
+  profileId: string,
+  config?: ProfileCloudSyncConfig,
+): ProfileCloudLocalState | null {
+  const userId = cloudSyncUserId(config);
   try {
     const parsed = JSON.parse(
-      localStorage.getItem(localStateKey(profileId)) ?? "null",
+      localStorage.getItem(localStateKey(profileId, userId)) ?? "null",
     ) as ProfileCloudLocalState | null;
-    return parsed?.profileId === profileId && parsed.userId === cloudSyncUserId() ? parsed : null;
+    return parsed?.profileId === profileId && parsed.userId === userId ? parsed : null;
   } catch {
     return null;
   }
@@ -388,10 +463,11 @@ export function saveProfileCloudLocalState(
   profileId: string,
   state: ProfileCloudRemoteState,
 ): void {
+  const userId = cloudSyncUserId(config);
   localStorage.setItem(
-    localStateKey(profileId),
+    localStateKey(profileId, userId),
     JSON.stringify({
-      userId: cloudSyncUserId(),
+      userId,
       profileId,
       revision: state.currentRevision,
       sha256: state.sha256,
@@ -404,7 +480,7 @@ export function saveProfileCloudLocalState(
 export async function getProfileCloudState(config: ProfileCloudSyncConfig): Promise<ProfileCloudRemoteState | null> {
   validateProfileCloudSyncConfig(config);
   try {
-    const response = await fetch(apiUrl(config, "/sync/profile/state", { userId: cloudSyncUserId() }), {
+    const response = await fetch(apiUrl(config, "/sync/profile/state", { userId: cloudSyncUserId(config) }), {
       method: "GET",
       headers: authHeaders(config),
     });
@@ -423,23 +499,26 @@ async function uploadEncryptedProfile(input: {
   packageJson: string;
   baseRevision: string | null;
 }): Promise<ProfileCloudRemoteState> {
-  assertProfilePackageIsCloudSyncTarget(input.packageJson);
+  assertProfilePackageMatchesConfig(input.packageJson, input.config);
   const { encrypted, sha256 } = await encryptPackageJson(input.packageJson, input.config);
   const revision = `rev_${Date.now()}_${randomRevisionSuffix()}`;
   try {
-    const response = await fetch(apiUrl(input.config, "/sync/profile/upload", { userId: cloudSyncUserId() }), {
-      method: "POST",
-      headers: {
-        ...authHeaders(input.config),
-        "content-type": "application/octet-stream",
-        "x-ocs-base-revision": input.baseRevision ?? "",
-        "x-ocs-device-id": input.config.deviceId.trim(),
-        "x-ocs-revision": revision,
-        "x-ocs-sha256": sha256,
-        "x-ocs-size-bytes": String(encrypted.byteLength),
+    const response = await fetch(
+      apiUrl(input.config, "/sync/profile/upload", { userId: cloudSyncUserId(input.config) }),
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(input.config),
+          "content-type": "application/octet-stream",
+          "x-ocs-base-revision": input.baseRevision ?? "",
+          "x-ocs-device-id": input.config.deviceId.trim(),
+          "x-ocs-revision": revision,
+          "x-ocs-sha256": sha256,
+          "x-ocs-size-bytes": String(encrypted.byteLength),
+        },
+        body: new Blob([bytesToArrayBuffer(encrypted)], { type: "application/octet-stream" }),
       },
-      body: new Blob([bytesToArrayBuffer(encrypted)], { type: "application/octet-stream" }),
-    });
+    );
     const state = await readJsonResponse<ProfileCloudRemoteState>(response);
     saveProfileCloudLocalState(input.config, input.profileId, state);
     return state;
@@ -469,10 +548,13 @@ export async function downloadProfilePackageFromCloud(input: {
   }
   let encrypted: Uint8Array;
   try {
-    const response = await fetch(apiUrl(input.config, "/sync/profile/download", { userId: cloudSyncUserId() }), {
-      method: "GET",
-      headers: authHeaders(input.config),
-    });
+    const response = await fetch(
+      apiUrl(input.config, "/sync/profile/download", { userId: cloudSyncUserId(input.config) }),
+      {
+        method: "GET",
+        headers: authHeaders(input.config),
+      },
+    );
     if (!response.ok) {
       throw new Error((await response.text()) || `Cloud sync download failed (${response.status}).`);
     }
@@ -489,7 +571,7 @@ export async function downloadProfilePackageFromCloud(input: {
   }
 
   try {
-    assertProfilePackageIsCloudSyncTarget(packageJson);
+    assertProfilePackageMatchesConfig(packageJson, input.config);
   } catch (error) {
     throw wrapCloudSyncError("Validate cloud profile package", error);
   }
@@ -507,10 +589,10 @@ export async function syncProfilePackageWithCloud(input: {
   packageJson: string;
 }): Promise<ProfileCloudSyncResult> {
   validateProfileCloudSyncConfig(input.config);
-  assertProfilePackageIsCloudSyncTarget(input.packageJson);
+  assertProfilePackageMatchesConfig(input.packageJson, input.config);
   const localSha256 = await sha256Hex(textEncoder.encode(input.packageJson));
   const remote = await getProfileCloudState(input.config);
-  const localState = loadProfileCloudLocalState(input.profileId);
+  const localState = loadProfileCloudLocalState(input.profileId, input.config);
 
   if (!remote) {
     const state = await uploadEncryptedProfile({ ...input, baseRevision: null });

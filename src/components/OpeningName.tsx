@@ -5,9 +5,12 @@ import { useStore } from "zustand";
 import { getOpening } from "@/utils/chess";
 import { TreeStateContext } from "./TreeStateContext";
 
-function OpeningName() {
+function OpeningName({ compact = false }: { compact?: boolean } = {}) {
   const [openingName, setOpeningName] = useState("");
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("OpeningName must be used within a TreeStateProvider");
+  }
   const root = useStore(store, (s) => s.root);
   const position = useStore(store, (s) => s.position);
   const { t } = useTranslation();
@@ -25,7 +28,7 @@ function OpeningName() {
   }, [root, position]);
 
   return (
-    <Text style={{ userSelect: "text" }} fz="sm" h="1.5rem">
+    <Text truncate={compact ? "end" : undefined} style={{ minWidth: 0, userSelect: "text" }} fz="sm" h="1.5rem">
       {openingName === "Empty Board"
         ? t("chess.opening.emptyBoard")
         : openingName === "Starting Position"

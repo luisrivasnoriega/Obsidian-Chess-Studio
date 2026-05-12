@@ -1,6 +1,6 @@
 import type { Piece } from "@lichess-org/chessground/types";
 import { Box, Stack } from "@mantine/core";
-import { memo, useCallback, useMemo } from "react";
+import { memo, type ReactNode, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { ResponsiveLoadingWrapper } from "@/components/ResponsiveLoadingWrapper";
 import { ResponsiveSkeleton } from "@/components/ResponsiveSkeleton";
@@ -56,6 +56,7 @@ interface ResponsiveBoardProps {
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
   hideMobileAnalysisPanel?: boolean;
+  desktopFooterContent?: ReactNode;
   allowPremove?: boolean;
 }
 
@@ -104,6 +105,7 @@ function ResponsiveBoard({
   hideEvalBar = false,
   hideFooterControls = false,
   hideMobileAnalysisPanel = false,
+  desktopFooterContent,
   allowPremove = false,
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
@@ -281,6 +283,7 @@ function ResponsiveBoard({
             hideClockSpaces={hideClockSpaces}
             hideEvalBar={hideEvalBar}
             hideFooterControls={hideFooterControls}
+            desktopFooterContent={desktopFooterContent}
             allowPremove={allowPremove}
           />
         </Box>

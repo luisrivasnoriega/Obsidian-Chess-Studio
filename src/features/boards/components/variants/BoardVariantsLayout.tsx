@@ -2,6 +2,7 @@ import { Box, Paper, Stack, Tabs } from "@mantine/core";
 import { type CSSProperties, type ReactNode, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import MoveControls from "@/components/MoveControls";
+import OpeningName from "@/components/OpeningName";
 import AnalysisPanel from "@/components/panels/analysis/AnalysisPanel";
 import LogsPanel from "@/components/panels/analysis/LogsPanel";
 import ReportPanel from "@/components/panels/analysis/ReportPanel";
@@ -280,6 +281,7 @@ export function BoardVariantsLayout({
                   toggleOrientation={commands.flipBoard}
                   disableVariations={false}
                   currentTabSourceType={state.currentTab?.source?.type || undefined}
+                  desktopFooterContent={desktopLayout.collapsedDesktopPanels.pgn ? <OpeningName compact /> : undefined}
                 />
               </Box>
               {!state.editingMode && (

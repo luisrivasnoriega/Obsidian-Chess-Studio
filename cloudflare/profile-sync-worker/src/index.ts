@@ -15,7 +15,7 @@ type ProfileSyncRow = {
 };
 
 const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
-const ALLOWED_USER_ID = "bethfisher94";
+const ALLOWED_USER_IDS = new Set(["bethfisher94", "kevin09877"]);
 
 function json(value: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(value), {
@@ -68,8 +68,8 @@ function required(value: string | null, name: string): string {
 }
 
 function requireAllowedUser(userId: string): Response | null {
-  if (userId.trim().toLowerCase() === ALLOWED_USER_ID) return null;
-  return text("This sync endpoint is limited to bethfisher94", { status: 403 });
+  if (ALLOWED_USER_IDS.has(userId.trim().toLowerCase())) return null;
+  return text("This sync endpoint is limited to configured OCS profile sync users", { status: 403 });
 }
 
 function safeSegment(value: string): string {

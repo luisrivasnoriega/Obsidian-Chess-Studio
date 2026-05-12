@@ -343,7 +343,7 @@ function VariantsNotation({
   ]);
 
   const notationBody = (
-    <Box style={{ position: "relative" }}>
+    <Box style={{ minWidth: 0, position: "relative" }}>
       {invisible && (
         <Overlay
           backgroundOpacity={0.6}
@@ -390,12 +390,26 @@ function VariantsNotation({
       flex={isMobileLayout ? undefined : 1}
       style={{
         ...(!isMobileLayout ? notationPanelSurface : {}),
+        display: isMobileLayout ? undefined : "flex",
+        flexDirection: isMobileLayout ? undefined : "column",
+        height: isMobileLayout ? undefined : "100%",
+        minHeight: 0,
+        minWidth: 0,
         position: "relative",
         overflow: isMobileLayout ? "visible" : "hidden",
         touchAction: isMobileLayout ? "pan-y" : undefined,
       }}
     >
-      <Stack h={isMobileLayout ? "auto" : "100%"} gap={0}>
+      <Stack
+        h={isMobileLayout ? "auto" : "100%"}
+        gap={0}
+        style={{
+          flex: isMobileLayout ? undefined : "1 1 0",
+          minHeight: 0,
+          minWidth: 0,
+          overflow: isMobileLayout ? undefined : "hidden",
+        }}
+      >
         {topBar && (
           <NotationHeader
             showComments={showComments}
@@ -423,9 +437,11 @@ function VariantsNotation({
         {isMobileLayout ? (
           <Box style={{ touchAction: "pan-y" }}>{notationBody}</Box>
         ) : (
-          <ScrollArea flex={1} offsetScrollbars viewportRef={viewportRef}>
-            {notationBody}
-          </ScrollArea>
+          <Box style={{ flex: "1 1 0", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+            <ScrollArea h="100%" type="auto" offsetScrollbars viewportRef={viewportRef}>
+              {notationBody}
+            </ScrollArea>
+          </Box>
         )}
       </Stack>
     </Paper>
@@ -460,9 +476,11 @@ function NotationHeader({
   const { t } = useTranslation();
 
   return (
-    <Stack>
-      <Group justify="space-between">
-        <OpeningName />
+    <Stack gap="xs" style={{ flex: "0 0 auto", minWidth: 0 }}>
+      <Group justify="space-between" align="flex-start" gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+        <Box style={{ flex: "1 1 auto", minWidth: 0 }}>
+          <OpeningName />
+        </Box>
         <Group gap="sm">
           <Tooltip label={invisible ? t("features.gameNotation.showMoves") : t("features.gameNotation.hideMoves")}>
             <ActionIcon onClick={() => setInvisible((prev: boolean) => !prev)}>

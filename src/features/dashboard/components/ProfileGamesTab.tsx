@@ -37,7 +37,6 @@ import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { stripAccountKey } from "@/utils/accountKeys";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
-import { getLichessGame } from "@/utils/lichess/api";
 import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
 import { formatRelativeTimeAgo } from "../utils/relativeTime";
 
@@ -52,6 +51,7 @@ type GamesHistoryRow = {
   color: "white" | "black";
   outcome: "win" | "loss" | "draw" | "unknown";
   pgn: string | null;
+  initialFen: string | null;
   accuracy: number | null;
   acpl: number | null;
   estimatedElo: number | null;
@@ -139,6 +139,18 @@ const _normalizeGameUrl = (urlLike?: string | null): string | null => {
   return null;
 };
 
+const _isLikelyLichessGameId = (value?: string | null): boolean => {
+  const raw = (value ?? "").trim();
+  return /^[A-Za-z0-9_-]{8,12}$/.test(raw) && /[A-Za-z]/.test(raw);
+};
+
+const _isLikelyLichessGameUrl = (value?: string | null): boolean => {
+  const url = _normalizeGameUrl(value);
+  if (!url || /lichess\.org\/broadcast\//i.test(url)) return false;
+  const match = url.match(/lichess\.org\/(?:game\/)?([A-Za-z0-9_-]{8,12})(?:[/?#]|$)/i);
+  return !!match?.[1] && _isLikelyLichessGameId(match[1]);
+};
+
 const _resolveRowGameUrl = (row: {
   kind: GamesHistoryKind;
   gameKey: string;
@@ -153,7 +165,7 @@ const _resolveRowGameUrl = (row: {
 
   if (row.kind === "lichess") {
     // Some rows keep only the lichess id in gameKey.
-    if (/^[A-Za-z0-9_-]{6,}$/.test(key)) return `https://lichess.org/${key}`;
+    if (_isLikelyLichessGameId(key)) return `https://lichess.org/${key}`;
   }
 
   return null;
@@ -263,6 +275,7 @@ export function ProfileGamesTab({
   timeControlCategory: TimeControlCategory | null;
   onTimeControlCategoryChange: (category: TimeControlCategory | null) => void;
 }) {
+  void profileDbPath;
   const { t } = useTranslation();
   const isMobile = useMediaQuery("(max-width: 48em)");
 
@@ -373,7 +386,7 @@ export function ProfileGamesTab({
           sortBy: sortBy ?? "date",
           sortDirection,
           includeBasePgn: true,
-          includeAnalyzedPgn: false,
+          includeAnalyzedPgn: true,
           includeAnalysisStats: true,
         },
       })) ?? { rows: [], totalCount: 0 };
@@ -760,53 +773,48 @@ export function ProfileGamesTab({
   };
 
   const handleAnalyzeRow = async (row: GamesHistoryRow, pgn: string | null) => {
+    const rowPgn = pgn?.trim() ? pgn.trim() : null;
+    if (!rowPgn || !_hasPgnHeaders(rowPgn)) {
+      return;
+    }
+
     const profileDisplayName = (profileUsernames?.[0] ?? "").trim() || t("common.player", { defaultValue: "Player" });
     const inferredWhite = row.color === "white" ? profileDisplayName : row.opponent;
     const inferredBlack = row.color === "white" ? row.opponent : profileDisplayName;
+    const whiteFromPgn = (_getTagFromPgn(rowPgn, "White") ?? "").trim();
+    const blackFromPgn = (_getTagFromPgn(rowPgn, "Black") ?? "").trim();
+    const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
+    const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
+    const timeControl = _getTimeControlFromPgn(rowPgn) ?? row.timeControl ?? null;
+    const result = _getResultFromPgn(rowPgn) ?? (row.outcome === "draw" ? "1/2-1/2" : "*");
+    const initialFen = _getTagFromPgn(rowPgn, "FEN") ?? row.initialFen ?? INITIAL_FEN;
 
     if (row.kind === "local") {
-      const g = localGames.find((x) => x.id === row.gameKey);
-      if (g) onAnalyzeLocalGame(g);
+      const localGame: GameRecord = {
+        id: row.analysisGameId,
+        profileId: profileId ?? undefined,
+        white: { type: "human", name: stripAccountKey(white) },
+        black: { type: "human", name: stripAccountKey(black) },
+        result,
+        timeControl: timeControl ?? undefined,
+        timestamp: row.timestampMs,
+        moves: [],
+        fen: initialFen,
+        initialFen,
+        pgn: rowPgn,
+      };
+      onAnalyzeLocalGame(localGame);
       return;
     }
 
     if (row.kind === "chesscom") {
-      const existing = chessComGames.find((x) => x.url === row.gameKey);
-      if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-        onAnalyzeChessComGame(existing, {
-          profileId: profileId ?? undefined,
-          profileDbGameId: row.analysisGameId,
-          playerColor: row.color,
-        });
-        return;
-      }
-
       const url = row.externalUrl || row.gameKey;
-      // For profile DB rows, avoid remote fetch here. Use locally available PGN only.
-      const fetched = (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
-      if (!fetched) {
-        if (existing) {
-          onAnalyzeChessComGame(existing, {
-            profileId: profileId ?? undefined,
-            profileDbGameId: row.analysisGameId,
-            playerColor: row.color,
-          });
-        }
-        return;
-      }
-
-      const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
-      const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
-      const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
-      const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
-      const tc = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? "";
-      const results = _chessComResultsFromPgn(fetched);
-      const initialFen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
+      const results = _chessComResultsFromPgn(rowPgn);
 
       const stub: ChessComGameWithEvent = {
         url,
-        pgn: fetched,
-        time_control: tc,
+        pgn: rowPgn,
+        time_control: timeControl ?? "",
         end_time: Math.floor(row.timestampMs / 1000),
         rated: true,
         initial_setup: initialFen,
@@ -827,16 +835,7 @@ export function ProfileGamesTab({
     }
 
     if (row.kind === "chessbase") {
-      const fetched = pgn?.trim() ? pgn : "";
-      if (!fetched) return;
-
-      const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
-      const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
-      const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
-      const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
-      const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
-      const winner = _winnerFromResult(_getResultFromPgn(fetched));
-      const fen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
+      const winner = _winnerFromResult(result);
 
       const stub: DashboardLichessGame = {
         id: `chessbase:${row.analysisGameId}`,
@@ -851,8 +850,8 @@ export function ProfileGamesTab({
         createdAt: row.timestampMs,
         winner,
         status: "finished",
-        pgn: fetched,
-        lastFen: fen,
+        pgn: rowPgn,
+        lastFen: initialFen,
         eventId: row.eventId ?? 0,
         eventName: row.eventName ?? null,
       };
@@ -866,40 +865,10 @@ export function ProfileGamesTab({
     }
 
     // Lichess
-    const existing = lichessGames.find((x) => x.id === row.gameKey);
-    if (existing?.pgn && _hasPgnHeaders(existing.pgn)) {
-      onAnalyzeLichessGame(existing, {
-        profileId: profileId ?? undefined,
-        profileDbGameId: row.analysisGameId,
-        playerColor: row.color,
-      });
-      return;
-    }
-
-    const gameId = row.gameKey;
-    const fetched =
-      ((await getLichessGame(gameId)) ?? "").trim() || (pgn?.trim() ?? "") || (existing?.pgn?.trim() ?? "");
-    if (!fetched) {
-      if (existing) {
-        onAnalyzeLichessGame(existing, {
-          profileId: profileId ?? undefined,
-          profileDbGameId: row.analysisGameId,
-          playerColor: row.color,
-        });
-      }
-      return;
-    }
-
-    const whiteFromPgn = (_getTagFromPgn(fetched, "White") ?? "").trim();
-    const blackFromPgn = (_getTagFromPgn(fetched, "Black") ?? "").trim();
-    const white = whiteFromPgn && whiteFromPgn !== "?" ? whiteFromPgn : inferredWhite;
-    const black = blackFromPgn && blackFromPgn !== "?" ? blackFromPgn : inferredBlack;
-    const timeControl = _getTimeControlFromPgn(fetched) ?? row.timeControl ?? null;
-    const winner = _winnerFromResult(_getResultFromPgn(fetched));
-    const fen = _getTagFromPgn(fetched, "FEN") ?? INITIAL_FEN;
+    const winner = _winnerFromResult(result);
 
     const stub: DashboardLichessGame = {
-      id: gameId,
+      id: row.gameKey,
       players: {
         white: { user: { name: stripAccountKey(white) } },
         black: { user: { name: stripAccountKey(black) } },
@@ -911,8 +880,8 @@ export function ProfileGamesTab({
       createdAt: row.timestampMs,
       winner,
       status: "finished",
-      pgn: fetched,
-      lastFen: fen,
+      pgn: rowPgn,
+      lastFen: initialFen,
       eventId: row.eventId ?? 0,
       eventName: row.eventName ?? null,
     };

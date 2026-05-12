@@ -29,6 +29,8 @@ static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
         .expect("Failed to build HTTP client")
 });
 
+const SMART_MIN_SOURCE_GAMES: u32 = 1_000;
+
 /// Coarse global throttle for Lichess explorer endpoints to avoid 429 bursts.
 /// This is global across invocations (best-effort).
 #[derive(Debug, Clone)]
@@ -509,6 +511,45 @@ fn build_existing_moves_by_fen(root: &TreeNodeDto) -> HashMap<String, Vec<Explor
     map
 }
 
+fn move_spec_from_existing_target_child(child: &TreeNodeDto) -> Option<MoveSpecDto> {
+    child
+        .san
+        .as_ref()
+        .map(|san| san.trim())
+        .filter(|san| !san.is_empty())
+        .map(|san| MoveSpecDto {
+            value: san.to_string(),
+            source: Some("smart".to_string()),
+            white: None,
+            black: None,
+            draws: None,
+            total: None,
+        })
+}
+
+fn build_existing_target_moves_by_fen(
+    root: &TreeNodeDto,
+    target_side: Side,
+) -> HashMap<String, MoveSpecDto> {
+    let mut map: HashMap<String, MoveSpecDto> = HashMap::new();
+    let mut stack: Vec<&TreeNodeDto> = vec![root];
+    while let Some(node) = stack.pop() {
+        if fen_turn(&node.fen).ok() == Some(target_side) {
+            if let Some(step) = node
+                .children
+                .first()
+                .and_then(move_spec_from_existing_target_child)
+            {
+                map.entry(fen_identity_key(&node.fen)).or_insert(step);
+            }
+        }
+        for child in &node.children {
+            stack.push(child);
+        }
+    }
+    map
+}
+
 // -----------------------------------------------------------------------------
 // Helpers: fen parsing + identity key
 // -----------------------------------------------------------------------------
@@ -795,6 +836,21 @@ fn select_coverage_moves(
     }
 
     selected
+}
+
+fn explorer_move_total(m: &ExplorerMove) -> u32 {
+    m.white.saturating_add(m.black).saturating_add(m.draws)
+}
+
+fn source_total_games(moves: &[ExplorerMove]) -> u32 {
+    moves
+        .iter()
+        .map(explorer_move_total)
+        .fold(0u32, u32::saturating_add)
+}
+
+fn smart_source_has_enough_games(moves: &[ExplorerMove]) -> bool {
+    source_total_games(moves) >= SMART_MIN_SOURCE_GAMES
 }
 
 fn visible_lichess_request_budget(req: &BuildVariantsTreeRequest) -> u32 {
@@ -1333,12 +1389,18 @@ mod smart {
     const DEFAULT_VALIDATION_FULL_MOVES: u32 = 8;
     const MIN_VALIDATION_PLIES: u32 = DEFAULT_VALIDATION_FULL_MOVES * 2;
     const RELIABILITY_SAMPLE_SIZE: f64 = 120.0;
-    const PRACTICAL_WEIGHT: f64 = 0.45;
-    const SAFETY_WEIGHT: f64 = 0.25;
-    const ENGINE_QUALITY_WEIGHT: f64 = 0.20;
-    const RELIABILITY_WEIGHT: f64 = 0.10;
-    const CURRENT_BRANCH_WEIGHT: f64 = 0.55;
-    const FUTURE_BRANCH_WEIGHT: f64 = 0.45;
+    const PRACTICAL_WEIGHT: f64 = 0.60;
+    const SAFETY_WEIGHT: f64 = 0.18;
+    const ENGINE_QUALITY_WEIGHT: f64 = 0.14;
+    const RELIABILITY_WEIGHT: f64 = 0.05;
+    const VALIDATION_COMPLETENESS_WEIGHT: f64 = 0.03;
+    const EXPECTED_SCORE_WEIGHT: f64 = 0.25;
+    const MAINLINE_SCORE_WEIGHT: f64 = 0.30;
+    const WORST_BRANCH_SCORE_WEIGHT: f64 = 0.25;
+    const TERMINAL_SCORE_WEIGHT: f64 = 0.20;
+    const CURRENT_BRANCH_WEIGHT: f64 = 0.30;
+    const FUTURE_BRANCH_WEIGHT: f64 = 0.70;
+    const INCOMPLETE_VALIDATION_SCORE: f64 = 0.46;
     const SMART_VALIDATION_LICHESS_REQUEST_BUDGET: u32 = 32;
 
     #[derive(Debug, Clone, Copy)]
@@ -1409,8 +1471,12 @@ mod smart {
     struct SmartOutcome {
         valid: bool,
         practical_score: f64,
+        mainline_score: f64,
+        worst_branch_score: f64,
+        terminal_score: f64,
         sample_reliability: f64,
         min_target_eval_cp: i32,
+        validation_complete: bool,
     }
 
     impl SmartOutcome {
@@ -1418,8 +1484,25 @@ mod smart {
             Self {
                 valid: true,
                 practical_score: 0.5,
+                mainline_score: 0.5,
+                worst_branch_score: 0.5,
+                terminal_score: 0.5,
                 sample_reliability: 0.0,
                 min_target_eval_cp: MATE_CP,
+                validation_complete: true,
+            }
+        }
+
+        fn incomplete() -> Self {
+            Self {
+                valid: true,
+                practical_score: INCOMPLETE_VALIDATION_SCORE,
+                mainline_score: INCOMPLETE_VALIDATION_SCORE,
+                worst_branch_score: INCOMPLETE_VALIDATION_SCORE,
+                terminal_score: INCOMPLETE_VALIDATION_SCORE,
+                sample_reliability: 0.0,
+                min_target_eval_cp: MATE_CP,
+                validation_complete: false,
             }
         }
 
@@ -1427,8 +1510,12 @@ mod smart {
             Self {
                 valid: false,
                 practical_score: 0.0,
+                mainline_score: 0.0,
+                worst_branch_score: 0.0,
+                terminal_score: 0.0,
                 sample_reliability: 0.0,
                 min_target_eval_cp: -MATE_CP,
+                validation_complete: false,
             }
         }
     }
@@ -1438,7 +1525,11 @@ mod smart {
         target_eval_cp: i32,
         best_target_eval_cp: i32,
         practical_score: f64,
+        mainline_score: f64,
+        worst_branch_score: f64,
+        terminal_score: f64,
         sample_reliability: f64,
+        validation_complete: bool,
         hidden_valid: bool,
     }
 
@@ -1514,12 +1605,22 @@ mod smart {
             ((input.target_eval_cp - cfg.playable_threshold_cp) as f64 / 300.0).clamp(0.0, 1.0);
         let engine_drop = (input.best_target_eval_cp - input.target_eval_cp).max(0);
         let engine_quality = (1.0 - (engine_drop as f64 / 220.0)).clamp(0.0, 1.0);
+        let practical_score = input.practical_score.clamp(0.0, 1.0);
+        let mainline_score = input.mainline_score.clamp(0.0, 1.0);
+        let worst_branch_score = input.worst_branch_score.clamp(0.0, 1.0);
+        let terminal_score = input.terminal_score.clamp(0.0, 1.0);
+        let practical_composite = practical_score * EXPECTED_SCORE_WEIGHT
+            + mainline_score * MAINLINE_SCORE_WEIGHT
+            + worst_branch_score * WORST_BRANCH_SCORE_WEIGHT
+            + terminal_score * TERMINAL_SCORE_WEIGHT;
+        let completeness = if input.validation_complete { 1.0 } else { 0.0 };
 
         Some(
-            input.practical_score.clamp(0.0, 1.0) * PRACTICAL_WEIGHT
+            practical_composite * PRACTICAL_WEIGHT
                 + safety_margin * SAFETY_WEIGHT
                 + engine_quality * ENGINE_QUALITY_WEIGHT
-                + input.sample_reliability.clamp(0.0, 1.0) * RELIABILITY_WEIGHT,
+                + input.sample_reliability.clamp(0.0, 1.0) * RELIABILITY_WEIGHT
+                + completeness * VALIDATION_COMPLETENESS_WEIGHT,
         )
     }
 
@@ -1658,6 +1759,7 @@ mod smart {
             let mut scored: Vec<CandidateEvaluation> = Vec::new();
             for candidate in engine_candidates.clone() {
                 let mut nodes_left = self.cfg.validation_beam_width;
+                *self.lichess_requests_left = validation_lichess_request_budget();
                 if let Some(evaluation) = Box::pin(self.score_candidate(
                     fen.to_string(),
                     candidate,
@@ -1667,6 +1769,20 @@ mod smart {
                 ))
                 .await?
                 {
+                    log::debug!(
+                        "SMART candidate scored: fen_key={} move={} rank={} eval_cp={} expected={:.3} mainline={:.3} worst={:.3} terminal={:.3} reliability={:.3} complete={} final={:.3}",
+                        fen_identity_key(fen),
+                        evaluation.candidate.san,
+                        evaluation.candidate.engine_rank + 1,
+                        evaluation.candidate.target_eval_cp,
+                        evaluation.outcome.practical_score,
+                        evaluation.outcome.mainline_score,
+                        evaluation.outcome.worst_branch_score,
+                        evaluation.outcome.terminal_score,
+                        evaluation.outcome.sample_reliability,
+                        evaluation.outcome.validation_complete,
+                        evaluation.final_score
+                    );
                     scored.push(evaluation);
                 }
             }
@@ -1680,8 +1796,11 @@ mod smart {
             plies_left: u32,
             nodes_left: &mut usize,
         ) -> Result<SmartOutcome> {
-            if plies_left == 0 || *nodes_left == 0 {
+            if plies_left == 0 {
                 return Ok(SmartOutcome::neutral());
+            }
+            if *nodes_left == 0 {
+                return Ok(SmartOutcome::incomplete());
             }
 
             let memo_key = format!("{}|plies={}", fen_identity_key(&fen), plies_left);
@@ -1705,7 +1824,9 @@ mod smart {
                 Box::pin(self.evaluate_opponent_turn(fen.clone(), plies_left, nodes_left)).await?
             };
 
-            self.memo.insert(memo_key, outcome);
+            if outcome.validation_complete {
+                self.memo.insert(memo_key, outcome);
+            }
             Ok(outcome)
         }
 
@@ -1799,14 +1920,22 @@ mod smart {
             let outcome = SmartOutcome {
                 valid: true,
                 practical_score: child.practical_score,
+                mainline_score: child.mainline_score,
+                worst_branch_score: child.worst_branch_score,
+                terminal_score: child.terminal_score,
                 sample_reliability: child.sample_reliability,
                 min_target_eval_cp,
+                validation_complete: child.validation_complete,
             };
             let input = CandidateScoreInput {
                 target_eval_cp: candidate.target_eval_cp,
                 best_target_eval_cp,
                 practical_score: outcome.practical_score,
+                mainline_score: outcome.mainline_score,
+                worst_branch_score: outcome.worst_branch_score,
+                terminal_score: outcome.terminal_score,
                 sample_reliability: outcome.sample_reliability,
+                validation_complete: outcome.validation_complete,
                 hidden_valid: outcome.valid && min_target_eval_cp >= self.cfg.playable_threshold_cp,
             };
             let Some(final_score) = score_candidate_input(input, self.cfg) else {
@@ -1827,23 +1956,31 @@ mod smart {
             nodes_left: &mut usize,
         ) -> Result<SmartOutcome> {
             let opening_moves = self.opening_moves(&fen).await?;
+            if !smart_source_has_enough_games(&opening_moves) {
+                return Ok(SmartOutcome::incomplete());
+            }
+
             let mut selected =
                 select_coverage_moves(&opening_moves, self.req.coverage, self.req.min_moves);
             if selected.len() > self.cfg.max_validation_opponent_branches {
                 selected.truncate(self.cfg.max_validation_opponent_branches);
             }
             if selected.is_empty() {
-                return Ok(SmartOutcome::neutral());
+                return Ok(SmartOutcome::incomplete());
             }
 
             let total_counts: u32 = selected.iter().map(|m| m.white + m.black + m.draws).sum();
             let equal_weight = 1.0 / selected.len() as f64;
             let mut weighted_practical = 0.0;
             let mut weighted_reliability = 0.0;
+            let mut weighted_terminal = 0.0;
+            let mut mainline_score: Option<f64> = None;
+            let mut worst_branch_score = 1.0;
             let mut min_target_eval_cp = MATE_CP;
             let mut applied_any = false;
+            let mut validation_complete = true;
 
-            for m in selected {
+            for (idx, m) in selected.into_iter().enumerate() {
                 let total = m.white + m.black + m.draws;
                 let weight = if total_counts > 0 {
                     total as f64 / total_counts as f64
@@ -1872,11 +2009,27 @@ mod smart {
                 if !child.valid || child.min_target_eval_cp < self.cfg.playable_threshold_cp {
                     return Ok(SmartOutcome::invalid());
                 }
+                validation_complete = validation_complete && child.validation_complete;
 
                 let branch_practical = if plies_left <= 1 {
                     practical_now
                 } else {
                     blend_future_value(practical_now, child.practical_score)
+                };
+                let branch_mainline = if plies_left <= 1 {
+                    practical_now
+                } else {
+                    practical_now.min(child.mainline_score)
+                };
+                let branch_worst = if plies_left <= 1 {
+                    practical_now
+                } else {
+                    practical_now.min(child.worst_branch_score)
+                };
+                let branch_terminal = if plies_left <= 1 {
+                    practical_now
+                } else {
+                    child.terminal_score
                 };
                 let branch_reliability = if plies_left <= 1 {
                     reliability
@@ -1885,20 +2038,31 @@ mod smart {
                 };
 
                 weighted_practical += branch_practical * weight;
+                weighted_terminal += branch_terminal * weight;
                 weighted_reliability += branch_reliability * weight;
+                if idx == 0 {
+                    mainline_score = Some(branch_mainline);
+                }
+                worst_branch_score = f64::min(worst_branch_score, branch_worst);
                 min_target_eval_cp = min_target_eval_cp.min(child.min_target_eval_cp);
                 applied_any = true;
             }
 
             if !applied_any {
-                return Ok(SmartOutcome::neutral());
+                return Ok(SmartOutcome::incomplete());
             }
 
             Ok(SmartOutcome {
                 valid: true,
                 practical_score: weighted_practical.clamp(0.0, 1.0),
+                mainline_score: mainline_score
+                    .unwrap_or(INCOMPLETE_VALIDATION_SCORE)
+                    .clamp(0.0, 1.0),
+                worst_branch_score: worst_branch_score.clamp(0.0, 1.0),
+                terminal_score: weighted_terminal.clamp(0.0, 1.0),
                 sample_reliability: weighted_reliability.clamp(0.0, 1.0),
                 min_target_eval_cp,
+                validation_complete,
             })
         }
     }
@@ -2047,7 +2211,11 @@ mod smart {
                 target_eval_cp: -101,
                 best_target_eval_cp: 20,
                 practical_score: 0.8,
+                mainline_score: 0.8,
+                worst_branch_score: 0.8,
+                terminal_score: 0.8,
                 sample_reliability: 0.9,
+                validation_complete: true,
                 hidden_valid: true,
             };
             assert!(score_candidate_input(input, cfg()).is_none());
@@ -2061,7 +2229,11 @@ mod smart {
                     target_eval_cp: 35,
                     best_target_eval_cp: 35,
                     practical_score: 0.50,
+                    mainline_score: 0.50,
+                    worst_branch_score: 0.50,
+                    terminal_score: 0.50,
                     sample_reliability: 0.8,
+                    validation_complete: true,
                     hidden_valid: true,
                 },
                 config,
@@ -2072,7 +2244,11 @@ mod smart {
                     target_eval_cp: 0,
                     best_target_eval_cp: 35,
                     practical_score: 0.72,
+                    mainline_score: 0.72,
+                    worst_branch_score: 0.72,
+                    terminal_score: 0.72,
                     sample_reliability: 0.8,
+                    validation_complete: true,
                     hidden_valid: true,
                 },
                 config,
@@ -2091,10 +2267,10 @@ mod smart {
         }
 
         #[test]
-        fn future_reliability_blend_does_not_overstate_current_low_sample_branch() {
+        fn future_blend_keeps_terminal_signal_material() {
             let blended = blend_future_value(0.0, 1.0);
-            assert!(blended > 0.0);
-            assert!(blended < 0.5);
+            assert!(blended > 0.5);
+            assert!(blended < 1.0);
         }
 
         #[test]
@@ -2108,10 +2284,125 @@ mod smart {
                 target_eval_cp: 30,
                 best_target_eval_cp: 30,
                 practical_score: 0.9,
+                mainline_score: 0.9,
+                worst_branch_score: 0.9,
+                terminal_score: 0.9,
                 sample_reliability: 1.0,
+                validation_complete: true,
                 hidden_valid: false,
             };
             assert!(score_candidate_input(input, cfg()).is_none());
+        }
+
+        #[test]
+        fn score_prefers_future_terminal_and_mainline_over_shallow_average() {
+            let config = cfg();
+            let shallow_good_terminal_bad = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 58,
+                    best_target_eval_cp: 58,
+                    practical_score: 0.508,
+                    mainline_score: 0.385,
+                    worst_branch_score: 0.25,
+                    terminal_score: 0.0,
+                    sample_reliability: 0.9,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            let slightly_lower_immediate_better_future = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 53,
+                    best_target_eval_cp: 58,
+                    practical_score: 0.477,
+                    mainline_score: 0.431,
+                    worst_branch_score: 0.375,
+                    terminal_score: 0.554,
+                    sample_reliability: 0.9,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+
+            assert!(slightly_lower_immediate_better_future > shallow_good_terminal_bad);
+        }
+
+        #[test]
+        fn score_penalizes_bad_mainline_even_when_global_average_is_high() {
+            let config = cfg();
+            let high_average_bad_mainline = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 40,
+                    best_target_eval_cp: 40,
+                    practical_score: 0.62,
+                    mainline_score: 0.35,
+                    worst_branch_score: 0.35,
+                    terminal_score: 0.42,
+                    sample_reliability: 0.9,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            let lower_average_healthy_mainline = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 35,
+                    best_target_eval_cp: 40,
+                    practical_score: 0.55,
+                    mainline_score: 0.53,
+                    worst_branch_score: 0.49,
+                    terminal_score: 0.52,
+                    sample_reliability: 0.9,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+
+            assert!(lower_average_healthy_mainline > high_average_bad_mainline);
+        }
+
+        #[test]
+        fn score_penalizes_incomplete_hidden_validation() {
+            let config = cfg();
+            let complete = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 30,
+                    best_target_eval_cp: 30,
+                    practical_score: 0.55,
+                    mainline_score: 0.55,
+                    worst_branch_score: 0.55,
+                    terminal_score: 0.55,
+                    sample_reliability: 0.7,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            let incomplete = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 30,
+                    best_target_eval_cp: 30,
+                    practical_score: 0.55,
+                    mainline_score: 0.55,
+                    worst_branch_score: 0.55,
+                    terminal_score: 0.55,
+                    sample_reliability: 0.7,
+                    validation_complete: false,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+
+            assert!(complete > incomplete);
         }
 
         #[test]
@@ -2157,8 +2448,12 @@ mod smart {
                     outcome: SmartOutcome {
                         valid: true,
                         practical_score: 0.6,
+                        mainline_score: 0.6,
+                        worst_branch_score: 0.6,
+                        terminal_score: 0.6,
                         sample_reliability: 0.8,
                         min_target_eval_cp: 30,
+                        validation_complete: true,
                     },
                     final_score: 0.7,
                 },
@@ -2167,8 +2462,12 @@ mod smart {
                     outcome: SmartOutcome {
                         valid: true,
                         practical_score: 0.6,
+                        mainline_score: 0.6,
+                        worst_branch_score: 0.6,
+                        terminal_score: 0.6,
                         sample_reliability: 0.8,
                         min_target_eval_cp: 30,
+                        validation_complete: true,
                     },
                     final_score: 0.7,
                 },
@@ -2391,6 +2690,7 @@ async fn build_variants_tree_impl(
     let mut path_stack: Vec<String> = Vec::new();
     let mut explorer_cache: HashMap<String, Vec<ExplorerMove>> = HashMap::new();
     let existing_moves_by_fen = build_existing_moves_by_fen(&req.root);
+    let mut smart_target_moves_by_fen = build_existing_target_moves_by_fen(&req.root, my_side);
     // Bound external requests by visible depth so deep visible branches are not starved by a flat cap.
     let mut lichess_requests_left = visible_lichess_request_budget(req);
 
@@ -2408,6 +2708,7 @@ async fn build_variants_tree_impl(
         path_stack: &mut Vec<String>,
         explorer_cache: &mut HashMap<String, Vec<ExplorerMove>>,
         existing_moves_by_fen: &HashMap<String, Vec<ExplorerMove>>,
+        smart_target_moves_by_fen: &mut HashMap<String, MoveSpecDto>,
         lichess_requests_left: &mut u32,
         current_fen: String,
         current_line: &mut Vec<MoveSpecDto>,
@@ -2436,7 +2737,9 @@ async fn build_variants_tree_impl(
         path_stack.push(key.clone());
 
         let res: Result<()> = async {
-            fen_owners.entry(key).or_insert_with(|| "generated".to_string());
+            fen_owners
+                .entry(key.clone())
+                .or_insert_with(|| "generated".to_string());
 
             let castling = if req.is960 {
                 CastlingMode::Chess960
@@ -2467,6 +2770,21 @@ async fn build_variants_tree_impl(
                         BuildVariantsMode::Smart => "smart",
                     },
                 );
+
+                if matches!(req.mode, BuildVariantsMode::Smart) && !current_line.is_empty() {
+                    if let Some(reused_step) = smart_target_moves_by_fen.get(&key).cloned() {
+                        if apply_move_to_fen(&current_fen, &reused_step.value, req.is960).is_ok() {
+                            current_line.push(reused_step);
+                            emit_variants_builder_progress(&app, start_path, current_line);
+                            lines.push(LineDto {
+                                moves: current_line.clone(),
+                            });
+                            current_line.pop();
+                            return Ok(());
+                        }
+                    }
+                }
+
                 let picked: Option<MoveSpecDto> = match req.mode {
                     BuildVariantsMode::Engine => get_engine_best_move(&current_fen, req, app.clone(), state.clone())
                         .await?
@@ -2527,7 +2845,13 @@ async fn build_variants_tree_impl(
                     }
                 };
 
+                let stored_target_step = step.clone();
                 current_line.push(step);
+                if matches!(req.mode, BuildVariantsMode::Smart) {
+                    smart_target_moves_by_fen
+                        .entry(key.clone())
+                        .or_insert(stored_target_step);
+                }
                 emit_variants_builder_progress(&app, start_path, current_line);
                 Box::pin(rec(
                     req,
@@ -2539,6 +2863,7 @@ async fn build_variants_tree_impl(
                     path_stack,
                     explorer_cache,
                     existing_moves_by_fen,
+                    smart_target_moves_by_fen,
                     lichess_requests_left,
                     next_fen,
                     current_line,
@@ -2563,6 +2888,25 @@ async fn build_variants_tree_impl(
                     explorer_cache,
                 )
                 .await?;
+
+                if matches!(req.mode, BuildVariantsMode::Smart)
+                    && !smart_source_has_enough_games(&opening_moves)
+                {
+                    let warning = format!(
+                        "SMART stopped at positions with fewer than {} source games.",
+                        SMART_MIN_SOURCE_GAMES
+                    );
+                    if !warnings.iter().any(|item| item == &warning) {
+                        warnings.push(warning);
+                    }
+                    if !current_line.is_empty() {
+                        lines.push(LineDto {
+                            moves: current_line.clone(),
+                        });
+                    }
+                    return Ok(());
+                }
+
                 let mut selected = select_coverage_moves(&opening_moves, req.coverage, req.min_moves);
                 if selected.len() > MAX_OPPONENT_BRANCHES {
                     selected.truncate(MAX_OPPONENT_BRANCHES);
@@ -2608,9 +2952,10 @@ async fn build_variants_tree_impl(
                                 my_side,
                                 fen_owners,
                                 path_stack,
-                                explorer_cache,
-                                existing_moves_by_fen,
-                                lichess_requests_left,
+                            explorer_cache,
+                            existing_moves_by_fen,
+                            smart_target_moves_by_fen,
+                            lichess_requests_left,
                                 next_fen,
                                 current_line,
                                 my_moves_left,
@@ -2647,9 +2992,10 @@ async fn build_variants_tree_impl(
                         my_side,
                         fen_owners,
                         path_stack,
-                        explorer_cache,
-                        existing_moves_by_fen,
-                        lichess_requests_left,
+                    explorer_cache,
+                    existing_moves_by_fen,
+                    smart_target_moves_by_fen,
+                    lichess_requests_left,
                         next_fen,
                         current_line,
                         my_moves_left,
@@ -2680,6 +3026,7 @@ async fn build_variants_tree_impl(
         &mut path_stack,
         &mut explorer_cache,
         &existing_moves_by_fen,
+        &mut smart_target_moves_by_fen,
         &mut lichess_requests_left,
         start_fen.to_string(),
         &mut line_buf,
@@ -2815,6 +3162,64 @@ mod tests {
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].san, "a");
         assert_eq!(selected[1].san, "b");
+    }
+
+    #[test]
+    fn smart_source_game_threshold_uses_position_total() {
+        let low = vec![
+            ExplorerMove {
+                uci: "".into(),
+                san: "a".into(),
+                white: 300,
+                black: 200,
+                draws: 100,
+            },
+            ExplorerMove {
+                uci: "".into(),
+                san: "b".into(),
+                white: 150,
+                black: 100,
+                draws: 50,
+            },
+        ];
+        let high = vec![
+            ExplorerMove {
+                uci: "".into(),
+                san: "a".into(),
+                white: 300,
+                black: 200,
+                draws: 100,
+            },
+            ExplorerMove {
+                uci: "".into(),
+                san: "b".into(),
+                white: 250,
+                black: 100,
+                draws: 50,
+            },
+        ];
+
+        assert_eq!(source_total_games(&low), 900);
+        assert!(!smart_source_has_enough_games(&low));
+        assert_eq!(source_total_games(&high), 1_000);
+        assert!(smart_source_has_enough_games(&high));
+    }
+
+    #[test]
+    fn existing_target_moves_seed_smart_transposition_reuse() {
+        let root = TreeNodeDto {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            san: None,
+            children: vec![TreeNodeDto {
+                fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string(),
+                san: Some("e4".to_string()),
+                children: Vec::new(),
+            }],
+        };
+
+        let moves = build_existing_target_moves_by_fen(&root, Side::White);
+        let key = fen_identity_key(&root.fen);
+        assert_eq!(moves.get(&key).map(|step| step.value.as_str()), Some("e4"));
     }
 
     fn request_for_budget(db_type: &str, depth: u32) -> BuildVariantsTreeRequest {
