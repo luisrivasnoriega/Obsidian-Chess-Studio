@@ -598,8 +598,8 @@ const ENGINES = [
     bmi2: true,
     image: "https://upload.wikimedia.org/wikipedia/commons/6/6f/Chess_icon.svg",
     installMethod: "download" as const,
-    downloadLink: "https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian_16.0_avx2.exe",
-    path: "obsidian/Obsidian_16.0_avx2.exe",
+    downloadLink: "https://github.com/gab8192/Obsidian/releases/download/v16.0/Obsidian160-avx2-pext.exe",
+    path: "obsidian/Obsidian160-avx2-pext.exe",
     elo: 0,
   },
 
