@@ -30,7 +30,8 @@ export type DownloadableDatabase = {
   game_count: number;
   player_count: number;
   storage_size: bigint;
-  downloadLink: string;
+  downloadLink?: string;
+  manualDownloadLink?: string;
   description?: string;
 };
 // TODO: These two types should follow the same format (camelCase vs snake_case)
@@ -39,10 +40,51 @@ export type DownloadablePuzzleDatabase = {
   description: string;
   puzzleCount: number;
   storageSize: bigint;
-  downloadLink: string;
+  downloadLink?: string;
+  manualDownloadLink?: string;
 };
 
 const DATABASES: DownloadableDatabase[] = [
+  {
+    title: "Lumbra's Gigabase",
+    game_count: 9570564,
+    player_count: 526520,
+    storage_size: BigInt(2789040128),
+    manualDownloadLink: "https://lumbrasgigabase.com/en/",
+    description: "Manual download source. Download the database externally, then import a PGN locally.",
+  },
+  {
+    title: "Caissabase 2024",
+    game_count: 5404926,
+    player_count: 321095,
+    storage_size: BigInt(1318744064),
+    manualDownloadLink: "https://web.archive.org/web/20241007103203/http://caissabase.co.uk/",
+    description: "Manual download source. Download the database externally, then import a PGN locally.",
+  },
+  {
+    title: "Ajedrez Data - Correspondence",
+    game_count: 1524027,
+    player_count: 40547,
+    storage_size: BigInt(328458240),
+    manualDownloadLink: "https://ajedrezdata.com/databases/",
+    description: "Manual download source. Download the correspondence database externally, then import a PGN locally.",
+  },
+  {
+    title: "Ajedrez Data - OTB",
+    game_count: 4279012,
+    player_count: 144015,
+    storage_size: BigInt(993509376),
+    manualDownloadLink: "https://ajedrezdata.com/databases/",
+    description: "Manual download source. Download the OTB database externally, then import a PGN locally.",
+  },
+  {
+    title: "MillionBase",
+    game_count: 3451068,
+    player_count: 284403,
+    storage_size: BigInt(779833344),
+    manualDownloadLink: "https://www.rebel.nl/milbase.htm",
+    description: "Manual download source. Download the database externally, then import a PGN locally.",
+  },
   {
     title: "Position Cache",
     game_count: 0,
@@ -56,11 +98,18 @@ const DATABASES: DownloadableDatabase[] = [
 
 const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
   {
+    title: "Lichess Puzzles",
+    description: "Manual download source. Download from Lichess, then import the puzzle file locally.",
+    puzzleCount: 3080529,
+    storageSize: BigInt(339046400),
+    manualDownloadLink: "https://database.lichess.org/#puzzles",
+  },
+  {
     title: "Lichess Puzzles 2025",
-    description: "Latest puzzles from Lichess.org organized by themes in database format",
+    description: "Manual download source. Download this large database externally, then import it locally.",
     puzzleCount: 5600086,
     storageSize: BigInt(3542036480), // 3,459,020 KB = 3,542,036,480 bytes
-    downloadLink: "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/Lichess%20Puzzles%202025.db3",
+    manualDownloadLink: "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/Lichess%20Puzzles%202025.db3",
   },
 ];
 
@@ -200,7 +249,10 @@ export function useDefaultDatabases(opened: boolean) {
   const { data, error, isLoading } = useQuery({
     queryKey: ["default-dbs"],
     queryFn: async () => {
-      return DATABASES as SuccessDatabaseInfo[];
+      return DATABASES as (SuccessDatabaseInfo & {
+        downloadLink?: string;
+        manualDownloadLink?: string;
+      })[];
     },
     enabled: opened,
     staleTime: Infinity,
@@ -212,9 +264,12 @@ export function useDefaultDatabases(opened: boolean) {
   };
 }
 
-export async function getDefaultPuzzleDatabases(): Promise<(PuzzleDatabaseInfo & { downloadLink: string })[]> {
+export async function getDefaultPuzzleDatabases(): Promise<
+  (PuzzleDatabaseInfo & { downloadLink?: string; manualDownloadLink?: string })[]
+> {
   return PUZZLE_DATABASES as (PuzzleDatabaseInfo & {
-    downloadLink: string;
+    downloadLink?: string;
+    manualDownloadLink?: string;
   })[];
 }
 
