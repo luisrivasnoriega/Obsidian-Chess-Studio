@@ -44,41 +44,6 @@ export type DownloadablePuzzleDatabase = {
 
 const DATABASES: DownloadableDatabase[] = [
   {
-    title: "Lumbra's Gigabase",
-    game_count: 9570564,
-    player_count: 526520,
-    storage_size: BigInt(2789040128),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/LumbrasGigaBase2025-06.db3",
-  },
-  {
-    title: "Caissabase 2024",
-    game_count: 5404926,
-    player_count: 321095,
-    storage_size: BigInt(1318744064),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/caissabase_2024.db3",
-  },
-  {
-    title: "Ajedrez Data - Correspondence",
-    game_count: 1524027,
-    player_count: 40547,
-    storage_size: BigInt(328458240),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/AJ-COR.db3",
-  },
-  {
-    title: "Ajedrez Data - OTB",
-    game_count: 4279012,
-    player_count: 144015,
-    storage_size: BigInt(993509376),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/AJ-OTB.db3",
-  },
-  {
-    title: "MillionBase",
-    game_count: 3451068,
-    player_count: 284403,
-    storage_size: BigInt(779833344),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/mb-3.db3",
-  },
-  {
     title: "Position Cache",
     game_count: 0,
     player_count: 0,
