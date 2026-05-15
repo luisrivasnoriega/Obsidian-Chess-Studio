@@ -55,7 +55,7 @@ interface AddDatabaseProps {
 
 interface DatabaseCardProps {
   setDatabases: () => void;
-  database: SuccessDatabaseInfo;
+  database: SuccessDatabaseInfo & { downloadLink?: string; manualDownloadLink?: string };
   databaseId: number;
   initInstalled: boolean;
   closeModal: () => void;
@@ -63,7 +63,7 @@ interface DatabaseCardProps {
 
 interface PuzzleDbCardProps {
   setPuzzleDbs: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
-  puzzleDb: PuzzleDatabaseInfo & { downloadLink: string };
+  puzzleDb: PuzzleDatabaseInfo & { downloadLink?: string; manualDownloadLink?: string };
   databaseId: number;
   initInstalled: boolean;
 }
@@ -463,20 +463,28 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled, close
         </Stack>
       </Group>
 
-      <ProgressButton
-        id={database.title === "Position Cache" ? "db_position_cache" : `db_${databaseId}`}
-        progressEvent={events.downloadProgress}
-        initInstalled={isInstalled}
-        labels={{
-          completed: t("common.installed"),
-          action: t("common.install"),
-          inProgress: t("common.downloading"),
-          finalizing: t("common.extracting"),
-        }}
-        onClick={handleDownload}
-        inProgress={inProgress}
-        setInProgress={setInProgress}
-      />
+      {database.downloadLink ? (
+        <ProgressButton
+          id={database.title === "Position Cache" ? "db_position_cache" : `db_${databaseId}`}
+          progressEvent={events.downloadProgress}
+          initInstalled={isInstalled}
+          labels={{
+            completed: t("common.installed"),
+            action: t("common.install"),
+            inProgress: t("common.downloading"),
+            finalizing: t("common.extracting"),
+          }}
+          onClick={handleDownload}
+          inProgress={inProgress}
+          setInProgress={setInProgress}
+        />
+      ) : (
+        database.manualDownloadLink && (
+          <Button component="a" href={database.manualDownloadLink} target="_blank" rel="noreferrer" fullWidth>
+            {t("common.download")}
+          </Button>
+        )
+      )}
     </Paper>
   );
 }
@@ -488,7 +496,7 @@ const _PuzzleDbCard = function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId
   const [willImport, setWillImport] = useState<boolean>(false); // Flag to indicate we will import after download
 
   // Check if it's a CSV file (needs import) or a database file (direct download)
-  const isCsvFile = puzzleDb.downloadLink?.endsWith(".csv") || puzzleDb.downloadLink?.endsWith(".csv.zst");
+  const isCsvFile = !!(puzzleDb.downloadLink?.endsWith(".csv") || puzzleDb.downloadLink?.endsWith(".csv.zst"));
 
   // Listen to import progress events for CSV files
   useEffect(() => {
@@ -634,27 +642,35 @@ const _PuzzleDbCard = function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId
         </Stack>
       </Group>
 
-      <ProgressButton
-        id={`puzzle_db_${databaseId}`}
-        progressEvent={events.downloadProgress}
-        initInstalled={initInstalled}
-        labels={{
-          completed: t("common.installed"),
-          action: t("common.install"),
-          inProgress: isCsvFile && isImporting ? t("common.importing") : t("common.downloading"),
-          finalizing: isCsvFile && isImporting ? t("common.importing") : t("common.extracting"),
-        }}
-        onClick={handleDownload}
-        inProgress={combinedInProgress}
-        setInProgress={(value) => {
-          // For CSV files, prevent ProgressButton from setting inProgress to false
-          // when download finishes, because we still need to import
-          // For non-CSV files, allow normal behavior
-          if (!isCsvFile || (!isImporting && !willImport)) {
-            setInProgress(value);
-          }
-        }}
-      />
+      {puzzleDb.downloadLink ? (
+        <ProgressButton
+          id={`puzzle_db_${databaseId}`}
+          progressEvent={events.downloadProgress}
+          initInstalled={initInstalled}
+          labels={{
+            completed: t("common.installed"),
+            action: t("common.install"),
+            inProgress: isCsvFile && isImporting ? t("common.importing") : t("common.downloading"),
+            finalizing: isCsvFile && isImporting ? t("common.importing") : t("common.extracting"),
+          }}
+          onClick={handleDownload}
+          inProgress={combinedInProgress}
+          setInProgress={(value) => {
+            // For CSV files, prevent ProgressButton from setting inProgress to false
+            // when download finishes, because we still need to import
+            // For non-CSV files, allow normal behavior
+            if (!isCsvFile || (!isImporting && !willImport)) {
+              setInProgress(value);
+            }
+          }}
+        />
+      ) : (
+        puzzleDb.manualDownloadLink && (
+          <Button component="a" href={puzzleDb.manualDownloadLink} target="_blank" rel="noreferrer" fullWidth>
+            {t("common.download")}
+          </Button>
+        )
+      )}
     </Paper>
   );
 };

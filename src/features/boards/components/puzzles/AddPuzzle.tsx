@@ -228,7 +228,7 @@ function PuzzleDbCard({
   closeModal,
 }: {
   setPuzzleDbs: Dispatch<SetStateAction<PuzzleDatabaseInfo[]>>;
-  puzzleDb: PuzzleDatabaseInfo & { downloadLink: string };
+  puzzleDb: PuzzleDatabaseInfo & { downloadLink?: string; manualDownloadLink?: string };
   databaseId: number;
   initInstalled: boolean;
   closeModal: () => void;
@@ -362,22 +362,30 @@ function PuzzleDbCard({
               <Text size="xs">{t("units.count", { count: puzzleDb.puzzleCount })}</Text>
             </Stack>
           </Group>
-          <ProgressButton
-            id={`puzzle_db_${databaseId}`}
-            progressEvent={events.downloadProgress}
-            initInstalled={initInstalled}
-            labels={{
-              completed: t("common.installed"),
-              action: t("common.install"),
-              inProgress: t("common.downloading"),
-              finalizing: t("common.extracting"),
-            }}
-            onClick={() =>
-              downloadDatabase(databaseId, puzzleDb.downloadLink || "", puzzleDb.title, puzzleDb.description)
-            }
-            inProgress={inProgress}
-            setInProgress={setInProgress}
-          />
+          {puzzleDb.downloadLink ? (
+            <ProgressButton
+              id={`puzzle_db_${databaseId}`}
+              progressEvent={events.downloadProgress}
+              initInstalled={initInstalled}
+              labels={{
+                completed: t("common.installed"),
+                action: t("common.install"),
+                inProgress: t("common.downloading"),
+                finalizing: t("common.extracting"),
+              }}
+              onClick={() =>
+                downloadDatabase(databaseId, puzzleDb.downloadLink ?? "", puzzleDb.title, puzzleDb.description)
+              }
+              inProgress={inProgress}
+              setInProgress={setInProgress}
+            />
+          ) : (
+            puzzleDb.manualDownloadLink && (
+              <Button component="a" href={puzzleDb.manualDownloadLink} target="_blank" rel="noreferrer" fullWidth>
+                {t("common.download")}
+              </Button>
+            )
+          )}
         </Box>
       </Group>
     </Paper>
