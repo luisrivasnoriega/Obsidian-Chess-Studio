@@ -91,13 +91,6 @@ const DATABASES: DownloadableDatabase[] = [
 
 const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
   {
-    title: "Lichess Puzzles",
-    description: "A collection of all puzzles from Lichess.org",
-    puzzleCount: 3080529,
-    storageSize: BigInt(339046400),
-    downloadLink: "https://pub-561e4f3376ea4e4eb2ffd01a876ba46e.r2.dev/puzzles.db3",
-  },
-  {
     title: "Lichess Puzzles 2025",
     description: "Latest puzzles from Lichess.org organized by themes in database format",
     puzzleCount: 5600086,
