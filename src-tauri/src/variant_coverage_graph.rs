@@ -1,9 +1,7 @@
 use chrono::Utc;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use shakmaty::{
-    fen::Fen, san::SanPlus, CastlingMode, Chess, EnPassantMode, Position,
-};
+use shakmaty::{fen::Fen, san::SanPlus, CastlingMode, Chess, EnPassantMode, Position};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -11,12 +9,15 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
-use crate::coverage_explorer_cache::{coverage_cache_get, coverage_cache_set, CoverageCacheMoveDto};
-use crate::db::{
-    coverage_search_position_stats, get_players, load_coverage_search_dataset, CoverageSearchDataset,
-    CoverageSearchFilters, PlayerQuery, PlayerSort, QueryOptions, SortDirection,
+use crate::coverage_explorer_cache::{
+    coverage_cache_get, coverage_cache_set, CoverageCacheMoveDto,
 };
 use crate::db::pgn::{GameTree, GameTreeNode, Importer, TempGame};
+use crate::db::{
+    coverage_search_position_stats, get_players, load_coverage_search_dataset,
+    CoverageSearchDataset, CoverageSearchFilters, PlayerQuery, PlayerSort, QueryOptions,
+    SortDirection,
+};
 use crate::error::{Error, Result};
 use crate::opening::get_opening_info_from_fen;
 use crate::variants_builder::{
@@ -361,7 +362,10 @@ fn is_valid_lichess_speed(value: &str) -> bool {
 }
 
 fn is_valid_lichess_rating(value: i32) -> bool {
-    matches!(value, 0 | 1000 | 1200 | 1400 | 1600 | 1800 | 2000 | 2200 | 2500)
+    matches!(
+        value,
+        0 | 1000 | 1200 | 1400 | 1600 | 1800 | 2000 | 2200 | 2500
+    )
 }
 
 #[derive(Serialize)]
@@ -399,7 +403,9 @@ struct LichessMasterSourceSignature<'a> {
 
 fn serialize_source_signature<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|err| {
-        Error::InvalidInput(format!("Failed to serialize coverage source signature: {err}"))
+        Error::InvalidInput(format!(
+            "Failed to serialize coverage source signature: {err}"
+        ))
     })
 }
 
@@ -503,7 +509,10 @@ fn collect_critical_line_nodes(
 
     let has_sufficient_sample = node.low_sample != Some(true);
     let is_complete_line_node = node.complete_line == Some(true) || node.children.is_empty();
-    if is_active_player_node && has_sufficient_sample && (!complete_lines_only || is_complete_line_node) {
+    if is_active_player_node
+        && has_sufficient_sample
+        && (!complete_lines_only || is_complete_line_node)
+    {
         if let (Some(win_rate), Some(loss_rate)) = (node.active_win_rate, node.active_loss_rate) {
             if win_rate.is_finite() && loss_rate.is_finite() && loss_rate > win_rate {
                 reasons.push(VariantCoverageCriticalLineReasonDto::Source);
@@ -613,7 +622,10 @@ fn now_iso_string() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn emit_coverage_graph_build_progress(app: &AppHandle, progress: VariantCoverageGraphBuildProgressDto) {
+fn emit_coverage_graph_build_progress(
+    app: &AppHandle,
+    progress: VariantCoverageGraphBuildProgressDto,
+) {
     let _ = app.emit("variant_coverage_graph_build_progress", progress);
 }
 
@@ -680,13 +692,16 @@ fn read_info_metadata_for_variant(path: &str) -> CoverageFileInfoMetadata {
 
 fn write_info_metadata_for_variant(path: &str, metadata: &CoverageFileInfoMetadata) -> Result<()> {
     let info_path = path.replace(".pgn", ".info");
-    let raw = serde_json::to_string_pretty(metadata)
-        .map_err(|err| Error::InvalidInput(format!("Failed to serialize variant metadata: {err}")))?;
+    let raw = serde_json::to_string_pretty(metadata).map_err(|err| {
+        Error::InvalidInput(format!("Failed to serialize variant metadata: {err}"))
+    })?;
     fs::write(info_path, raw)?;
     Ok(())
 }
 
-fn parse_legacy_coverage_cache(metadata: &CoverageFileInfoMetadata) -> Option<VariantCoverageGraphCacheDto> {
+fn parse_legacy_coverage_cache(
+    metadata: &CoverageFileInfoMetadata,
+) -> Option<VariantCoverageGraphCacheDto> {
     let value = metadata.rest.get("coverageGraphCache")?;
     let version = value.get("version")?.as_i64()?;
     if version != 3 && version != 4 {
@@ -761,13 +776,17 @@ fn strip_account_key(value: &str) -> &str {
 }
 
 fn normalize_coverage_identity_name(value: Option<&str>) -> String {
-    strip_account_key(value.unwrap_or_default()).trim().to_lowercase()
+    strip_account_key(value.unwrap_or_default())
+        .trim()
+        .to_lowercase()
 }
 
 fn graph_cache_path_for_variant(variant_path: &str, source_signature: &str) -> Result<PathBuf> {
     let variant = Path::new(variant_path);
     let parent = variant.parent().ok_or_else(|| {
-        Error::InvalidInput("variant_coverage_graph_cache_path: variant path has no parent".to_string())
+        Error::InvalidInput(
+            "variant_coverage_graph_cache_path: variant path has no parent".to_string(),
+        )
     })?;
     let cache_dir = parent.join(COVERAGE_GRAPH_CACHE_DIR);
     std::fs::create_dir_all(&cache_dir)?;
@@ -781,7 +800,10 @@ fn graph_cache_path_for_variant(variant_path: &str, source_signature: &str) -> R
         .or_else(|| file_name.strip_suffix(".PGN"))
         .unwrap_or(file_name);
     let signature_hash = hash_text_fnv1a(source_signature);
-    Ok(cache_dir.join(format!("{}-{signature_hash}.json", sanitize_file_stem(stem))))
+    Ok(cache_dir.join(format!(
+        "{}-{signature_hash}.json",
+        sanitize_file_stem(stem)
+    )))
 }
 
 fn read_graph_cache_from_path(file_path: &str) -> Result<Option<VariantCoverageGraphCacheDto>> {
@@ -883,8 +905,9 @@ fn append_game_tree_to_parsed_root(
                     san: Some(san),
                     children: Vec::new(),
                 };
-                let parent = get_parsed_node_mut(root, &parent_path)
-                    .ok_or_else(|| Error::InvalidInput("Invalid parsed PGN node path".to_string()))?;
+                let parent = get_parsed_node_mut(root, &parent_path).ok_or_else(|| {
+                    Error::InvalidInput("Invalid parsed PGN node path".to_string())
+                })?;
                 parent.children.push(child);
                 let child_index = parent.children.len().saturating_sub(1);
                 variation_parent_path = parent_path;
@@ -898,8 +921,10 @@ fn append_game_tree_to_parsed_root(
                     children: Vec::new(),
                 };
                 append_game_tree_to_parsed_root(&mut branch_root, branch, &previous_position)?;
-                let parent = get_parsed_node_mut(root, &variation_parent_path)
-                    .ok_or_else(|| Error::InvalidInput("Invalid parsed PGN variation path".to_string()))?;
+                let parent =
+                    get_parsed_node_mut(root, &variation_parent_path).ok_or_else(|| {
+                        Error::InvalidInput("Invalid parsed PGN variation path".to_string())
+                    })?;
                 parent.children.extend(branch_root.children);
             }
             GameTreeNode::Comment(_) | GameTreeNode::Nag(_) => {}
@@ -940,14 +965,22 @@ fn parse_variant_trees(path: &str) -> Vec<CoverageParsedTree> {
             Ok(Some(None)) => continue,
             Ok(None) => break,
             Err(error) => {
-                log::warn!("coverage graph PGN parse failed: path={} error={}", path, error);
+                log::warn!(
+                    "coverage graph PGN parse failed: path={} error={}",
+                    path,
+                    error
+                );
                 break;
             }
         };
         match parsed_tree_from_game(game) {
             Ok(tree) => trees.push(tree),
             Err(error) => {
-                log::warn!("coverage graph PGN tree conversion failed: path={} error={}", path, error);
+                log::warn!(
+                    "coverage graph PGN tree conversion failed: path={} error={}",
+                    path,
+                    error
+                );
             }
         }
     }
@@ -978,9 +1011,12 @@ fn find_tree_branch_anchor(
         return None;
     }
 
-    let side_to_move = fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
+    let side_to_move =
+        fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
     let is_opponent_turn = side_to_move != repertoire_color;
-    if (is_opponent_turn && node.children.len() > 1) || (!is_opponent_turn && node.children.len() > 1) {
+    if (is_opponent_turn && node.children.len() > 1)
+        || (!is_opponent_turn && node.children.len() > 1)
+    {
         let labels = node
             .children
             .iter()
@@ -1013,7 +1049,8 @@ fn collect_tree_branch_candidates(
     if node.children.is_empty() {
         return;
     }
-    let side_to_move = fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
+    let side_to_move =
+        fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
     if side_to_move != repertoire_color {
         let labels = node
             .children
@@ -1023,16 +1060,19 @@ fn collect_tree_branch_candidates(
             .collect::<HashSet<_>>();
         if !labels.is_empty() {
             let fen_key = normalize_fen_key(&node.fen);
-            let candidate = candidates.entry(fen_key).or_insert_with(|| CoverageBranchAnchor {
-                anchor_fen: node.fen.clone(),
-                anchor_path: path.to_vec(),
-                anchor_ply: path.len() as i64,
-                labels: HashSet::new(),
-            });
+            let candidate = candidates
+                .entry(fen_key)
+                .or_insert_with(|| CoverageBranchAnchor {
+                    anchor_fen: node.fen.clone(),
+                    anchor_path: path.to_vec(),
+                    anchor_ply: path.len() as i64,
+                    labels: HashSet::new(),
+                });
             candidate.labels.extend(labels);
             if path.len() < candidate.anchor_path.len()
                 || (path.len() == candidate.anchor_path.len()
-                    && compare_anchor_path(path, &candidate.anchor_path) == std::cmp::Ordering::Less)
+                    && compare_anchor_path(path, &candidate.anchor_path)
+                        == std::cmp::Ordering::Less)
             {
                 candidate.anchor_fen = node.fen.clone();
                 candidate.anchor_path = path.to_vec();
@@ -1053,11 +1093,17 @@ fn collect_orientation_moves(
     repertoire_color: VariantCoverageColorDto,
     out: &mut HashMap<String, HashSet<String>>,
 ) {
-    let side_to_move = fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
+    let side_to_move =
+        fen_side_to_move_color(Some(&node.fen)).unwrap_or(VariantCoverageColorDto::White);
     if side_to_move == repertoire_color {
         let moves = out.entry(normalize_fen_key(&node.fen)).or_default();
         for child in &node.children {
-            if let Some(san) = child.san.as_deref().map(str::trim).filter(|san| !san.is_empty()) {
+            if let Some(san) = child
+                .san
+                .as_deref()
+                .map(str::trim)
+                .filter(|san| !san.is_empty())
+            {
                 moves.insert(san.to_string());
             }
         }
@@ -1072,16 +1118,22 @@ fn collect_mapped_moves(
     out: &mut HashMap<String, HashMap<String, CoverageMappedLineMove>>,
 ) {
     for child in &node.children {
-        if let Some(san) = child.san.as_deref().map(str::trim).filter(|san| !san.is_empty()) {
+        if let Some(san) = child
+            .san
+            .as_deref()
+            .map(str::trim)
+            .filter(|san| !san.is_empty())
+        {
             let source_key = normalize_fen_key(&node.fen);
             let next_key = normalize_fen_key(&child.fen);
             let move_key = format!("{san}|{next_key}");
-            out.entry(source_key).or_default().entry(move_key).or_insert_with(|| {
-                CoverageMappedLineMove {
+            out.entry(source_key)
+                .or_default()
+                .entry(move_key)
+                .or_insert_with(|| CoverageMappedLineMove {
                     san: san.to_string(),
                     next_fen: child.fen.clone(),
-                }
-            });
+                });
         }
         collect_mapped_moves(child, out);
     }
@@ -1091,7 +1143,11 @@ fn format_opening_name_for_coverage_node(fen: &str) -> Option<String> {
     let info = get_opening_info_from_fen(fen).ok()?;
     let variation = info.variation.trim();
     let opening = info.opening.trim();
-    let base = if !variation.is_empty() { variation } else { opening };
+    let base = if !variation.is_empty() {
+        variation
+    } else {
+        opening
+    };
     if base.is_empty() {
         return None;
     }
@@ -1103,11 +1159,15 @@ fn format_opening_name_for_coverage_node(fen: &str) -> Option<String> {
     }
 }
 
-fn explorer_moves_to_raw(moves: Vec<crate::variants_builder::ExplorerMove>) -> Vec<VariantCoverageRawMoveDto> {
+fn explorer_moves_to_raw(
+    moves: Vec<crate::variants_builder::ExplorerMove>,
+) -> Vec<VariantCoverageRawMoveDto> {
     moves
         .into_iter()
         .map(|move_entry| {
-            let games = i64::from(move_entry.white) + i64::from(move_entry.black) + i64::from(move_entry.draws);
+            let games = i64::from(move_entry.white)
+                + i64::from(move_entry.black)
+                + i64::from(move_entry.draws);
             VariantCoverageRawMoveDto {
                 san: move_entry.san,
                 games,
@@ -1146,7 +1206,11 @@ fn collect_engine_annotations_by_fen(
     out: &mut HashMap<String, (String, Option<i64>, Option<String>)>,
 ) {
     if let Some(fen) = node.fen.as_deref() {
-        if let Some(advantage) = node.engine_advantage.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Some(advantage) = node
+            .engine_advantage
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
             out.insert(
                 normalize_fen_key(fen),
                 (advantage.clone(), node.engine_ms, node.engine_name.clone()),
@@ -1163,7 +1227,8 @@ fn apply_engine_annotations_by_fen(
     annotations: &HashMap<String, (String, Option<i64>, Option<String>)>,
 ) -> VariantCoverageGraphNodeDto {
     if let Some(fen) = node.fen.as_deref() {
-        if let Some((advantage, engine_ms, engine_name)) = annotations.get(&normalize_fen_key(fen)) {
+        if let Some((advantage, engine_ms, engine_name)) = annotations.get(&normalize_fen_key(fen))
+        {
             node.engine_advantage = Some(advantage.clone());
             node.engine_ms = *engine_ms;
             node.engine_name = engine_name.clone();
@@ -1254,7 +1319,9 @@ impl<'a> CoverageGraphBuilder<'a> {
 
     fn push_progress(&mut self, phase: &str, force: bool) {
         let now = std::time::Instant::now();
-        if !force && now.duration_since(self.last_progress_at) < std::time::Duration::from_millis(150) {
+        if !force
+            && now.duration_since(self.last_progress_at) < std::time::Duration::from_millis(150)
+        {
             return;
         }
         self.last_progress_at = now;
@@ -1300,7 +1367,11 @@ impl<'a> CoverageGraphBuilder<'a> {
         value
     }
 
-    fn resolve_opening_name(&mut self, fen: Option<&str>, fallback: Option<&str>) -> Option<String> {
+    fn resolve_opening_name(
+        &mut self,
+        fen: Option<&str>,
+        fallback: Option<&str>,
+    ) -> Option<String> {
         self.get_opening_name_by_fen(fen)
             .or_else(|| fallback.map(ToOwned::to_owned))
     }
@@ -1329,7 +1400,11 @@ impl<'a> CoverageGraphBuilder<'a> {
         }
     }
 
-    fn format_orientation_node_label(&self, san: &str, variant_names: Option<Vec<String>>) -> String {
+    fn format_orientation_node_label(
+        &self,
+        san: &str,
+        variant_names: Option<Vec<String>>,
+    ) -> String {
         match variant_names {
             Some(names) if !names.is_empty() => format!("{san} - {}", names.join(" / ")),
             _ => san.to_string(),
@@ -1405,7 +1480,11 @@ impl<'a> CoverageGraphBuilder<'a> {
                         VariantCoverageColorDto::Black => "black".to_string(),
                     },
                 };
-                let data = fetch_explorer(lichess_explorer_url(fen, &options)?, self.lichess_token.as_deref()).await?;
+                let data = fetch_explorer(
+                    lichess_explorer_url(fen, &options)?,
+                    self.lichess_token.as_deref(),
+                )
+                .await?;
                 Ok(classify_position_moves(
                     fen.to_string(),
                     explorer_moves_to_raw(data.moves),
@@ -1420,7 +1499,11 @@ impl<'a> CoverageGraphBuilder<'a> {
                     moves: None,
                     top_games: None,
                 };
-                let data = fetch_explorer(masters_explorer_url(fen, &options)?, self.lichess_token.as_deref()).await?;
+                let data = fetch_explorer(
+                    masters_explorer_url(fen, &options)?,
+                    self.lichess_token.as_deref(),
+                )
+                .await?;
                 Ok(classify_position_moves(
                     fen.to_string(),
                     explorer_moves_to_raw(data.moves),
@@ -1435,7 +1518,8 @@ impl<'a> CoverageGraphBuilder<'a> {
         let fen_key = normalize_fen_key(fen);
         if let Some(entry) = self.positions.get(&fen_key) {
             let needs_hydration = entry.moves.iter().any(|row| {
-                row.low_sample == false && (row.active_win_rate.is_none() || row.active_loss_rate.is_none())
+                row.low_sample == false
+                    && (row.active_win_rate.is_none() || row.active_loss_rate.is_none())
             });
             if !needs_hydration {
                 return Ok(entry.clone());
@@ -1462,9 +1546,11 @@ impl<'a> CoverageGraphBuilder<'a> {
         }
 
         if !self.bypass_position_cache {
-            if let Ok(Some(cache_entry)) =
-                coverage_cache_get(self.app.clone(), self.source_signature.clone(), fen.to_string())
-            {
+            if let Ok(Some(cache_entry)) = coverage_cache_get(
+                self.app.clone(),
+                self.source_signature.clone(),
+                fen.to_string(),
+            ) {
                 let has_result_breakdown = cache_entry
                     .moves
                     .iter()
@@ -1483,12 +1569,15 @@ impl<'a> CoverageGraphBuilder<'a> {
         }
 
         let entry = self.fetch_source_position(fen).await?;
-        if !self.bypass_position_cache && self.config.db_type == VariantCoverageDatabaseTypeDto::Local {
+        if !self.bypass_position_cache
+            && self.config.db_type == VariantCoverageDatabaseTypeDto::Local
+        {
             let _ = coverage_cache_set(
                 self.app.clone(),
                 self.source_signature.clone(),
                 fen.to_string(),
                 position_moves_to_cache_moves(&entry.moves),
+                None,
             );
         }
         self.positions.insert(fen_key, entry.clone());
@@ -1542,7 +1631,8 @@ impl<'a> CoverageGraphBuilder<'a> {
         target_key: &'b str,
     ) -> BoxFuture<'b, Result<()>> {
         Box::pin(async move {
-            let mut mapped_moves_by_fen: HashMap<String, HashMap<String, CoverageMappedLineMove>> = HashMap::new();
+            let mut mapped_moves_by_fen: HashMap<String, HashMap<String, CoverageMappedLineMove>> =
+                HashMap::new();
             for (tree_key, trees) in variant_trees_by_key {
                 for tree in trees {
                     if tree.orientation != self.repertoire_color && tree_key != target_key {
@@ -1551,8 +1641,14 @@ impl<'a> CoverageGraphBuilder<'a> {
                     collect_mapped_moves(&tree.root, &mut mapped_moves_by_fen);
                 }
             }
-            self.build_mapped_children(target_root_fen, root_node, 0, HashSet::new(), &mapped_moves_by_fen)
-                .await
+            self.build_mapped_children(
+                target_root_fen,
+                root_node,
+                0,
+                HashSet::new(),
+                &mapped_moves_by_fen,
+            )
+            .await
         })
     }
 
@@ -1578,7 +1674,8 @@ impl<'a> CoverageGraphBuilder<'a> {
             self.positions_pending = self.positions_pending.saturating_sub(1);
             self.push_progress("building", false);
 
-            let side_to_move = fen_side_to_move_color(Some(&fen)).unwrap_or(VariantCoverageColorDto::White);
+            let side_to_move =
+                fen_side_to_move_color(Some(&fen)).unwrap_or(VariantCoverageColorDto::White);
             let is_active_move = side_to_move == self.repertoire_color;
             let source_entry = self.get_position_entry(&fen).await.ok();
             let profile_entry = self
@@ -1589,7 +1686,12 @@ impl<'a> CoverageGraphBuilder<'a> {
 
             for mapped_move in moves {
                 let next_fen_key = normalize_fen_key(&mapped_move.next_fen);
-                let edge_key = format!("{}|{}|{}", normalize_fen_key(&fen), mapped_move.san, next_fen_key);
+                let edge_key = format!(
+                    "{}|{}|{}",
+                    normalize_fen_key(&fen),
+                    mapped_move.san,
+                    next_fen_key
+                );
                 if path_edges.contains(&edge_key) {
                     continue;
                 }
@@ -1633,7 +1735,10 @@ impl<'a> CoverageGraphBuilder<'a> {
                 };
 
                 let mut child = coverage_node(
-                    format!("{}|mapped:{}|{}", parent_node.id, mapped_move.san, next_fen_key),
+                    format!(
+                        "{}|mapped:{}|{}",
+                        parent_node.id, mapped_move.san, next_fen_key
+                    ),
                     label,
                     if is_active_move {
                         VariantCoverageTierDto::Root
@@ -1653,14 +1758,24 @@ impl<'a> CoverageGraphBuilder<'a> {
                 child.low_sample = source_move.as_ref().map(|entry| entry.low_sample);
                 child.override_key = Some(build_tier_override_key(&fen, &mapped_move.san));
                 child.active_moves_used = Some(next_active_moves_used);
-                child.active_win_rate = source_move.as_ref().and_then(|entry| entry.active_win_rate);
-                child.active_loss_rate = source_move.as_ref().and_then(|entry| entry.active_loss_rate);
-                child.profile_win_rate = profile_move.as_ref().and_then(|entry| entry.active_win_rate);
-                child.profile_loss_rate = profile_move.as_ref().and_then(|entry| entry.active_loss_rate);
+                child.active_win_rate =
+                    source_move.as_ref().and_then(|entry| entry.active_win_rate);
+                child.active_loss_rate = source_move
+                    .as_ref()
+                    .and_then(|entry| entry.active_loss_rate);
+                child.profile_win_rate = profile_move
+                    .as_ref()
+                    .and_then(|entry| entry.active_win_rate);
+                child.profile_loss_rate = profile_move
+                    .as_ref()
+                    .and_then(|entry| entry.active_loss_rate);
                 child.complete_line = Some(false);
 
                 parent_node.children.push(child);
-                let child_node = parent_node.children.last_mut().expect("child was just pushed");
+                let child_node = parent_node
+                    .children
+                    .last_mut()
+                    .expect("child was just pushed");
                 let mut next_edges = path_edges.clone();
                 next_edges.insert(edge_key);
                 self.positions_pending += 1;
@@ -1699,7 +1814,8 @@ impl<'a> CoverageGraphBuilder<'a> {
             self.positions_pending = self.positions_pending.saturating_sub(1);
             self.push_progress("building", false);
 
-            let side_to_move = fen_side_to_move_color(Some(&fen)).unwrap_or(VariantCoverageColorDto::White);
+            let side_to_move =
+                fen_side_to_move_color(Some(&fen)).unwrap_or(VariantCoverageColorDto::White);
             if side_to_move == self.repertoire_color {
                 let orientation_moves = orientation_moves_by_fen
                     .get(&normalize_fen_key(&fen))
@@ -1711,17 +1827,30 @@ impl<'a> CoverageGraphBuilder<'a> {
                 }
 
                 let entry = self.get_position_entry(&fen).await?;
-                let profile_entry = self.get_profile_position_entry(&fen, active_moves_used).await?;
+                let profile_entry = self
+                    .get_profile_position_entry(&fen, active_moves_used)
+                    .await?;
                 for san in orientation_moves {
                     let next_fen = get_next_fen_from_san(&fen, &san);
-                    let response_move = entry.moves.iter().find(|move_entry| move_entry.san == san).cloned();
-                    let profile_move = profile_entry
-                        .as_ref()
-                        .and_then(|profile| profile.moves.iter().find(|move_entry| move_entry.san == san).cloned());
+                    let response_move = entry
+                        .moves
+                        .iter()
+                        .find(|move_entry| move_entry.san == san)
+                        .cloned();
+                    let profile_move = profile_entry.as_ref().and_then(|profile| {
+                        profile
+                            .moves
+                            .iter()
+                            .find(|move_entry| move_entry.san == san)
+                            .cloned()
+                    });
                     let next_active_moves_used = active_moves_used + 1;
                     let variant_names = self.get_variant_names_for_fen(next_fen.as_deref());
                     let override_key = build_tier_override_key(&fen, &san);
-                    let opening_name = self.resolve_opening_name(next_fen.as_deref(), parent_node.opening_name.as_deref());
+                    let opening_name = self.resolve_opening_name(
+                        next_fen.as_deref(),
+                        parent_node.opening_name.as_deref(),
+                    );
 
                     let mut child = coverage_node(
                         format!("{}|forced:{}|{}", parent_node.id, san, remaining_moves),
@@ -1733,14 +1862,25 @@ impl<'a> CoverageGraphBuilder<'a> {
                     child.percent = response_move.as_ref().map(|move_entry| move_entry.percent);
                     child.override_key = Some(override_key);
                     child.active_moves_used = Some(next_active_moves_used);
-                    child.active_win_rate = response_move.as_ref().and_then(|move_entry| move_entry.active_win_rate);
-                    child.active_loss_rate = response_move.as_ref().and_then(|move_entry| move_entry.active_loss_rate);
-                    child.profile_win_rate = profile_move.as_ref().and_then(|move_entry| move_entry.active_win_rate);
-                    child.profile_loss_rate = profile_move.as_ref().and_then(|move_entry| move_entry.active_loss_rate);
+                    child.active_win_rate = response_move
+                        .as_ref()
+                        .and_then(|move_entry| move_entry.active_win_rate);
+                    child.active_loss_rate = response_move
+                        .as_ref()
+                        .and_then(|move_entry| move_entry.active_loss_rate);
+                    child.profile_win_rate = profile_move
+                        .as_ref()
+                        .and_then(|move_entry| move_entry.active_win_rate);
+                    child.profile_loss_rate = profile_move
+                        .as_ref()
+                        .and_then(|move_entry| move_entry.active_loss_rate);
 
                     parent_node.children.push(child);
                     if let Some(next_fen) = next_fen.filter(|value| !value.trim().is_empty()) {
-                        let child_node = parent_node.children.last_mut().expect("child was just pushed");
+                        let child_node = parent_node
+                            .children
+                            .last_mut()
+                            .expect("child was just pushed");
                         self.positions_pending += 1;
                         self.push_progress("building", false);
                         self.expand_node(
@@ -1767,7 +1907,11 @@ impl<'a> CoverageGraphBuilder<'a> {
                         .next_fen
                         .as_deref()
                         .map(normalize_fen_key)
-                        .and_then(|key| orientation_moves_by_fen.get(&key).map(|moves| !moves.is_empty()))
+                        .and_then(|key| {
+                            orientation_moves_by_fen
+                                .get(&key)
+                                .map(|moves| !moves.is_empty())
+                        })
                         .unwrap_or(false);
                     move_entry.tier != VariantCoverageTierDto::Alternative || has_mapped_response
                 })
@@ -1776,14 +1920,19 @@ impl<'a> CoverageGraphBuilder<'a> {
             let profile_entry = if visible_moves.is_empty() {
                 None
             } else {
-                self.get_profile_position_entry(&fen, active_moves_used).await?
+                self.get_profile_position_entry(&fen, active_moves_used)
+                    .await?
             };
 
             for move_entry in visible_moves {
                 let next_fen_key = move_entry.next_fen.as_deref().map(normalize_fen_key);
                 let has_mapped_response = next_fen_key
                     .as_deref()
-                    .and_then(|key| orientation_moves_by_fen.get(key).map(|moves| !moves.is_empty()))
+                    .and_then(|key| {
+                        orientation_moves_by_fen
+                            .get(key)
+                            .map(|moves| !moves.is_empty())
+                    })
                     .unwrap_or(false);
                 let variant_names = self.get_variant_names_for_fen(move_entry.next_fen.as_deref());
                 let profile_move = profile_entry.as_ref().and_then(|profile| {
@@ -1795,8 +1944,10 @@ impl<'a> CoverageGraphBuilder<'a> {
                 });
 
                 let override_key = build_tier_override_key(&fen, &move_entry.san);
-                let opening_name =
-                    self.resolve_opening_name(move_entry.next_fen.as_deref(), parent_node.opening_name.as_deref());
+                let opening_name = self.resolve_opening_name(
+                    move_entry.next_fen.as_deref(),
+                    parent_node.opening_name.as_deref(),
+                );
                 let label_san = self
                     .label_overrides
                     .get(&build_tier_override_key(&fen, &move_entry.san))
@@ -1815,13 +1966,22 @@ impl<'a> CoverageGraphBuilder<'a> {
                 child.active_moves_used = Some(active_moves_used);
                 child.active_win_rate = move_entry.active_win_rate;
                 child.active_loss_rate = move_entry.active_loss_rate;
-                child.profile_win_rate = profile_move.as_ref().and_then(|profile_move| profile_move.active_win_rate);
-                child.profile_loss_rate = profile_move.as_ref().and_then(|profile_move| profile_move.active_loss_rate);
+                child.profile_win_rate = profile_move
+                    .as_ref()
+                    .and_then(|profile_move| profile_move.active_win_rate);
+                child.profile_loss_rate = profile_move
+                    .as_ref()
+                    .and_then(|profile_move| profile_move.active_loss_rate);
 
                 parent_node.children.push(child);
                 if remaining_moves >= 1 && has_mapped_response {
-                    if let Some(next_fen) = move_entry.next_fen.filter(|value| !value.trim().is_empty()) {
-                        let child_node = parent_node.children.last_mut().expect("child was just pushed");
+                    if let Some(next_fen) =
+                        move_entry.next_fen.filter(|value| !value.trim().is_empty())
+                    {
+                        let child_node = parent_node
+                            .children
+                            .last_mut()
+                            .expect("child was just pushed");
                         self.positions_pending += 1;
                         self.push_progress("building", false);
                         self.expand_node(
@@ -1847,8 +2007,8 @@ fn enrich_graph_openings(
     mut node: VariantCoverageGraphNodeDto,
     inherited_opening_name: Option<String>,
 ) -> VariantCoverageGraphNodeDto {
-    let opening_name = builder
-        .resolve_opening_name(node.fen.as_deref(), inherited_opening_name.as_deref());
+    let opening_name =
+        builder.resolve_opening_name(node.fen.as_deref(), inherited_opening_name.as_deref());
     let child_inherited = opening_name.clone();
     node.children = node
         .children
@@ -1909,7 +2069,11 @@ fn build_variant_link_maps(
 
     for variant in variants {
         let self_key = normalize_path_key(&variant.path);
-        if let Some(parent_link) = variant.parent_link.as_ref().filter(|link| !link.path.trim().is_empty()) {
+        if let Some(parent_link) = variant
+            .parent_link
+            .as_ref()
+            .filter(|link| !link.path.trim().is_empty())
+        {
             if let Some(parent_variant) = resolve_variant_by_link(
                 variant,
                 &parent_link.path,
@@ -1949,7 +2113,9 @@ fn build_variant_link_maps(
                 .entry(self_key.clone())
                 .or_default()
                 .insert(child_key.clone());
-            parent_by_child.entry(child_key).or_insert_with(|| self_key.clone());
+            parent_by_child
+                .entry(child_key)
+                .or_insert_with(|| self_key.clone());
         }
     }
 
@@ -1981,13 +2147,28 @@ fn collect_subtree_keys_backend(
             .unwrap_or_default();
         children.sort();
         for child_key in children {
-            if parent_by_child.get(&child_key).is_some_and(|parent| parent == key) {
-                walk(&child_key, children_by_parent, parent_by_child, visited, out);
+            if parent_by_child
+                .get(&child_key)
+                .is_some_and(|parent| parent == key)
+            {
+                walk(
+                    &child_key,
+                    children_by_parent,
+                    parent_by_child,
+                    visited,
+                    out,
+                );
             }
         }
     }
 
-    walk(root_key, children_by_parent, parent_by_child, &mut visited, &mut out);
+    walk(
+        root_key,
+        children_by_parent,
+        parent_by_child,
+        &mut visited,
+        &mut out,
+    );
     out
 }
 
@@ -1998,7 +2179,12 @@ fn san_sequence_for_anchor_path(root: &CoverageParsedNode, anchor_path: &[u32]) 
         let Some(child) = node.children.get(*index as usize) else {
             return Vec::new();
         };
-        if let Some(san) = child.san.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        if let Some(san) = child
+            .san
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
             sequence.push(san.to_string());
         }
         node = child;
@@ -2076,7 +2262,14 @@ fn collect_priority_updates_from_graph(
         }
     }
 
-    visit(root, 0, None, variant_keys_by_root_fen, variant_keys_by_identity, &mut updates);
+    visit(
+        root,
+        0,
+        None,
+        variant_keys_by_root_fen,
+        variant_keys_by_identity,
+        &mut updates,
+    );
     updates
         .into_iter()
         .map(|(key, (priority, _))| (key, priority))
@@ -2125,8 +2318,11 @@ fn sync_variant_priority_metadata(
         }
     }
 
-    let priority_updates =
-        collect_priority_updates_from_graph(graph_root, &variant_keys_by_root_fen, &variant_keys_by_identity);
+    let priority_updates = collect_priority_updates_from_graph(
+        graph_root,
+        &variant_keys_by_root_fen,
+        &variant_keys_by_identity,
+    );
     let mut updated = 0;
     for key in priority_sync_keys {
         let Some(variant) = variant_by_key.get(&key) else {
@@ -2150,7 +2346,10 @@ fn profile_db_path_for_id(app: &AppHandle, profile_id: Option<&str>) -> Option<S
         return None;
     }
     app.path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)
+        .resolve(
+            format!("db/profile_{profile_id}.db3"),
+            BaseDirectory::AppData,
+        )
         .ok()
         .map(|path| path.to_string_lossy().to_string())
 }
@@ -2206,11 +2405,17 @@ async fn resolve_profile_player_ids_for_coverage(
                     direction: SortDirection::Asc,
                 },
             };
-            let Ok(response) = get_players(PathBuf::from(db_path), query, state.clone()).await else {
+            let Ok(response) = get_players(PathBuf::from(db_path), query, state.clone()).await
+            else {
                 break;
             };
             for player in response.data {
-                let Some(player_name) = player.name.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+                let Some(player_name) = player
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
                     continue;
                 };
                 let player_lower = player_name.to_lowercase();
@@ -2383,7 +2588,13 @@ fn normalized_profile_time_control_categories(categories: Vec<String>) -> Vec<St
         .filter(|value| {
             matches!(
                 value.as_str(),
-                "ultra_bullet" | "bullet" | "blitz" | "rapid" | "classical" | "correspondence" | "daily"
+                "ultra_bullet"
+                    | "bullet"
+                    | "blitz"
+                    | "rapid"
+                    | "classical"
+                    | "correspondence"
+                    | "daily"
             )
         })
         .collect();
@@ -2415,8 +2626,10 @@ fn fetch_profile_position_stats_from_dataset(
                 dataset,
                 fen,
                 CoverageSearchFilters {
-                    player1: matches!(repertoire_color, VariantCoverageColorDto::White).then_some(*player_id),
-                    player2: matches!(repertoire_color, VariantCoverageColorDto::Black).then_some(*player_id),
+                    player1: matches!(repertoire_color, VariantCoverageColorDto::White)
+                        .then_some(*player_id),
+                    player2: matches!(repertoire_color, VariantCoverageColorDto::Black)
+                        .then_some(*player_id),
                     wanted_result: None,
                     time_control_category: time_control_category.as_deref(),
                     ..CoverageSearchFilters::default()
@@ -2428,16 +2641,17 @@ fn fetch_profile_position_stats_from_dataset(
                 if san.is_empty() {
                     continue;
                 }
-                let entry = merged_moves
-                    .entry(san.clone())
-                    .or_insert_with(|| VariantCoverageRawMoveDto {
-                        san,
-                        games: 0,
-                        white: 0,
-                        black: 0,
-                        draw: 0,
-                        next_fen: None,
-                    });
+                let entry =
+                    merged_moves
+                        .entry(san.clone())
+                        .or_insert_with(|| VariantCoverageRawMoveDto {
+                            san,
+                            games: 0,
+                            white: 0,
+                            black: 0,
+                            draw: 0,
+                            next_fen: None,
+                        });
                 entry.white += i64::from(row.white.max(0));
                 entry.black += i64::from(row.black.max(0));
                 entry.draw += i64::from(row.draw.max(0));
@@ -2480,7 +2694,10 @@ async fn fetch_profile_position_stats(
     )
 }
 
-fn active_side_win_rate(move_entry: &VariantCoverageMoveDto, repertoire_color: VariantCoverageColorDto) -> Option<f64> {
+fn active_side_win_rate(
+    move_entry: &VariantCoverageMoveDto,
+    repertoire_color: VariantCoverageColorDto,
+) -> Option<f64> {
     let total = move_entry.games.max(0);
     if total <= 0 {
         return None;
@@ -2496,7 +2713,10 @@ fn active_side_win_rate(move_entry: &VariantCoverageMoveDto, repertoire_color: V
     Some(((wins as f64 / total as f64) * 1000.0).round() / 10.0)
 }
 
-fn active_side_loss_rate(move_entry: &VariantCoverageMoveDto, repertoire_color: VariantCoverageColorDto) -> Option<f64> {
+fn active_side_loss_rate(
+    move_entry: &VariantCoverageMoveDto,
+    repertoire_color: VariantCoverageColorDto,
+) -> Option<f64> {
     let total = move_entry.games.max(0);
     if total <= 0 {
         return None;
@@ -2832,13 +3052,14 @@ pub async fn variant_coverage_build_graph(
 ) -> Result<VariantCoverageGraphBuildResultDto> {
     let target_key = normalize_path_key(&request.target_key);
     let requested_depth = request.requested_depth.clamp(1, 20);
-    let (variant_by_key, children_by_parent, parent_by_child) = build_variant_link_maps(&request.variants);
-    let target_variant = variant_by_key
-        .get(&target_key)
-        .cloned()
-        .ok_or_else(|| Error::InvalidInput("Coverage graph target variant not found".to_string()))?;
+    let (variant_by_key, children_by_parent, parent_by_child) =
+        build_variant_link_maps(&request.variants);
+    let target_variant = variant_by_key.get(&target_key).cloned().ok_or_else(|| {
+        Error::InvalidInput("Coverage graph target variant not found".to_string())
+    })?;
     let target_metadata = read_info_metadata_for_variant(&target_variant.path);
-    let resolved_config = merge_build_config_from_tags(request.build_config.clone(), &target_metadata.tags);
+    let resolved_config =
+        merge_build_config_from_tags(request.build_config.clone(), &target_metadata.tags);
 
     if resolved_config.db_type != VariantCoverageDatabaseTypeDto::Local
         && request
@@ -2854,9 +3075,12 @@ pub async fn variant_coverage_build_graph(
     }
 
     let source_signature = variant_coverage_build_source_signature(resolved_config.clone())?;
-    let subtree_keys = collect_subtree_keys_backend(&target_key, &children_by_parent, &parent_by_child);
+    let subtree_keys =
+        collect_subtree_keys_backend(&target_key, &children_by_parent, &parent_by_child);
     if subtree_keys.is_empty() {
-        return Err(Error::InvalidInput("Coverage graph target subtree is empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Coverage graph target subtree is empty".to_string(),
+        ));
     }
 
     let base_cache_path = graph_cache_path_for_variant(&target_variant.path, &source_signature)?
@@ -2923,8 +3147,11 @@ pub async fn variant_coverage_build_graph(
 
             let graph_with_openings =
                 enrich_graph_openings(&mut builder, cache.graph_root.clone(), None);
-            let graph_with_position_flags =
-                apply_position_flags_to_node(graph_with_openings, &cache.positions, cache.repertoire_color);
+            let graph_with_position_flags = apply_position_flags_to_node(
+                graph_with_openings,
+                &cache.positions,
+                cache.repertoire_color,
+            );
             let graph_with_profile_flags = variant_coverage_apply_profile_position_flags(
                 app.clone(),
                 state.clone(),
@@ -2986,7 +3213,12 @@ pub async fn variant_coverage_build_graph(
                 .map(|tree| tree.root.fen.clone())
                 .filter(|fen| !fen.trim().is_empty())
                 .collect::<Vec<_>>();
-            if let Some(fen) = variant.fen.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+            if let Some(fen) = variant
+                .fen
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+            {
                 root_fens.push(fen.to_string());
             }
             root_fens.sort();
@@ -3014,15 +3246,13 @@ pub async fn variant_coverage_build_graph(
         .cloned()
         .unwrap_or_default();
     let target_tree = target_trees.first();
-    let repertoire_color = target_tree
-        .map(|tree| tree.orientation)
-        .unwrap_or_else(|| {
-            target_variant
-                .fen
-                .as_deref()
-                .and_then(|fen| fen_side_to_move_color(Some(fen)))
-                .unwrap_or(VariantCoverageColorDto::White)
-        });
+    let repertoire_color = target_tree.map(|tree| tree.orientation).unwrap_or_else(|| {
+        target_variant
+            .fen
+            .as_deref()
+            .and_then(|fen| fen_side_to_move_color(Some(fen)))
+            .unwrap_or(VariantCoverageColorDto::White)
+    });
 
     let mut variant_names_by_fen: HashMap<String, Vec<String>> = HashMap::new();
     for key in &subtree_keys {
@@ -3062,18 +3292,22 @@ pub async fn variant_coverage_build_graph(
     let tree_branch_anchor = ordered_tree_branch_candidates
         .into_iter()
         .next()
-        .or_else(|| target_tree.and_then(|tree| find_tree_branch_anchor(&tree.root, &[], repertoire_color)));
+        .or_else(|| {
+            target_tree.and_then(|tree| find_tree_branch_anchor(&tree.root, &[], repertoire_color))
+        });
 
     let mut anchor_groups: HashMap<String, CoverageBranchAnchor> = HashMap::new();
     for link in &target_variant.child_links {
         let fen_key = normalize_fen_key(&link.anchor_fen);
         let label = link.label.as_deref().unwrap_or_default().trim();
-        let entry = anchor_groups.entry(fen_key).or_insert_with(|| CoverageBranchAnchor {
-            anchor_fen: link.anchor_fen.clone(),
-            anchor_path: link.anchor_path.clone(),
-            anchor_ply: i64::from(link.anchor_ply),
-            labels: HashSet::new(),
-        });
+        let entry = anchor_groups
+            .entry(fen_key)
+            .or_insert_with(|| CoverageBranchAnchor {
+                anchor_fen: link.anchor_fen.clone(),
+                anchor_path: link.anchor_path.clone(),
+                anchor_ply: i64::from(link.anchor_ply),
+                labels: HashSet::new(),
+            });
         if !label.is_empty() {
             entry.labels.insert(label.to_string());
         }
@@ -3153,7 +3387,9 @@ pub async fn variant_coverage_build_graph(
         .cloned()
         .or_else(|| target_variant.fen.clone())
         .filter(|fen| !fen.trim().is_empty())
-        .ok_or_else(|| Error::InvalidInput("Could not determine root FEN for the selected variant".to_string()))?;
+        .ok_or_else(|| {
+            Error::InvalidInput("Could not determine root FEN for the selected variant".to_string())
+        })?;
 
     let mut root_node = coverage_node(
         format!("coverage:{target_key}"),
@@ -3190,8 +3426,10 @@ pub async fn variant_coverage_build_graph(
                         VariantCoverageTierDto::Root,
                         Some(branch_start_fen.clone()),
                     );
-                    branch_parent.opening_name =
-                        builder.resolve_opening_name(Some(&branch_start_fen), root_node.opening_name.as_deref());
+                    branch_parent.opening_name = builder.resolve_opening_name(
+                        Some(&branch_start_fen),
+                        root_node.opening_name.as_deref(),
+                    );
                     branch_parent.active_moves_used = Some(0);
                     root_node.children.push(branch_parent);
                 }
@@ -3235,10 +3473,16 @@ pub async fn variant_coverage_build_graph(
     } else {
         apply_engine_annotations_by_fen(root_node, &preserved_engine_annotations)
     };
-    let graph_with_position_flags =
-        apply_position_flags_to_node(root_with_engine_annotations, &positions_record, repertoire_color);
-    let graph_with_profile_flags =
-        apply_profile_flags_to_node(graph_with_position_flags, &builder.profile_positions, repertoire_color);
+    let graph_with_position_flags = apply_position_flags_to_node(
+        root_with_engine_annotations,
+        &positions_record,
+        repertoire_color,
+    );
+    let graph_with_profile_flags = apply_profile_flags_to_node(
+        graph_with_position_flags,
+        &builder.profile_positions,
+        repertoire_color,
+    );
     let max_moves = if request.mapped_only {
         max_coverage_active_moves(&graph_with_profile_flags)
     } else {
@@ -3454,8 +3698,9 @@ pub fn variant_coverage_write_graph_cache(
     {
         let file = std::fs::File::create(&tmp_path)?;
         let mut writer = BufWriter::new(file);
-        serde_json::to_writer(&mut writer, &cache)
-            .map_err(|err| Error::InvalidInput(format!("Failed to serialize coverage graph cache: {err}")))?;
+        serde_json::to_writer(&mut writer, &cache).map_err(|err| {
+            Error::InvalidInput(format!("Failed to serialize coverage graph cache: {err}"))
+        })?;
         writer.flush()?;
     }
     match std::fs::rename(&tmp_path, path) {
@@ -3536,9 +3781,10 @@ pub fn variant_coverage_get_cached_position(
     let Some(cache_entry) = coverage_cache_get(app, source_signature, fen.clone())? else {
         return Ok(None);
     };
-    let has_result_breakdown = cache_entry.moves.iter().any(|row| {
-        row.white.max(0) + row.black.max(0) + row.draw.max(0) > 0
-    });
+    let has_result_breakdown = cache_entry
+        .moves
+        .iter()
+        .any(|row| row.white.max(0) + row.black.max(0) + row.draw.max(0) > 0);
     if !has_result_breakdown {
         return Ok(None);
     }
@@ -3592,13 +3838,21 @@ pub async fn variant_coverage_apply_profile_position_flags(
 ) -> Result<VariantCoverageGraphNodeDto> {
     let _ = app;
     let Some(db_path) = db_path.filter(|value| !value.trim().is_empty()) else {
-        return Ok(apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color));
+        return Ok(apply_profile_flags_to_node(
+            root,
+            &HashMap::new(),
+            repertoire_color,
+        ));
     };
     let mut unique_player_ids = player_ids;
     unique_player_ids.sort_unstable();
     unique_player_ids.dedup();
     if unique_player_ids.is_empty() {
-        return Ok(apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color));
+        return Ok(apply_profile_flags_to_node(
+            root,
+            &HashMap::new(),
+            repertoire_color,
+        ));
     }
 
     let categories = normalized_profile_time_control_categories(time_control_categories);
@@ -3607,7 +3861,11 @@ pub async fn variant_coverage_apply_profile_position_flags(
     fen_keys.sort();
     fen_keys.dedup();
     if fen_keys.is_empty() {
-        return Ok(apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color));
+        return Ok(apply_profile_flags_to_node(
+            root,
+            &HashMap::new(),
+            repertoire_color,
+        ));
     }
 
     let dataset = load_coverage_search_dataset(PathBuf::from(&db_path), state.clone())?;
@@ -3626,7 +3884,11 @@ pub async fn variant_coverage_apply_profile_position_flags(
         profile_positions.insert(fen_key, profile_entry);
     }
 
-    Ok(apply_profile_flags_to_node(root, &profile_positions, repertoire_color))
+    Ok(apply_profile_flags_to_node(
+        root,
+        &profile_positions,
+        repertoire_color,
+    ))
 }
 
 #[tauri::command]

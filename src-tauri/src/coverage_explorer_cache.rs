@@ -25,6 +25,7 @@ pub struct CoverageCacheMoveDto {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct CoverageCacheEntryDto {
     pub source_signature: String,
+    pub config_json: Option<String>,
     pub fen: String,
     pub total_games: i64,
     pub moves: Vec<CoverageCacheMoveDto>,
@@ -43,7 +44,9 @@ fn canonicalize_fen_key(fen: &str) -> Result<String> {
 }
 
 fn get_cache_db_path(app: &AppHandle) -> Result<PathBuf> {
-    let path = app.path().resolve(COVERAGE_CACHE_DB_PATH, BaseDirectory::AppData)?;
+    let path = app
+        .path()
+        .resolve(COVERAGE_CACHE_DB_PATH, BaseDirectory::AppData)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -62,6 +65,7 @@ fn get_cache_connection(app: &AppHandle) -> Result<Connection> {
         CREATE TABLE IF NOT EXISTS coverage_explorer_cache (
             source_signature TEXT NOT NULL,
             fen_key TEXT NOT NULL,
+            config_json TEXT,
             fen TEXT NOT NULL,
             total_games INTEGER NOT NULL,
             moves_json TEXT NOT NULL,
@@ -74,6 +78,15 @@ fn get_cache_connection(app: &AppHandle) -> Result<Connection> {
             ON coverage_explorer_cache(expires_at_ms);
         "#,
     )?;
+    if let Err(err) = conn.execute(
+        "ALTER TABLE coverage_explorer_cache ADD COLUMN config_json TEXT",
+        [],
+    ) {
+        let msg = err.to_string();
+        if !msg.contains("duplicate column name") {
+            return Err(err.into());
+        }
+    }
     Ok(conn)
 }
 
@@ -94,19 +107,30 @@ pub fn coverage_cache_get(
     let conn = get_cache_connection(&app)?;
     let current_ms = now_ms()?;
 
-    let row: Option<(String, i64, String, i64, i64)> = conn
+    let row: Option<(Option<String>, String, i64, String, i64, i64)> = conn
         .query_row(
             r#"
-            SELECT fen, total_games, moves_json, fetched_at_ms, expires_at_ms
+            SELECT config_json, fen, total_games, moves_json, fetched_at_ms, expires_at_ms
             FROM coverage_explorer_cache
             WHERE source_signature = ?1 AND fen_key = ?2
             "#,
             params![signature, fen_key],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .optional()?;
 
-    let Some((cached_fen, total_games, moves_json, fetched_at_ms, expires_at_ms)) = row else {
+    let Some((config_json, cached_fen, total_games, moves_json, fetched_at_ms, expires_at_ms)) =
+        row
+    else {
         return Ok(None);
     };
 
@@ -131,6 +155,7 @@ pub fn coverage_cache_get(
 
     Ok(Some(CoverageCacheEntryDto {
         source_signature: signature.to_string(),
+        config_json,
         fen: cached_fen,
         total_games,
         moves,
@@ -146,14 +171,19 @@ pub fn coverage_cache_set(
     source_signature: String,
     fen: String,
     moves: Vec<CoverageCacheMoveDto>,
+    config_json: Option<String>,
 ) -> Result<()> {
     let signature = source_signature.trim();
     let fen_raw = fen.trim();
     if signature.is_empty() {
-        return Err(Error::InvalidInput("coverage_cache_set: source_signature is empty".to_string()));
+        return Err(Error::InvalidInput(
+            "coverage_cache_set: source_signature is empty".to_string(),
+        ));
     }
     if fen_raw.is_empty() {
-        return Err(Error::InvalidInput("coverage_cache_set: fen is empty".to_string()));
+        return Err(Error::InvalidInput(
+            "coverage_cache_set: fen is empty".to_string(),
+        ));
     }
 
     let cleaned_moves: Vec<CoverageCacheMoveDto> = moves
@@ -175,8 +205,14 @@ pub fn coverage_cache_set(
 
     let fen_key = canonicalize_fen_key(fen_raw)?;
     let total_games: i64 = cleaned_moves.iter().map(|m| m.games).sum();
-    let moves_json = serde_json::to_string(&cleaned_moves)
-        .map_err(|e| Error::InvalidInput(format!("coverage_cache_set: invalid moves payload: {e}")))?;
+    let moves_json = serde_json::to_string(&cleaned_moves).map_err(|e| {
+        Error::InvalidInput(format!("coverage_cache_set: invalid moves payload: {e}"))
+    })?;
+    let config_json = config_json
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
     let fetched_at_ms = now_ms()?;
     let expires_at_ms = fetched_at_ms + COVERAGE_CACHE_TTL_MS;
 
@@ -184,9 +220,10 @@ pub fn coverage_cache_set(
     conn.execute(
         r#"
         INSERT INTO coverage_explorer_cache (
-            source_signature, fen_key, fen, total_games, moves_json, fetched_at_ms, expires_at_ms
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            source_signature, fen_key, config_json, fen, total_games, moves_json, fetched_at_ms, expires_at_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ON CONFLICT(source_signature, fen_key) DO UPDATE SET
+            config_json = excluded.config_json,
             fen = excluded.fen,
             total_games = excluded.total_games,
             moves_json = excluded.moves_json,
@@ -196,6 +233,7 @@ pub fn coverage_cache_set(
         params![
             signature,
             fen_key,
+            config_json,
             fen_raw,
             total_games,
             moves_json,

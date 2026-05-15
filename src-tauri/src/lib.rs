@@ -129,7 +129,7 @@ use crate::puzzle_variants::{
 use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
 use crate::variants_builder::build_variants_tree;
 use crate::variants_manager::{variants_delete_files, variants_list_fast, variants_validate_consistency};
-use crate::variants_opening::variants_create_opening_variants;
+use crate::variants_opening::{variants_compress_variant_family, variants_create_opening_variants};
 use crate::variant_coverage_graph::{
     variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
     variant_coverage_apply_profile_position_flags, variant_coverage_build_source_signature,
@@ -362,6 +362,7 @@ pub async fn run() {
             variants_validate_consistency,
             variants_delete_files,
             variants_create_opening_variants,
+            variants_compress_variant_family,
             post_game_review_variants,
             analysis_db_set_analyzed_game,
             analysis_db_get_analyzed_game,

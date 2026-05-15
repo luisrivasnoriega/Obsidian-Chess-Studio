@@ -1585,6 +1585,7 @@ export default function VariantsPage() {
   const [puzzleTargetKey, setPuzzleTargetKey] = useState<string | null>(null);
   const [generatingPuzzles, setGeneratingPuzzles] = useState(false);
   const [openingVariantsTargetKey, setOpeningVariantsTargetKey] = useState<string | null>(null);
+  const [compressVariantsTargetKey, setCompressVariantsTargetKey] = useState<string | null>(null);
   const [validatingVariants, setValidatingVariants] = useState(false);
   const [resolvingValidationConflict, setResolvingValidationConflict] = useState(false);
   const [validationReport, setValidationReport] = useState<VariantValidationReport | null>(null);
@@ -3097,6 +3098,102 @@ export default function VariantsPage() {
       }
     },
     [activeProfileId, openingVariantsTargetKey, refetch, t, validateVariantConsistencyBeforeAction, variantLinkGraph],
+  );
+
+  const handleCompressVariantFamily = useCallback(
+    async (row: VariantTableRow) => {
+      if (compressVariantsTargetKey) return;
+
+      const rootKey = row.canonicalKey ?? row.key;
+      const rootVariant = variantLinkGraph.variantByKey.get(rootKey);
+      if (!rootVariant) return;
+      const subtreeKeys = collectSubtreeKeys(rootKey);
+      const descendantCount = Math.max(0, subtreeKeys.length - 1);
+      if (descendantCount === 0) {
+        notifications.show({
+          title: t("common.warning"),
+          message: t("features.board.variants.compressFamilyNoChildren", {
+            defaultValue: "This variant does not have child variants to compress.",
+          }),
+          color: "yellow",
+        });
+        return;
+      }
+
+      const canContinue = await validateVariantConsistencyBeforeAction(rootVariant);
+      if (!canContinue) return;
+
+      modals.openConfirmModal({
+        title: t("features.board.variants.compressFamily", {
+          defaultValue: "Compress variant family",
+        }),
+        children: (
+          <Text size="sm">
+            {t("features.board.variants.compressFamilyConfirm", {
+              defaultValue:
+                "Merge {{count}} descendant variant(s) into {{name}} and delete the child files. This cannot be undone.",
+              count: descendantCount,
+              name: rootVariant.name,
+            })}
+          </Text>
+        ),
+        labels: {
+          confirm: t("features.board.variants.compressFamily", { defaultValue: "Compress variant family" }),
+          cancel: t("common.cancel"),
+        },
+        confirmProps: { color: "orange" },
+        onConfirm: async () => {
+          setCompressVariantsTargetKey(rootKey);
+          try {
+            const variantsDir = await getVariantsDirectory(activeProfileId);
+            const result = await invoke<{ merged: number; removed: number; rootPath: string }>(
+              "variants_compress_variant_family",
+              {
+                variantsDir,
+                targetPath: rootVariant.path,
+              },
+            );
+
+            try {
+              window.dispatchEvent(new Event("variants:links-updated"));
+              window.dispatchEvent(new Event("variants:updated"));
+            } catch {}
+            await refetch();
+
+            notifications.show({
+              title: t("common.success"),
+              message: t("features.board.variants.compressFamilyDone", {
+                defaultValue:
+                  "Compressed {{merged}} variants into the parent and removed {{removed}} child variant(s).",
+                merged: result.merged,
+                removed: result.removed,
+              }),
+              color: "green",
+            });
+          } catch (error) {
+            notifications.show({
+              title: t("common.error"),
+              message: t("features.board.variants.compressFamilyFailed", {
+                defaultValue: "Failed to compress variant family: {{reason}}",
+                reason: getErrorMessage(error),
+              }),
+              color: "red",
+            });
+          } finally {
+            setCompressVariantsTargetKey(null);
+          }
+        },
+      });
+    },
+    [
+      activeProfileId,
+      collectSubtreeKeys,
+      compressVariantsTargetKey,
+      refetch,
+      t,
+      validateVariantConsistencyBeforeAction,
+      variantLinkGraph.variantByKey,
+    ],
   );
   const openCoverageGraphForKey = useCallback((key: string) => {
     coverageGraphResumeSnapshot = null;
@@ -4997,6 +5094,7 @@ export default function VariantsPage() {
   const renderVariantActions = (row: VariantTableRow) => {
     const isBusyCriticalLine = criticalLineReportRequestKey === (row.canonicalKey ?? row.key);
     const isBusyOpeningVariants = openingVariantsTargetKey === (row.canonicalKey ?? row.key);
+    const isBusyCompressVariants = compressVariantsTargetKey === (row.canonicalKey ?? row.key);
 
     if (useCompactVariantsTable) {
       return (
@@ -5040,6 +5138,15 @@ export default function VariantsPage() {
             >
               {t("features.board.variants.createOpeningVariants", {
                 defaultValue: "Create ECO opening variants",
+              })}
+            </Menu.Item>
+            <Menu.Item
+              leftSection={isBusyCompressVariants ? <Loader size={14} /> : <IconFileImport size={16} />}
+              onClick={() => void handleCompressVariantFamily(row)}
+              disabled={compressVariantsTargetKey !== null || validatingVariants || !row.hasChildren}
+            >
+              {t("features.board.variants.compressFamily", {
+                defaultValue: "Compress variant family",
               })}
             </Menu.Item>
             <Menu.Item
@@ -5114,6 +5221,20 @@ export default function VariantsPage() {
             disabled={openingVariantsTargetKey !== null || validatingVariants}
           >
             {isBusyOpeningVariants ? <Loader size={14} /> : <IconSitemap size={16} />}
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip
+          label={t("features.board.variants.compressFamily", {
+            defaultValue: "Compress variant family",
+          })}
+        >
+          <ActionIcon
+            variant="subtle"
+            color="orange"
+            onClick={() => void handleCompressVariantFamily(row)}
+            disabled={compressVariantsTargetKey !== null || validatingVariants || !row.hasChildren}
+          >
+            {isBusyCompressVariants ? <Loader size={14} /> : <IconFileImport size={16} />}
           </ActionIcon>
         </Tooltip>
         <Tooltip label={t("features.board.variants.coverageGraph", { defaultValue: "Open coverage graph" })}>

@@ -97,6 +97,7 @@ export type BuildVariantsTreeRequest = {
   coverage: number;
   minMoves: number;
   depth: number;
+  forceRebuild?: boolean;
   splitConfig?: BuildVariantsSplitConfigDto;
 };
 

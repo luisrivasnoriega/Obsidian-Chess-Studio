@@ -395,82 +395,8 @@ fn parse_pgn_tag_line(line: &str) -> Option<(&str, String)> {
     Some((key, value))
 }
 
-fn parse_pgn_tag_value(pgn: &str, tag: &str) -> Option<String> {
-    let tag_lower = tag.to_lowercase();
-    for line in pgn.lines().take(64) {
-        let Some((key, value)) = parse_pgn_tag_line(line) else {
-            continue;
-        };
-        if key.to_lowercase() == tag_lower {
-            return Some(value);
-        }
-    }
-    None
-}
-
 fn normalize_player_name_for_match(name: &str) -> String {
     strip_account_key(name).trim().to_lowercase()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PgnIdentity {
-    white: String,
-    black: String,
-    date: Option<String>,
-    result: Option<String>,
-}
-
-fn normalize_required_player_tag(value: Option<String>) -> Option<String> {
-    let raw = value?;
-    let normalized = normalize_player_name_for_match(&raw);
-    if normalized.is_empty() || normalized == "?" {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn normalize_optional_identity_tag(value: Option<String>) -> Option<String> {
-    let normalized = value?.trim().to_lowercase();
-    if normalized.is_empty() || normalized == "?" || normalized == "*" || normalized == "????.??.??"
-    {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn extract_pgn_identity(pgn: &str) -> Option<PgnIdentity> {
-    Some(PgnIdentity {
-        white: normalize_required_player_tag(parse_pgn_tag_value(pgn, "White"))?,
-        black: normalize_required_player_tag(parse_pgn_tag_value(pgn, "Black"))?,
-        date: normalize_optional_identity_tag(parse_pgn_tag_value(pgn, "Date")),
-        result: normalize_optional_identity_tag(parse_pgn_tag_value(pgn, "Result")),
-    })
-}
-
-fn pgn_identity_matches(stored_pgn: &str, base_pgn: &str) -> bool {
-    let Some(stored) = extract_pgn_identity(stored_pgn) else {
-        return true;
-    };
-    let Some(base) = extract_pgn_identity(base_pgn) else {
-        return true;
-    };
-
-    if stored.white != base.white || stored.black != base.black {
-        return false;
-    }
-    if let (Some(stored_date), Some(base_date)) = (&stored.date, &base.date) {
-        if stored_date != base_date {
-            return false;
-        }
-    }
-    if let (Some(stored_result), Some(base_result)) = (&stored.result, &base.result) {
-        if stored_result != base_result {
-            return false;
-        }
-    }
-    true
 }
 
 fn find_chesscom_link_in_pgn_export(
@@ -836,20 +762,6 @@ fn parse_timestamp_ms(date: Option<&str>, time: Option<&str>) -> i64 {
 
     let dt = NaiveDateTime::new(date, nt);
     Utc.from_utc_datetime(&dt).timestamp_millis()
-}
-
-fn valid_analyzed_pgn_for_row<'a>(
-    row: &GamesHistoryRow,
-    analyzed_map: &'a HashMap<String, String>,
-) -> Option<&'a String> {
-    let analyzed_pgn = analyzed_map.get(&row.analysis_game_id)?;
-    if let Some(base_pgn) = row.pgn.as_deref() {
-        if !pgn_identity_matches(analyzed_pgn, base_pgn) {
-            return None;
-        }
-    }
-
-    Some(analyzed_pgn)
 }
 
 fn has_any_pgn_tag(text: &str) -> bool {
@@ -3319,32 +3231,6 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn sample_row(base_pgn: &str) -> GamesHistoryRow {
-        GamesHistoryRow {
-            kind: GamesHistoryKind::Lichess,
-            game_key: "12345678".to_string(),
-            analysis_game_id: "12345678".to_string(),
-            external_url: None,
-            opponent: "JoseCortes11".to_string(),
-            color: "black".to_string(),
-            outcome: "win".to_string(),
-            pgn: Some(base_pgn.to_string()),
-            initial_fen: None,
-            accuracy: None,
-            acpl: None,
-            estimated_elo: None,
-            resistance: None,
-            elo_estimated_balanced: None,
-            moves: 23,
-            time_control: None,
-            time_control_category: None,
-            timestamp_ms: 0,
-            event_id: None,
-            event_name: None,
-            is_analyzed: false,
-        }
-    }
-
     fn create_dashboard_profile_db(conn: &Connection) {
         conn.execute_batch(
             r#"
@@ -3608,80 +3494,6 @@ mod tests {
         assert_eq!(legacy_row.accuracy, None);
         assert!(legacy_row.pgn.as_deref().unwrap().contains("Ba1r"));
         assert!(!legacy_row.pgn.as_deref().unwrap().contains("[%eval -0.20]"));
-    }
-
-    #[test]
-    fn pgn_identity_rejects_different_players() {
-        let base = r#"[Event "Rated Rapid game"]
-[Site "Lichess.org"]
-[Date "2026.05.11"]
-[White "JoseCortes11"]
-[Black "CurrentUser"]
-[Result "0-1"]
-
-1. e4 c5 0-1"#;
-        let stored = r#"[Event "Rated Rapid game"]
-[Site "Lichess.org"]
-[Date "2026.04.10"]
-[White "bethfisher94"]
-[Black "Ba1r"]
-[Result "1/2-1/2"]
-
-1. d4 Nf6 1/2-1/2"#;
-
-        assert!(!pgn_identity_matches(stored, base));
-    }
-
-    #[test]
-    fn valid_analyzed_pgn_for_row_filters_mismatched_analysis() {
-        let base = r#"[Event "Rated Rapid game"]
-[Site "Lichess.org"]
-[Date "2026.05.11"]
-[White "JoseCortes11"]
-[Black "CurrentUser"]
-[Result "0-1"]
-
-1. e4 c5 0-1"#;
-        let stored = r#"[Event "Rated Rapid game"]
-[Site "Lichess.org"]
-[Date "2026.04.10"]
-[White "bethfisher94"]
-[Black "Ba1r"]
-[Result "1/2-1/2"]
-
-1. d4 Nf6 1/2-1/2"#;
-        let row = sample_row(base);
-        let mut analyzed_map = HashMap::new();
-        analyzed_map.insert(row.analysis_game_id.clone(), stored.to_string());
-
-        assert!(valid_analyzed_pgn_for_row(&row, &analyzed_map).is_none());
-    }
-
-    #[test]
-    fn valid_analyzed_pgn_for_row_ignores_external_game_key() {
-        let base = r#"[Event "Rated Rapid game"]
-[Site "https://lichess.org/AbCDef12"]
-[Date "2026.05.11"]
-[White "JoseCortes11"]
-[Black "CurrentUser"]
-[Result "0-1"]
-
-1. e4 c5 0-1"#;
-        let matching = r#"[Event "Rated Rapid game"]
-[Site "Lichess.org"]
-[Date "2026.05.11"]
-[White "JoseCortes11"]
-[Black "CurrentUser"]
-[Result "0-1"]
-
-1. e4 {[%eval 0.20]} c5 0-1"#;
-        let mut row = sample_row(base);
-        row.analysis_game_id = "12345678".to_string();
-        row.game_key = "AbCDef12".to_string();
-        let mut analyzed_map = HashMap::new();
-        analyzed_map.insert(row.game_key.clone(), matching.to_string());
-
-        assert!(valid_analyzed_pgn_for_row(&row, &analyzed_map).is_none());
     }
 
     #[test]

@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use crate::db::pgn::{GameTree, GameTreeNode, Importer, TempGame};
 use crate::error::{Error, Result};
 use crate::opening::{get_opening_info_from_fen, OpeningInfo};
-use crate::variants_manager::{variants_delete_files, variants_list_fast, VariantInfoDto, VariantLinkRefDto};
+use crate::variants_manager::{
+    variants_delete_files, variants_list_fast, VariantInfoDto, VariantLinkRefDto,
+};
 use chrono::Local;
 use pgn_reader::BufferedReader;
 use shakmaty::{fen::Fen, Chess, EnPassantMode, Position};
@@ -18,6 +20,14 @@ use shakmaty::{fen::Fen, Chess, EnPassantMode, Position};
 #[serde(rename_all = "camelCase")]
 pub struct CreateOpeningVariantsResult {
     pub created: u32,
+    pub removed: u32,
+    pub root_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressVariantFamilyResult {
+    pub merged: u32,
     pub removed: u32,
     pub root_path: String,
 }
@@ -70,7 +80,9 @@ fn normalize_fen_key(fen: &str) -> String {
 }
 
 fn parent_dir(path: &Path) -> PathBuf {
-    path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn file_stem(path: &Path) -> String {
@@ -85,6 +97,14 @@ fn file_name(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_string()
+}
+
+fn resolve_link_path(owner_path: &Path, link_path: &str) -> String {
+    if Path::new(link_path).is_absolute() {
+        normalize_path_key(link_path)
+    } else {
+        normalize_path_key(&parent_dir(owner_path).join(link_path).to_string_lossy())
+    }
 }
 
 fn info_path(path: &Path) -> PathBuf {
@@ -127,8 +147,9 @@ fn read_metadata(path: &Path) -> Result<Value> {
 }
 
 fn write_metadata(path: &Path, value: &Value) -> Result<()> {
-    let raw = serde_json::to_string_pretty(value)
-        .map_err(|error| Error::InvalidInput(format!("Failed to serialize variant metadata: {error}")))?;
+    let raw = serde_json::to_string_pretty(value).map_err(|error| {
+        Error::InvalidInput(format!("Failed to serialize variant metadata: {error}"))
+    })?;
     fs::write(info_path(path), raw)?;
     Ok(())
 }
@@ -174,7 +195,12 @@ fn truncate_file_stem(input: &str) -> String {
     if trimmed.chars().count() <= 96 {
         return trimmed.to_string();
     }
-    trimmed.chars().take(96).collect::<String>().trim().to_string()
+    trimmed
+        .chars()
+        .take(96)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn make_unique_file_stem(input: &str, reserved: &mut HashSet<String>, fallback: &str) -> String {
@@ -206,7 +232,10 @@ fn make_unique_opening_file_stem(
             return (title.clone(), file_stem);
         }
     }
-    let title = candidates.last().cloned().unwrap_or_else(|| fallback.to_string());
+    let title = candidates
+        .last()
+        .cloned()
+        .unwrap_or_else(|| fallback.to_string());
     let file_stem = make_unique_file_stem(&title, reserved, fallback);
     (title, file_stem)
 }
@@ -276,7 +305,8 @@ fn descriptive_opening_title_candidates(
 
     let mut out = Vec::new();
     for candidate in title_candidates.iter().rev() {
-        if has_more_descriptive_opening_name(candidate) && !out.iter().any(|item| item == candidate) {
+        if has_more_descriptive_opening_name(candidate) && !out.iter().any(|item| item == candidate)
+        {
             out.push(candidate.clone());
         }
     }
@@ -304,9 +334,15 @@ fn opening_title_candidates(info: &OpeningInfo) -> Vec<String> {
     let names = if parts.is_empty() {
         vec![raw_name.to_string()]
     } else {
-        (0..parts.len()).map(|index| parts[..=index].join(", ")).collect()
+        (0..parts.len())
+            .map(|index| parts[..=index].join(", "))
+            .collect()
     };
-    let first_name = names.first().map(String::as_str).unwrap_or_default().to_lowercase();
+    let first_name = names
+        .first()
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_lowercase();
     if (eco.is_empty() || eco.eq_ignore_ascii_case("extra"))
         && matches!(first_name.as_str(), "empty board" | "starting position")
     {
@@ -348,7 +384,11 @@ fn build_simple_tree_from_game(game: &TempGame) -> Result<SimpleNode> {
     Ok(root)
 }
 
-fn append_game_tree(parent: &mut SimpleNode, tree: &GameTree, start_position: &Chess) -> Result<()> {
+fn append_game_tree(
+    parent: &mut SimpleNode,
+    tree: &GameTree,
+    start_position: &Chess,
+) -> Result<()> {
     let mut current_position = start_position.clone();
     let mut previous_position = current_position.clone();
     let mut current_path: Vec<usize> = Vec::new();
@@ -429,7 +469,8 @@ fn find_equivalent_child(children: &[SimpleNode], source: &SimpleNode) -> Option
     let source_san = source.san.as_deref().unwrap_or_default();
     let source_fen = normalize_fen_key(&source.fen);
     children.iter().position(|child| {
-        child.san.as_deref().unwrap_or_default() == source_san && normalize_fen_key(&child.fen) == source_fen
+        child.san.as_deref().unwrap_or_default() == source_san
+            && normalize_fen_key(&child.fen) == source_fen
     })
 }
 
@@ -478,12 +519,18 @@ fn render_pgn(root: &SimpleNode, event: &str, eco: Option<&str>, orientation: &s
         out.push_str(&format!("[ECO \"{}\"]\n", escape_tag(eco)));
     }
     out.push_str(&format!("[Orientation \"{}\"]\n", escape_tag(orientation)));
-    if normalize_fen_key(&root.fen) != normalize_fen_key("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") {
+    if normalize_fen_key(&root.fen)
+        != normalize_fen_key("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    {
         out.push_str("[SetUp \"1\"]\n");
         out.push_str(&format!("[FEN \"{}\"]\n", escape_tag(&root.fen)));
     }
     out.push('\n');
-    out.push_str(&render_children(&root.children, &position_from_fen(&root.fen).unwrap_or_default(), true));
+    out.push_str(&render_children(
+        &root.children,
+        &position_from_fen(&root.fen).unwrap_or_default(),
+        true,
+    ));
     if !out.ends_with(' ') && !out.ends_with('\n') {
         out.push(' ');
     }
@@ -560,7 +607,11 @@ fn render_line_from_node_with_alternatives(
 fn parse_eco_from_title(title: &str) -> Option<String> {
     let eco = title.split(" - ").next()?.trim();
     let chars: Vec<char> = eco.chars().collect();
-    if chars.len() == 3 && matches!(chars[0], 'A'..='E' | 'a'..='e') && chars[1].is_ascii_digit() && chars[2].is_ascii_digit() {
+    if chars.len() == 3
+        && matches!(chars[0], 'A'..='E' | 'a'..='e')
+        && chars[1].is_ascii_digit()
+        && chars[2].is_ascii_digit()
+    {
         Some(eco.to_uppercase())
     } else {
         None
@@ -592,7 +643,12 @@ fn collect_simple_active_moves(
                 })
                 .or_else(|| position_from_fen(&child.fen).ok());
             if let Some(next_position) = next_position {
-                collect_simple_active_moves(child, &next_position, active_color_is_white, active_moves_by_fen);
+                collect_simple_active_moves(
+                    child,
+                    &next_position,
+                    active_color_is_white,
+                    active_moves_by_fen,
+                );
             }
         }
     }
@@ -605,7 +661,12 @@ fn validate_generated_consistency(
     let mut active_moves_by_fen: HashMap<String, HashSet<String>> = HashMap::new();
     for tree in group_trees.values() {
         let position = position_from_fen(&tree.fen)?;
-        collect_simple_active_moves(tree, &position, active_color_is_white, &mut active_moves_by_fen);
+        collect_simple_active_moves(
+            tree,
+            &position,
+            active_color_is_white,
+            &mut active_moves_by_fen,
+        );
     }
     let conflicts = active_moves_by_fen
         .values()
@@ -672,14 +733,26 @@ fn child_indexes_by_parent(variants: &[VariantInfoDto]) -> HashMap<String, Vec<S
     for variant in variants {
         let child_key = normalize_path_key(&variant.path);
         if let Some(parent) = &variant.parent_link {
-            let parent_key = if Path::new(&parent.path).is_absolute() {
-                normalize_path_key(&parent.path)
-            } else {
-                let owner_dir = parent_dir(Path::new(&variant.path));
-                normalize_path_key(&owner_dir.join(&parent.path).to_string_lossy())
-            };
+            let parent_key = resolve_link_path(Path::new(&variant.path), &parent.path);
             if by_key.contains_key(&parent_key) {
-                children.entry(parent_key).or_default().push(child_key);
+                let entry = children.entry(parent_key).or_default();
+                if !entry.contains(&child_key) {
+                    entry.push(child_key.clone());
+                }
+            }
+        }
+
+        for child in &variant.child_links {
+            if child.path.trim().is_empty() {
+                continue;
+            }
+            let linked_child_key = resolve_link_path(Path::new(&variant.path), &child.path);
+            if linked_child_key == child_key || !by_key.contains_key(&linked_child_key) {
+                continue;
+            }
+            let entry = children.entry(child_key.clone()).or_default();
+            if !entry.contains(&linked_child_key) {
+                entry.push(linked_child_key);
             }
         }
     }
@@ -689,16 +762,183 @@ fn child_indexes_by_parent(variants: &[VariantInfoDto]) -> HashMap<String, Vec<S
 fn ordered_subtree_keys(root_key: &str, variants: &[VariantInfoDto]) -> Vec<String> {
     let children = child_indexes_by_parent(variants);
     let mut out = Vec::new();
-    fn walk(key: &str, children: &HashMap<String, Vec<String>>, out: &mut Vec<String>) {
+    let mut visited = HashSet::new();
+    fn walk(
+        key: &str,
+        children: &HashMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if !visited.insert(key.to_string()) {
+            return;
+        }
         out.push(key.to_string());
         if let Some(items) = children.get(key) {
             for child in items {
-                walk(child, children, out);
+                walk(child, children, visited, out);
             }
         }
     }
-    walk(root_key, &children, &mut out);
+    walk(root_key, &children, &mut visited, &mut out);
     out
+}
+
+fn aggregate_variant_family_tree(
+    root_key: &str,
+    variants: &[VariantInfoDto],
+    variant_by_key: &HashMap<String, VariantInfoDto>,
+    trees_by_key: &HashMap<String, Vec<ParsedVariantGame>>,
+) -> Result<SimpleNode> {
+    let root_games = trees_by_key.get(root_key).ok_or_else(|| {
+        Error::InvalidInput("No readable PGN found for this variant family.".to_string())
+    })?;
+    let mut aggregate_root = root_games[0].root.clone();
+    for game in root_games.iter().skip(1) {
+        if normalize_fen_key(&game.root.fen) == normalize_fen_key(&aggregate_root.fen) {
+            merge_children(&mut aggregate_root, &game.root.children);
+        } else if let Some(path) = find_first_path_by_fen(&aggregate_root, &game.root.fen) {
+            let path = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
+            if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path) {
+                merge_children(node, &game.root.children);
+            }
+        }
+    }
+
+    let source_keys = ordered_subtree_keys(root_key, variants);
+    let mut base_path_by_key: HashMap<String, Vec<u32>> =
+        HashMap::from([(root_key.to_string(), Vec::new())]);
+    for key in &source_keys {
+        if key == root_key {
+            continue;
+        }
+        let Some(variant) = variant_by_key.get(key) else {
+            continue;
+        };
+        let Some(games) = trees_by_key.get(key) else {
+            continue;
+        };
+
+        let mut attach_path: Option<Vec<u32>> = None;
+        if let Some(parent) = &variant.parent_link {
+            let parent_key = resolve_link_path(Path::new(&variant.path), &parent.path);
+            if let Some(parent_base) = base_path_by_key.get(&parent_key) {
+                let mut path = parent_base.clone();
+                path.extend(parent.anchor_path.iter().copied());
+                attach_path = Some(path);
+            }
+            if attach_path.is_none() {
+                attach_path = find_first_path_by_fen(&aggregate_root, &parent.anchor_fen);
+            }
+        }
+        if attach_path.is_none() {
+            attach_path = find_first_path_by_fen(&aggregate_root, &games[0].root.fen);
+        }
+        let Some(path) = attach_path else {
+            continue;
+        };
+        let path_usize = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
+        if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path_usize) {
+            base_path_by_key.insert(key.clone(), path);
+            for game in games {
+                merge_children(node, &game.root.children);
+            }
+        }
+    }
+
+    Ok(aggregate_root)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn variants_compress_variant_family(
+    variants_dir: String,
+    target_path: String,
+) -> Result<CompressVariantFamilyResult> {
+    let variants = variants_list_fast(variants_dir)?;
+    let root_key = normalize_path_key(&target_path);
+    let variant_by_key: HashMap<String, VariantInfoDto> = variants
+        .iter()
+        .cloned()
+        .map(|variant| (normalize_path_key(&variant.path), variant))
+        .collect();
+    let root_variant = variant_by_key
+        .get(&root_key)
+        .cloned()
+        .ok_or_else(|| Error::InvalidInput("Target variant was not found".to_string()))?;
+    let source_keys = ordered_subtree_keys(&root_key, &variants);
+    if source_keys.len() <= 1 {
+        return Err(Error::InvalidInput(
+            "This variant does not have descendants to compress.".to_string(),
+        ));
+    }
+
+    let mut trees_by_key: HashMap<String, Vec<ParsedVariantGame>> = HashMap::new();
+    for key in &source_keys {
+        let Some(variant) = variant_by_key.get(key) else {
+            continue;
+        };
+        if let Ok(games) = read_all_games(Path::new(&variant.path)) {
+            if !games.is_empty() {
+                trees_by_key.insert(key.clone(), games);
+            }
+        }
+    }
+    let root_games = trees_by_key.get(&root_key).ok_or_else(|| {
+        Error::InvalidInput("No readable PGN found for this variant family.".to_string())
+    })?;
+    let orientation = root_games
+        .first()
+        .map(|game| game.orientation.as_str())
+        .unwrap_or("white");
+    let aggregate_root =
+        aggregate_variant_family_tree(&root_key, &variants, &variant_by_key, &trees_by_key)?;
+
+    let root_path = PathBuf::from(&root_variant.path);
+    let event = root_variant
+        .opening
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&root_variant.name);
+    let pgn = render_pgn(
+        &aggregate_root,
+        event,
+        root_variant
+            .opening
+            .as_deref()
+            .and_then(parse_eco_from_title)
+            .as_deref(),
+        orientation,
+    );
+    fs::write(&root_path, pgn)?;
+
+    let mut metadata = read_metadata(&root_path)?;
+    let mut tags = metadata_tags(&metadata)
+        .into_iter()
+        .filter(|tag| !tag.starts_with("fen:") && !tag.starts_with("variantsCount:"))
+        .collect::<Vec<_>>();
+    tags.push(format!("fen:{}", aggregate_root.fen));
+    tags.push(format!("variantsCount:{}", source_keys.len()));
+    metadata["schemaVersion"] = json!(2);
+    metadata["tags"] = json!(tags);
+    metadata["links"]["children"] = json!([]);
+    write_metadata(&root_path, &metadata)?;
+
+    let cleanup_paths = source_keys
+        .iter()
+        .filter(|key| *key != &root_key)
+        .filter_map(|key| variant_by_key.get(key).map(|variant| variant.path.clone()))
+        .collect::<Vec<_>>();
+    let removed = if cleanup_paths.is_empty() {
+        0
+    } else {
+        variants_delete_files(cleanup_paths)?.deleted_pgn
+    };
+
+    Ok(CompressVariantFamilyResult {
+        merged: u32::try_from(source_keys.len()).unwrap_or(u32::MAX),
+        removed,
+        root_path: root_path.to_string_lossy().to_string(),
+    })
 }
 
 #[tauri::command]
@@ -732,23 +972,30 @@ pub fn variants_create_opening_variants(
         }
     }
 
-    let root_games = trees_by_key
-        .get(&root_key)
-        .ok_or_else(|| Error::InvalidInput("No readable PGN found for this variant family.".to_string()))?;
-    let orientation = root_games.first().map(|game| game.orientation.as_str()).unwrap_or("white");
+    let root_games = trees_by_key.get(&root_key).ok_or_else(|| {
+        Error::InvalidInput("No readable PGN found for this variant family.".to_string())
+    })?;
+    let orientation = root_games
+        .first()
+        .map(|game| game.orientation.as_str())
+        .unwrap_or("white");
     let active_color_is_white = !orientation.eq_ignore_ascii_case("black");
     let mut aggregate_root = root_games[0].root.clone();
     for game in root_games.iter().skip(1) {
         if normalize_fen_key(&game.root.fen) == normalize_fen_key(&aggregate_root.fen) {
             merge_children(&mut aggregate_root, &game.root.children);
         } else if let Some(path) = find_first_path_by_fen(&aggregate_root, &game.root.fen) {
-            if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path.iter().map(|value| *value as usize).collect::<Vec<_>>()) {
+            if let Some(node) = get_simple_node_mut(
+                &mut aggregate_root,
+                &path.iter().map(|value| *value as usize).collect::<Vec<_>>(),
+            ) {
                 merge_children(node, &game.root.children);
             }
         }
     }
 
-    let mut base_path_by_key: HashMap<String, Vec<u32>> = HashMap::from([(root_key.clone(), Vec::new())]);
+    let mut base_path_by_key: HashMap<String, Vec<u32>> =
+        HashMap::from([(root_key.clone(), Vec::new())]);
     for key in &source_keys {
         if key == &root_key {
             continue;
@@ -764,7 +1011,11 @@ pub fn variants_create_opening_variants(
             let parent_key = if Path::new(&parent.path).is_absolute() {
                 normalize_path_key(&parent.path)
             } else {
-                normalize_path_key(&parent_dir(Path::new(&variant.path)).join(&parent.path).to_string_lossy())
+                normalize_path_key(
+                    &parent_dir(Path::new(&variant.path))
+                        .join(&parent.path)
+                        .to_string_lossy(),
+                )
             };
             if let Some(parent_base) = base_path_by_key.get(&parent_key) {
                 let mut path = parent_base.clone();
@@ -781,7 +1032,10 @@ pub fn variants_create_opening_variants(
         let Some(path) = attach_path else {
             continue;
         };
-        if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path.iter().map(|value| *value as usize).collect::<Vec<_>>()) {
+        if let Some(node) = get_simple_node_mut(
+            &mut aggregate_root,
+            &path.iter().map(|value| *value as usize).collect::<Vec<_>>(),
+        ) {
             base_path_by_key.insert(key.clone(), path);
             for game in games {
                 merge_children(node, &game.root.children);
@@ -825,11 +1079,9 @@ pub fn variants_create_opening_variants(
             let group = &mut groups[index];
             group.source_nodes.push(node.clone());
             for candidate in title_candidates {
-                if !group
-                    .title_candidates
-                    .iter()
-                    .any(|item| normalize_opening_variant_key(item) == normalize_opening_variant_key(&candidate))
-                {
+                if !group.title_candidates.iter().any(|item| {
+                    normalize_opening_variant_key(item) == normalize_opening_variant_key(&candidate)
+                }) {
                     group.title_candidates.push(candidate);
                 }
             }
@@ -885,7 +1137,9 @@ pub fn variants_create_opening_variants(
         let mut active_title = current_title.clone();
         let can_start_group_here = node.san.is_none()
             || position_from_fen(&node.fen)
-                .map(|position| (position.turn() == shakmaty::Color::White) != active_color_is_white)
+                .map(|position| {
+                    (position.turn() == shakmaty::Color::White) != active_color_is_white
+                })
                 .unwrap_or(false);
         if can_start_group_here {
             let title_candidates = resolve_titles(&node.fen, cache);
@@ -900,12 +1154,16 @@ pub fn variants_create_opening_variants(
                     title_candidates
                         .iter()
                         .skip(index.saturating_add(1))
-                        .find(|candidate| Some(normalize_opening_variant_key(candidate)) != current_key)
+                        .find(|candidate| {
+                            Some(normalize_opening_variant_key(candidate)) != current_key
+                        })
                         .cloned()
                 } else {
                     title_candidates
                         .iter()
-                        .find(|candidate| Some(normalize_opening_variant_key(candidate)) != current_key)
+                        .find(|candidate| {
+                            Some(normalize_opening_variant_key(candidate)) != current_key
+                        })
                         .cloned()
                 };
                 if let Some(title) = title {
@@ -963,7 +1221,9 @@ pub fn variants_create_opening_variants(
     }
 
     if groups.is_empty() {
-        return Err(Error::InvalidInput("No ECO openings were found in this variant family.".to_string()));
+        return Err(Error::InvalidInput(
+            "No ECO openings were found in this variant family.".to_string(),
+        ));
     }
 
     let output_dir = parent_dir(Path::new(&root_variant.path));
@@ -1019,14 +1279,19 @@ pub fn variants_create_opening_variants(
         .filter_map(|(base, count)| if count > 1 { Some(base) } else { None })
         .collect();
     for group in &mut groups {
-        let title_candidates = descriptive_opening_title_candidates(&group.title_candidates, &repeated_base_names);
-        let (title, stem) = make_unique_opening_file_stem(&title_candidates, &mut reserved, "variant");
+        let title_candidates =
+            descriptive_opening_title_candidates(&group.title_candidates, &repeated_base_names);
+        let (title, stem) =
+            make_unique_opening_file_stem(&title_candidates, &mut reserved, "variant");
         group.title = title;
         group.file_stem = stem;
     }
 
-    let mut group_by_id: HashMap<String, OpeningGroup> =
-        groups.iter().cloned().map(|group| (group.id.clone(), group)).collect();
+    let mut group_by_id: HashMap<String, OpeningGroup> = groups
+        .iter()
+        .cloned()
+        .map(|group| (group.id.clone(), group))
+        .collect();
     let mut anchors: HashMap<String, OpeningAnchor> = HashMap::new();
 
     fn edge_key(parent_id: &str, child_id: &str) -> String {
@@ -1074,10 +1339,14 @@ pub fn variants_create_opening_variants(
                         .get(owner_id)
                         .map(|owner| owner.children.contains(boundary_id))
                         .unwrap_or(false);
-                    let is_root_level_child = owner_id == root_replacement_id && boundary_group.parent_id.is_none();
+                    let is_root_level_child =
+                        owner_id == root_replacement_id && boundary_group.parent_id.is_none();
                     if is_child || is_root_level_child {
                         record_anchor(anchors, owner_id, boundary_group, node, path);
-                        return SimpleNode { children: Vec::new(), ..node.clone() };
+                        return SimpleNode {
+                            children: Vec::new(),
+                            ..node.clone()
+                        };
                     }
                 }
             }
@@ -1089,13 +1358,27 @@ pub fn variants_create_opening_variants(
             .map(|(index, child)| {
                 let mut child_path = path.to_vec();
                 let Ok(index) = u32::try_from(index) else {
-                    return SimpleNode { children: Vec::new(), ..child.clone() };
+                    return SimpleNode {
+                        children: Vec::new(),
+                        ..child.clone()
+                    };
                 };
                 child_path.push(index);
-                clone_for_group(child, owner_id, root_replacement_id, &child_path, boundary_by_fen, group_by_id, anchors)
+                clone_for_group(
+                    child,
+                    owner_id,
+                    root_replacement_id,
+                    &child_path,
+                    boundary_by_fen,
+                    group_by_id,
+                    anchors,
+                )
             })
             .collect();
-        SimpleNode { children, ..node.clone() }
+        SimpleNode {
+            children,
+            ..node.clone()
+        }
     }
 
     let mut group_trees: HashMap<String, SimpleNode> = HashMap::new();
@@ -1170,7 +1453,10 @@ pub fn variants_create_opening_variants(
                                 anchor_fen: anchor_node.fen.clone(),
                                 anchor_path: path.clone(),
                                 anchor_ply: path_ply(&path),
-                                label: anchor_node.san.clone().or_else(|| child_group.parent_anchor_san.clone()),
+                                label: anchor_node
+                                    .san
+                                    .clone()
+                                    .or_else(|| child_group.parent_anchor_san.clone()),
                             },
                         );
                     }
@@ -1207,7 +1493,10 @@ pub fn variants_create_opening_variants(
 
     fs::create_dir_all(&output_dir)?;
     let root_path = PathBuf::from(&root_variant.path);
-    if let Some(root_group) = groups.iter_mut().find(|group| group.id == root_replacement_id) {
+    if let Some(root_group) = groups
+        .iter_mut()
+        .find(|group| group.id == root_replacement_id)
+    {
         root_group.file_path = Some(root_path.clone());
     }
 
@@ -1224,7 +1513,12 @@ pub fn variants_create_opening_variants(
         let tree = group_trees
             .get(&group.id)
             .ok_or_else(|| Error::InvalidInput("Missing generated opening tree".to_string()))?;
-        let pgn = render_pgn(tree, &group.title, parse_eco_from_title(&group.title).as_deref(), orientation);
+        let pgn = render_pgn(
+            tree,
+            &group.title,
+            parse_eco_from_title(&group.title).as_deref(),
+            orientation,
+        );
         fs::write(&path, pgn)?;
         let metadata = json!({
             "type": "variants",
@@ -1242,20 +1536,29 @@ pub fn variants_create_opening_variants(
         group.file_path = Some(path);
     }
 
-    group_by_id = groups.iter().cloned().map(|group| (group.id.clone(), group)).collect();
+    group_by_id = groups
+        .iter()
+        .cloned()
+        .map(|group| (group.id.clone(), group))
+        .collect();
     for group in &groups {
         let Some(path) = &group.file_path else {
             continue;
         };
         let mut metadata = read_metadata(path)?;
         let tree_fen = if group.id == root_replacement_id {
-            group_trees.get(&group.id).map(|tree| tree.fen.clone()).unwrap_or_else(|| group.fen.clone())
+            group_trees
+                .get(&group.id)
+                .map(|tree| tree.fen.clone())
+                .unwrap_or_else(|| group.fen.clone())
         } else {
             group.fen.clone()
         };
         let mut child_ids = group.children.clone();
         if group.id == root_replacement_id {
-            for candidate in groups.iter().filter(|candidate| candidate.id != root_replacement_id && candidate.parent_id.is_none()) {
+            for candidate in groups.iter().filter(|candidate| {
+                candidate.id != root_replacement_id && candidate.parent_id.is_none()
+            }) {
                 if !child_ids.contains(&candidate.id) {
                     child_ids.push(candidate.id.clone());
                 }
@@ -1293,7 +1596,11 @@ pub fn variants_create_opening_variants(
                     .unwrap_or_else(|| file_name(&root_path));
                 let parent_name = parent_group
                     .map(|parent| parent.file_stem.clone())
-                    .or_else(|| group_by_id.get(&root_replacement_id).map(|root| root.file_stem.clone()))
+                    .or_else(|| {
+                        group_by_id
+                            .get(&root_replacement_id)
+                            .map(|root| root.file_stem.clone())
+                    })
                     .unwrap_or_else(|| file_stem(&root_path));
                 json!({
                     "path": parent_path,
@@ -1366,9 +1673,111 @@ pub fn variants_create_opening_variants(
     }
 
     Ok(CreateOpeningVariantsResult {
-        created: u32::try_from(groups.iter().filter(|group| group.id != root_replacement_id).count())
-            .unwrap_or(u32::MAX),
+        created: u32::try_from(
+            groups
+                .iter()
+                .filter(|group| group.id != root_replacement_id)
+                .count(),
+        )
+        .unwrap_or(u32::MAX),
         removed,
         root_path: root_path.to_string_lossy().to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn compress_variant_family_merges_descendants_into_parent_and_removes_children() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let child_path = dir.path().join("child.pgn");
+        let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+
+        fs::write(
+            &root_path,
+            "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n\n1. e4 *\n",
+        )
+        .unwrap();
+        fs::write(
+            root_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Root", "fen:rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
+                "schemaVersion": 2,
+                "links": {
+                    "children": [{
+                        "path": "child.pgn",
+                        "name": "child",
+                        "anchorFen": after_e4,
+                        "anchorPath": [0],
+                        "anchorPly": 1,
+                        "label": "e4"
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        fs::write(
+            &child_path,
+            format!(
+                "[Event \"Child\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n[SetUp \"1\"]\n[FEN \"{after_e4}\"]\n\n1... c5 *\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            child_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Child", format!("fen:{after_e4}")],
+                "schemaVersion": 2,
+                "links": {
+                    "parent": {
+                        "path": "root.pgn",
+                        "name": "root",
+                        "anchorFen": after_e4,
+                        "anchorPath": [0],
+                        "anchorPly": 1,
+                        "label": "e4"
+                    },
+                    "children": []
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let result = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.merged, 2);
+        assert_eq!(result.removed, 1);
+        assert!(!child_path.exists());
+        assert!(!child_path.with_extension("info").exists());
+
+        let merged_pgn = fs::read_to_string(&root_path).unwrap();
+        assert!(merged_pgn.contains("1.e4 c5") || merged_pgn.contains("1. e4 c5"));
+
+        let metadata: Value =
+            serde_json::from_str(&fs::read_to_string(root_path.with_extension("info")).unwrap())
+                .unwrap();
+        assert_eq!(
+            metadata
+                .get("links")
+                .and_then(|links| links.get("children"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        let tags = metadata_tags(&metadata);
+        assert!(tags.iter().any(|tag| tag == "variantsCount:2"));
+    }
 }

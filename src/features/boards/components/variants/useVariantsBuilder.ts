@@ -465,6 +465,7 @@ export function useVariantsBuilder({ store, currentTab, boardOrientation, is960 
           coverage: treeBuilderCoverage,
           minMoves: treeBuilderMinMoves,
           depth: treeBuilderDepth,
+          forceRebuild: false,
           splitConfig: {
             enabled: false,
             mode: "none",

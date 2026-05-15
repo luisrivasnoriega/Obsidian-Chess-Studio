@@ -11,6 +11,7 @@ export type CoverageExplorerCacheMove = {
 
 export type CoverageExplorerCacheEntry = {
   source_signature: string;
+  config_json?: string | null;
   fen: string;
   total_games: number;
   moves: CoverageExplorerCacheMove[];
@@ -114,10 +115,12 @@ export async function setCoverageExplorerCache(
   sourceSignature: string,
   fen: string,
   moves: CoverageExplorerCacheMove[],
+  configJson?: string | null,
 ): Promise<void> {
   await invoke("coverage_cache_set", {
     sourceSignature,
     fen,
     moves,
+    configJson: configJson ?? null,
   });
 }

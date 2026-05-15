@@ -388,9 +388,9 @@ async coverageCacheGet(sourceSignature: string, fen: string) : Promise<Result<Co
     else return { status: "error", error: e  as any };
 }
 },
-async coverageCacheSet(sourceSignature: string, fen: string, moves: CoverageCacheMoveDto[]) : Promise<Result<null, string>> {
+async coverageCacheSet(sourceSignature: string, fen: string, moves: CoverageCacheMoveDto[], configJson: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("coverage_cache_set", { sourceSignature, fen, moves }) };
+    return { status: "ok", data: await TAURI_INVOKE("coverage_cache_set", { sourceSignature, fen, moves, configJson }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1323,6 +1323,14 @@ async variantsCreateOpeningVariants(variantsDir: string, targetPath: string) : P
     else return { status: "error", error: e  as any };
 }
 },
+async variantsCompressVariantFamily(variantsDir: string, targetPath: string) : Promise<Result<CompressVariantFamilyResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("variants_compress_variant_family", { variantsDir, targetPath }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async postGameReviewVariants(input: PostGameReviewVariantsInput) : Promise<Result<PostGameReviewVariantsResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("post_game_review_variants", { input }) };
@@ -1947,7 +1955,7 @@ export type BookErrorEntry = { ply: bigint; playedMove: string; expectedMove: st
 export type BookNode = { id: bigint; fen: string; plyFromRoot: bigint; sideToMove: PlayerColor; reachProb: number }
 export type BookUnknownEntry = { ply: bigint; playedMove: string; expectedMove: string | null; expectedMoves: string[] }
 export type BuildVariantsMode = "engine" | "smart"
-export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: BuildVariantsMode; smartConfig?: SmartConfigDto | null; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; splitConfig?: SplitConfigDto | null }
+export type BuildVariantsTreeRequest = { root: VariantsTreeNodeDto; startPath: number[]; orientation: string; is960: boolean; dbType: string; localDbPath?: string | null; lichessOptions?: LichessGamesOptionsDto | null; masterOptions?: MasterGamesOptionsDto | null; lichessToken?: string | null; mode: BuildVariantsMode; smartConfig?: SmartConfigDto | null; engine?: EngineRequestDto | null; engineMs: number; coverage: number; minMoves: number; depth: number; forceRebuild?: boolean; splitConfig?: SplitConfigDto | null }
 export type BuildVariantsTreeResponse = { lines: LineDto[]; segments?: SegmentDto[] | null; warnings?: string[] | null }
 export type ChessbaseCredentialsSummary = { username: string | null; has_password: boolean }
 export type ChessbaseDownloadResult = { pgn: string; games: number }
@@ -1956,7 +1964,8 @@ export type ChessbasePositionSearchResult = { stats: PositionStats[]; games: Nor
 export type ChessbasePreparedDownload = { query: string; maxGames: number; downloadedGames: number }
 export type ChessbaseQuickSearchCount = { returned: number; total: number }
 export type ChessbaseSessionStatus = { connected: boolean; username: string | null; state: string; last_error: string | null }
-export type CoverageCacheEntryDto = { source_signature: string; fen: string; total_games: bigint; moves: CoverageCacheMoveDto[]; fetched_at_ms: bigint; expires_at_ms: bigint }
+export type CompressVariantFamilyResult = { merged: number; removed: number; rootPath: string }
+export type CoverageCacheEntryDto = { source_signature: string; config_json: string | null; fen: string; total_games: bigint; moves: CoverageCacheMoveDto[]; fetched_at_ms: bigint; expires_at_ms: bigint }
 export type CoverageCacheMoveDto = { san: string; games: bigint; white?: bigint; black?: bigint; draw?: bigint }
 export type CoverageEngineAnalysisResultEntry = { fen: string; label: string; advantage: string | null; engineName: string; engineMs: number; bestMove: string | null; cached: boolean; error: string | null }
 export type CoverageEngineAnalysisRunRequest = { engineName: string; enginePath: string; sourceNodeId: string; sourceNode: VariantCoverageGraphNodeDto | null; graphRoot: VariantCoverageGraphNodeDto | null; graphCachePath: string | null; variantPath: string | null; coverageGraphSourceSignature: string | null; ms: number; engineSettings: EngineOption[]; emitProgress: boolean; writeGraphCache: boolean; runId: string | null }

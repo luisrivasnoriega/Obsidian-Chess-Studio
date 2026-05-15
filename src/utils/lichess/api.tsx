@@ -12,7 +12,12 @@ import { match, P } from "ts-pattern";
 import { type BestMoves, commands, type EngineOptions, type GoMode, type NormalizedGame } from "@/bindings";
 import { parsePGN, uciNormalize } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import { buildCoverageSourceSignature, setCoverageExplorerCache } from "@/utils/coverageExplorerCache";
+import {
+  buildCoverageSourceSignature,
+  type CoverageExplorerCacheEntry,
+  getCoverageExplorerCache,
+  setCoverageExplorerCache,
+} from "@/utils/coverageExplorerCache";
 import {
   getLichessGamesQueryParams,
   getMasterGamesQueryParams,
@@ -203,6 +208,50 @@ type PositionData = {
   recentGames?: PositionGames;
   topGames?: PositionGames;
 };
+
+function formatExplorerMonth(date: Date | null | undefined): string | null {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function normalizeLichessAllCacheConfig(options: LichessGamesOptions): string {
+  return JSON.stringify({
+    schema: "ocs.lichess-all-position-cache.v1",
+    dbType: "lch_all",
+    variant: options.variant ?? null,
+    speeds: [...(options.speeds ?? [])].sort(),
+    ratings: [...(options.ratings ?? [])].sort((a, b) => a - b),
+    since: formatExplorerMonth(options.since),
+    until: formatExplorerMonth(options.until),
+    moves: typeof options.moves === "number" && options.moves >= 0 ? options.moves : null,
+    topGames: typeof options.topGames === "number" && options.topGames >= 0 ? options.topGames : null,
+    recentGames: typeof options.recentGames === "number" && options.recentGames >= 0 ? options.recentGames : null,
+    player: (options.player ?? "").trim().toLowerCase(),
+    color: options.color ?? "white",
+  });
+}
+
+function positionDataFromCoverageCache(entry: CoverageExplorerCacheEntry): PositionData {
+  const moves = entry.moves.map((move) => ({
+    uci: "",
+    san: move.san,
+    averageRating: 0,
+    white: move.white ?? 0,
+    black: move.black ?? 0,
+    draws: move.draw ?? 0,
+  }));
+
+  return {
+    white: moves.reduce((sum, move) => sum + move.white, 0),
+    black: moves.reduce((sum, move) => sum + move.black, 0),
+    draws: moves.reduce((sum, move) => sum + move.draws, 0),
+    moves,
+    recentGames: [],
+    topGames: [],
+  };
+}
 
 function getExplorerHeaders(token?: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -435,15 +484,17 @@ export async function getLichessGames(
   token?: string,
   signal?: AbortSignal,
 ): Promise<PositionData> {
-  const sourceSignature = await buildCoverageSourceSignature({
-    dbType: "lch_all",
-    lichessSpeeds: options.speeds ?? [],
-    lichessRatings: options.ratings ?? [],
-    lichessSince: options.since ?? null,
-    lichessUntil: options.until ?? null,
-    lichessPlayer: options.player ?? "",
-    lichessColor: options.color ?? "white",
-  });
+  const cacheConfigJson = normalizeLichessAllCacheConfig(options);
+  const sourceSignature = cacheConfigJson;
+  try {
+    const cached = await getCoverageExplorerCache(sourceSignature, fen);
+    if (cached) {
+      return positionDataFromCoverageCache(cached);
+    }
+  } catch {
+    // Coverage cache is best effort and should not block explorer usage.
+  }
+
   const url = match(options.player)
     .with(P.union(undefined, ""), () => `${explorerURL}/lichess?${getLichessGamesQueryParams(fen, options)}`)
     .otherwise(() => `${explorerURL}/player?${getLichessGamesQueryParams(fen, options)}`);
@@ -464,6 +515,7 @@ export async function getLichessGames(
         black: move.black,
         draw: move.draws,
       })),
+      cacheConfigJson,
     );
   } catch {
     // Coverage cache is best effort and should not block explorer usage.

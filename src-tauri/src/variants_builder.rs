@@ -336,6 +336,8 @@ pub struct BuildVariantsTreeRequest {
     pub min_moves: u32,
     pub depth: u32, // active player moves
     #[serde(default)]
+    pub force_rebuild: bool,
+    #[serde(default)]
     pub split_config: Option<SplitConfigDto>,
 }
 
@@ -624,6 +626,48 @@ fn node_at_path<'a>(root: &'a TreeNodeDto, path: &[u32]) -> Option<&'a TreeNodeD
         cur = cur.children.get(idx)?;
     }
     Some(cur)
+}
+
+fn move_text_candidates(fen: &str, value: &str, is960: bool) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let trimmed = value.trim();
+    if !trimmed.is_empty() {
+        candidates.push(trimmed.to_string());
+    }
+    if let Ok(san) = uci_to_san(fen, trimmed, is960) {
+        if !candidates.iter().any(|candidate| candidate == &san) {
+            candidates.push(san);
+        }
+    }
+    candidates
+}
+
+fn child_matches_move(fen: &str, step: &MoveSpecDto, child: &TreeNodeDto, is960: bool) -> bool {
+    let Some(child_san) = child
+        .san
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+
+    move_text_candidates(fen, &step.value, is960)
+        .iter()
+        .any(|candidate| candidate == child_san)
+}
+
+fn find_existing_child_for_step<'a>(
+    node: Option<&'a TreeNodeDto>,
+    fen: &str,
+    step: &MoveSpecDto,
+    is960: bool,
+) -> Option<&'a TreeNodeDto> {
+    node.and_then(|node| {
+        node.children
+            .iter()
+            .find(|child| child_matches_move(fen, step, child, is960))
+    })
 }
 
 fn parse_date_to_year_month(s: &str) -> Option<String> {
@@ -952,6 +996,7 @@ async fn get_opening_moves(
     fen: &str,
     req: &BuildVariantsTreeRequest,
     existing_moves_by_fen: &HashMap<String, Vec<ExplorerMove>>,
+    allow_existing_fallback: bool,
     requests_left: &mut u32,
     app: &AppHandle,
     state: tauri::State<'_, AppState>,
@@ -1073,7 +1118,7 @@ async fn get_opening_moves(
         other => return Err(Error::FenError(format!("Unknown db_type: {other}"))),
     };
 
-    if fetched.is_empty() {
+    if allow_existing_fallback && fetched.is_empty() {
         if let Some(existing) = existing_fallback {
             log::debug!(
                 "get_opening_moves: DB/explorer empty, falling back to existing tree moves ({} moves) for fen_key={}",
@@ -1382,6 +1427,18 @@ fn push_unique_line(lines: &mut Vec<LineDto>, seen: &mut HashSet<String>, line: 
     }
 }
 
+fn push_line_if_changed(
+    lines: &mut Vec<LineDto>,
+    current_line: &[MoveSpecDto],
+    line_has_new: bool,
+) {
+    if line_has_new && !current_line.is_empty() {
+        lines.push(LineDto {
+            moves: current_line.to_vec(),
+        });
+    }
+}
+
 mod smart {
     use super::*;
 
@@ -1389,15 +1446,19 @@ mod smart {
     const DEFAULT_VALIDATION_FULL_MOVES: u32 = 8;
     const MIN_VALIDATION_PLIES: u32 = DEFAULT_VALIDATION_FULL_MOVES * 2;
     const RELIABILITY_SAMPLE_SIZE: f64 = 120.0;
-    const PRACTICAL_WEIGHT: f64 = 0.60;
+    const PRINCIPAL_RESPONSE_COVERAGE: f64 = 0.60;
+    const RARE_REFUTATION_DISCOVERABILITY_CAP: f64 = 0.15;
+    const PRACTICAL_WEIGHT: f64 = 0.62;
     const SAFETY_WEIGHT: f64 = 0.18;
-    const ENGINE_QUALITY_WEIGHT: f64 = 0.14;
-    const RELIABILITY_WEIGHT: f64 = 0.05;
-    const VALIDATION_COMPLETENESS_WEIGHT: f64 = 0.03;
-    const EXPECTED_SCORE_WEIGHT: f64 = 0.25;
-    const MAINLINE_SCORE_WEIGHT: f64 = 0.30;
-    const WORST_BRANCH_SCORE_WEIGHT: f64 = 0.25;
-    const TERMINAL_SCORE_WEIGHT: f64 = 0.20;
+    const ENGINE_QUALITY_WEIGHT: f64 = 0.10;
+    const SURPRISE_WEIGHT: f64 = 0.05;
+    const RELIABILITY_WEIGHT: f64 = 0.03;
+    const VALIDATION_COMPLETENESS_WEIGHT: f64 = 0.02;
+    const PRINCIPAL_SCORE_WEIGHT: f64 = 0.35;
+    const PRINCIPAL_WORST_SCORE_WEIGHT: f64 = 0.20;
+    const PRINCIPAL_TERMINAL_SCORE_WEIGHT: f64 = 0.25;
+    const ALL_LINES_SCORE_WEIGHT: f64 = 0.10;
+    const RARE_REFUTATION_SCORE_WEIGHT: f64 = 0.10;
     const CURRENT_BRANCH_WEIGHT: f64 = 0.30;
     const FUTURE_BRANCH_WEIGHT: f64 = 0.70;
     const INCOMPLETE_VALIDATION_SCORE: f64 = 0.46;
@@ -1474,6 +1535,8 @@ mod smart {
         mainline_score: f64,
         worst_branch_score: f64,
         terminal_score: f64,
+        rare_refutation_score: f64,
+        surprise_value: f64,
         sample_reliability: f64,
         min_target_eval_cp: i32,
         validation_complete: bool,
@@ -1487,6 +1550,8 @@ mod smart {
                 mainline_score: 0.5,
                 worst_branch_score: 0.5,
                 terminal_score: 0.5,
+                rare_refutation_score: 0.5,
+                surprise_value: 0.0,
                 sample_reliability: 0.0,
                 min_target_eval_cp: MATE_CP,
                 validation_complete: true,
@@ -1500,6 +1565,8 @@ mod smart {
                 mainline_score: INCOMPLETE_VALIDATION_SCORE,
                 worst_branch_score: INCOMPLETE_VALIDATION_SCORE,
                 terminal_score: INCOMPLETE_VALIDATION_SCORE,
+                rare_refutation_score: INCOMPLETE_VALIDATION_SCORE,
+                surprise_value: 0.0,
                 sample_reliability: 0.0,
                 min_target_eval_cp: MATE_CP,
                 validation_complete: false,
@@ -1513,6 +1580,8 @@ mod smart {
                 mainline_score: 0.0,
                 worst_branch_score: 0.0,
                 terminal_score: 0.0,
+                rare_refutation_score: 0.0,
+                surprise_value: 0.0,
                 sample_reliability: 0.0,
                 min_target_eval_cp: -MATE_CP,
                 validation_complete: false,
@@ -1528,6 +1597,8 @@ mod smart {
         mainline_score: f64,
         worst_branch_score: f64,
         terminal_score: f64,
+        rare_refutation_score: f64,
+        surprise_value: f64,
         sample_reliability: f64,
         validation_complete: bool,
         hidden_valid: bool,
@@ -1592,6 +1663,32 @@ mod smart {
         (current * CURRENT_BRANCH_WEIGHT + future * FUTURE_BRANCH_WEIGHT).clamp(0.0, 1.0)
     }
 
+    fn principal_response_indices(selected: &[ExplorerMove], source_total: u32) -> HashSet<usize> {
+        if selected.is_empty() {
+            return HashSet::new();
+        }
+
+        let selected_total = source_total_games(selected);
+        let denominator = source_total.max(selected_total);
+        if denominator == 0 {
+            return HashSet::from([0]);
+        }
+
+        let mut indices = HashSet::new();
+        let mut cumulative = 0u32;
+        for (idx, m) in selected.iter().enumerate() {
+            if !indices.is_empty()
+                && (cumulative as f64 / denominator as f64) >= PRINCIPAL_RESPONSE_COVERAGE
+            {
+                break;
+            }
+            indices.insert(idx);
+            cumulative = cumulative.saturating_add(explorer_move_total(m));
+        }
+
+        indices
+    }
+
     fn validation_lichess_request_budget() -> u32 {
         SMART_VALIDATION_LICHESS_REQUEST_BUDGET
     }
@@ -1609,16 +1706,20 @@ mod smart {
         let mainline_score = input.mainline_score.clamp(0.0, 1.0);
         let worst_branch_score = input.worst_branch_score.clamp(0.0, 1.0);
         let terminal_score = input.terminal_score.clamp(0.0, 1.0);
-        let practical_composite = practical_score * EXPECTED_SCORE_WEIGHT
-            + mainline_score * MAINLINE_SCORE_WEIGHT
-            + worst_branch_score * WORST_BRANCH_SCORE_WEIGHT
-            + terminal_score * TERMINAL_SCORE_WEIGHT;
+        let rare_refutation_score = input.rare_refutation_score.clamp(0.0, 1.0);
+        let surprise_value = input.surprise_value.clamp(0.0, 1.0);
+        let practical_composite = mainline_score * PRINCIPAL_SCORE_WEIGHT
+            + worst_branch_score * PRINCIPAL_WORST_SCORE_WEIGHT
+            + terminal_score * PRINCIPAL_TERMINAL_SCORE_WEIGHT
+            + practical_score * ALL_LINES_SCORE_WEIGHT
+            + rare_refutation_score * RARE_REFUTATION_SCORE_WEIGHT;
         let completeness = if input.validation_complete { 1.0 } else { 0.0 };
 
         Some(
             practical_composite * PRACTICAL_WEIGHT
                 + safety_margin * SAFETY_WEIGHT
                 + engine_quality * ENGINE_QUALITY_WEIGHT
+                + surprise_value * SURPRISE_WEIGHT
                 + input.sample_reliability.clamp(0.0, 1.0) * RELIABILITY_WEIGHT
                 + completeness * VALIDATION_COMPLETENESS_WEIGHT,
         )
@@ -1737,6 +1838,7 @@ mod smart {
                 fen,
                 self.req,
                 self.existing_moves_by_fen,
+                false,
                 self.lichess_requests_left,
                 &self.app,
                 self.state.clone(),
@@ -1770,7 +1872,7 @@ mod smart {
                 .await?
                 {
                     log::debug!(
-                        "SMART candidate scored: fen_key={} move={} rank={} eval_cp={} expected={:.3} mainline={:.3} worst={:.3} terminal={:.3} reliability={:.3} complete={} final={:.3}",
+                        "SMART candidate scored: fen_key={} move={} rank={} eval_cp={} all_lines={:.3} principal={:.3} principal_worst={:.3} principal_terminal={:.3} rare_refutation={:.3} surprise={:.3} reliability={:.3} complete={} final={:.3}",
                         fen_identity_key(fen),
                         evaluation.candidate.san,
                         evaluation.candidate.engine_rank + 1,
@@ -1779,6 +1881,8 @@ mod smart {
                         evaluation.outcome.mainline_score,
                         evaluation.outcome.worst_branch_score,
                         evaluation.outcome.terminal_score,
+                        evaluation.outcome.rare_refutation_score,
+                        evaluation.outcome.surprise_value,
                         evaluation.outcome.sample_reliability,
                         evaluation.outcome.validation_complete,
                         evaluation.final_score
@@ -1923,6 +2027,8 @@ mod smart {
                 mainline_score: child.mainline_score,
                 worst_branch_score: child.worst_branch_score,
                 terminal_score: child.terminal_score,
+                rare_refutation_score: child.rare_refutation_score,
+                surprise_value: child.surprise_value,
                 sample_reliability: child.sample_reliability,
                 min_target_eval_cp,
                 validation_complete: child.validation_complete,
@@ -1934,6 +2040,8 @@ mod smart {
                 mainline_score: outcome.mainline_score,
                 worst_branch_score: outcome.worst_branch_score,
                 terminal_score: outcome.terminal_score,
+                rare_refutation_score: outcome.rare_refutation_score,
+                surprise_value: outcome.surprise_value,
                 sample_reliability: outcome.sample_reliability,
                 validation_complete: outcome.validation_complete,
                 hidden_valid: outcome.valid && min_target_eval_cp >= self.cfg.playable_threshold_cp,
@@ -1969,19 +2077,23 @@ mod smart {
                 return Ok(SmartOutcome::incomplete());
             }
 
-            let total_counts: u32 = selected.iter().map(|m| m.white + m.black + m.draws).sum();
+            let source_total_counts = source_total_games(&opening_moves);
+            let principal_indices = principal_response_indices(&selected, source_total_counts);
+            let total_counts: u32 = selected.iter().map(explorer_move_total).sum();
             let equal_weight = 1.0 / selected.len() as f64;
             let mut weighted_practical = 0.0;
             let mut weighted_reliability = 0.0;
-            let mut weighted_terminal = 0.0;
-            let mut mainline_score: Option<f64> = None;
-            let mut worst_branch_score = 1.0;
+            let mut principal_weight = 0.0;
+            let mut principal_score = 0.0;
+            let mut principal_terminal = 0.0;
+            let mut principal_worst = 1.0;
+            let mut rare_refutation_risk = 0.0;
             let mut min_target_eval_cp = MATE_CP;
             let mut applied_any = false;
             let mut validation_complete = true;
 
             for (idx, m) in selected.into_iter().enumerate() {
-                let total = m.white + m.black + m.draws;
+                let total = explorer_move_total(&m);
                 let weight = if total_counts > 0 {
                     total as f64 / total_counts as f64
                 } else {
@@ -2016,10 +2128,10 @@ mod smart {
                 } else {
                     blend_future_value(practical_now, child.practical_score)
                 };
-                let branch_mainline = if plies_left <= 1 {
+                let branch_principal = if plies_left <= 1 {
                     practical_now
                 } else {
-                    practical_now.min(child.mainline_score)
+                    blend_future_value(practical_now, child.mainline_score)
                 };
                 let branch_worst = if plies_left <= 1 {
                     practical_now
@@ -2038,12 +2150,26 @@ mod smart {
                 };
 
                 weighted_practical += branch_practical * weight;
-                weighted_terminal += branch_terminal * weight;
                 weighted_reliability += branch_reliability * weight;
-                if idx == 0 {
-                    mainline_score = Some(branch_mainline);
+                if principal_indices.contains(&idx) {
+                    principal_weight += weight;
+                    principal_score += branch_principal * weight;
+                    principal_terminal += branch_terminal * weight;
+                    principal_worst = f64::min(principal_worst, branch_worst);
+                } else {
+                    let source_frequency = if source_total_counts > 0 {
+                        total as f64 / source_total_counts as f64
+                    } else {
+                        weight
+                    };
+                    let opponent_advantage = ((0.5 - branch_worst).max(0.0) * 2.0).clamp(0.0, 1.0);
+                    let discoverability =
+                        (source_frequency / RARE_REFUTATION_DISCOVERABILITY_CAP).clamp(0.0, 1.0);
+                    let branch_risk = opponent_advantage * discoverability * branch_reliability;
+                    if branch_risk > rare_refutation_risk {
+                        rare_refutation_risk = branch_risk;
+                    }
                 }
-                worst_branch_score = f64::min(worst_branch_score, branch_worst);
                 min_target_eval_cp = min_target_eval_cp.min(child.min_target_eval_cp);
                 applied_any = true;
             }
@@ -2052,14 +2178,34 @@ mod smart {
                 return Ok(SmartOutcome::incomplete());
             }
 
+            let principal_score = if principal_weight > 0.0 {
+                principal_score / principal_weight
+            } else {
+                INCOMPLETE_VALIDATION_SCORE
+            };
+            let principal_terminal = if principal_weight > 0.0 {
+                principal_terminal / principal_weight
+            } else {
+                INCOMPLETE_VALIDATION_SCORE
+            };
+            let principal_worst = if principal_weight > 0.0 {
+                principal_worst
+            } else {
+                INCOMPLETE_VALIDATION_SCORE
+            };
+            let rare_refutation_score = (1.0 - rare_refutation_risk).clamp(0.0, 1.0);
+            let surprise_value = (((principal_score - 0.5) * 2.0).clamp(0.0, 1.0)
+                * rare_refutation_score)
+                .clamp(0.0, 1.0);
+
             Ok(SmartOutcome {
                 valid: true,
                 practical_score: weighted_practical.clamp(0.0, 1.0),
-                mainline_score: mainline_score
-                    .unwrap_or(INCOMPLETE_VALIDATION_SCORE)
-                    .clamp(0.0, 1.0),
-                worst_branch_score: worst_branch_score.clamp(0.0, 1.0),
-                terminal_score: weighted_terminal.clamp(0.0, 1.0),
+                mainline_score: principal_score.clamp(0.0, 1.0),
+                worst_branch_score: principal_worst.clamp(0.0, 1.0),
+                terminal_score: principal_terminal.clamp(0.0, 1.0),
+                rare_refutation_score,
+                surprise_value,
                 sample_reliability: weighted_reliability.clamp(0.0, 1.0),
                 min_target_eval_cp,
                 validation_complete,
@@ -2144,6 +2290,7 @@ mod smart {
                 coverage: 90,
                 min_moves: 2,
                 depth: 2,
+                force_rebuild: false,
                 split_config: None,
             }
         }
@@ -2214,6 +2361,8 @@ mod smart {
                 mainline_score: 0.8,
                 worst_branch_score: 0.8,
                 terminal_score: 0.8,
+                rare_refutation_score: 0.8,
+                surprise_value: 0.0,
                 sample_reliability: 0.9,
                 validation_complete: true,
                 hidden_valid: true,
@@ -2232,6 +2381,8 @@ mod smart {
                     mainline_score: 0.50,
                     worst_branch_score: 0.50,
                     terminal_score: 0.50,
+                    rare_refutation_score: 0.50,
+                    surprise_value: 0.0,
                     sample_reliability: 0.8,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2247,6 +2398,8 @@ mod smart {
                     mainline_score: 0.72,
                     worst_branch_score: 0.72,
                     terminal_score: 0.72,
+                    rare_refutation_score: 0.72,
+                    surprise_value: 0.4,
                     sample_reliability: 0.8,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2274,6 +2427,46 @@ mod smart {
         }
 
         #[test]
+        fn principal_response_set_accumulates_to_sixty_percent() {
+            let moves = vec![
+                ExplorerMove {
+                    uci: String::new(),
+                    san: "A".to_string(),
+                    white: 300,
+                    black: 0,
+                    draws: 0,
+                },
+                ExplorerMove {
+                    uci: String::new(),
+                    san: "B".to_string(),
+                    white: 200,
+                    black: 0,
+                    draws: 0,
+                },
+                ExplorerMove {
+                    uci: String::new(),
+                    san: "C".to_string(),
+                    white: 100,
+                    black: 0,
+                    draws: 0,
+                },
+                ExplorerMove {
+                    uci: String::new(),
+                    san: "D".to_string(),
+                    white: 25,
+                    black: 0,
+                    draws: 0,
+                },
+            ];
+
+            let principal = principal_response_indices(&moves, 1_000);
+            assert!(principal.contains(&0));
+            assert!(principal.contains(&1));
+            assert!(principal.contains(&2));
+            assert!(!principal.contains(&3));
+        }
+
+        #[test]
         fn validation_budget_is_dedicated_to_hidden_smart_search() {
             assert_eq!(validation_lichess_request_budget(), 32);
         }
@@ -2287,6 +2480,8 @@ mod smart {
                 mainline_score: 0.9,
                 worst_branch_score: 0.9,
                 terminal_score: 0.9,
+                rare_refutation_score: 0.9,
+                surprise_value: 0.0,
                 sample_reliability: 1.0,
                 validation_complete: true,
                 hidden_valid: false,
@@ -2305,6 +2500,8 @@ mod smart {
                     mainline_score: 0.385,
                     worst_branch_score: 0.25,
                     terminal_score: 0.0,
+                    rare_refutation_score: 0.4,
+                    surprise_value: 0.0,
                     sample_reliability: 0.9,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2320,6 +2517,8 @@ mod smart {
                     mainline_score: 0.431,
                     worst_branch_score: 0.375,
                     terminal_score: 0.554,
+                    rare_refutation_score: 0.7,
+                    surprise_value: 0.0,
                     sample_reliability: 0.9,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2342,6 +2541,8 @@ mod smart {
                     mainline_score: 0.35,
                     worst_branch_score: 0.35,
                     terminal_score: 0.42,
+                    rare_refutation_score: 0.5,
+                    surprise_value: 0.0,
                     sample_reliability: 0.9,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2357,6 +2558,8 @@ mod smart {
                     mainline_score: 0.53,
                     worst_branch_score: 0.49,
                     terminal_score: 0.52,
+                    rare_refutation_score: 0.6,
+                    surprise_value: 0.05,
                     sample_reliability: 0.9,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2366,6 +2569,47 @@ mod smart {
             .unwrap();
 
             assert!(lower_average_healthy_mainline > high_average_bad_mainline);
+        }
+
+        #[test]
+        fn score_discounts_rare_refutations_that_are_hard_to_find() {
+            let config = cfg();
+            let rare_refutation = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 25,
+                    best_target_eval_cp: 30,
+                    practical_score: 0.50,
+                    mainline_score: 0.57,
+                    worst_branch_score: 0.53,
+                    terminal_score: 0.55,
+                    rare_refutation_score: 0.90,
+                    surprise_value: 0.12,
+                    sample_reliability: 0.8,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+            let discoverable_refutation = score_candidate_input(
+                CandidateScoreInput {
+                    target_eval_cp: 25,
+                    best_target_eval_cp: 30,
+                    practical_score: 0.50,
+                    mainline_score: 0.57,
+                    worst_branch_score: 0.53,
+                    terminal_score: 0.55,
+                    rare_refutation_score: 0.40,
+                    surprise_value: 0.02,
+                    sample_reliability: 0.8,
+                    validation_complete: true,
+                    hidden_valid: true,
+                },
+                config,
+            )
+            .unwrap();
+
+            assert!(rare_refutation > discoverable_refutation);
         }
 
         #[test]
@@ -2379,6 +2623,8 @@ mod smart {
                     mainline_score: 0.55,
                     worst_branch_score: 0.55,
                     terminal_score: 0.55,
+                    rare_refutation_score: 0.55,
+                    surprise_value: 0.1,
                     sample_reliability: 0.7,
                     validation_complete: true,
                     hidden_valid: true,
@@ -2394,6 +2640,8 @@ mod smart {
                     mainline_score: 0.55,
                     worst_branch_score: 0.55,
                     terminal_score: 0.55,
+                    rare_refutation_score: 0.55,
+                    surprise_value: 0.1,
                     sample_reliability: 0.7,
                     validation_complete: false,
                     hidden_valid: true,
@@ -2451,6 +2699,8 @@ mod smart {
                         mainline_score: 0.6,
                         worst_branch_score: 0.6,
                         terminal_score: 0.6,
+                        rare_refutation_score: 0.6,
+                        surprise_value: 0.1,
                         sample_reliability: 0.8,
                         min_target_eval_cp: 30,
                         validation_complete: true,
@@ -2465,6 +2715,8 @@ mod smart {
                         mainline_score: 0.6,
                         worst_branch_score: 0.6,
                         terminal_score: 0.6,
+                        rare_refutation_score: 0.6,
+                        surprise_value: 0.1,
                         sample_reliability: 0.8,
                         min_target_eval_cp: 30,
                         validation_complete: true,
@@ -2710,28 +2962,22 @@ async fn build_variants_tree_impl(
         existing_moves_by_fen: &HashMap<String, Vec<ExplorerMove>>,
         smart_target_moves_by_fen: &mut HashMap<String, MoveSpecDto>,
         lichess_requests_left: &mut u32,
+        existing_node: Option<&TreeNodeDto>,
         current_fen: String,
         current_line: &mut Vec<MoveSpecDto>,
         my_moves_left: u32,
+        line_has_new: bool,
         lines: &mut Vec<LineDto>,
         warnings: &mut Vec<String>,
     ) -> Result<()> {
         if my_moves_left == 0 {
-            if !current_line.is_empty() {
-                lines.push(LineDto {
-                    moves: current_line.clone(),
-                });
-            }
+            push_line_if_changed(lines, current_line, line_has_new);
             return Ok(());
         }
 
         let key = fen_identity_key(&current_fen);
         if path_stack.iter().any(|k| k == &key) {
-            if !current_line.is_empty() {
-                lines.push(LineDto {
-                    moves: current_line.clone(),
-                });
-            }
+            push_line_if_changed(lines, current_line, line_has_new);
             return Ok(());
         }
         path_stack.push(key.clone());
@@ -2748,11 +2994,7 @@ async fn build_variants_tree_impl(
             };
             let pos: Chess = Fen::from_ascii(current_fen.as_bytes())?.into_position(castling)?;
             if pos.is_game_over() {
-                if !current_line.is_empty() {
-                    lines.push(LineDto {
-                        moves: current_line.clone(),
-                    });
-                }
+                push_line_if_changed(lines, current_line, line_has_new);
                 return Ok(());
             }
 
@@ -2771,14 +3013,65 @@ async fn build_variants_tree_impl(
                     },
                 );
 
-                if matches!(req.mode, BuildVariantsMode::Smart) && !current_line.is_empty() {
+                if matches!(req.mode, BuildVariantsMode::Smart) && !req.force_rebuild {
+                    if let Some(existing_child) = existing_node.and_then(|node| node.children.first()) {
+                        if let Some(reused_step) = move_spec_from_existing_target_child(existing_child) {
+                            if let Ok(next_fen) =
+                                apply_move_to_fen(&current_fen, &reused_step.value, req.is960)
+                            {
+                                current_line.push(reused_step);
+                                Box::pin(rec(
+                                    req,
+                                    app.clone(),
+                                    state.clone(),
+                                    start_path,
+                                    my_side,
+                                    fen_owners,
+                                    path_stack,
+                                    explorer_cache,
+                                    existing_moves_by_fen,
+                                    smart_target_moves_by_fen,
+                                    lichess_requests_left,
+                                    Some(existing_child),
+                                    next_fen,
+                                    current_line,
+                                    my_moves_left.saturating_sub(1),
+                                    line_has_new,
+                                    lines,
+                                    warnings,
+                                ))
+                                .await?;
+                                current_line.pop();
+                                return Ok(());
+                            }
+                        }
+                    }
+
                     if let Some(reused_step) = smart_target_moves_by_fen.get(&key).cloned() {
-                        if apply_move_to_fen(&current_fen, &reused_step.value, req.is960).is_ok() {
+                        if let Ok(next_fen) = apply_move_to_fen(&current_fen, &reused_step.value, req.is960) {
                             current_line.push(reused_step);
                             emit_variants_builder_progress(&app, start_path, current_line);
-                            lines.push(LineDto {
-                                moves: current_line.clone(),
-                            });
+                            Box::pin(rec(
+                                req,
+                                app.clone(),
+                                state.clone(),
+                                start_path,
+                                my_side,
+                                fen_owners,
+                                path_stack,
+                                explorer_cache,
+                                existing_moves_by_fen,
+                                smart_target_moves_by_fen,
+                                lichess_requests_left,
+                                None,
+                                next_fen,
+                                current_line,
+                                my_moves_left.saturating_sub(1),
+                                true,
+                                lines,
+                                warnings,
+                            ))
+                            .await?;
                             current_line.pop();
                             return Ok(());
                         }
@@ -2825,26 +3118,24 @@ async fn build_variants_tree_impl(
                 };
 
                 let Some(step) = picked else {
-                    if !current_line.is_empty() {
-                        lines.push(LineDto {
-                            moves: current_line.clone(),
-                        });
-                    }
+                    push_line_if_changed(lines, current_line, line_has_new);
                     return Ok(());
                 };
 
                 let next_fen = match apply_move_to_fen(&current_fen, &step.value, req.is960) {
                     Ok(f) => f,
                     Err(_) => {
-                        if !current_line.is_empty() {
-                            lines.push(LineDto {
-                                moves: current_line.clone(),
-                            });
-                        }
+                        push_line_if_changed(lines, current_line, line_has_new);
                         return Ok(());
                     }
                 };
 
+                let existing_child = if matches!(req.mode, BuildVariantsMode::Smart) {
+                    find_existing_child_for_step(existing_node, &current_fen, &step, req.is960)
+                } else {
+                    None
+                };
+                let step_is_new = existing_child.is_none();
                 let stored_target_step = step.clone();
                 current_line.push(step);
                 if matches!(req.mode, BuildVariantsMode::Smart) {
@@ -2852,7 +3143,9 @@ async fn build_variants_tree_impl(
                         .entry(key.clone())
                         .or_insert(stored_target_step);
                 }
-                emit_variants_builder_progress(&app, start_path, current_line);
+                if step_is_new {
+                    emit_variants_builder_progress(&app, start_path, current_line);
+                }
                 Box::pin(rec(
                     req,
                     app.clone(),
@@ -2865,9 +3158,11 @@ async fn build_variants_tree_impl(
                     existing_moves_by_fen,
                     smart_target_moves_by_fen,
                     lichess_requests_left,
+                    existing_child,
                     next_fen,
                     current_line,
                     my_moves_left.saturating_sub(1),
+                    line_has_new || step_is_new,
                     lines,
                     warnings,
                 ))
@@ -2882,6 +3177,7 @@ async fn build_variants_tree_impl(
                     &current_fen,
                     req,
                     existing_moves_by_fen,
+                    matches!(req.mode, BuildVariantsMode::Engine),
                     lichess_requests_left,
                     &app,
                     state.clone(),
@@ -2899,11 +3195,7 @@ async fn build_variants_tree_impl(
                     if !warnings.iter().any(|item| item == &warning) {
                         warnings.push(warning);
                     }
-                    if !current_line.is_empty() {
-                        lines.push(LineDto {
-                            moves: current_line.clone(),
-                        });
-                    }
+                    push_line_if_changed(lines, current_line, line_has_new);
                     return Ok(());
                 }
 
@@ -2934,11 +3226,7 @@ async fn build_variants_tree_impl(
                             let next_fen = match apply_move_to_fen(&current_fen, &step.value, req.is960) {
                                 Ok(f) => f,
                                 Err(_) => {
-                                    if !current_line.is_empty() {
-                                        lines.push(LineDto {
-                                            moves: current_line.clone(),
-                                        });
-                                    }
+                                    push_line_if_changed(lines, current_line, line_has_new);
                                     return Ok(());
                                 }
                             };
@@ -2952,13 +3240,15 @@ async fn build_variants_tree_impl(
                                 my_side,
                                 fen_owners,
                                 path_stack,
-                            explorer_cache,
-                            existing_moves_by_fen,
-                            smart_target_moves_by_fen,
-                            lichess_requests_left,
+                                explorer_cache,
+                                existing_moves_by_fen,
+                                smart_target_moves_by_fen,
+                                lichess_requests_left,
+                                None,
                                 next_fen,
                                 current_line,
                                 my_moves_left,
+                                true,
                                 lines,
                                 warnings,
                             ))
@@ -2967,11 +3257,7 @@ async fn build_variants_tree_impl(
                             return Ok(());
                         }
                     }
-                    if !current_line.is_empty() {
-                        lines.push(LineDto {
-                            moves: current_line.clone(),
-                        });
-                    }
+                    push_line_if_changed(lines, current_line, line_has_new);
                     return Ok(());
                 }
 
@@ -2982,8 +3268,13 @@ async fn build_variants_tree_impl(
                         Err(_) => continue,
                     };
 
+                    let existing_child =
+                        find_existing_child_for_step(existing_node, &current_fen, &step, req.is960);
+                    let step_is_new = existing_child.is_none();
                     current_line.push(step);
-                    emit_variants_builder_progress(&app, start_path, current_line);
+                    if step_is_new {
+                        emit_variants_builder_progress(&app, start_path, current_line);
+                    }
                     Box::pin(rec(
                         req,
                         app.clone(),
@@ -2992,13 +3283,15 @@ async fn build_variants_tree_impl(
                         my_side,
                         fen_owners,
                         path_stack,
-                    explorer_cache,
-                    existing_moves_by_fen,
-                    smart_target_moves_by_fen,
-                    lichess_requests_left,
+                        explorer_cache,
+                        existing_moves_by_fen,
+                        smart_target_moves_by_fen,
+                        lichess_requests_left,
+                        existing_child,
                         next_fen,
                         current_line,
                         my_moves_left,
+                        line_has_new || step_is_new,
                         lines,
                         warnings,
                     ))
@@ -3028,9 +3321,11 @@ async fn build_variants_tree_impl(
         &existing_moves_by_fen,
         &mut smart_target_moves_by_fen,
         &mut lichess_requests_left,
+        Some(start_node),
         start_fen.to_string(),
         &mut line_buf,
         std::cmp::max(1, req.depth),
+        false,
         &mut lines,
         &mut warnings,
     )
@@ -3222,6 +3517,58 @@ mod tests {
         assert_eq!(moves.get(&key).map(|step| step.value.as_str()), Some("e4"));
     }
 
+    #[test]
+    fn existing_child_lookup_matches_san_and_uci() {
+        let root = TreeNodeDto {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            san: None,
+            children: vec![TreeNodeDto {
+                fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string(),
+                san: Some("e4".to_string()),
+                children: Vec::new(),
+            }],
+        };
+        let san_step = MoveSpecDto {
+            value: "e4".to_string(),
+            source: Some("db".to_string()),
+            white: None,
+            black: None,
+            draws: None,
+            total: None,
+        };
+        let uci_step = MoveSpecDto {
+            value: "e2e4".to_string(),
+            source: Some("engine".to_string()),
+            white: None,
+            black: None,
+            draws: None,
+            total: None,
+        };
+
+        assert!(find_existing_child_for_step(Some(&root), &root.fen, &san_step, false).is_some());
+        assert!(find_existing_child_for_step(Some(&root), &root.fen, &uci_step, false).is_some());
+    }
+
+    #[test]
+    fn unchanged_incremental_lines_are_not_returned() {
+        let mut lines = Vec::new();
+        let current_line = vec![MoveSpecDto {
+            value: "e4".to_string(),
+            source: Some("db".to_string()),
+            white: None,
+            black: None,
+            draws: None,
+            total: None,
+        }];
+
+        push_line_if_changed(&mut lines, &current_line, false);
+        assert!(lines.is_empty());
+
+        push_line_if_changed(&mut lines, &current_line, true);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].moves[0].value, "e4");
+    }
+
     fn request_for_budget(db_type: &str, depth: u32) -> BuildVariantsTreeRequest {
         BuildVariantsTreeRequest {
             root: TreeNodeDto {
@@ -3244,6 +3591,7 @@ mod tests {
             coverage: 90,
             min_moves: 2,
             depth,
+            force_rebuild: false,
             split_config: None,
         }
     }
