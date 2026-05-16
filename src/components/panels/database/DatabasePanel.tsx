@@ -85,12 +85,13 @@ async function fetchOpening(
   db: DBType,
   tab: string,
   gameDetailsLimit: number,
+  includeGames: boolean,
   lichessToken?: string,
   signal?: AbortSignal,
 ) {
   return match(db)
     .with({ type: "lch_all" }, async ({ fen, options }) => {
-      const data = await getLichessGames(fen, options, lichessToken);
+      const data = await getLichessGames(fen, options, lichessToken, signal, !includeGames);
       return {
         openings: data.moves.map((move) => ({
           move: move.san,
@@ -98,11 +99,11 @@ async function fetchOpening(
           black: move.black,
           draw: move.draws,
         })),
-        games: await convertToNormalized(data.topGames || data.recentGames || []),
+        games: includeGames ? await convertToNormalized(data.topGames || data.recentGames || [], signal) : [],
       };
     })
     .with({ type: "lch_master" }, async ({ fen, options }) => {
-      const data = await getMasterGames(fen, options, lichessToken);
+      const data = await getMasterGames(fen, options, lichessToken, signal);
       return {
         openings: data.moves.map((move) => ({
           move: move.san,
@@ -110,7 +111,7 @@ async function fetchOpening(
           black: move.black,
           draw: move.draws,
         })),
-        games: await convertToNormalized(data.topGames || data.recentGames || []),
+        games: includeGames ? await convertToNormalized(data.topGames || data.recentGames || [], signal) : [],
       };
     })
     .with({ type: "local" }, async ({ options }) => {
@@ -247,6 +248,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
   const isDatabaseTabActive = currentTabSelected === "database";
   const isStatsOrGamesTab = tabType === "stats" || tabType === "games";
   const shouldSearch = !coverageEngineAnalysisActive && (forceActive || isDatabaseTabActive) && isStatsOrGamesTab;
+  const includeGameDetails = tabType === "games";
 
   // Always get FEN from store to ensure we have the current position
   // Use a ref to track the last FEN to prevent unnecessary re-renders when not searching
@@ -269,44 +271,39 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     }
   }, [fenFromStore]);
 
-  const fenDebounceMs = db === "local" && isChessbaseDatabasePath(localOptions.path) ? 250 : db === "local" ? 100 : 50;
-  // Use a higher debounce for ChessBase to avoid flooding websocket requests while dragging pieces quickly.
+  // Remote explorer calls are intentionally debounced a little longer to avoid piling up requests during fast navigation.
+  const fenDebounceMs = db === "local" && isChessbaseDatabasePath(localOptions.path) ? 250 : db === "local" ? 100 : 150;
   const [debouncedFen] = useDebouncedValue(fen, fenDebounceMs);
   const effectiveLocalFen =
     db === "local" && isChessbaseDatabasePath(localOptions.path) ? debouncedFen || localOptions.fen : localOptions.fen;
 
   const prevFenRef = useRef<string>(localOptions.fen || "");
 
-  // Update localOptions immediately when FEN changes (before debounce)
-  // This ensures the query always uses the latest FEN
-  // Always load 1000 games sorted by elo when FEN changes
-  // Update FEN whenever it changes, not just when searching
+  // Cancel stale searches immediately when the board position changes, before the debounced query key settles.
   useEffect(() => {
     if (coverageEngineAnalysisActive) return;
-    if (db === "local" && localOptions.path && fen) {
-      const fenChanged = fen !== prevFenRef.current;
-      if (fenChanged) {
-        prevFenRef.current = fen;
+    if (!fen) return;
 
-        // Cancel any ongoing queries immediately when FEN changes
-        if (shouldSearch) {
-          void queryClient.cancelQueries({ queryKey: ["database-opening"] }).catch(() => {});
-        }
+    const fenChanged = fen !== prevFenRef.current;
+    if (!fenChanged) return;
+    prevFenRef.current = fen;
 
-        setLocalOptions((q) => {
-          // Update FEN immediately and ensure sort is by averageElo
-          const updated =
-            q.fen !== fen
-              ? { ...q, fen, sort: "averageElo" as const, direction: "desc" as const }
-              : { ...q, sort: "averageElo" as const, direction: "desc" as const };
-          return updated;
-        });
+    if (shouldSearch) {
+      void queryClient.cancelQueries({ queryKey: ["database-opening"] }).catch(() => {});
+    }
 
-        // Always set limit to 1000 when FEN changes
-        if (shouldSearch) {
-          setGameLimit(1000);
-        }
-      }
+    if (db !== "local" || !localOptions.path) return;
+
+    setLocalOptions((q) => {
+      const updated =
+        q.fen !== fen
+          ? { ...q, fen, sort: "averageElo" as const, direction: "desc" as const }
+          : { ...q, sort: "averageElo" as const, direction: "desc" as const };
+      return updated;
+    });
+
+    if (shouldSearch) {
+      setGameLimit(1000);
     }
   }, [coverageEngineAnalysisActive, fen, setLocalOptions, db, queryClient, shouldSearch, localOptions.path]);
 
@@ -403,6 +400,7 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     db === "local" ? localOptions.sort : null,
     db === "local" ? localOptions.direction : null,
     tabValue,
+    includeGameDetails,
     gameLimit,
     db === "local" ? null : (lichessAuthToken ?? null),
     db === "local" ? null : activeProfileId,
@@ -416,7 +414,14 @@ function DatabasePanel({ forceActive = false }: { forceActive?: boolean }) {
     // Use localOptions.fen directly for queryKey to ensure it matches what's sent to backend
     queryKey,
     queryFn: async ({ signal }) => {
-      const result = (await fetchOpening(dbType, tabValue, gameLimit, lichessAuthToken, signal)) as OpeningData;
+      const result = (await fetchOpening(
+        dbType,
+        tabValue,
+        gameLimit,
+        includeGameDetails,
+        lichessAuthToken,
+        signal,
+      )) as OpeningData;
       return result;
     },
     enabled: queryEnabled && (db !== "local" || (!!effectiveLocalFen && !!localOptions.path)),

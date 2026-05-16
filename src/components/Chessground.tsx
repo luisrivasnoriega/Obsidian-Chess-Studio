@@ -3,15 +3,57 @@ import type { Api } from "@lichess-org/chessground/api";
 import type { Config } from "@lichess-org/chessground/config";
 import type { Key, Piece } from "@lichess-org/chessground/types";
 import { Box } from "@mantine/core";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { boardImageAtom, moveMethodAtom } from "@/state/atoms";
+import { boardImageAtom, boardInteractionActiveAtom, moveMethodAtom } from "@/state/atoms";
 import "@lichess-org/chessground/assets/chessground.base.css";
 
 export interface ChessgroundProps extends Config {
   setBoardFen?: (fen: string) => void;
   selectedPiece?: Piece | null;
   setSelectedPiece?: (piece: Piece | null) => void;
+}
+
+type MoveMethod = "drag" | "select" | "both";
+
+type ChessgroundConfigSnapshot = {
+  fen: string | undefined;
+  orientation: Config["orientation"];
+  turnColor: Config["turnColor"];
+  selected: Config["selected"];
+  moveMethod: MoveMethod;
+  movable: Config["movable"] | undefined;
+  premovable: Config["premovable"] | undefined;
+  predroppable: Config["predroppable"] | undefined;
+  draggable: Config["draggable"] | undefined;
+  selectable: Config["selectable"] | undefined;
+  drawable: Config["drawable"] | undefined;
+  check: Config["check"];
+  lastMove: Config["lastMove"];
+  coordinates: Config["coordinates"];
+  coordinatesOnSquares: Config["coordinatesOnSquares"];
+  ranksPosition: Config["ranksPosition"];
+  autoCastle: Config["autoCastle"];
+  viewOnly: Config["viewOnly"];
+  disableContextMenu: Config["disableContextMenu"];
+  addPieceZIndex: Config["addPieceZIndex"];
+  addDimensionsCssVarsTo: Config["addDimensionsCssVarsTo"];
+  blockTouchScroll: Config["blockTouchScroll"];
+  touchIgnoreRadius: Config["touchIgnoreRadius"];
+  trustAllEvents: Config["trustAllEvents"];
+  jsHover: Config["jsHover"];
+  highlight: Config["highlight"] | undefined;
+  events: Config["events"] | undefined;
+  animation: Config["animation"] | undefined;
+};
+
+type PendingChessgroundConfig = {
+  snapshot: ChessgroundConfigSnapshot;
+  config: Config;
+};
+
+function omitUndefinedConfig(config: Config): Config {
+  return Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)) as Config;
 }
 
 export function Chessground({
@@ -24,6 +66,7 @@ export function Chessground({
   const ref = useRef<HTMLDivElement>(null);
   const moveMethod = useAtomValue(moveMethodAtom);
   const boardImage = useAtomValue(boardImageAtom);
+  const setBoardInteractionActive = useSetAtom(boardInteractionActiveAtom);
   const [isDocumentHidden, setIsDocumentHidden] = useState(() =>
     typeof document !== "undefined" ? document.hidden : false,
   );
@@ -32,22 +75,10 @@ export function Chessground({
   const setSelectedPieceRef = useRef(setSelectedPiece);
 
   // Use refs to track previous values and prevent unnecessary api.set() calls
-  const prevConfigRef = useRef<{
-    fen: string | undefined;
-    orientation: Config["orientation"];
-    turnColor: Config["turnColor"];
-    moveMethod: "drag" | "select" | "both";
-    movable: Config["movable"] | undefined;
-    premovable: Config["premovable"] | undefined;
-    draggable: Config["draggable"] | undefined;
-    selectable: Config["selectable"] | undefined;
-    drawable: Config["drawable"] | undefined;
-    check: Config["check"];
-    lastMove: Config["lastMove"];
-    coordinates: Config["coordinates"];
-    coordinatesOnSquares: Config["coordinatesOnSquares"];
-    animation: Config["animation"] | undefined;
-  } | null>(null);
+  const prevConfigRef = useRef<ChessgroundConfigSnapshot | null>(null);
+  const interactionActiveRef = useRef(false);
+  const pendingConfigRef = useRef<PendingChessgroundConfig | null>(null);
+  const pendingFrameRef = useRef<number | null>(null);
   const isSettingRef = useRef(false);
 
   // Update refs without triggering effects - do this synchronously during render
@@ -71,30 +102,95 @@ export function Chessground({
     };
   }, []);
 
-  // Memoize chessgroundConfig to avoid recreating it on every render
-  // Don't include chessgroundConfigProps itself in dependencies since it's a new object every render
-  // We track all individual properties instead
-  const chessgroundConfig = useMemo(
-    () => chessgroundConfigProps,
-    // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfigProps is a spread object, we track its key properties
+  const {
+    addDimensionsCssVarsTo,
+    addPieceZIndex,
+    animation,
+    autoCastle,
+    blockTouchScroll,
+    check,
+    coordinates,
+    coordinatesOnSquares,
+    disableContextMenu,
+    drawable,
+    draggable,
+    events,
+    fen,
+    highlight,
+    jsHover,
+    lastMove,
+    movable,
+    orientation,
+    predroppable,
+    premovable,
+    ranksPosition,
+    selectable,
+    selected,
+    touchIgnoreRadius,
+    trustAllEvents,
+    turnColor,
+    viewOnly,
+  } = chessgroundConfigProps;
+
+  const chessgroundConfig = useMemo<Config>(
+    () =>
+      omitUndefinedConfig({
+        addDimensionsCssVarsTo,
+        addPieceZIndex,
+        animation,
+        autoCastle,
+        blockTouchScroll,
+        check,
+        coordinates,
+        coordinatesOnSquares,
+        disableContextMenu,
+        drawable,
+        draggable,
+        events,
+        fen,
+        highlight,
+        jsHover,
+        lastMove,
+        movable,
+        orientation,
+        predroppable,
+        premovable,
+        ranksPosition,
+        selectable,
+        selected,
+        touchIgnoreRadius,
+        trustAllEvents,
+        turnColor,
+        viewOnly,
+      }),
     [
-      chessgroundConfigProps.fen,
-      chessgroundConfigProps.orientation,
-      chessgroundConfigProps.turnColor,
-      chessgroundConfigProps.movable,
-      chessgroundConfigProps.premovable,
-      chessgroundConfigProps.predroppable,
-      chessgroundConfigProps.drawable,
-      chessgroundConfigProps.lastMove,
-      chessgroundConfigProps.check,
-      chessgroundConfigProps.coordinates,
-      chessgroundConfigProps.coordinatesOnSquares,
-      chessgroundConfigProps.draggable,
-      chessgroundConfigProps.selectable,
-      chessgroundConfigProps.highlight,
-      chessgroundConfigProps.animation,
-      chessgroundConfigProps.events,
-      chessgroundConfigProps,
+      addDimensionsCssVarsTo,
+      addPieceZIndex,
+      animation,
+      autoCastle,
+      blockTouchScroll,
+      check,
+      coordinates,
+      coordinatesOnSquares,
+      disableContextMenu,
+      drawable,
+      draggable,
+      events,
+      fen,
+      highlight,
+      jsHover,
+      lastMove,
+      movable,
+      orientation,
+      predroppable,
+      premovable,
+      ranksPosition,
+      selectable,
+      selected,
+      touchIgnoreRadius,
+      trustAllEvents,
+      turnColor,
+      viewOnly,
     ],
   );
 
@@ -152,6 +248,34 @@ export function Chessground({
   );
   handleSelectRef.current = handleSelect;
 
+  const applyConfig = useCallback(
+    (snapshot: ChessgroundConfigSnapshot, config: Config) => {
+      if (!api) return;
+
+      prevConfigRef.current = snapshot;
+      isSettingRef.current = true;
+      api.set(config);
+      queueMicrotask(() => {
+        isSettingRef.current = false;
+      });
+    },
+    [api],
+  );
+
+  const flushPendingConfig = useCallback(() => {
+    if (pendingFrameRef.current != null) {
+      return;
+    }
+    pendingFrameRef.current = window.requestAnimationFrame(() => {
+      pendingFrameRef.current = null;
+      const pending = pendingConfigRef.current;
+      pendingConfigRef.current = null;
+      if (pending) {
+        applyConfig(pending.snapshot, pending.config);
+      }
+    });
+  }, [applyConfig]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: Chessground must initialize exactly once; updates go through `api.set(...)`.
   useEffect(() => {
     const el = ref.current;
@@ -184,6 +308,52 @@ export function Chessground({
       setApi(null);
     };
   }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const startInteraction = () => {
+      interactionActiveRef.current = true;
+      setBoardInteractionActive(true);
+      if (pendingFrameRef.current != null) {
+        window.cancelAnimationFrame(pendingFrameRef.current);
+        pendingFrameRef.current = null;
+      }
+    };
+
+    const endInteraction = () => {
+      if (!interactionActiveRef.current && !pendingConfigRef.current) return;
+      interactionActiveRef.current = false;
+      setBoardInteractionActive(false);
+      flushPendingConfig();
+    };
+
+    el.addEventListener("pointerdown", startInteraction);
+    el.addEventListener("touchstart", startInteraction, { passive: true });
+    document.addEventListener("pointerup", endInteraction, true);
+    document.addEventListener("pointercancel", endInteraction, true);
+    document.addEventListener("touchend", endInteraction, true);
+    document.addEventListener("touchcancel", endInteraction, true);
+    window.addEventListener("blur", endInteraction);
+
+    return () => {
+      el.removeEventListener("pointerdown", startInteraction);
+      el.removeEventListener("touchstart", startInteraction);
+      document.removeEventListener("pointerup", endInteraction, true);
+      document.removeEventListener("pointercancel", endInteraction, true);
+      document.removeEventListener("touchend", endInteraction, true);
+      document.removeEventListener("touchcancel", endInteraction, true);
+      window.removeEventListener("blur", endInteraction);
+      if (pendingFrameRef.current != null) {
+        window.cancelAnimationFrame(pendingFrameRef.current);
+        pendingFrameRef.current = null;
+      }
+      pendingConfigRef.current = null;
+      interactionActiveRef.current = false;
+      setBoardInteractionActive(false);
+    };
+  }, [flushPendingConfig, setBoardInteractionActive]);
 
   // Android WebView can treat drag gestures as scroll even if the board uses `touch-action: none`,
   // especially when the board is adjacent to or nested near scroll containers.
@@ -220,9 +390,11 @@ export function Chessground({
       fen: chessgroundConfig.fen,
       orientation: chessgroundConfig.orientation,
       turnColor: chessgroundConfig.turnColor,
+      selected: chessgroundConfig.selected,
       moveMethod,
       movable: chessgroundConfig.movable,
       premovable: chessgroundConfig.premovable,
+      predroppable: chessgroundConfig.predroppable,
       draggable: chessgroundConfig.draggable,
       selectable: chessgroundConfig.selectable,
       drawable: chessgroundConfig.drawable,
@@ -230,6 +402,18 @@ export function Chessground({
       lastMove: chessgroundConfig.lastMove,
       coordinates: chessgroundConfig.coordinates,
       coordinatesOnSquares: chessgroundConfig.coordinatesOnSquares,
+      ranksPosition: chessgroundConfig.ranksPosition,
+      autoCastle: chessgroundConfig.autoCastle,
+      viewOnly: chessgroundConfig.viewOnly,
+      disableContextMenu: chessgroundConfig.disableContextMenu,
+      addPieceZIndex: chessgroundConfig.addPieceZIndex,
+      addDimensionsCssVarsTo: chessgroundConfig.addDimensionsCssVarsTo,
+      blockTouchScroll: chessgroundConfig.blockTouchScroll,
+      touchIgnoreRadius: chessgroundConfig.touchIgnoreRadius,
+      trustAllEvents: chessgroundConfig.trustAllEvents,
+      jsHover: chessgroundConfig.jsHover,
+      highlight: chessgroundConfig.highlight,
+      events: chessgroundConfig.events,
       animation: effectiveAnimation,
     } as const;
 
@@ -239,9 +423,11 @@ export function Chessground({
       prev.fen === snapshot.fen &&
       prev.orientation === snapshot.orientation &&
       prev.turnColor === snapshot.turnColor &&
+      prev.selected === snapshot.selected &&
       prev.moveMethod === snapshot.moveMethod &&
       prev.movable === snapshot.movable &&
       prev.premovable === snapshot.premovable &&
+      prev.predroppable === snapshot.predroppable &&
       prev.draggable === snapshot.draggable &&
       prev.selectable === snapshot.selectable &&
       prev.drawable === snapshot.drawable &&
@@ -249,16 +435,23 @@ export function Chessground({
       prev.lastMove === snapshot.lastMove &&
       prev.coordinates === snapshot.coordinates &&
       prev.coordinatesOnSquares === snapshot.coordinatesOnSquares &&
+      prev.ranksPosition === snapshot.ranksPosition &&
+      prev.autoCastle === snapshot.autoCastle &&
+      prev.viewOnly === snapshot.viewOnly &&
+      prev.disableContextMenu === snapshot.disableContextMenu &&
+      prev.addPieceZIndex === snapshot.addPieceZIndex &&
+      prev.addDimensionsCssVarsTo === snapshot.addDimensionsCssVarsTo &&
+      prev.blockTouchScroll === snapshot.blockTouchScroll &&
+      prev.touchIgnoreRadius === snapshot.touchIgnoreRadius &&
+      prev.trustAllEvents === snapshot.trustAllEvents &&
+      prev.jsHover === snapshot.jsHover &&
+      prev.highlight === snapshot.highlight &&
+      prev.events === snapshot.events &&
       prev.animation === snapshot.animation;
 
     if (unchanged) {
       return;
     }
-
-    prevConfigRef.current = snapshot;
-
-    // Set flag BEFORE creating config to prevent any synchronous events from triggering state updates
-    isSettingRef.current = true;
 
     const config: Config = withOptionalAnimation({
       ...chessgroundConfig,
@@ -278,17 +471,14 @@ export function Chessground({
       },
     });
 
-    // Call api.set() synchronously - the isSettingRef flag will prevent handleChange from updating state
-    api.set(config);
+    if (interactionActiveRef.current || pendingFrameRef.current != null) {
+      pendingConfigRef.current = { snapshot, config };
+      return;
+    }
 
-    // Reset flag asynchronously to allow any queued events to process first
-    // Use a microtask to ensure this happens after any synchronous events from api.set()
-    queueMicrotask(() => {
-      isSettingRef.current = false;
-    });
-    // biome-ignore lint/correctness/useExhaustiveDependencies: chessgroundConfig is memoized and contains all necessary dependencies
+    applyConfig(snapshot, config);
     // Note: We don't include handleChange and handleSelect in dependencies since we use refs
-  }, [api, moveMethod, chessgroundConfig, effectiveAnimation, withOptionalAnimation]);
+  }, [api, moveMethod, chessgroundConfig, effectiveAnimation, withOptionalAnimation, applyConfig]);
 
   // Clear selected piece when not in free move mode
   useEffect(() => {

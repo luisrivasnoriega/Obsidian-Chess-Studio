@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use specta::Type;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use crate::db::pgn::{GameTree, GameTreeNode, Importer, TempGame};
@@ -442,6 +442,12 @@ fn get_simple_node<'a>(root: &'a SimpleNode, path: &[u32]) -> Option<&'a SimpleN
     Some(node)
 }
 
+fn path_matches_fen(root: &SimpleNode, path: &[u32], fen: &str) -> bool {
+    get_simple_node(root, path)
+        .map(|node| normalize_fen_key(&node.fen) == normalize_fen_key(fen))
+        .unwrap_or(false)
+}
+
 fn find_first_path_by_fen(root: &SimpleNode, fen: &str) -> Option<Vec<u32>> {
     let target = normalize_fen_key(fen);
     let mut queue = VecDeque::from([(root, Vec::<u32>::new())]);
@@ -680,26 +686,81 @@ fn validate_generated_consistency(
     Ok(())
 }
 
-fn read_all_games(path: &Path) -> Result<Vec<ParsedVariantGame>> {
-    let file = fs::File::open(path)?;
-    let mut reader = BufferedReader::new(file);
+fn read_games_from_reader<R: Read>(
+    reader: R,
+    orientation: String,
+    context: &str,
+) -> Result<Vec<ParsedVariantGame>> {
+    let mut reader = BufferedReader::new(reader);
     let mut games = Vec::new();
-    let orientation = read_orientation_header(path);
     loop {
         let mut importer = Importer::new(None);
         let game = reader
             .read_game(&mut importer)
             .map(|game| game.flatten())
-            .map_err(|error| Error::InvalidInput(format!("Variant PGN parser error: {error}")))?;
+            .map_err(|error| Error::InvalidInput(format!("{context} parser error: {error}")))?;
         let Some(game) = game else {
             break;
         };
+        let root = build_simple_tree_from_game(&game).map_err(|error| {
+            Error::InvalidInput(format!("{context} contains illegal PGN: {error}"))
+        })?;
         games.push(ParsedVariantGame {
-            root: build_simple_tree_from_game(&game)?,
+            root,
             orientation: orientation.clone(),
         });
     }
     Ok(games)
+}
+
+fn read_all_games(path: &Path) -> Result<Vec<ParsedVariantGame>> {
+    let file = fs::File::open(path).map_err(|error| {
+        Error::InvalidInput(format!(
+            "Failed to read variant PGN '{}': {error}",
+            path.display()
+        ))
+    })?;
+    read_games_from_reader(
+        file,
+        read_orientation_header(path),
+        &format!("Variant PGN '{}'", path.display()),
+    )
+}
+
+fn validate_rendered_pgn(pgn: &str, context: &str) -> Result<()> {
+    let games = read_games_from_reader(Cursor::new(pgn.as_bytes()), "white".to_string(), context)?;
+    if games.is_empty() {
+        return Err(Error::InvalidInput(format!(
+            "{context} produced no readable PGN games"
+        )));
+    }
+    Ok(())
+}
+
+fn load_variant_family_trees(
+    source_keys: &[String],
+    variant_by_key: &HashMap<String, VariantInfoDto>,
+) -> Result<HashMap<String, Vec<ParsedVariantGame>>> {
+    let mut trees_by_key: HashMap<String, Vec<ParsedVariantGame>> = HashMap::new();
+    for key in source_keys {
+        let variant = variant_by_key.get(key).ok_or_else(|| {
+            Error::InvalidInput(format!("Variant family member was not found: {key}"))
+        })?;
+        let games = read_all_games(Path::new(&variant.path)).map_err(|error| {
+            Error::InvalidInput(format!(
+                "Cannot process variant '{}': {error}",
+                variant.name
+            ))
+        })?;
+        if games.is_empty() {
+            return Err(Error::InvalidInput(format!(
+                "Variant '{}' has no readable PGN games",
+                variant.name
+            )));
+        }
+        trees_by_key.insert(key.clone(), games);
+    }
+    Ok(trees_by_key)
 }
 
 fn read_orientation_header(path: &Path) -> String {
@@ -783,6 +844,22 @@ fn ordered_subtree_keys(root_key: &str, variants: &[VariantInfoDto]) -> Vec<Stri
     out
 }
 
+fn resolve_attach_path(
+    aggregate_root: &SimpleNode,
+    parent_base: Option<&Vec<u32>>,
+    parent_link: Option<&VariantLinkRefDto>,
+    source_fen: &str,
+) -> Option<Vec<u32>> {
+    if let (Some(parent_base), Some(parent)) = (parent_base, parent_link) {
+        let mut path = parent_base.clone();
+        path.extend(parent.anchor_path.iter().copied());
+        if path_matches_fen(aggregate_root, &path, source_fen) {
+            return Some(path);
+        }
+    }
+    find_first_path_by_fen(aggregate_root, source_fen)
+}
+
 fn aggregate_variant_family_tree(
     root_key: &str,
     variants: &[VariantInfoDto],
@@ -801,6 +878,11 @@ fn aggregate_variant_family_tree(
             if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path) {
                 merge_children(node, &game.root.children);
             }
+        } else {
+            return Err(Error::InvalidInput(format!(
+                "Could not attach root PGN game at FEN '{}'",
+                game.root.fen
+            )));
         }
     }
 
@@ -818,30 +900,49 @@ fn aggregate_variant_family_tree(
             continue;
         };
 
-        let mut attach_path: Option<Vec<u32>> = None;
+        let source_fen = &games[0].root.fen;
+        let mut parent_base: Option<&Vec<u32>> = None;
+        let mut parent_label = None;
         if let Some(parent) = &variant.parent_link {
             let parent_key = resolve_link_path(Path::new(&variant.path), &parent.path);
-            if let Some(parent_base) = base_path_by_key.get(&parent_key) {
-                let mut path = parent_base.clone();
-                path.extend(parent.anchor_path.iter().copied());
-                attach_path = Some(path);
-            }
-            if attach_path.is_none() {
-                attach_path = find_first_path_by_fen(&aggregate_root, &parent.anchor_fen);
-            }
+            parent_base = base_path_by_key.get(&parent_key);
+            parent_label = Some(parent.name.as_str());
         }
-        if attach_path.is_none() {
-            attach_path = find_first_path_by_fen(&aggregate_root, &games[0].root.fen);
+        let path = resolve_attach_path(
+            &aggregate_root,
+            parent_base,
+            variant.parent_link.as_ref(),
+            source_fen,
+        )
+        .ok_or_else(|| {
+            let parent = parent_label.unwrap_or("unknown parent");
+            Error::InvalidInput(format!(
+                "Could not attach variant '{}' from {parent} at FEN '{source_fen}'",
+                variant.name
+            ))
+        })?;
+        if !path_matches_fen(&aggregate_root, &path, source_fen) {
+            return Err(Error::InvalidInput(format!(
+                "Variant '{}' resolved to an unexpected FEN while aggregating",
+                variant.name
+            )));
         }
-        let Some(path) = attach_path else {
-            continue;
-        };
         let path_usize = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
-        if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path_usize) {
-            base_path_by_key.insert(key.clone(), path);
-            for game in games {
-                merge_children(node, &game.root.children);
+        let Some(node) = get_simple_node_mut(&mut aggregate_root, &path_usize) else {
+            return Err(Error::InvalidInput(format!(
+                "Variant '{}' resolved to an invalid aggregate path",
+                variant.name
+            )));
+        };
+        base_path_by_key.insert(key.clone(), path);
+        for game in games {
+            if normalize_fen_key(&game.root.fen) != normalize_fen_key(source_fen) {
+                return Err(Error::InvalidInput(format!(
+                    "Variant '{}' contains multiple PGN root positions and cannot be compressed safely",
+                    variant.name
+                )));
             }
+            merge_children(node, &game.root.children);
         }
     }
 
@@ -872,17 +973,7 @@ pub fn variants_compress_variant_family(
         ));
     }
 
-    let mut trees_by_key: HashMap<String, Vec<ParsedVariantGame>> = HashMap::new();
-    for key in &source_keys {
-        let Some(variant) = variant_by_key.get(key) else {
-            continue;
-        };
-        if let Ok(games) = read_all_games(Path::new(&variant.path)) {
-            if !games.is_empty() {
-                trees_by_key.insert(key.clone(), games);
-            }
-        }
-    }
+    let trees_by_key = load_variant_family_trees(&source_keys, &variant_by_key)?;
     let root_games = trees_by_key.get(&root_key).ok_or_else(|| {
         Error::InvalidInput("No readable PGN found for this variant family.".to_string())
     })?;
@@ -909,6 +1000,7 @@ pub fn variants_compress_variant_family(
             .as_deref(),
         orientation,
     );
+    validate_rendered_pgn(&pgn, "Compressed variant family PGN")?;
     fs::write(&root_path, pgn)?;
 
     let mut metadata = read_metadata(&root_path)?;
@@ -960,17 +1052,7 @@ pub fn variants_create_opening_variants(
         .ok_or_else(|| Error::InvalidInput("Target variant was not found".to_string()))?;
     let source_keys = ordered_subtree_keys(&root_key, &variants);
 
-    let mut trees_by_key: HashMap<String, Vec<ParsedVariantGame>> = HashMap::new();
-    for key in &source_keys {
-        let Some(variant) = variant_by_key.get(key) else {
-            continue;
-        };
-        if let Ok(games) = read_all_games(Path::new(&variant.path)) {
-            if !games.is_empty() {
-                trees_by_key.insert(key.clone(), games);
-            }
-        }
-    }
+    let trees_by_key = load_variant_family_trees(&source_keys, &variant_by_key)?;
 
     let root_games = trees_by_key.get(&root_key).ok_or_else(|| {
         Error::InvalidInput("No readable PGN found for this variant family.".to_string())
@@ -980,68 +1062,8 @@ pub fn variants_create_opening_variants(
         .map(|game| game.orientation.as_str())
         .unwrap_or("white");
     let active_color_is_white = !orientation.eq_ignore_ascii_case("black");
-    let mut aggregate_root = root_games[0].root.clone();
-    for game in root_games.iter().skip(1) {
-        if normalize_fen_key(&game.root.fen) == normalize_fen_key(&aggregate_root.fen) {
-            merge_children(&mut aggregate_root, &game.root.children);
-        } else if let Some(path) = find_first_path_by_fen(&aggregate_root, &game.root.fen) {
-            if let Some(node) = get_simple_node_mut(
-                &mut aggregate_root,
-                &path.iter().map(|value| *value as usize).collect::<Vec<_>>(),
-            ) {
-                merge_children(node, &game.root.children);
-            }
-        }
-    }
-
-    let mut base_path_by_key: HashMap<String, Vec<u32>> =
-        HashMap::from([(root_key.clone(), Vec::new())]);
-    for key in &source_keys {
-        if key == &root_key {
-            continue;
-        }
-        let Some(variant) = variant_by_key.get(key) else {
-            continue;
-        };
-        let Some(games) = trees_by_key.get(key) else {
-            continue;
-        };
-        let mut attach_path: Option<Vec<u32>> = None;
-        if let Some(parent) = &variant.parent_link {
-            let parent_key = if Path::new(&parent.path).is_absolute() {
-                normalize_path_key(&parent.path)
-            } else {
-                normalize_path_key(
-                    &parent_dir(Path::new(&variant.path))
-                        .join(&parent.path)
-                        .to_string_lossy(),
-                )
-            };
-            if let Some(parent_base) = base_path_by_key.get(&parent_key) {
-                let mut path = parent_base.clone();
-                path.extend(parent.anchor_path.iter().copied());
-                attach_path = Some(path);
-            }
-            if attach_path.is_none() {
-                attach_path = find_first_path_by_fen(&aggregate_root, &parent.anchor_fen);
-            }
-        }
-        if attach_path.is_none() {
-            attach_path = find_first_path_by_fen(&aggregate_root, &games[0].root.fen);
-        }
-        let Some(path) = attach_path else {
-            continue;
-        };
-        if let Some(node) = get_simple_node_mut(
-            &mut aggregate_root,
-            &path.iter().map(|value| *value as usize).collect::<Vec<_>>(),
-        ) {
-            base_path_by_key.insert(key.clone(), path);
-            for game in games {
-                merge_children(node, &game.root.children);
-            }
-        }
-    }
+    let aggregate_root =
+        aggregate_variant_family_tree(&root_key, &variants, &variant_by_key, &trees_by_key)?;
 
     let mut opening_cache: HashMap<String, Vec<String>> = HashMap::new();
     let mut groups: Vec<OpeningGroup> = Vec::new();
@@ -1480,6 +1502,36 @@ pub fn variants_create_opening_variants(
 
     validate_generated_consistency(&group_trees, active_color_is_white)?;
 
+    fs::create_dir_all(&output_dir)?;
+    let root_path = PathBuf::from(&root_variant.path);
+    for group in &mut groups {
+        if group.id == root_replacement_id {
+            group.file_path = Some(root_path.clone());
+            continue;
+        }
+        let path = output_dir.join(format!("{}.pgn", group.file_stem));
+        let path_key = normalize_path_key(path.to_string_lossy().as_ref());
+        if path.exists() && !cleanup_keys.contains(&path_key) {
+            return Err(Error::InvalidInput("File already exists".to_string()));
+        }
+        group.file_path = Some(path);
+    }
+
+    let mut rendered_pgn_by_group: HashMap<String, String> = HashMap::new();
+    for group in &groups {
+        let tree = group_trees
+            .get(&group.id)
+            .ok_or_else(|| Error::InvalidInput("Missing generated opening tree".to_string()))?;
+        let pgn = render_pgn(
+            tree,
+            &group.title,
+            parse_eco_from_title(&group.title).as_deref(),
+            orientation,
+        );
+        validate_rendered_pgn(&pgn, &format!("Generated PGN for '{}'", group.title))?;
+        rendered_pgn_by_group.insert(group.id.clone(), pgn);
+    }
+
     let cleanup_paths: Vec<String> = variants
         .iter()
         .filter(|variant| cleanup_keys.contains(&normalize_path_key(&variant.path)))
@@ -1491,49 +1543,17 @@ pub fn variants_create_opening_variants(
         variants_delete_files(cleanup_paths)?.deleted_pgn
     };
 
-    fs::create_dir_all(&output_dir)?;
-    let root_path = PathBuf::from(&root_variant.path);
-    if let Some(root_group) = groups
-        .iter_mut()
-        .find(|group| group.id == root_replacement_id)
-    {
-        root_group.file_path = Some(root_path.clone());
-    }
-
     let created_at = Local::now().to_rfc3339();
 
-    for group in &mut groups {
-        if group.id == root_replacement_id {
-            continue;
-        }
-        let path = output_dir.join(format!("{}.pgn", group.file_stem));
-        if path.exists() {
-            return Err(Error::InvalidInput("File already exists".to_string()));
-        }
-        let tree = group_trees
+    for group in &groups {
+        let path = group
+            .file_path
+            .as_ref()
+            .ok_or_else(|| Error::InvalidInput("Missing generated output path".to_string()))?;
+        let pgn = rendered_pgn_by_group
             .get(&group.id)
-            .ok_or_else(|| Error::InvalidInput("Missing generated opening tree".to_string()))?;
-        let pgn = render_pgn(
-            tree,
-            &group.title,
-            parse_eco_from_title(&group.title).as_deref(),
-            orientation,
-        );
-        fs::write(&path, pgn)?;
-        let metadata = json!({
-            "type": "variants",
-            "tags": [
-                format!("opening:{}", group.title),
-                format!("fen:{}", group.fen),
-                "generatedBy:opening-variants",
-                format!("generatedRoot:{}", root_path.to_string_lossy()),
-                format!("generatedAt:{created_at}")
-            ],
-            "schemaVersion": 2,
-            "links": { "children": [] }
-        });
-        write_metadata(&path, &metadata)?;
-        group.file_path = Some(path);
+            .ok_or_else(|| Error::InvalidInput("Missing generated PGN".to_string()))?;
+        fs::write(path, pgn)?;
     }
 
     group_by_id = groups
@@ -1615,6 +1635,21 @@ pub fn variants_create_opening_variants(
 
         metadata["schemaVersion"] = json!(2);
         if group.id == root_replacement_id {
+            let mut tags = metadata_tags(&metadata)
+                .into_iter()
+                .filter(|tag| {
+                    !tag.starts_with("opening:")
+                        && !tag.starts_with("fen:")
+                        && !tag.starts_with("variantsCount:")
+                        && !tag.starts_with("generatedBy:opening-variants")
+                        && !tag.starts_with("generatedRoot:")
+                        && !tag.starts_with("generatedAt:")
+                })
+                .collect::<Vec<_>>();
+            tags.push(format!("opening:{}", group.title));
+            tags.push(format!("fen:{tree_fen}"));
+            metadata["tags"] = json!(tags);
+
             let root_dir = parent_dir(&root_path);
             let mut merged_children = metadata
                 .get("links")
@@ -1779,5 +1814,203 @@ mod tests {
         );
         let tags = metadata_tags(&metadata);
         assert!(tags.iter().any(|tag| tag == "variantsCount:2"));
+    }
+
+    #[test]
+    fn compress_variant_family_rejects_invalid_descendant_without_rewriting_root() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let child_path = dir.path().join("child.pgn");
+        let after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        let original_root = "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n\n1. e4 *\n";
+
+        fs::write(&root_path, original_root).unwrap();
+        fs::write(
+            root_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Root", "fen:rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
+                "schemaVersion": 2,
+                "links": {
+                    "children": [{
+                        "path": "child.pgn",
+                        "name": "child",
+                        "anchorFen": after_e4,
+                        "anchorPath": [0],
+                        "anchorPly": 1,
+                        "label": "e4"
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        fs::write(
+            &child_path,
+            format!(
+                "[Event \"Child\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n[SetUp \"1\"]\n[FEN \"{after_e4}\"]\n\n1... Nxd4 *\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            child_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Child", format!("fen:{after_e4}")],
+                "schemaVersion": 2,
+                "links": {
+                    "parent": {
+                        "path": "root.pgn",
+                        "name": "root",
+                        "anchorFen": after_e4,
+                        "anchorPath": [0],
+                        "anchorPly": 1,
+                        "label": "e4"
+                    },
+                    "children": []
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let error = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error.contains("Cannot process variant") || error.contains("no readable PGN games"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(fs::read_to_string(&root_path).unwrap(), original_root);
+        assert!(child_path.exists());
+        assert!(child_path.with_extension("info").exists());
+    }
+
+    #[test]
+    fn compress_variant_family_uses_fen_when_anchor_path_is_stale() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let child_path = dir.path().join("child.pgn");
+        let after_e5 = "rnbqkb1r/pppppppp/5n2/4P3/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2";
+
+        fs::write(
+            &root_path,
+            "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n\n1. e4 c5 (1... Nf6 2. e5) *\n",
+        )
+        .unwrap();
+        fs::write(
+            root_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Root", "fen:rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
+                "schemaVersion": 2,
+                "links": {
+                    "children": [{
+                        "path": "child.pgn",
+                        "name": "child",
+                        "anchorFen": after_e5,
+                        "anchorPath": [0],
+                        "anchorPly": 3,
+                        "label": "e5"
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        fs::write(
+            &child_path,
+            format!(
+                "[Event \"Child\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n[SetUp \"1\"]\n[FEN \"{after_e5}\"]\n\n2... Nd5 *\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            child_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Child", format!("fen:{after_e5}")],
+                "schemaVersion": 2,
+                "links": {
+                    "parent": {
+                        "path": "root.pgn",
+                        "name": "root",
+                        "anchorFen": after_e5,
+                        "anchorPath": [0],
+                        "anchorPly": 3,
+                        "label": "e5"
+                    },
+                    "children": []
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let result = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.merged, 2);
+        assert_eq!(result.removed, 1);
+
+        let merged_pgn = fs::read_to_string(&root_path).unwrap();
+        assert!(merged_pgn.contains("2.e5 Nd5"));
+        assert!(!merged_pgn.contains("1...Nd5"));
+    }
+
+    #[test]
+    fn create_opening_variants_rewrites_root_pgn_after_splitting() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("B00 - King's Pawn Game.pgn");
+        let root_info_path = root_path.with_extension("info");
+        let compressed_pgn = "[Event \"B00 - King's Pawn Game\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[ECO \"B00\"]\n[Orientation \"white\"]\n\n1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 4. O-O Bg7 5. c3 Nf6 6. Re1 O-O 7. d4 cxd4 8. cxd4 d5 *\n";
+
+        fs::write(&root_path, compressed_pgn).unwrap();
+        fs::write(
+            &root_info_path,
+            json!({
+                "type": "variants",
+                "tags": [
+                    "opening:B00 - King's Pawn Game",
+                    "fen:rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "variantsCount:4"
+                ],
+                "schemaVersion": 2,
+                "links": { "children": [] }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let result = variants_create_opening_variants(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(result.created > 0);
+        let split_root = fs::read_to_string(&root_path).unwrap();
+        assert_ne!(split_root, compressed_pgn);
+        validate_rendered_pgn(&split_root, "split root PGN").unwrap();
+
+        let metadata: Value = serde_json::from_str(&fs::read_to_string(root_info_path).unwrap())
+            .expect("parse root metadata");
+        assert!(metadata
+            .get("links")
+            .and_then(|links| links.get("children"))
+            .and_then(Value::as_array)
+            .map(|children| !children.is_empty())
+            .unwrap_or(false));
+        let tags = metadata_tags(&metadata);
+        assert!(!tags.iter().any(|tag| tag.starts_with("variantsCount:")));
     }
 }

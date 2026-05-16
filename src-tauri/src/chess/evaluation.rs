@@ -93,4 +93,3 @@ pub fn naive_eval(pos: &Chess) -> i32 {
         .max()
         .unwrap_or(i32::MIN)
 }
-

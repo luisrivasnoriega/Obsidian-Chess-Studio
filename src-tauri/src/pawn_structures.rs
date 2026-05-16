@@ -1,9 +1,11 @@
-use crate::db::{get_games, GameQueryJs, GameSort, NormalizedGame, QueryOptions, Sides, SortDirection};
+use crate::db::{
+    get_games, GameQueryJs, GameSort, NormalizedGame, QueryOptions, Sides, SortDirection,
+};
 use crate::error::{Error, Result};
 use chrono::Datelike;
-use shakmaty::{fen::Fen, CastlingMode, Chess, Color, EnPassantMode, FromSetup, Position};
 use shakmaty::san::SanPlus;
 use shakmaty::uci::UciMove;
+use shakmaty::{fen::Fen, CastlingMode, Chess, Color, EnPassantMode, FromSetup, Position};
 use specta::Type;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -124,7 +126,7 @@ fn pawn_sets_from_fen(fen: &str, color: Color) -> PawnSets {
             let idx = fen_rank * 8 + file;
             if squares[idx] == pawn_char {
                 let white_rank = 7usize.saturating_sub(fen_rank); // fen_rank 0 (rank8) -> 7 (rank1)?? Actually we want 0=rank1, so invert.
-                // Wait: fen_rank 7 (rank1) -> 0, fen_rank 0 (rank8) -> 7
+                                                                  // Wait: fen_rank 7 (rank1) -> 0, fen_rank 0 (rank8) -> 7
                 let r = white_rank;
                 out.squares[file][r] = true;
                 out.file_counts[file] = out.file_counts[file].saturating_add(1);
@@ -285,12 +287,24 @@ fn has_backward_pawn(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
 
             // Adjacent friendly pawns are more advanced?
             let left_advanced = if f > 0 {
-                (0..8).any(|rr| ps.squares[f - 1][rr] && match color { Color::White => rr > r, Color::Black => rr < r })
+                (0..8).any(|rr| {
+                    ps.squares[f - 1][rr]
+                        && match color {
+                            Color::White => rr > r,
+                            Color::Black => rr < r,
+                        }
+                })
             } else {
                 false
             };
             let right_advanced = if f < 7 {
-                (0..8).any(|rr| ps.squares[f + 1][rr] && match color { Color::White => rr > r, Color::Black => rr < r })
+                (0..8).any(|rr| {
+                    ps.squares[f + 1][rr]
+                        && match color {
+                            Color::White => rr > r,
+                            Color::Black => rr < r,
+                        }
+                })
             } else {
                 false
             };
@@ -301,11 +315,15 @@ fn has_backward_pawn(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
             // Advance square exists?
             let advance_rank = match color {
                 Color::White => {
-                    if r >= 7 { continue; }
+                    if r >= 7 {
+                        continue;
+                    }
                     r + 1
                 }
                 Color::Black => {
-                    if r == 0 { continue; }
+                    if r == 0 {
+                        continue;
+                    }
                     r - 1
                 }
             };
@@ -316,15 +334,21 @@ fn has_backward_pawn(color: Color, ps: &PawnSets, opp: &PawnSets) -> bool {
                 Color::White => {
                     // black pawns attack downwards: from (f-1, advance_rank+1) or (f+1, advance_rank+1)
                     let src_rank = advance_rank + 1;
-                    if src_rank >= 8 { false } else {
-                        (f > 0 && opp.squares[f - 1][src_rank]) || (f < 7 && opp.squares[f + 1][src_rank])
+                    if src_rank >= 8 {
+                        false
+                    } else {
+                        (f > 0 && opp.squares[f - 1][src_rank])
+                            || (f < 7 && opp.squares[f + 1][src_rank])
                     }
                 }
                 Color::Black => {
                     // white pawns attack upwards: from (f-1, advance_rank-1) or (f+1, advance_rank-1)
-                    if advance_rank == 0 { false } else {
+                    if advance_rank == 0 {
+                        false
+                    } else {
                         let src_rank = advance_rank - 1;
-                        (f > 0 && opp.squares[f - 1][src_rank]) || (f < 7 && opp.squares[f + 1][src_rank])
+                        (f > 0 && opp.squares[f - 1][src_rank])
+                            || (f < 7 && opp.squares[f + 1][src_rank])
                     }
                 }
             };
@@ -354,10 +378,21 @@ fn detect_motif_mask(fen: &str, player_color: Color, mode: &str) -> u32 {
     const CONNECTED_PASSED: u32 = 1 << 8;
     const FIANCHETTO: u32 = 1 << 9;
 
-    let colors: Vec<Color> = if analyze_both { vec![Color::White, Color::Black] } else { vec![player_color] };
+    let colors: Vec<Color> = if analyze_both {
+        vec![Color::White, Color::Black]
+    } else {
+        vec![player_color]
+    };
     for c in colors {
         let ps = pawn_sets_from_fen(fen, c);
-        let opp = pawn_sets_from_fen(fen, if c == Color::White { Color::Black } else { Color::White });
+        let opp = pawn_sets_from_fen(
+            fen,
+            if c == Color::White {
+                Color::Black
+            } else {
+                Color::White
+            },
+        );
 
         if count_pawn_islands(&ps) >= 3 {
             mask |= ISLANDS;
@@ -466,10 +501,21 @@ fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u3
     const SEMI_SLAV_TRI: u32 = 1 << 11;
     const KINGS_INDIAN: u32 = 1 << 12;
 
-    let colors: Vec<Color> = if analyze_both { vec![Color::White, Color::Black] } else { vec![player_color] };
+    let colors: Vec<Color> = if analyze_both {
+        vec![Color::White, Color::Black]
+    } else {
+        vec![player_color]
+    };
     for c in colors {
         let ps = pawn_sets_from_fen(fen, c);
-        let opp = pawn_sets_from_fen(fen, if c == Color::White { Color::Black } else { Color::White });
+        let opp = pawn_sets_from_fen(
+            fen,
+            if c == Color::White {
+                Color::Black
+            } else {
+                Color::White
+            },
+        );
 
         // Helpers: file indices a=0..h=7, rank indices 0=rank1..7=rank8 (White perspective)
         // Note: These are heuristics for filtering.
@@ -480,18 +526,38 @@ fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u3
             Color::White => {
                 // White pawns: a2(0,1), b2(1,1), d4(3,3), e3(4,2), f2(5,1), g2(6,1), h2(7,1)
                 // Black pawns: a7(0,6), b7(1,6), c6(2,5), d5(3,4), f7(5,6), g7(6,6), h7(7,6)
-                has_pawn(&ps, 0, 1) && has_pawn(&ps, 1, 1) && has_pawn(&ps, 3, 3) && has_pawn(&ps, 4, 2)
-                    && has_pawn(&ps, 5, 1) && has_pawn(&ps, 6, 1) && has_pawn(&ps, 7, 1)
-                    && has_pawn(&opp, 0, 6) && has_pawn(&opp, 1, 6) && has_pawn(&opp, 2, 5) && has_pawn(&opp, 3, 4)
-                    && has_pawn(&opp, 5, 6) && has_pawn(&opp, 6, 6) && has_pawn(&opp, 7, 6)
+                has_pawn(&ps, 0, 1)
+                    && has_pawn(&ps, 1, 1)
+                    && has_pawn(&ps, 3, 3)
+                    && has_pawn(&ps, 4, 2)
+                    && has_pawn(&ps, 5, 1)
+                    && has_pawn(&ps, 6, 1)
+                    && has_pawn(&ps, 7, 1)
+                    && has_pawn(&opp, 0, 6)
+                    && has_pawn(&opp, 1, 6)
+                    && has_pawn(&opp, 2, 5)
+                    && has_pawn(&opp, 3, 4)
+                    && has_pawn(&opp, 5, 6)
+                    && has_pawn(&opp, 6, 6)
+                    && has_pawn(&opp, 7, 6)
             }
             Color::Black => {
                 // Black pawns: a7(0,6), b7(1,6), c6(2,5), d5(3,4), f7(5,6), g7(6,6), h7(7,6)
                 // White pawns: a2(0,1), b2(1,1), d4(3,3), e3(4,2), f2(5,1), g2(6,1), h2(7,1)
-                has_pawn(&ps, 0, 6) && has_pawn(&ps, 1, 6) && has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4)
-                    && has_pawn(&ps, 5, 6) && has_pawn(&ps, 6, 6) && has_pawn(&ps, 7, 6)
-                    && has_pawn(&opp, 0, 1) && has_pawn(&opp, 1, 1) && has_pawn(&opp, 3, 3) && has_pawn(&opp, 4, 2)
-                    && has_pawn(&opp, 5, 1) && has_pawn(&opp, 6, 1) && has_pawn(&opp, 7, 1)
+                has_pawn(&ps, 0, 6)
+                    && has_pawn(&ps, 1, 6)
+                    && has_pawn(&ps, 2, 5)
+                    && has_pawn(&ps, 3, 4)
+                    && has_pawn(&ps, 5, 6)
+                    && has_pawn(&ps, 6, 6)
+                    && has_pawn(&ps, 7, 6)
+                    && has_pawn(&opp, 0, 1)
+                    && has_pawn(&opp, 1, 1)
+                    && has_pawn(&opp, 3, 3)
+                    && has_pawn(&opp, 4, 2)
+                    && has_pawn(&opp, 5, 1)
+                    && has_pawn(&opp, 6, 1)
+                    && has_pawn(&opp, 7, 1)
             }
         };
         if carlsbad {
@@ -524,16 +590,32 @@ fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u3
         // Hedgehog: classic black setup pawns a6 b6 d6 e6 (white often has c4,e4).
         // We'll detect presence of a6+b6+d6+e6 for one side.
         let hedgehog = match c {
-            Color::White => has_pawn(&opp, 0, 5) && has_pawn(&opp, 1, 5) && has_pawn(&opp, 3, 5) && has_pawn(&opp, 4, 5),
-            Color::Black => has_pawn(&ps, 0, 5) && has_pawn(&ps, 1, 5) && has_pawn(&ps, 3, 5) && has_pawn(&ps, 4, 5),
+            Color::White => {
+                has_pawn(&opp, 0, 5)
+                    && has_pawn(&opp, 1, 5)
+                    && has_pawn(&opp, 3, 5)
+                    && has_pawn(&opp, 4, 5)
+            }
+            Color::Black => {
+                has_pawn(&ps, 0, 5)
+                    && has_pawn(&ps, 1, 5)
+                    && has_pawn(&ps, 3, 5)
+                    && has_pawn(&ps, 4, 5)
+            }
         };
         if hedgehog {
             mask |= HEDGEHOG;
         }
 
         // Stonewall: pawns c3 d4 e3 f4 (white) or c6 d5 e6 f5 (black).
-        let stonewall_white = has_pawn(&ps, 2, 2) && has_pawn(&ps, 3, 3) && has_pawn(&ps, 4, 2) && has_pawn(&ps, 5, 3);
-        let stonewall_black = has_pawn(&ps, 2, 5) && has_pawn(&ps, 3, 4) && has_pawn(&ps, 4, 5) && has_pawn(&ps, 5, 4);
+        let stonewall_white = has_pawn(&ps, 2, 2)
+            && has_pawn(&ps, 3, 3)
+            && has_pawn(&ps, 4, 2)
+            && has_pawn(&ps, 5, 3);
+        let stonewall_black = has_pawn(&ps, 2, 5)
+            && has_pawn(&ps, 3, 4)
+            && has_pawn(&ps, 4, 5)
+            && has_pawn(&ps, 5, 4);
         if stonewall_white || stonewall_black {
             mask |= STONEWALL;
         }
@@ -569,7 +651,10 @@ fn detect_named_structure_mask(fen: &str, player_color: Color, mode: &str) -> u3
         }
 
         // French: black d5+e6 AND white d4+e5
-        let french = has_pawn(&ps, 3, 4) && has_pawn(&ps, 4, 5) && has_pawn(&opp, 3, 3) && has_pawn(&opp, 4, 4);
+        let french = has_pawn(&ps, 3, 4)
+            && has_pawn(&ps, 4, 5)
+            && has_pawn(&opp, 3, 3)
+            && has_pawn(&opp, 4, 4);
         if french {
             mask |= FRENCH;
         }
@@ -623,11 +708,11 @@ fn is_all_any(value: &str) -> bool {
 fn calculate_earliest_date_from_range(date_range: &Option<String>) -> Option<String> {
     let range = date_range.as_ref()?;
     let range_norm = normalize_filter_value(range);
-    
+
     if range_norm == "all" || range_norm.is_empty() {
         return None;
     }
-    
+
     // Calculate days to subtract based on range
     // Backend format: "SevenDays", "ThirtyDays", "NinetyDays", "OneYear" (normalized to lowercase)
     let days = match range_norm.as_str() {
@@ -637,13 +722,18 @@ fn calculate_earliest_date_from_range(date_range: &Option<String>) -> Option<Str
         "oneyear" => 365,
         _ => return None,
     };
-    
+
     // Get current date in UTC
     let now = chrono::Utc::now();
     let earliest = now - chrono::Duration::days(days as i64);
-    
+
     // Format as PGN date (YYYY.MM.DD)
-    Some(format!("{:04}.{:02}.{:02}", earliest.year(), earliest.month(), earliest.day()))
+    Some(format!(
+        "{:04}.{:02}.{:02}",
+        earliest.year(),
+        earliest.month(),
+        earliest.day()
+    ))
 }
 
 fn get_time_control(_site: &str, time_control: &str) -> Option<String> {
@@ -948,7 +1038,8 @@ fn extract_structure_at_move(
         if mover == player_color && current_fullmove == move_number {
             pos.play_unchecked(&mv);
 
-            let fen_after = Fen::from_setup(pos.clone().into_setup(EnPassantMode::Legal)).to_string();
+            let fen_after =
+                Fen::from_setup(pos.clone().into_setup(EnPassantMode::Legal)).to_string();
             let signature = if normalize_filter_value(pawn_structure_mode) == "both" {
                 pawn_structure_signature_from_fen(&fen_after, "both", player_color)
             } else {
@@ -1065,7 +1156,10 @@ pub async fn compute_pawn_structures(
                         None => options.platform_filter.clone(),
                     };
                     let normalized_site = normalize_platform(&game.site);
-                    let matches_platform = normalized_site.as_ref().map(|s| s == &wanted).unwrap_or(false);
+                    let matches_platform = normalized_site
+                        .as_ref()
+                        .map(|s| s == &wanted)
+                        .unwrap_or(false);
                     if !matches_platform {
                         continue;
                     }
@@ -1087,7 +1181,11 @@ pub async fn compute_pawn_structures(
 
                 if !elo_all {
                     if let Ok(start) = options.opponent_elo_bucket.trim().parse::<i32>() {
-                        let opponent_elo = if is_white { game.black_elo } else { game.white_elo };
+                        let opponent_elo = if is_white {
+                            game.black_elo
+                        } else {
+                            game.white_elo
+                        };
                         if let Some(elo) = opponent_elo {
                             let end = start + 199;
                             if elo < start || elo > end {
@@ -1109,15 +1207,24 @@ pub async fn compute_pawn_structures(
         }
     }
 
-    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>, u32, u32)> = HashMap::new();
+    let mut stats: HashMap<String, (i32, f64, Option<String>, Vec<PawnStructureGame>, u32, u32)> =
+        HashMap::new();
     let max_games_per_structure = 50;
 
     for (player_id, game) in game_data.iter() {
-        let player_color = if game.white_id == *player_id { Color::White } else { Color::Black };
+        let player_color = if game.white_id == *player_id {
+            Color::White
+        } else {
+            Color::Black
+        };
 
         let requested_player_color = normalize_filter_value(&options.player_color);
         if !is_all_any(&requested_player_color) {
-            let want = if requested_player_color == "white" { Color::White } else { Color::Black };
+            let want = if requested_player_color == "white" {
+                Color::White
+            } else {
+                Color::Black
+            };
             if player_color != want {
                 continue;
             }
@@ -1155,30 +1262,36 @@ pub async fn compute_pawn_structures(
 
     let mut results: Vec<PawnStructureStat> = stats
         .into_iter()
-        .filter(|(_structure, (_count, _wins, _sample_fen, _games, motif_mask, named_mask))| {
-            let motifs_ok = if wanted_motif_mask == 0 {
-                true
-            } else {
-                // AND semantics: when multiple motifs are selected, require all of them.
-                (motif_mask & wanted_motif_mask) == wanted_motif_mask
-            };
+        .filter(
+            |(_structure, (_count, _wins, _sample_fen, _games, motif_mask, named_mask))| {
+                let motifs_ok = if wanted_motif_mask == 0 {
+                    true
+                } else {
+                    // AND semantics: when multiple motifs are selected, require all of them.
+                    (motif_mask & wanted_motif_mask) == wanted_motif_mask
+                };
 
-            let named_ok = if wanted_named_structure_mask == 0 {
-                true
-            } else {
-                // OR semantics: any selected named structure matches.
-                (named_mask & wanted_named_structure_mask) != 0
-            };
+                let named_ok = if wanted_named_structure_mask == 0 {
+                    true
+                } else {
+                    // OR semantics: any selected named structure matches.
+                    (named_mask & wanted_named_structure_mask) != 0
+                };
 
-            motifs_ok && named_ok
-        })
-        .map(|(structure, (count, wins, sample_fen, games, _motif_mask, _named_mask))| PawnStructureStat {
-            structure,
-            frequency: count,
-            win_rate: if count > 0 { wins / count as f64 } else { 0.0 },
-            sample_fen,
-            games,
-        })
+                motifs_ok && named_ok
+            },
+        )
+        .map(
+            |(structure, (count, wins, sample_fen, games, _motif_mask, _named_mask))| {
+                PawnStructureStat {
+                    structure,
+                    frequency: count,
+                    win_rate: if count > 0 { wins / count as f64 } else { 0.0 },
+                    sample_fen,
+                    games,
+                }
+            },
+        )
         .collect();
 
     results.sort_by(|a, b| b.frequency.cmp(&a.frequency));
@@ -1214,10 +1327,22 @@ mod tests {
 
     #[test]
     fn normalize_platform_works() {
-        assert_eq!(normalize_platform("Chess.com"), Some("Chess.com".to_string()));
-        assert_eq!(normalize_platform(" chess.com "), Some("Chess.com".to_string()));
-        assert_eq!(normalize_platform("CHESSCOM"), Some("Chess.com".to_string()));
-        assert_eq!(normalize_platform("https://lichess.org/@/foo"), Some("Lichess".to_string()));
+        assert_eq!(
+            normalize_platform("Chess.com"),
+            Some("Chess.com".to_string())
+        );
+        assert_eq!(
+            normalize_platform(" chess.com "),
+            Some("Chess.com".to_string())
+        );
+        assert_eq!(
+            normalize_platform("CHESSCOM"),
+            Some("Chess.com".to_string())
+        );
+        assert_eq!(
+            normalize_platform("https://lichess.org/@/foo"),
+            Some("Lichess".to_string())
+        );
         assert_eq!(normalize_platform("LiCHESS"), Some("Lichess".to_string()));
         assert_eq!(normalize_platform("unknown site"), None);
     }
@@ -1234,21 +1359,54 @@ mod tests {
 
     #[test]
     fn get_time_control_parses_common() {
-        assert_eq!(get_time_control("Lichess", "0+1"), Some("ultra_bullet".to_string()));
-        assert_eq!(get_time_control("Lichess", "ultrabullet"), Some("ultra_bullet".to_string()));
+        assert_eq!(
+            get_time_control("Lichess", "0+1"),
+            Some("ultra_bullet".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "ultrabullet"),
+            Some("ultra_bullet".to_string())
+        );
 
-        assert_eq!(get_time_control("Lichess", "1+0"), Some("bullet".to_string()));
-        assert_eq!(get_time_control("Lichess", "Bullet"), Some("bullet".to_string()));
+        assert_eq!(
+            get_time_control("Lichess", "1+0"),
+            Some("bullet".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "Bullet"),
+            Some("bullet".to_string())
+        );
 
-        assert_eq!(get_time_control("Lichess", "3+0"), Some("blitz".to_string()));
-        assert_eq!(get_time_control("Lichess", "5+3"), Some("blitz".to_string()));
+        assert_eq!(
+            get_time_control("Lichess", "3+0"),
+            Some("blitz".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "5+3"),
+            Some("blitz".to_string())
+        );
 
-        assert_eq!(get_time_control("Lichess", "10+0"), Some("rapid".to_string()));
-        assert_eq!(get_time_control("Lichess", "15+10"), Some("rapid".to_string()));
+        assert_eq!(
+            get_time_control("Lichess", "10+0"),
+            Some("rapid".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "15+10"),
+            Some("rapid".to_string())
+        );
 
-        assert_eq!(get_time_control("Lichess", "30+0"), Some("classical".to_string()));
-        assert_eq!(get_time_control("Lichess", "correspondence"), Some("correspondence".to_string()));
-        assert_eq!(get_time_control("Lichess", "daily"), Some("daily".to_string()));
+        assert_eq!(
+            get_time_control("Lichess", "30+0"),
+            Some("classical".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "correspondence"),
+            Some("correspondence".to_string())
+        );
+        assert_eq!(
+            get_time_control("Lichess", "daily"),
+            Some("daily".to_string())
+        );
 
         assert_eq!(get_time_control("Lichess", "???"), None);
     }
@@ -1261,24 +1419,15 @@ mod tests {
 
         // both mantiene P/p
         let both = pawn_structure_signature_from_fen(&fen, "both", Color::White);
-        assert_eq!(
-            both,
-            "8/pppppppp/8/8/8/8/PPPPPPPP/8".to_string()
-        );
+        assert_eq!(both, "8/pppppppp/8/8/8/8/PPPPPPPP/8".to_string());
 
         // player (white) mantiene sólo peones blancos, normalizados como 'P'
         let white_only = pawn_structure_signature_from_fen(&fen, "player", Color::White);
-        assert_eq!(
-            white_only,
-            "8/8/8/8/8/8/PPPPPPPP/8".to_string()
-        );
+        assert_eq!(white_only, "8/8/8/8/8/8/PPPPPPPP/8".to_string());
 
         // player (black) mantiene sólo peones negros, normalizados como 'P'
         let black_only = pawn_structure_signature_from_fen(&fen, "player", Color::Black);
-        assert_eq!(
-            black_only,
-            "8/PPPPPPPP/8/8/8/8/8/8".to_string()
-        );
+        assert_eq!(black_only, "8/PPPPPPPP/8/8/8/8/8/8".to_string());
     }
 
     #[test]
@@ -1331,7 +1480,10 @@ mod tests {
     fn tokenize_moves_handles_black_ellipsis_and_nags() {
         let s = "1... d5 $1 2. c4 $2 2... e6 *";
         let toks = tokenize_moves(s);
-        assert_eq!(toks, vec!["d5".to_string(), "c4".to_string(), "e6".to_string()]);
+        assert_eq!(
+            toks,
+            vec!["d5".to_string(), "c4".to_string(), "e6".to_string()]
+        );
     }
 
     #[test]
@@ -1342,10 +1494,7 @@ mod tests {
         pos.play_unchecked(&mv);
         let fen = Fen::from_setup(pos.clone().into_setup(EnPassantMode::Legal)).to_string();
         let placement = fen.split_whitespace().next().unwrap_or("");
-        assert_eq!(
-            placement,
-            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR"
-        );
+        assert_eq!(placement, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR");
 
         // UCI
         let mut pos2 = Chess::default();
@@ -1353,10 +1502,7 @@ mod tests {
         pos2.play_unchecked(&mv2);
         let fen2 = Fen::from_setup(pos2.clone().into_setup(EnPassantMode::Legal)).to_string();
         let placement2 = fen2.split_whitespace().next().unwrap_or("");
-        assert_eq!(
-            placement2,
-            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR"
-        );
+        assert_eq!(placement2, "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR");
     }
 
     #[test]

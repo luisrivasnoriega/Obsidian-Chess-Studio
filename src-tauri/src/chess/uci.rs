@@ -3,11 +3,10 @@
 //! This module provides the `UciCommunicator` struct for spawning and communicating with UCI engines
 //! using async I/O. Handles stdin/stdout/stderr and line-based protocol.
 
-use log::{error, info};
-use std::path::PathBuf;
-use std::time::Duration;
-use std::process::Stdio;
 use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
@@ -164,7 +163,6 @@ impl UciCommunicator {
             }
             Error::Io(e)
         })?;
-        info!("Starting engine process: {:?}", &path);
         let stdin = child.stdin.take().ok_or(Error::NoStdin)?;
         let stdout = child.stdout.take().ok_or(Error::NoStdout)?;
         let stdout_lines = BufReader::new(stdout).lines();
@@ -174,9 +172,7 @@ impl UciCommunicator {
         tokio::spawn(async move {
             if let Some(stderr) = stderr {
                 let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    error!("[engine-stderr] {}", line);
-                }
+                while let Ok(Some(_line)) = lines.next_line().await {}
             }
         });
 
@@ -195,7 +191,6 @@ impl UciCommunicator {
     /// # Errors
     /// Returns `Error` if writing fails.
     pub async fn write_line(&mut self, line: &str) -> Result<(), Error> {
-        // REMOVED: Excessive logging - called hundreds of times per second
         let write_result = timeout(UCI_WRITE_TIMEOUT, self.stdin.write_all(line.as_bytes())).await;
         match write_result {
             Ok(Ok(())) => Ok(()),

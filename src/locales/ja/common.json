@@ -231,7 +231,6 @@
   "error": {
     "title": "エラーが発生しました",
     "unexpectedError": "予期しないエラー:",
-    "copyStackTrace": "スタックトレースをコピー",
     "reportPrompt": "これを報告してください",
     "reportOr": "または"
   },
@@ -576,7 +575,6 @@
       "documentation": "ドキュメント",
       "reportIssue": "問題を報告",
       "clearSavedData": "保存データを消去",
-      "openLogs": "ログを開く",
       "checkUpdate": "更新を確認",
       "about": "このアプリについて",
       "markAsStart": "開始としてマーク",
@@ -929,10 +927,6 @@
       "error": "エラー",
       "errorOpeningGame": "対局を開けませんでした",
       "analyzed": "分析済み",
-      "debug": "デバッグ",
-      "debugPgns": "デバッグPGN",
-      "debugPgnsDescription": "分析関数に渡されたPGN:",
-      "noDebugPgns": "デバッグPGNがありません",
       "showing": "表示中",
       "count": "件数",
       "maxGames": "最大対局数",
@@ -1554,8 +1548,6 @@
       "errors": "エラー",
       "precacheCompleted": "事前キャッシュが正常に完了しました！"
     },
-    "telemetry": "テレメトリ",
-    "telemetryDesc": "匿名の利用データを共有してObsidian Chess Studioの改善に協力する",
     "about": "このアプリについて",
     "aboutDesc": "Obsidian Chess Studioについて詳しく知る",
     "moveNotation": "表記法",
@@ -1574,8 +1566,6 @@
     "analysis": "分析",
     "interface": "インターフェース",
     "system": "システム",
-    "telemetryLoading": "テレメトリ設定を読み込み中...",
-    "telemetryDetails": "テレメトリデータは匿名で、Obsidian Chess Studioの使われ方を理解し体験を改善するために役立ちます。個人情報や対局内容は収集しません。データはSupabaseで安全に保管されます。",
     "pickValue": "値を選択",
     "pressAnyKey": "任意のキーを押してください"
   },

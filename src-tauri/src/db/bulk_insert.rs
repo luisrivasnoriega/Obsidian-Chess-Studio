@@ -1,8 +1,13 @@
-use std::collections::HashMap;
 use diesel::{connection::SimpleConnection, prelude::*, SqliteConnection};
 use shakmaty::Position;
+use std::collections::HashMap;
 
-use crate::db::{models::NewGame, ops::{create_event, create_player, create_site}, pgn::TempGame, schema::games};
+use crate::db::{
+    models::NewGame,
+    ops::{create_event, create_player, create_site},
+    pgn::TempGame,
+    schema::games,
+};
 use crate::error::Result;
 
 use super::get_pawn_home;
@@ -16,25 +21,35 @@ struct BatchCache {
 
 impl BatchCache {
     fn new() -> Self {
-        Self { players: HashMap::new(), events: HashMap::new(), sites: HashMap::new() }
+        Self {
+            players: HashMap::new(),
+            events: HashMap::new(),
+            sites: HashMap::new(),
+        }
     }
 
     fn player_id(&mut self, conn: &mut SqliteConnection, name: &str) -> Result<i32> {
-        if let Some(&id) = self.players.get(name) { return Ok(id); }
+        if let Some(&id) = self.players.get(name) {
+            return Ok(id);
+        }
         let row = create_player(conn, name)?;
         self.players.insert(name.to_string(), row.id);
         Ok(row.id)
     }
 
     fn event_id(&mut self, conn: &mut SqliteConnection, name: &str) -> Result<i32> {
-        if let Some(&id) = self.events.get(name) { return Ok(id); }
+        if let Some(&id) = self.events.get(name) {
+            return Ok(id);
+        }
         let row = create_event(conn, name)?;
         self.events.insert(name.to_string(), row.id);
         Ok(row.id)
     }
 
     fn site_id(&mut self, conn: &mut SqliteConnection, name: &str) -> Result<i32> {
-        if let Some(&id) = self.sites.get(name) { return Ok(id); }
+        if let Some(&id) = self.sites.get(name) {
+            return Ok(id);
+        }
         let row = create_site(conn, name)?;
         self.sites.insert(name.to_string(), row.id);
         Ok(row.id)
@@ -76,7 +91,12 @@ impl<'a> BulkInsertContext<'a> {
         // Drop non-dedupe indexes to speed inserts (best-effort).
         let _ = conn.batch_execute(super::DROP_INDEXES_FOR_BULK_SQL);
 
-        Ok(Self { conn, cache: BatchCache::new(), pragmas_applied: true, indexes_dropped: true })
+        Ok(Self {
+            conn,
+            cache: BatchCache::new(),
+            pragmas_applied: true,
+            indexes_dropped: true,
+        })
     }
 
     pub fn insert_games_batch(&mut self, games: Vec<TempGame>) -> Result<()> {
@@ -111,27 +131,49 @@ impl<'a> BulkInsertContext<'a> {
             for g in &sub_batch {
                 let pawn_home = get_pawn_home(g.position.board());
 
-                let white_id = match g.white_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let white_id = match g
+                    .white_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     Some(name) => self.cache.player_id(self.conn, name)?,
                     None => 0,
                 };
-                let black_id = match g.black_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let black_id = match g
+                    .black_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     Some(name) => self.cache.player_id(self.conn, name)?,
                     None => 0,
                 };
-                let event_id = match g.event_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let event_id = match g
+                    .event_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     Some(name) => self.cache.event_id(self.conn, name)?,
                     None => 0,
                 };
-                let site_id = match g.site_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let site_id = match g
+                    .site_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
                     Some(name) => self.cache.site_id(self.conn, name)?,
                     None => 0,
                 };
 
                 let ply_count = g.tree.count_main_line_moves() as i32;
                 let final_material = pgn::get_material_count(g.position.board());
-                let minimal_white_material = g.material_count.white.min(final_material.white) as i32;
-                let minimal_black_material = g.material_count.black.min(final_material.black) as i32;
+                let minimal_white_material =
+                    g.material_count.white.min(final_material.white) as i32;
+                let minimal_black_material =
+                    g.material_count.black.min(final_material.black) as i32;
 
                 rows.push(NewGame {
                     white_id,
@@ -157,7 +199,10 @@ impl<'a> BulkInsertContext<'a> {
             }
 
             // Execute bulk insert for this chunk.
-            match diesel::insert_or_ignore_into(games::table).values(&rows).execute(self.conn) {
+            match diesel::insert_or_ignore_into(games::table)
+                .values(&rows)
+                .execute(self.conn)
+            {
                 Ok(_) => {}
                 Err(e) => {
                     let msg = e.to_string().to_ascii_lowercase();

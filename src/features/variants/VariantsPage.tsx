@@ -8,6 +8,7 @@
   Center,
   Checkbox,
   Code,
+  CopyButton,
   Group,
   Loader,
   Menu,
@@ -32,8 +33,12 @@ import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
+  IconAlertTriangle,
+  IconArrowRight,
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconCopy,
   IconEdit,
   IconExclamationCircle,
   IconExternalLink,
@@ -49,6 +54,7 @@ import {
   IconShieldCheck,
   IconSitemap,
   IconTrash,
+  IconVersions,
 } from "@tabler/icons-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -87,7 +93,6 @@ import { getDatabases, query_players } from "@/utils/db";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
 import { formatDateToPGN, parseDate } from "@/utils/format";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
-import { logger } from "@/utils/logger";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
 import {
@@ -346,15 +351,6 @@ const COVERAGE_GRAPH_CACHE_VERSION = 6;
 const COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS = 3;
 const COVERAGE_ENGINE_SESSION_PROGRESS_EVENT = "coverage_engine_session_progress";
 const COVERAGE_GRAPH_BUILD_PROGRESS_EVENT = "variant_coverage_graph_build_progress";
-const COVERAGE_ENGINE_DEBUG_STORAGE_PREFIX = "ocs.coverageEngine.";
-
-function readCoverageEngineDebugFlag(flag: string) {
-  try {
-    return localStorage.getItem(`${COVERAGE_ENGINE_DEBUG_STORAGE_PREFIX}${flag}`) === "1";
-  } catch {
-    return false;
-  }
-}
 
 function createCoverageEngineRunId() {
   const randomId = globalThis.crypto?.randomUUID?.();
@@ -373,25 +369,7 @@ function formatCoverageEngineUnknownError(error: unknown) {
   return String(error);
 }
 
-function trackCoverageEngine(runId: string, phase: string, details: Record<string, unknown> = {}) {
-  const enableConsoleLog = readCoverageEngineDebugFlag("enableTrackConsoleLog");
-  const enableNativeLog = readCoverageEngineDebugFlag("enableTrackNativeLog");
-  if (!enableConsoleLog && !enableNativeLog) return;
-
-  const payload = {
-    ...details,
-    runId,
-    phase,
-    at: new Date().toISOString(),
-    performanceMs: Math.round(globalThis.performance?.now?.() ?? 0),
-  };
-  if (enableConsoleLog) {
-    console.debug("[coverageEngineTrack]", payload);
-  }
-  if (enableNativeLog) {
-    void logger.debug("coverageEngineTrack", payload).catch(() => {});
-  }
-}
+function trackCoverageEngine(_runId: string, _phase: string, _details: Record<string, unknown> = {}) {}
 
 const COVERAGE_CONTROL_INPUT_STYLE = {
   minHeight: 38,
@@ -1590,6 +1568,10 @@ export default function VariantsPage() {
   const [resolvingValidationConflict, setResolvingValidationConflict] = useState(false);
   const [validationReport, setValidationReport] = useState<VariantValidationReport | null>(null);
   const [validationModalOpened, setValidationModalOpened] = useState(false);
+  const validationActiveColorLabel =
+    validationReport?.activeColor === "black"
+      ? t("features.board.variants.validationBlack", { defaultValue: "Black" })
+      : t("features.board.variants.validationWhite", { defaultValue: "White" });
   const [coverageGraphModalOpened, setCoverageGraphModalOpened] = useState(false);
   const [coverageGraphTargetKey, setCoverageGraphTargetKey] = useState<string | null>(null);
   const [coverageGraphDepth, setCoverageGraphDepth] = useState<number | "">("");
@@ -2210,7 +2192,6 @@ export default function VariantsPage() {
         return;
       }
 
-      console.log("Creating variant file:", { filename, dir: variantsDir, profileId: activeProfileId });
       const result = await createFile({
         filename,
         filetype: "variants",
@@ -2218,10 +2199,7 @@ export default function VariantsPage() {
         pgn: defaultPGN(),
       });
 
-      console.log("Create file result:", { isOk: result.isOk, isErr: result.isErr });
-
       if (result.isOk) {
-        console.log("File created successfully:", result.value.path);
         await openFile(result.value.path, setTabs, setActiveTab);
         navigate({ to: "/analysis" });
         closeCreateNewModal();
@@ -2229,8 +2207,6 @@ export default function VariantsPage() {
         await refetch();
       } else {
         const error = result.error;
-        console.error("Create file error details:", { error, type: typeof error, isError: error instanceof Error });
-
         let errorMessage: string;
         if (error instanceof Error) {
           errorMessage = error.message || error.toString();
@@ -2247,7 +2223,6 @@ export default function VariantsPage() {
         });
       }
     } catch (error) {
-      console.error("Unexpected error creating variant:", error);
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -3353,7 +3328,6 @@ export default function VariantsPage() {
           await refetch();
         }
       } catch (error) {
-        console.error("Coverage graph build failed", error);
         const reason = getErrorMessage(error);
         notifications.show({
           title: t("common.error"),
@@ -3874,8 +3848,7 @@ export default function VariantsPage() {
         color: "green",
       });
       setCoverageActionNode(null);
-    } catch (error) {
-      console.error("Failed to generate puzzles from coverage node", error);
+    } catch {
       notifications.show({
         title: t("common.error"),
         message: t("common.failedToGeneratePuzzles"),
@@ -4045,9 +4018,8 @@ export default function VariantsPage() {
         });
         navigate({ to: "/analysis" });
         setCoverageActionNode(null);
-      } catch (error) {
+      } catch {
         coverageGraphResumeSnapshot = null;
-        console.error("Failed to navigate to coverage node variant", error);
         notifications.show({
           title: t("common.error"),
           message: t("features.board.variants.coverageGoToVariantFailed", {
@@ -4182,7 +4154,7 @@ export default function VariantsPage() {
         color: "green",
       });
       setCoverageActionNode(null);
-    } catch (error) {
+    } catch (_error) {
       notifications.show({
         title: t("common.error"),
         message: t("features.board.variants.coverageEditFailed", {
@@ -4190,7 +4162,6 @@ export default function VariantsPage() {
         }),
         color: "red",
       });
-      console.error("Failed to save coverage node edit", error);
     } finally {
       setCoverageActionSaving(false);
     }
@@ -4221,10 +4192,10 @@ export default function VariantsPage() {
     if (!coverageActionNode || !coverageGraphTargetKey) return;
     const runId = createCoverageEngineRunId();
     coverageEngineRunIdRef.current = runId;
-    const disableProgressEvents = readCoverageEngineDebugFlag("disableProgressEvents");
-    const disableProgressUi = readCoverageEngineDebugFlag("disableProgressUi");
-    const disableNotifications = readCoverageEngineDebugFlag("disableNotifications");
-    const disableGraphCacheWrites = readCoverageEngineDebugFlag("disableGraphCacheWrites");
+    const disableProgressEvents = false;
+    const disableProgressUi = false;
+    const disableNotifications = false;
+    const disableGraphCacheWrites = false;
     const updateCoverageProgress = (
       phase: string,
       updater: CoverageEngineProgress | null | ((prev: CoverageEngineProgress | null) => CoverageEngineProgress | null),
@@ -4503,7 +4474,6 @@ export default function VariantsPage() {
       trackCoverageEngine(runId, "front.run.error", {
         error: formatCoverageEngineUnknownError(error),
       });
-      console.error("Failed to evaluate coverage node", error);
       showCoverageEngineNotification("failed", {
         title: t("common.error"),
         message: t("features.board.variants.coverageEngineEvalFailed", {
@@ -6492,22 +6462,106 @@ export default function VariantsPage() {
       <Modal
         opened={validationModalOpened}
         onClose={() => setValidationModalOpened(false)}
-        title={t("features.board.variants.validationReportTitle", { defaultValue: "Variants consistency report" })}
-        size="xl"
-      >
-        {validationReport ? (
-          <Stack gap="sm">
-            <Text size="sm">
-              {t("features.board.variants.validationSummary", {
+        title={
+          <Stack gap={2}>
+            <Text fw={800} size="xl">
+              {t("features.board.variants.validationReportTitle", { defaultValue: "Variants consistency report" })}
+            </Text>
+            <Text size="sm" c="dimmed">
+              {t("features.board.variants.validationReportDescription", {
                 defaultValue:
-                  "Variant: {{variant}} | Active side: {{color}} | Variants checked: {{variants}} | Positions checked: {{positions}} | Contradictions: {{conflicts}}",
-                variant: validationReport.targetVariantName,
-                color: validationReport.activeColor,
-                variants: validationReport.checkedVariants,
-                positions: validationReport.checkedPositions,
-                conflicts: validationReport.conflicts.length,
+                  "These positions contain more than one selected move for the active side. Choose the single move that should remain and review each conflicting variant.",
               })}
             </Text>
+          </Stack>
+        }
+        size={1120}
+        padding="lg"
+        styles={{
+          body: {
+            display: "flex",
+            flex: 1,
+            flexDirection: "column",
+            minHeight: 0,
+            overflow: "hidden",
+          },
+          content: {
+            display: "flex",
+            flexDirection: "column",
+            height: "min(92dvh, 900px)",
+          },
+          header: {
+            flexShrink: 0,
+          },
+          title: {
+            flex: 1,
+            minWidth: 0,
+          },
+        }}
+      >
+        {validationReport ? (
+          <Stack gap="md" style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="xs">
+              <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon variant="light" color="blue" size="lg" radius="md">
+                    <IconVersions size={18} />
+                  </ThemeIcon>
+                  <Box style={{ minWidth: 0 }}>
+                    <Text size="xs" c="dimmed">
+                      {t("features.board.variants.validationMetricVariant", { defaultValue: "Variant" })}
+                    </Text>
+                    <Text fw={800} truncate>
+                      {validationReport.targetVariantName}
+                    </Text>
+                  </Box>
+                </Group>
+              </Card>
+              <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon variant="light" color="indigo" size="lg" radius="md">
+                    <IconGitBranch size={18} />
+                  </ThemeIcon>
+                  <Box>
+                    <Text size="xs" c="dimmed">
+                      {t("features.board.variants.validationMetricActiveSide", { defaultValue: "Active side" })}
+                    </Text>
+                    <Text fw={800}>{validationActiveColorLabel}</Text>
+                  </Box>
+                </Group>
+              </Card>
+              <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon
+                    variant="light"
+                    color={validationReport.conflicts.length > 0 ? "yellow" : "green"}
+                    size="lg"
+                    radius="md"
+                  >
+                    {validationReport.conflicts.length > 0 ? <IconAlertTriangle size={18} /> : <IconCheck size={18} />}
+                  </ThemeIcon>
+                  <Box>
+                    <Text size="xs" c="dimmed">
+                      {t("features.board.variants.validationMetricIssues", { defaultValue: "Issues" })}
+                    </Text>
+                    <Text fw={800}>{validationReport.conflicts.length}</Text>
+                  </Box>
+                </Group>
+              </Card>
+              <Card withBorder radius="md" p="sm" style={premiumMutedPanelStyle}>
+                <Group gap="sm" wrap="nowrap">
+                  <ThemeIcon variant="light" color="cyan" size="lg" radius="md">
+                    <IconSearch size={18} />
+                  </ThemeIcon>
+                  <Box>
+                    <Text size="xs" c="dimmed">
+                      {t("features.board.variants.validationMetricPositions", { defaultValue: "Positions checked" })}
+                    </Text>
+                    <Text fw={800}>{validationReport.checkedPositions}</Text>
+                  </Box>
+                </Group>
+              </Card>
+            </SimpleGrid>
 
             {validationReport.orientationMismatches.length > 0 ? (
               <Alert color="yellow" variant="light">
@@ -6538,77 +6592,255 @@ export default function VariantsPage() {
                 })}
               </Alert>
             ) : (
-              <Stack gap="xs" style={{ maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
-                {validationReport.conflicts.map((conflict) => (
-                  <Card key={conflict.fen} withBorder radius="md" p="sm">
-                    <Stack gap="xs">
-                      <Group justify="space-between" align="flex-start" gap="sm">
-                        <Box style={{ minWidth: 0, flex: 1 }}>
-                          <Text size="sm" fw={700}>
-                            {t("features.board.variants.validationFen", { defaultValue: "FEN" })}:{" "}
-                            <Code>{conflict.fen}</Code>
-                          </Text>
-                          <Text size="xs" c="dimmed">
-                            {t("features.board.variants.validationChooseMove", {
-                              defaultValue: "Choose the single reply that should be used for every occurrence.",
-                            })}
-                          </Text>
-                        </Box>
-                        <Button size="xs" variant="light" onClick={() => void handleOpenValidationConflict(conflict)}>
-                          {t("features.board.variants.validationOpenPosition", {
-                            defaultValue: "Open position",
-                          })}
-                        </Button>
-                      </Group>
-                      {conflict.moves.map((move) => (
+              <Stack gap="sm" style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: 6 }}>
+                {validationReport.conflicts.map((conflict, conflictIndex) => {
+                  const conflictingMoveLabels = conflict.moves.map((move) => move.san).join(" / ");
+                  const occurrenceCount = conflict.moves.reduce((sum, move) => sum + move.occurrences.length, 0);
+                  return (
+                    <Box
+                      key={conflict.fen}
+                      style={{
+                        ...premiumMutedPanelStyle,
+                        border:
+                          "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 18%, var(--mantine-color-dark-4))",
+                        borderRadius: 8,
+                        background:
+                          "radial-gradient(120% 160% at 100% 0%, color-mix(in srgb, var(--mantine-color-blue-9) 14%, transparent) 0%, transparent 58%), linear-gradient(145deg, color-mix(in srgb, var(--mantine-color-dark-7) 90%, var(--mantine-color-dark-6) 10%), var(--mantine-color-dark-7))",
+                        overflow: "visible",
+                        padding: "var(--mantine-spacing-md)",
+                      }}
+                    >
+                      <Stack gap="md">
+                        <Group justify="space-between" align="flex-start" gap="md">
+                          <Group align="flex-start" gap="sm" style={{ minWidth: 0, flex: 1 }}>
+                            <ThemeIcon color="yellow" variant="light" radius="md" size="lg">
+                              <IconAlertTriangle size={18} />
+                            </ThemeIcon>
+                            <Box style={{ minWidth: 0, flex: 1 }}>
+                              <Group gap="xs" mb={4}>
+                                <Badge variant="light" color="gray" radius="xl">
+                                  {conflictIndex + 1}
+                                </Badge>
+                                <Text fw={800}>
+                                  {t("features.board.variants.validationIssueTitle", {
+                                    defaultValue: "Inconsistent move selection",
+                                  })}
+                                </Text>
+                              </Group>
+                              <Text size="sm" c="dimmed">
+                                {t("features.board.variants.validationIssueDescription", {
+                                  defaultValue:
+                                    "{{color}} has {{count}} conflicting selected moves from this position.",
+                                  color: validationActiveColorLabel,
+                                  count: conflict.moves.length,
+                                })}
+                              </Text>
+                              <Group gap="xs" mt="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                                <Text size="xs" c="dimmed" fw={700}>
+                                  {t("features.board.variants.validationFen", { defaultValue: "FEN" })}
+                                </Text>
+                                <Code
+                                  style={{
+                                    maxWidth: "100%",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {conflict.fen}
+                                </Code>
+                                <CopyButton value={conflict.fen}>
+                                  {({ copied, copy }) => (
+                                    <ActionIcon
+                                      size="sm"
+                                      variant="subtle"
+                                      color={copied ? "teal" : "gray"}
+                                      onClick={copy}
+                                      aria-label={t("common.copy", { defaultValue: "Copy" })}
+                                    >
+                                      {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                                    </ActionIcon>
+                                  )}
+                                </CopyButton>
+                              </Group>
+                            </Box>
+                          </Group>
+                          <Box
+                            style={{
+                              flexShrink: 0,
+                              minWidth: 250,
+                              paddingLeft: 16,
+                              borderLeft:
+                                "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 16%, var(--mantine-color-dark-4))",
+                            }}
+                          >
+                            <Text size="xs" c="dimmed" fw={700} mb={6}>
+                              {t("features.board.variants.validationConflictingMoves", {
+                                defaultValue: "Conflicting moves",
+                              })}
+                            </Text>
+                            <Group gap="xs" wrap="nowrap">
+                              {conflict.moves.map((move, moveIndex) => (
+                                <Group key={`${conflict.fen}-summary-${move.san}`} gap="xs" wrap="nowrap">
+                                  {moveIndex > 0 ? <IconRefresh size={16} color="var(--mantine-color-red-5)" /> : null}
+                                  <Badge
+                                    variant="light"
+                                    color="teal"
+                                    radius="sm"
+                                    size="xl"
+                                    style={{
+                                      minWidth: 110,
+                                      justifyContent: "center",
+                                      border:
+                                        "1px solid color-mix(in srgb, var(--mantine-color-teal-5) 34%, transparent)",
+                                    }}
+                                  >
+                                    {move.san}
+                                  </Badge>
+                                </Group>
+                              ))}
+                            </Group>
+                          </Box>
+                        </Group>
+
                         <Box
-                          key={`${conflict.fen}-${move.san}`}
-                          p="xs"
                           style={{
+                            border:
+                              "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 12%, var(--mantine-color-dark-4))",
                             borderRadius: 8,
-                            border: "1px solid var(--mantine-color-dark-4)",
-                            background: "color-mix(in srgb, var(--mantine-color-dark-7) 80%, transparent)",
+                            overflowX: "auto",
                           }}
                         >
-                          <Group justify="space-between" align="center" gap="sm">
-                            <Text size="sm" fw={700}>
-                              {move.san}
-                              {move.uci ? (
-                                <Text span size="xs" c="dimmed" ml={6}>
-                                  {move.uci}
-                                </Text>
-                              ) : null}
-                            </Text>
+                          <Box
+                            style={{
+                              minWidth: 760,
+                            }}
+                          >
+                            <Box
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "120px minmax(0, 1fr) 146px",
+                                gap: 0,
+                                background:
+                                  "color-mix(in srgb, var(--mantine-color-blue-9) 10%, var(--mantine-color-dark-7))",
+                                borderBottom:
+                                  "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 12%, var(--mantine-color-dark-4))",
+                              }}
+                            >
+                              <Text size="xs" c="dimmed" fw={700} px="sm" py={7}>
+                                {t("features.board.variants.validationSelectedMove", {
+                                  defaultValue: "Selected move",
+                                })}
+                              </Text>
+                              <Text size="xs" c="dimmed" fw={700} px="sm" py={7}>
+                                {t("features.board.variants.validationVariantBranch", {
+                                  defaultValue: "Variant / Branch",
+                                })}
+                              </Text>
+                              <Text size="xs" c="dimmed" fw={700} px="sm" py={7}>
+                                {t("common.actions", { defaultValue: "Actions" })}
+                              </Text>
+                            </Box>
+                            {conflict.moves.flatMap((move) =>
+                              move.occurrences.map((occurrence, occurrenceIndex) => (
+                                <Box
+                                  key={`${conflict.fen}-${move.san}-${occurrence.variantPath}-${occurrence.variantName}-${occurrence.line}`}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "120px minmax(0, 1fr) 146px",
+                                    alignItems: "center",
+                                    borderTop:
+                                      occurrenceIndex === 0
+                                        ? "0"
+                                        : "1px solid color-mix(in srgb, var(--mantine-color-blue-8) 8%, var(--mantine-color-dark-4))",
+                                  }}
+                                >
+                                  <Box px="sm" py={7}>
+                                    <Badge
+                                      variant="outline"
+                                      color="teal"
+                                      radius="sm"
+                                      style={{ minWidth: 58, justifyContent: "center" }}
+                                    >
+                                      {move.san}
+                                    </Badge>
+                                  </Box>
+                                  <Box px="sm" py={7} style={{ minWidth: 0 }}>
+                                    <Text size="xs" c="dimmed" truncate>
+                                      {conflict.fen}
+                                    </Text>
+                                    <Group gap={5} wrap="nowrap" style={{ minWidth: 0 }}>
+                                      <IconGitBranch size={13} color="var(--mantine-color-blue-4)" />
+                                      <Text size="xs" c="dimmed" truncate>
+                                        {occurrence.variantName}
+                                      </Text>
+                                      <IconChevronRight size={12} color="var(--mantine-color-dimmed)" />
+                                      <Text size="xs" truncate>
+                                        {occurrence.line}
+                                      </Text>
+                                    </Group>
+                                  </Box>
+                                  <Box px="sm" py={7}>
+                                    <Button
+                                      size="compact-xs"
+                                      variant="light"
+                                      rightSection={<IconArrowRight size={13} />}
+                                      onClick={() => void handleOpenValidationConflict(conflict, occurrence)}
+                                    >
+                                      {t("features.board.variants.validationGoToVariant", {
+                                        defaultValue: "Go to variant",
+                                      })}
+                                    </Button>
+                                  </Box>
+                                </Box>
+                              )),
+                            )}
+                          </Box>
+                        </Box>
+
+                        <Group justify="space-between" gap="sm">
+                          <Text size="xs" c="dimmed">
+                            {t("features.board.variants.validationResolveIssue", {
+                              defaultValue: "Resolve this issue:",
+                            })}{" "}
+                            {t("features.board.variants.validationConflictSummary", {
+                              defaultValue: "{{moves}} across {{count}} occurrence(s)",
+                              moves: conflictingMoveLabels,
+                              count: occurrenceCount,
+                            })}
+                          </Text>
+                          <Group gap="xs">
+                            {conflict.moves.map((move) => (
+                              <Button
+                                key={`${conflict.fen}-keep-${move.san}`}
+                                size="xs"
+                                color="teal"
+                                leftSection={<IconCheck size={14} />}
+                                loading={resolvingValidationConflict}
+                                onClick={() => void handleApplyValidationMove(conflict, move.san)}
+                              >
+                                {t("features.board.variants.validationKeepMoveForAll", {
+                                  defaultValue: "Keep {{move}} for all",
+                                  move: move.san,
+                                })}
+                              </Button>
+                            ))}
                             <Button
                               size="xs"
-                              color="teal"
-                              loading={resolvingValidationConflict}
-                              onClick={() => void handleApplyValidationMove(conflict, move.san)}
+                              variant="default"
+                              leftSection={<IconEye size={14} />}
+                              onClick={() => void handleOpenValidationConflict(conflict)}
                             >
-                              {t("features.board.variants.validationUseMove", {
-                                defaultValue: "Use this move",
+                              {t("features.board.variants.validationReviewManually", {
+                                defaultValue: "Review manually",
                               })}
                             </Button>
                           </Group>
-                          {move.occurrences.map((occurrence, index) => (
-                            <Group key={`${occurrence.variantPath}-${index}`} gap="xs" wrap="nowrap">
-                              <Text size="xs" c="dimmed" style={{ minWidth: 0, flex: 1 }} truncate>
-                                {occurrence.variantName} {"->"} {occurrence.line}
-                              </Text>
-                              <Button
-                                size="compact-xs"
-                                variant="subtle"
-                                onClick={() => void handleOpenValidationConflict(conflict, occurrence)}
-                              >
-                                {t("common.open", { defaultValue: "Open" })}
-                              </Button>
-                            </Group>
-                          ))}
-                        </Box>
-                      ))}
-                    </Stack>
-                  </Card>
-                ))}
+                        </Group>
+                      </Stack>
+                    </Box>
+                  );
+                })}
               </Stack>
             )}
           </Stack>

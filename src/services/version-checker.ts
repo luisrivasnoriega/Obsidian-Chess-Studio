@@ -1,4 +1,4 @@
-import { info, error as logError } from "@tauri-apps/plugin-log";
+import { error as logError } from "@tauri-apps/plugin-log";
 
 export interface VersionInfo {
   version: string;
@@ -148,7 +148,6 @@ export async function checkForUpdates(config: VersionCheckConfig): Promise<Versi
 
   try {
     if (skipInDev) {
-      info("Skipping version check in development mode");
       return {
         hasUpdate: false,
         currentVersion,
@@ -160,12 +159,8 @@ export async function checkForUpdates(config: VersionCheckConfig): Promise<Versi
       throw new Error(`Invalid current version format: ${currentVersion}`);
     }
 
-    info(`Starting version check - Current: ${currentVersion}, URL: ${versionUrl}`);
-
     const versionInfo = await fetchVersionInfo(versionUrl, timeout);
     const hasUpdate = compareVersions(versionInfo.version, currentVersion) > 0;
-
-    info(`Version check completed - Latest: ${versionInfo.version}, Has update: ${hasUpdate}`);
 
     return {
       hasUpdate,

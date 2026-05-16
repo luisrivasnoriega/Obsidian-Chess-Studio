@@ -244,7 +244,6 @@
       "help": "Ajuda",
       "documentation": "Documentação",
       "clearSavedData": "Limpar dados salvos",
-      "openLogs": "Abrir logs",
       "checkUpdate": "Verificar atualizações",
       "about": "Sobre",
       "pawnAppetit": "Obsidian Chess Studio",
@@ -518,10 +517,6 @@
       "error": "Erro",
       "errorOpeningGame": "Falha ao abrir a partida",
       "analyzed": "Analisado",
-      "debug": "Depurar",
-      "debugPgns": "Depurar PGNs",
-      "debugPgnsDescription": "PGNs enviados para a função de análise:",
-      "noDebugPgns": "Nenhum PGN de depuração disponível",
       "showing": "Mostrando",
       "count": "Contagem",
       "maxGames": "Máx. de partidas",
@@ -1254,8 +1249,6 @@
       "errors": "Erros",
       "precacheCompleted": "Pré-cache concluído com sucesso!"
     },
-    "telemetry": "Telemetria",
-    "telemetryDesc": "Ajude a melhorar o Obsidian Chess Studio compartilhando dados anônimos de uso",
     "about": "Sobre",
     "aboutDesc": "Saiba mais sobre o Obsidian Chess Studio",
     "moveNotation": "Notação dos lances",
@@ -1274,8 +1267,6 @@
     "analysis": "Análise",
     "interface": "Interface",
     "system": "Sistema",
-    "telemetryLoading": "Carregando configurações de telemetria...",
-    "telemetryDetails": "Os dados de telemetria são anônimos e ajudam a entender como o Obsidian Chess Studio é usado para melhorar a experiência. Nunca coletamos informações pessoais ou conteúdo de partidas. Os dados são armazenados com segurança usando Supabase.",
     "pickValue": "Selecionar valor",
     "pressAnyKey": "Pressione qualquer tecla"
   },
@@ -1294,7 +1285,6 @@
   "error": {
     "title": "Ocorreu um erro",
     "unexpectedError": "Erro inesperado:",
-    "copyStackTrace": "Copiar rastreamento de pilha",
     "reportPrompt": "Por favor, relate isso em",
     "reportOr": "ou no"
   },

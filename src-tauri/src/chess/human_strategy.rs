@@ -217,7 +217,9 @@ pub fn pick_human_strategic_move(
     let mut candidates: Vec<HumanStrategicCandidate> = Vec::new();
     let mut seen_ucis: HashSet<String> = HashSet::new();
 
-    for (engine_rank, (uci, engine_cp_white, engine_cp_mover, pv_line)) in ranked_engine.into_iter().enumerate() {
+    for (engine_rank, (uci, engine_cp_white, engine_cp_mover, pv_line)) in
+        ranked_engine.into_iter().enumerate()
+    {
         if !seen_ucis.insert(uci.clone()) {
             continue;
         }
@@ -231,7 +233,11 @@ pub fn pick_human_strategic_move(
         let macro_components = score_macro_components(&root, &after, &mv, &components);
         let base_strategic_score = aggregate_strategic_score(&components);
         let macro_strategic_score = aggregate_macro_strategic_score(&macro_components);
-        let pv_tail: &[String] = if pv_line.len() > 1 { &pv_line[1..] } else { &[] };
+        let pv_tail: &[String] = if pv_line.len() > 1 {
+            &pv_line[1..]
+        } else {
+            &[]
+        };
         let pv_projection = project_pv_from_after(&after, pv_tail);
         let transition_to_endgame = score_transition_to_endgame_pv(
             root.board(),
@@ -268,8 +274,9 @@ pub fn pick_human_strategic_move(
 
         let engine_quality = (1.0
             - (engine_drop_cp as f32 / (cfg.max_engine_drop_cp + 20).max(1) as f32))
-        .clamp(0.0, 1.0);
-        let practical_bonus = if engine_drop_cp <= cfg.max_engine_drop_cp && strategic_score >= 0.75 {
+            .clamp(0.0, 1.0);
+        let practical_bonus = if engine_drop_cp <= cfg.max_engine_drop_cp && strategic_score >= 0.75
+        {
             0.03
         } else {
             0.0
@@ -285,8 +292,10 @@ pub fn pick_human_strategic_move(
                 0.0
             };
         // Keep objective eval slightly dominant, but allow strategic profile to steer practical choices.
-        let mut final_score =
-            strategic_score * 0.45 + engine_quality * 0.55 + practical_bonus + aggressive_break_bonus;
+        let mut final_score = strategic_score * 0.45
+            + engine_quality * 0.55
+            + practical_bonus
+            + aggressive_break_bonus;
         if !passes_guardrail {
             final_score -= 1.0;
         }
@@ -441,13 +450,20 @@ fn score_transition_to_endgame_pv(
     let material_edge = material_balance_cp(pv_end, mover, opponent) as f32;
     let own_files = pawn_file_counts(pv_end, mover);
     let opp_files = pawn_file_counts(pv_end, opponent);
-    let structure_edge = (isolated_pawns_from_file_counts(&opp_files) - isolated_pawns_from_file_counts(&own_files))
-        .max(0) as f32
+    let structure_edge = (isolated_pawns_from_file_counts(&opp_files)
+        - isolated_pawns_from_file_counts(&own_files))
+    .max(0) as f32
         + (doubled_pawns(&opp_files) - doubled_pawns(&own_files)).max(0) as f32;
 
-    let king_activity_edge = (king_activity_index(pv_end, mover) - king_activity_index(pv_end, opponent)).max(0.0);
+    let king_activity_edge =
+        (king_activity_index(pv_end, mover) - king_activity_index(pv_end, opponent)).max(0.0);
     let file_pressure_gain = (heavy_piece_file_pressure(pv_end, mover, &own_files, &opp_files)
-        - heavy_piece_file_pressure(after_first, mover, &pawn_file_counts(after_first, mover), &pawn_file_counts(after_first, opponent)))
+        - heavy_piece_file_pressure(
+            after_first,
+            mover,
+            &pawn_file_counts(after_first, mover),
+            &pawn_file_counts(after_first, opponent),
+        ))
     .max(0.0);
 
     let mut value = normalize(traded, 8.0) * 0.34
@@ -488,13 +504,16 @@ fn score_tension_management_pv(
     let immediate_release = (tension_before - tension_after).max(0.0);
     let eventual_release = (tension_before - tension_end).max(0.0);
 
-    let pressure_gain =
-        (king_ring_pressure(pv_end, mover, opponent) - king_ring_pressure(after_first, mover, opponent)).max(0.0);
-    let local_gain =
-        (local_attack_balance(pv_end, mover, opponent) - local_attack_balance(after_first, mover, opponent)).max(0.0);
+    let pressure_gain = (king_ring_pressure(pv_end, mover, opponent)
+        - king_ring_pressure(after_first, mover, opponent))
+    .max(0.0);
+    let local_gain = (local_attack_balance(pv_end, mover, opponent)
+        - local_attack_balance(after_first, mover, opponent))
+    .max(0.0);
 
     let keep_tension_value = if immediate_release <= 0.2 {
-        normalize(tension_after, tension_before.max(1.0)) * 0.42 + normalize(pressure_gain, 1.0) * 0.34
+        normalize(tension_after, tension_before.max(1.0)) * 0.42
+            + normalize(pressure_gain, 1.0) * 0.34
     } else {
         0.0
     };
@@ -586,7 +605,11 @@ fn passes_guardrail(
 
 #[inline]
 fn mover_perspective_sign(mover: Color) -> i32 {
-    if mover == Color::White { 1 } else { -1 }
+    if mover == Color::White {
+        1
+    } else {
+        -1
+    }
 }
 
 fn aggregate_strategic_score(c: &HumanStrategicComponents) -> f32 {
@@ -626,17 +649,26 @@ fn score_macro_components(
     let opponent = mover.other();
 
     let outpost_control = score_outpost_control(before.board(), after.board(), mover, opponent, mv);
-    let color_complex_weakness = score_color_complex_weakness(before.board(), after.board(), mover, opponent);
-    let bad_piece_detection = score_bad_piece_detection(before.board(), after.board(), mover, opponent);
-    let piece_coordination = score_piece_coordination(before.board(), after.board(), mover, opponent);
+    let color_complex_weakness =
+        score_color_complex_weakness(before.board(), after.board(), mover, opponent);
+    let bad_piece_detection =
+        score_bad_piece_detection(before.board(), after.board(), mover, opponent);
+    let piece_coordination =
+        score_piece_coordination(before.board(), after.board(), mover, opponent);
     let prophylaxis = score_prophylaxis(before.board(), after.board(), mover, opponent, mv);
-    let trade_favorability = score_trade_favorability(before.board(), after.board(), mover, opponent, mv);
-    let counterplay_initiative = score_counterplay_initiative(before.board(), after.board(), mover, opponent, mv);
-    let central_break_initiative = score_central_break_initiative(before.board(), after.board(), mover, opponent, mv);
-    let infiltration_tension = score_infiltration_tension(before.board(), after.board(), mover, opponent, mv);
-    let king_attack_complexity = score_king_attack_complexity(before.board(), after.board(), mover, opponent, mv);
+    let trade_favorability =
+        score_trade_favorability(before.board(), after.board(), mover, opponent, mv);
+    let counterplay_initiative =
+        score_counterplay_initiative(before.board(), after.board(), mover, opponent, mv);
+    let central_break_initiative =
+        score_central_break_initiative(before.board(), after.board(), mover, opponent, mv);
+    let infiltration_tension =
+        score_infiltration_tension(before.board(), after.board(), mover, opponent, mv);
+    let king_attack_complexity =
+        score_king_attack_complexity(before.board(), after.board(), mover, opponent, mv);
     let king_net_setup = score_king_net_setup(before.board(), after.board(), mover, opponent, mv);
-    let piece_lift_assault = score_piece_lift_assault(before.board(), after.board(), mover, opponent, mv);
+    let piece_lift_assault =
+        score_piece_lift_assault(before.board(), after.board(), mover, opponent, mv);
     let local_attack_superiority =
         score_local_attack_superiority(before.board(), after.board(), mover, opponent, mv);
     let initiative_compensation =
@@ -644,16 +676,19 @@ fn score_macro_components(
     let pawn_avalanche = score_pawn_avalanche(before.board(), after.board(), mover, opponent, mv);
 
     let material_edge_after = material_balance_cp(after.board(), mover, opponent) as f32;
-    let king_activity_edge =
-        (king_activity_index(after.board(), mover) - king_activity_index(after.board(), opponent)).max(0.0);
-    let queen_trade = (has_queen(before.board(), Color::White) || has_queen(before.board(), Color::Black))
+    let king_activity_edge = (king_activity_index(after.board(), mover)
+        - king_activity_index(after.board(), opponent))
+    .max(0.0);
+    let queen_trade = (has_queen(before.board(), Color::White)
+        || has_queen(before.board(), Color::Black))
         && !has_queen(after.board(), Color::White)
         && !has_queen(after.board(), Color::Black);
     let queen_trade_signal = if queen_trade { 1.0 } else { 0.0 };
 
-    let pawn_structure =
-        (legacy.pawn_structure_damage * 0.56 + legacy.weak_pawn_pressure * 0.24 + trade_favorability * 0.20)
-            .clamp(0.0, 1.0);
+    let pawn_structure = (legacy.pawn_structure_damage * 0.56
+        + legacy.weak_pawn_pressure * 0.24
+        + trade_favorability * 0.20)
+        .clamp(0.0, 1.0);
     let space = (legacy.space_gain * 0.72 + outpost_control * 0.28).clamp(0.0, 1.0);
     let piece_quality = (legacy.piece_restriction * 0.36
         + outpost_control * 0.24
@@ -675,9 +710,11 @@ fn score_macro_components(
         + legacy.central_king_pressure * 0.25)
         .clamp(0.0, 1.0);
     let counterplay =
-        (counterplay_initiative * 0.56 + infiltration_tension * 0.18 + trade_favorability * 0.26).clamp(0.0, 1.0);
+        (counterplay_initiative * 0.56 + infiltration_tension * 0.18 + trade_favorability * 0.26)
+            .clamp(0.0, 1.0);
     let prophylaxis =
-        (prophylaxis * 0.66 + legacy.wing_clamp * 0.16 + legacy.piece_restriction * 0.18).clamp(0.0, 1.0);
+        (prophylaxis * 0.66 + legacy.wing_clamp * 0.16 + legacy.piece_restriction * 0.18)
+            .clamp(0.0, 1.0);
     let conversion = (pawn_avalanche * 0.44
         + trade_favorability * 0.24
         + legacy.open_file_pressure * 0.18
@@ -746,7 +783,8 @@ fn score_components(before: &Chess, after: &Chess, mv: &Move) -> HumanStrategicC
     let mover = before.turn();
     let opponent = mover.other();
 
-    let mut pawn_structure_damage = score_pawn_structure_damage(before.board(), after.board(), mover);
+    let mut pawn_structure_damage =
+        score_pawn_structure_damage(before.board(), after.board(), mover);
     let mut weak_pawn_pressure =
         score_weak_pawn_pressure(before.board(), after.board(), mover, opponent, mv);
     let mut space_gain = score_space_gain(before.board(), after.board(), mover);
@@ -756,8 +794,10 @@ fn score_components(before: &Chess, after: &Chess, mv: &Move) -> HumanStrategicC
         score_central_king_pressure(before.board(), after.board(), mover, opponent);
     let mut piece_restriction = score_piece_restriction(before.board(), after.board(), opponent);
     let mut wing_clamp = score_wing_clamp(after.board(), mv, mover, opponent, piece_restriction);
-    let structure_break = score_structural_break_plan(before.board(), after.board(), mv, mover, opponent);
-    let decoy_king_line = score_decoy_king_line_break(before.board(), after.board(), mv, mover, opponent);
+    let structure_break =
+        score_structural_break_plan(before.board(), after.board(), mv, mover, opponent);
+    let decoy_king_line =
+        score_decoy_king_line_break(before.board(), after.board(), mv, mover, opponent);
     let king_attack_complexity =
         score_king_attack_complexity(before.board(), after.board(), mover, opponent, mv);
     let sacrificial_complexity =
@@ -770,55 +810,57 @@ fn score_components(before: &Chess, after: &Chess, mv: &Move) -> HumanStrategicC
     let king_net_setup = score_king_net_setup(before.board(), after.board(), mover, opponent, mv);
     let counterplay_initiative =
         score_counterplay_initiative(before.board(), after.board(), mover, opponent, mv);
-    let piece_lift_assault = score_piece_lift_assault(before.board(), after.board(), mover, opponent, mv);
+    let piece_lift_assault =
+        score_piece_lift_assault(before.board(), after.board(), mover, opponent, mv);
     let local_attack_superiority =
         score_local_attack_superiority(before.board(), after.board(), mover, opponent, mv);
     let initiative_compensation =
         score_initiative_compensation(before.board(), after.board(), mover, opponent, mv);
     let outpost_control = score_outpost_control(before.board(), after.board(), mover, opponent, mv);
-    let color_complex_weakness = score_color_complex_weakness(before.board(), after.board(), mover, opponent);
-    let bad_piece_detection = score_bad_piece_detection(before.board(), after.board(), mover, opponent);
-    let piece_coordination = score_piece_coordination(before.board(), after.board(), mover, opponent);
+    let color_complex_weakness =
+        score_color_complex_weakness(before.board(), after.board(), mover, opponent);
+    let bad_piece_detection =
+        score_bad_piece_detection(before.board(), after.board(), mover, opponent);
+    let piece_coordination =
+        score_piece_coordination(before.board(), after.board(), mover, opponent);
     let prophylaxis = score_prophylaxis(before.board(), after.board(), mover, opponent, mv);
-    let trade_favorability = score_trade_favorability(before.board(), after.board(), mover, opponent, mv);
+    let trade_favorability =
+        score_trade_favorability(before.board(), after.board(), mover, opponent, mv);
 
     // Strategic-aggressive plans:
     // - structural concessions to damage the pawn shell and open files (...Nxb4, ...Bxa3)
     // - initiative sacrifices and king-ring pressure (Bxh7 / Bxh2 patterns)
-    pawn_structure_damage =
-        (pawn_structure_damage
-            + structure_break * 0.75
-            + decoy_king_line * 0.25
-            + sacrificial_complexity * 0.18
-            + central_break_initiative * 0.28
-            + pawn_avalanche * 0.12
-            + trade_favorability * 0.16
-            + prophylaxis * 0.05)
+    pawn_structure_damage = (pawn_structure_damage
+        + structure_break * 0.75
+        + decoy_king_line * 0.25
+        + sacrificial_complexity * 0.18
+        + central_break_initiative * 0.28
+        + pawn_avalanche * 0.12
+        + trade_favorability * 0.16
+        + prophylaxis * 0.05)
         .clamp(0.0, 1.0);
-    weak_pawn_pressure =
-        (weak_pawn_pressure
-            + structure_break * 0.28
-            + king_attack_complexity * 0.42
-            + pawn_avalanche * 0.15
-            + king_net_setup * 0.22
-            + counterplay_initiative * 0.08
-            + local_attack_superiority * 0.10
-            + initiative_compensation * 0.12
-            + color_complex_weakness * 0.20
-            + prophylaxis * 0.15
-            + trade_favorability * 0.06)
-            .clamp(0.0, 1.0);
-    open_file_pressure =
-        (open_file_pressure
-            + structure_break * 0.55
-            + central_break_initiative * 0.45
-            + infiltration_tension * 0.20
-            + counterplay_initiative * 0.22
-            + piece_lift_assault * 0.20
-            + initiative_compensation * 0.18
-            + trade_favorability * 0.18
-            + prophylaxis * 0.10)
-            .clamp(0.0, 1.0);
+    weak_pawn_pressure = (weak_pawn_pressure
+        + structure_break * 0.28
+        + king_attack_complexity * 0.42
+        + pawn_avalanche * 0.15
+        + king_net_setup * 0.22
+        + counterplay_initiative * 0.08
+        + local_attack_superiority * 0.10
+        + initiative_compensation * 0.12
+        + color_complex_weakness * 0.20
+        + prophylaxis * 0.15
+        + trade_favorability * 0.06)
+        .clamp(0.0, 1.0);
+    open_file_pressure = (open_file_pressure
+        + structure_break * 0.55
+        + central_break_initiative * 0.45
+        + infiltration_tension * 0.20
+        + counterplay_initiative * 0.22
+        + piece_lift_assault * 0.20
+        + initiative_compensation * 0.18
+        + trade_favorability * 0.18
+        + prophylaxis * 0.10)
+        .clamp(0.0, 1.0);
     central_king_pressure = (central_king_pressure
         + decoy_king_line * 0.70
         + king_attack_complexity * 0.90
@@ -835,45 +877,42 @@ fn score_components(before: &Chess, after: &Chess, mv: &Move) -> HumanStrategicC
         + outpost_control * 0.12
         + trade_favorability * 0.12)
         .clamp(0.0, 1.0);
-    piece_restriction =
-        (piece_restriction
-            + structure_break * 0.24
-            + king_attack_complexity * 0.28
-            + pawn_avalanche * 0.38
-            + infiltration_tension * 0.55
-            + king_net_setup * 0.26
-            + counterplay_initiative * 0.24
-            + local_attack_superiority * 0.30
-            + initiative_compensation * 0.26
-            + outpost_control * 0.38
-            + bad_piece_detection * 0.46
-            + piece_coordination * 0.22
-            + prophylaxis * 0.14)
-            .clamp(0.0, 1.0);
-    space_gain =
-        (space_gain
-            + king_attack_complexity * 0.14
-            + pawn_avalanche * 0.78
-            + infiltration_tension * 0.15
-            + king_net_setup * 0.10
-            + counterplay_initiative * 0.05
-            + piece_lift_assault * 0.08
-            + initiative_compensation * 0.04
-            + outpost_control * 0.28
-            + piece_coordination * 0.08
-            + prophylaxis * 0.10)
-            .clamp(0.0, 1.0);
-    wing_clamp =
-        (wing_clamp
-            + king_attack_complexity * 0.18
-            + king_net_setup * 0.32
-            + counterplay_initiative * 0.12
-            + piece_lift_assault * 0.14
-            + local_attack_superiority * 0.12
-            + initiative_compensation * 0.10
-            + prophylaxis * 0.18
-            + color_complex_weakness * 0.10)
-            .clamp(0.0, 1.0);
+    piece_restriction = (piece_restriction
+        + structure_break * 0.24
+        + king_attack_complexity * 0.28
+        + pawn_avalanche * 0.38
+        + infiltration_tension * 0.55
+        + king_net_setup * 0.26
+        + counterplay_initiative * 0.24
+        + local_attack_superiority * 0.30
+        + initiative_compensation * 0.26
+        + outpost_control * 0.38
+        + bad_piece_detection * 0.46
+        + piece_coordination * 0.22
+        + prophylaxis * 0.14)
+        .clamp(0.0, 1.0);
+    space_gain = (space_gain
+        + king_attack_complexity * 0.14
+        + pawn_avalanche * 0.78
+        + infiltration_tension * 0.15
+        + king_net_setup * 0.10
+        + counterplay_initiative * 0.05
+        + piece_lift_assault * 0.08
+        + initiative_compensation * 0.04
+        + outpost_control * 0.28
+        + piece_coordination * 0.08
+        + prophylaxis * 0.10)
+        .clamp(0.0, 1.0);
+    wing_clamp = (wing_clamp
+        + king_attack_complexity * 0.18
+        + king_net_setup * 0.32
+        + counterplay_initiative * 0.12
+        + piece_lift_assault * 0.14
+        + local_attack_superiority * 0.12
+        + initiative_compensation * 0.10
+        + prophylaxis * 0.18
+        + color_complex_weakness * 0.10)
+        .clamp(0.0, 1.0);
 
     HumanStrategicComponents {
         pawn_structure_damage,
@@ -894,15 +933,19 @@ fn score_pawn_structure_damage(before: &Board, after: &Board, mover: Color) -> f
 
     let islands_delta =
         (pawn_islands(&opp_after_files) - pawn_islands(&opp_before_files)).max(0) as f32;
-    let doubled_delta = (doubled_pawns(&opp_after_files) - doubled_pawns(&opp_before_files)).max(0) as f32;
-    let isolated_delta =
-        (isolated_pawns(after, opponent, &opp_after_files) - isolated_pawns(before, opponent, &opp_before_files))
-            .max(0) as f32;
-    let fixed_delta =
-        (fixed_pawns_by_enemy_pawns(after, opponent, mover) - fixed_pawns_by_enemy_pawns(before, opponent, mover))
-            .max(0) as f32;
+    let doubled_delta =
+        (doubled_pawns(&opp_after_files) - doubled_pawns(&opp_before_files)).max(0) as f32;
+    let isolated_delta = (isolated_pawns(after, opponent, &opp_after_files)
+        - isolated_pawns(before, opponent, &opp_before_files))
+    .max(0) as f32;
+    let fixed_delta = (fixed_pawns_by_enemy_pawns(after, opponent, mover)
+        - fixed_pawns_by_enemy_pawns(before, opponent, mover))
+    .max(0) as f32;
 
-    normalize(islands_delta * 0.45 + doubled_delta * 0.30 + isolated_delta * 0.25 + fixed_delta * 0.35, 2.6)
+    normalize(
+        islands_delta * 0.45 + doubled_delta * 0.30 + isolated_delta * 0.25 + fixed_delta * 0.35,
+        2.6,
+    )
 }
 
 fn score_weak_pawn_pressure(
@@ -920,8 +963,10 @@ fn score_weak_pawn_pressure(
 }
 
 fn score_space_gain(before: &Board, after: &Board, mover: Color) -> f32 {
-    let advanced_delta = (advanced_pawns(after, mover) - advanced_pawns(before, mover)).max(0) as f32;
-    let center_delta = (central_control(after, mover) - central_control(before, mover)).max(0) as f32;
+    let advanced_delta =
+        (advanced_pawns(after, mover) - advanced_pawns(before, mover)).max(0) as f32;
+    let center_delta =
+        (central_control(after, mover) - central_control(before, mover)).max(0) as f32;
     normalize(advanced_delta * 0.60 + center_delta * 0.35, 3.0)
 }
 
@@ -935,19 +980,22 @@ fn score_open_file_pressure(before: &Board, after: &Board, mover: Color, opponen
         - heavy_piece_file_pressure(before, mover, &before_own, &before_opp))
     .max(0.0);
 
-    let d_file_delta =
-        (heavy_piece_pressure_on_file(after, mover, &after_own, &after_opp, 3)
-            - heavy_piece_pressure_on_file(before, mover, &before_own, &before_opp, 3))
-        .max(0.0);
-    let e_file_delta =
-        (heavy_piece_pressure_on_file(after, mover, &after_own, &after_opp, 4)
-            - heavy_piece_pressure_on_file(before, mover, &before_own, &before_opp, 4))
-        .max(0.0);
+    let d_file_delta = (heavy_piece_pressure_on_file(after, mover, &after_own, &after_opp, 3)
+        - heavy_piece_pressure_on_file(before, mover, &before_own, &before_opp, 3))
+    .max(0.0);
+    let e_file_delta = (heavy_piece_pressure_on_file(after, mover, &after_own, &after_opp, 4)
+        - heavy_piece_pressure_on_file(before, mover, &before_own, &before_opp, 4))
+    .max(0.0);
 
     normalize(pressure_delta + (d_file_delta + e_file_delta) * 0.50, 2.2)
 }
 
-fn score_central_king_pressure(before: &Board, after: &Board, mover: Color, opponent: Color) -> f32 {
+fn score_central_king_pressure(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+) -> f32 {
     let before_own = pawn_file_counts(before, mover);
     let before_opp = pawn_file_counts(before, opponent);
     let after_own = pawn_file_counts(after, mover);
@@ -960,8 +1008,10 @@ fn score_central_king_pressure(before: &Board, after: &Board, mover: Color, oppo
 }
 
 fn score_piece_restriction(before: &Board, after: &Board, opponent: Color) -> f32 {
-    let mobility_delta = (pseudo_mobility(before, opponent) - pseudo_mobility(after, opponent)).max(0) as f32;
-    let knight_delta = (knight_freedom(before, opponent) - knight_freedom(after, opponent)).max(0) as f32;
+    let mobility_delta =
+        (pseudo_mobility(before, opponent) - pseudo_mobility(after, opponent)).max(0) as f32;
+    let knight_delta =
+        (knight_freedom(before, opponent) - knight_freedom(after, opponent)).max(0) as f32;
     ((mobility_delta / 9.0) + (knight_delta / 5.0)).clamp(0.0, 1.0)
 }
 
@@ -990,7 +1040,11 @@ fn score_wing_clamp(
     if piece_restriction > 0.25 {
         score += 0.20;
     }
-    if is_square_attacked_by(after, mover, king_square(after, opponent).unwrap_or(mv.to())) {
+    if is_square_attacked_by(
+        after,
+        mover,
+        king_square(after, opponent).unwrap_or(mv.to()),
+    ) {
         score += 0.10;
     }
     score.clamp(0.0, 1.0)
@@ -1034,9 +1088,9 @@ fn score_structural_break_plan(
         let adjacent_file = if to_file == 0 { 1 } else { 6 };
         let mut leverage = 0.26f32;
         let islands_delta = (pawn_islands(&opp_after) - pawn_islands(&opp_before)).max(0) as f32;
-        let isolated_delta =
-            (isolated_pawns_from_file_counts(&opp_after) - isolated_pawns_from_file_counts(&opp_before)).max(0)
-                as f32;
+        let isolated_delta = (isolated_pawns_from_file_counts(&opp_after)
+            - isolated_pawns_from_file_counts(&opp_before))
+        .max(0) as f32;
         leverage += islands_delta * 0.28 + isolated_delta * 0.24;
         if opp_after[adjacent_file] > 0 && opp_after[to_file] == 0 {
             leverage += 0.32;
@@ -1060,10 +1114,11 @@ fn score_structural_break_plan(
         virtual_opp[to_file] = virtual_opp[to_file].saturating_add(1);
 
         let islands_delta = (pawn_islands(&virtual_opp) - pawn_islands(&opp_before)).max(0) as f32;
-        let doubled_delta = (doubled_pawns(&virtual_opp) - doubled_pawns(&opp_before)).max(0) as f32;
-        let isolated_delta =
-            (isolated_pawns_from_file_counts(&virtual_opp) - isolated_pawns_from_file_counts(&opp_before)).max(0)
-                as f32;
+        let doubled_delta =
+            (doubled_pawns(&virtual_opp) - doubled_pawns(&opp_before)).max(0) as f32;
+        let isolated_delta = (isolated_pawns_from_file_counts(&virtual_opp)
+            - isolated_pawns_from_file_counts(&opp_before))
+        .max(0) as f32;
 
         let mut leverage = islands_delta * 0.30 + doubled_delta * 0.22 + isolated_delta * 0.26;
 
@@ -1073,7 +1128,10 @@ fn score_structural_break_plan(
         }
 
         // If the source file becomes empty from opponent pawns, that file becomes easier to pressure.
-        if (src_file == 0 || src_file == 7) && own_files[src_file] == 0 && virtual_opp[src_file] == 0 {
+        if (src_file == 0 || src_file == 7)
+            && own_files[src_file] == 0
+            && virtual_opp[src_file] == 0
+        {
             leverage += 0.24;
         }
 
@@ -1147,7 +1205,11 @@ fn score_decoy_king_line_break(
         .abs()
         .max((king_rank as i32 - to_rank as i32).abs()) as f32;
     let proximity = (1.0 - ((chebyshev - 1.0) / 4.0).clamp(0.0, 1.0)).clamp(0.0, 1.0);
-    let wing_bonus = if to_file == 1 || to_file == 6 { 0.16 } else { 0.10 };
+    let wing_bonus = if to_file == 1 || to_file == 6 {
+        0.16
+    } else {
+        0.10
+    };
     normalize(0.55 + 0.30 * proximity + wing_bonus, 1.15)
 }
 
@@ -1190,7 +1252,9 @@ fn score_king_attack_complexity(
             let Some(sq) = coords_to_square(nf as usize, nr as usize) else {
                 continue;
             };
-            if is_square_attacked_by(after, attacker, sq) && !is_square_defended_by(after, defender, sq) {
+            if is_square_attacked_by(after, attacker, sq)
+                && !is_square_defended_by(after, defender, sq)
+            {
                 forcing_targets += 1;
             }
         }
@@ -1240,14 +1304,16 @@ fn score_sacrificial_complexity(
     }
     let lightly_defended = !is_square_defended_by(after, attacker, mv.to());
 
-    let attack_gain =
-        (king_ring_pressure(after, attacker, defender) - king_ring_pressure(before, attacker, defender)).max(0.0);
+    let attack_gain = (king_ring_pressure(after, attacker, defender)
+        - king_ring_pressure(before, attacker, defender))
+    .max(0.0);
 
     let direct_king_attack = king_square(after, defender)
         .map(|k| is_square_attacked_by(after, attacker, k))
         .unwrap_or(false);
 
-    let mut score = normalize(material_investment, 420.0) * 0.35 + normalize(attack_gain, 1.0) * 0.60;
+    let mut score =
+        normalize(material_investment, 420.0) * 0.35 + normalize(attack_gain, 1.0) * 0.60;
     if direct_king_attack {
         score += 0.18;
     }
@@ -1281,7 +1347,10 @@ fn score_pawn_avalanche(
     let delta_conn = after_conn.saturating_sub(before_conn) as f32;
 
     let mut value = delta_count * 0.40 + delta_adv * 0.45 + delta_conn * 0.40;
-    if after_passed.iter().any(|&(_, rank)| is_near_promotion_rank(mover, rank)) {
+    if after_passed
+        .iter()
+        .any(|&(_, rank)| is_near_promotion_rank(mover, rank))
+    {
         value += 0.25;
     }
     normalize(value, 2.0)
@@ -1342,17 +1411,20 @@ fn score_central_break_initiative(
     let own_before = pawn_file_counts(before, mover);
     let opp_before = pawn_file_counts(before, opponent);
 
-    let central_open_gain = (heavy_piece_pressure_on_file(after, mover, &own_after, &opp_after, to_file)
-        - heavy_piece_pressure_on_file(before, mover, &own_before, &opp_before, to_file))
-    .max(0.0);
+    let central_open_gain =
+        (heavy_piece_pressure_on_file(after, mover, &own_after, &opp_after, to_file)
+            - heavy_piece_pressure_on_file(before, mover, &own_before, &opp_before, to_file))
+        .max(0.0);
     value += central_open_gain * 0.45;
 
-    let king_pressure_gain =
-        (king_ring_pressure(after, mover, opponent) - king_ring_pressure(before, mover, opponent)).max(0.0);
+    let king_pressure_gain = (king_ring_pressure(after, mover, opponent)
+        - king_ring_pressure(before, mover, opponent))
+    .max(0.0);
     value += king_pressure_gain * 0.45;
 
     if central_pawn_thrust {
-        let attacked_targets = attacked_valuable_targets_from_square(after, mv.to(), opponent) as f32;
+        let attacked_targets =
+            attacked_valuable_targets_from_square(after, mv.to(), opponent) as f32;
         value += attacked_targets * 0.10;
 
         if is_square_defended_by(after, mover, mv.to()) {
@@ -1394,7 +1466,11 @@ fn score_infiltration_tension(
     let Some((to_file, to_rank)) = square_to_coords(mv.to()) else {
         return 0.0;
     };
-    let advanced = if mover == Color::White { to_rank >= 4 } else { to_rank <= 3 };
+    let advanced = if mover == Color::White {
+        to_rank >= 4
+    } else {
+        to_rank <= 3
+    };
     if !advanced {
         return 0.0;
     }
@@ -1405,10 +1481,13 @@ fn score_infiltration_tension(
         return 0.0;
     }
 
-    let mobility_drop = (pseudo_mobility(before, opponent) - pseudo_mobility(after, opponent)).max(0) as f32;
-    let knight_drop = (knight_freedom(before, opponent) - knight_freedom(after, opponent)).max(0) as f32;
-    let attack_gain =
-        (king_ring_pressure(after, mover, opponent) - king_ring_pressure(before, mover, opponent)).max(0.0);
+    let mobility_drop =
+        (pseudo_mobility(before, opponent) - pseudo_mobility(after, opponent)).max(0) as f32;
+    let knight_drop =
+        (knight_freedom(before, opponent) - knight_freedom(after, opponent)).max(0) as f32;
+    let attack_gain = (king_ring_pressure(after, mover, opponent)
+        - king_ring_pressure(before, mover, opponent))
+    .max(0.0);
     let attacked_targets = attacked_valuable_targets_from_square(after, mv.to(), opponent) as f32;
 
     let mut value = normalize(mobility_drop, 10.0) * 0.28
@@ -1453,8 +1532,9 @@ fn score_king_net_setup(
     let Some((to_file, to_rank)) = square_to_coords(mv.to()) else {
         return 0.0;
     };
-    let chebyshev =
-        (king_file as i32 - to_file as i32).abs().max((king_rank as i32 - to_rank as i32).abs()) as f32;
+    let chebyshev = (king_file as i32 - to_file as i32)
+        .abs()
+        .max((king_rank as i32 - to_rank as i32).abs()) as f32;
     if chebyshev > 3.0 {
         return 0.0;
     }
@@ -1525,9 +1605,10 @@ fn score_counterplay_initiative(
     let before_opp_files = pawn_file_counts(before, opponent);
     let after_own_files = pawn_file_counts(after, mover);
     let after_opp_files = pawn_file_counts(after, opponent);
-    let file_pressure_gain = (heavy_piece_file_pressure(after, mover, &after_own_files, &after_opp_files)
-        - heavy_piece_file_pressure(before, mover, &before_own_files, &before_opp_files))
-    .max(0.0);
+    let file_pressure_gain =
+        (heavy_piece_file_pressure(after, mover, &after_own_files, &after_opp_files)
+            - heavy_piece_file_pressure(before, mover, &before_own_files, &before_opp_files))
+        .max(0.0);
 
     let attacked_targets = attacked_valuable_targets_from_square(after, mv.to(), opponent) as f32;
     let chebyshev = (opp_king_file as i32 - to_file as i32)
@@ -1582,8 +1663,10 @@ fn score_piece_lift_assault(
         return 0.0;
     };
 
-    let from_back_rank = (mover == Color::White && from_rank == 0) || (mover == Color::Black && from_rank == 7);
-    let advanced = (mover == Color::White && to_rank >= 3) || (mover == Color::Black && to_rank <= 4);
+    let from_back_rank =
+        (mover == Color::White && from_rank == 0) || (mover == Color::Black && from_rank == 7);
+    let advanced =
+        (mover == Color::White && to_rank >= 3) || (mover == Color::Black && to_rank <= 4);
     let lateral_shift = from_file != to_file;
     if !advanced {
         return 0.0;
@@ -1599,12 +1682,15 @@ fn score_piece_lift_assault(
     let ring_before = undefended_ring_targets(before, mover, defender, king_sq) as f32;
     let ring_after = undefended_ring_targets(after, mover, defender, king_sq) as f32;
     let ring_gain = (ring_after - ring_before).max(0.0);
-    let pressure_gain = (king_ring_pressure(after, mover, defender) - king_ring_pressure(before, mover, defender))
-        .max(0.0);
+    let pressure_gain = (king_ring_pressure(after, mover, defender)
+        - king_ring_pressure(before, mover, defender))
+    .max(0.0);
     let attacked_targets = attacked_valuable_targets_from_square(after, mv.to(), defender) as f32;
 
-    let mut value: f32 =
-        ring_gain * 0.30 + pressure_gain * 0.46 + attacked_targets * 0.08 + normalize(4.0 - chebyshev, 4.0) * 0.18;
+    let mut value: f32 = ring_gain * 0.30
+        + pressure_gain * 0.46
+        + attacked_targets * 0.08
+        + normalize(4.0 - chebyshev, 4.0) * 0.18;
     if from_back_rank {
         value += 0.14;
     }
@@ -1662,11 +1748,14 @@ fn score_initiative_compensation(
         return 0.0;
     }
 
-    let pressure_gain =
-        (king_ring_pressure(after, mover, opponent) - king_ring_pressure(before, mover, opponent)).max(0.0);
-    let local_gain = (local_attack_balance(after, mover, opponent) - local_attack_balance(before, mover, opponent))
-        .max(0.0);
-    let mobility_gain = (pseudo_mobility(after, mover) - pseudo_mobility(before, mover)).max(0) as f32;
+    let pressure_gain = (king_ring_pressure(after, mover, opponent)
+        - king_ring_pressure(before, mover, opponent))
+    .max(0.0);
+    let local_gain = (local_attack_balance(after, mover, opponent)
+        - local_attack_balance(before, mover, opponent))
+    .max(0.0);
+    let mobility_gain =
+        (pseudo_mobility(after, mover) - pseudo_mobility(before, mover)).max(0) as f32;
 
     let before_own_files = pawn_file_counts(before, mover);
     let before_opp_files = pawn_file_counts(before, opponent);
@@ -1700,7 +1789,13 @@ fn score_initiative_compensation(
     normalize(value, 1.20)
 }
 
-fn score_outpost_control(before: &Board, after: &Board, mover: Color, opponent: Color, mv: &Move) -> f32 {
+fn score_outpost_control(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+    mv: &Move,
+) -> f32 {
     if mv.role() != Role::Knight && mv.role() != Role::Bishop {
         return 0.0;
     }
@@ -1718,7 +1813,13 @@ fn score_outpost_control(before: &Board, after: &Board, mover: Color, opponent: 
     (destination - origin).max(0.0)
 }
 
-fn outpost_square_value(board: &Board, mover: Color, opponent: Color, role: Role, sq: Square) -> f32 {
+fn outpost_square_value(
+    board: &Board,
+    mover: Color,
+    opponent: Color,
+    role: Role,
+    sq: Square,
+) -> f32 {
     let Some((file, rank)) = square_to_coords(sq) else {
         return 0.0;
     };
@@ -1732,12 +1833,16 @@ fn outpost_square_value(board: &Board, mover: Color, opponent: Color, role: Role
     let king_proximity = king_square(board, opponent)
         .and_then(square_to_coords)
         .map(|(kf, kr)| {
-            let chebyshev =
-                (kf as i32 - file as i32).abs().max((kr as i32 - rank as i32).abs()) as f32;
+            let chebyshev = (kf as i32 - file as i32)
+                .abs()
+                .max((kr as i32 - rank as i32).abs()) as f32;
             normalize((5.0 - chebyshev).max(0.0), 5.0)
         })
         .unwrap_or(0.0);
-    let targets = normalize(attacked_valuable_targets_from_square(board, sq, opponent) as f32, 4.0);
+    let targets = normalize(
+        attacked_valuable_targets_from_square(board, sq, opponent) as f32,
+        4.0,
+    );
     let piece_factor = if role == Role::Knight { 1.0 } else { 0.86 };
 
     (stability * 0.38 + pawn_absence * 0.27 + king_proximity * 0.20 + targets * 0.15)
@@ -1745,7 +1850,12 @@ fn outpost_square_value(board: &Board, mover: Color, opponent: Color, role: Role
         .clamp(0.0, 1.0)
 }
 
-fn score_color_complex_weakness(before: &Board, after: &Board, mover: Color, opponent: Color) -> f32 {
+fn score_color_complex_weakness(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+) -> f32 {
     let before_pressure = color_complex_pressure(before, mover, opponent);
     let after_pressure = color_complex_pressure(after, mover, opponent);
     (after_pressure - before_pressure).max(0.0)
@@ -1802,7 +1912,8 @@ fn color_complex_pressure(board: &Board, attacker: Color, defender: Color) -> f3
     let light_absence = if def_has_light_bishop { 0.35 } else { 1.0 };
 
     let dark_score = weak_dark * (0.55 + 0.30 * dark_absence + 0.15 * normalize(access_dark, 8.0));
-    let light_score = weak_light * (0.55 + 0.30 * light_absence + 0.15 * normalize(access_light, 8.0));
+    let light_score =
+        weak_light * (0.55 + 0.30 * light_absence + 0.15 * normalize(access_light, 8.0));
 
     normalize(dark_score.max(light_score), 7.0)
 }
@@ -1893,12 +2004,21 @@ fn piece_coordination_index(board: &Board, side: Color, opponent: Color) -> f32 
     let qn_coord = queen_knight_coordination(board, side, opp_king) as f32;
 
     normalize(
-        ring_attackers * 0.24 + defended_units * 0.14 + near_king_supported * 0.12 + qn_coord * 0.22,
+        ring_attackers * 0.24
+            + defended_units * 0.14
+            + near_king_supported * 0.12
+            + qn_coord * 0.22,
         3.6,
     )
 }
 
-fn score_prophylaxis(before: &Board, after: &Board, mover: Color, opponent: Color, mv: &Move) -> f32 {
+fn score_prophylaxis(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+    mv: &Move,
+) -> f32 {
     let opp_threat_before = threat_index(before, opponent, mover);
     let opp_threat_after = threat_index(after, opponent, mover);
     let threat_reduction = (opp_threat_before - opp_threat_after).max(0.0);
@@ -1907,10 +2027,12 @@ fn score_prophylaxis(before: &Board, after: &Board, mover: Color, opponent: Colo
     let break_after = opponent_break_options(after, opponent, mover);
     let break_reduction = (break_before - break_after).max(0.0);
 
-    let own_plan_gain =
-        (king_ring_pressure(after, mover, opponent) - king_ring_pressure(before, mover, opponent)).max(0.0);
-    let own_plan_drop =
-        (king_ring_pressure(before, mover, opponent) - king_ring_pressure(after, mover, opponent)).max(0.0);
+    let own_plan_gain = (king_ring_pressure(after, mover, opponent)
+        - king_ring_pressure(before, mover, opponent))
+    .max(0.0);
+    let own_plan_drop = (king_ring_pressure(before, mover, opponent)
+        - king_ring_pressure(after, mover, opponent))
+    .max(0.0);
 
     let mut value = threat_reduction * 0.56 + break_reduction * 0.30 + own_plan_gain * 0.20;
     if mv.role() == Role::Pawn {
@@ -1927,7 +2049,13 @@ fn score_prophylaxis(before: &Board, after: &Board, mover: Color, opponent: Colo
     normalize(value, 1.45)
 }
 
-fn score_trade_favorability(before: &Board, after: &Board, mover: Color, opponent: Color, mv: &Move) -> f32 {
+fn score_trade_favorability(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+    mv: &Move,
+) -> f32 {
     let Some(captured_piece) = before.piece_at(mv.to()) else {
         return 0.0;
     };
@@ -1945,22 +2073,32 @@ fn score_trade_favorability(before: &Board, after: &Board, mover: Color, opponen
     let material_before = material_balance_cp(before, mover, opponent) as f32;
     let material_after = material_balance_cp(after, mover, opponent) as f32;
     let material_gain = material_after - material_before;
-    let pressure_gain =
-        (king_ring_pressure(after, mover, opponent) - king_ring_pressure(before, mover, opponent)).max(0.0);
-    let local_gain =
-        (local_attack_balance(after, mover, opponent) - local_attack_balance(before, mover, opponent)).max(0.0);
+    let pressure_gain = (king_ring_pressure(after, mover, opponent)
+        - king_ring_pressure(before, mover, opponent))
+    .max(0.0);
+    let local_gain = (local_attack_balance(after, mover, opponent)
+        - local_attack_balance(before, mover, opponent))
+    .max(0.0);
 
     let defender_removed_bonus = king_square(before, opponent)
         .and_then(square_to_coords)
         .and_then(|(kf, kr)| square_to_coords(mv.to()).map(|(tf, tr)| (kf, kr, tf, tr)))
         .map(|(kf, kr, tf, tr)| {
-            let chebyshev = (kf as i32 - tf as i32).abs().max((kr as i32 - tr as i32).abs());
-            if chebyshev <= 2 { 0.20 } else { 0.0 }
+            let chebyshev = (kf as i32 - tf as i32)
+                .abs()
+                .max((kr as i32 - tr as i32).abs());
+            if chebyshev <= 2 {
+                0.20
+            } else {
+                0.0
+            }
         })
         .unwrap_or(0.0);
 
-    let mut value = normalize((captured_value + material_gain * 0.90 - investment_penalty * 0.55).max(0.0), 720.0)
-        * 0.46
+    let mut value = normalize(
+        (captured_value + material_gain * 0.90 - investment_penalty * 0.55).max(0.0),
+        720.0,
+    ) * 0.46
         + normalize(pressure_gain, 1.10) * 0.30
         + normalize(local_gain, 2.20) * 0.18
         + defender_removed_bonus;
@@ -2007,7 +2145,12 @@ fn king_ring_pressure(board: &Board, attacker: Color, defender: Color) -> f32 {
     ring_attack as f32 * 0.12 + attacking_pieces * 0.18 - ring_defense as f32 * 0.06
 }
 
-fn pieces_attacking_king_ring(board: &Board, side: Color, king_file: usize, king_rank: usize) -> i32 {
+fn pieces_attacking_king_ring(
+    board: &Board,
+    side: Color,
+    king_file: usize,
+    king_rank: usize,
+) -> i32 {
     let mut count = 0;
     for from in board.by_color(side) {
         let Some(piece) = board.piece_at(from) else {
@@ -2021,7 +2164,9 @@ fn pieces_attacking_king_ring(board: &Board, side: Color, king_file: usize, king
             let Some((tf, tr)) = square_to_coords(to) else {
                 continue;
             };
-            if (tf as i32 - king_file as i32).abs() <= 1 && (tr as i32 - king_rank as i32).abs() <= 1 {
+            if (tf as i32 - king_file as i32).abs() <= 1
+                && (tr as i32 - king_rank as i32).abs() <= 1
+            {
                 touches_ring = true;
                 break;
             }
@@ -2033,7 +2178,12 @@ fn pieces_attacking_king_ring(board: &Board, side: Color, king_file: usize, king
     count
 }
 
-fn undefended_ring_targets(board: &Board, attacker: Color, defender: Color, king_sq: Square) -> i32 {
+fn undefended_ring_targets(
+    board: &Board,
+    attacker: Color,
+    defender: Color,
+    king_sq: Square,
+) -> i32 {
     let Some((king_file, king_rank)) = square_to_coords(king_sq) else {
         return 0;
     };
@@ -2051,7 +2201,9 @@ fn undefended_ring_targets(board: &Board, attacker: Color, defender: Color, king
             let Some(sq) = coords_to_square(nf as usize, nr as usize) else {
                 continue;
             };
-            if is_square_attacked_by(board, attacker, sq) && !is_square_defended_by(board, defender, sq) {
+            if is_square_attacked_by(board, attacker, sq)
+                && !is_square_defended_by(board, defender, sq)
+            {
                 count += 1;
             }
         }
@@ -2336,7 +2488,9 @@ fn near_king_supported_count(board: &Board, side: Color, defender: Color) -> i32
         let Some((f, r)) = square_to_coords(sq) else {
             continue;
         };
-        let chebyshev = (f as i32 - kf as i32).abs().max((r as i32 - kr as i32).abs());
+        let chebyshev = (f as i32 - kf as i32)
+            .abs()
+            .max((r as i32 - kr as i32).abs());
         if chebyshev <= 3 && is_square_defended_by(board, side, sq) {
             count += 1;
         }
@@ -2347,7 +2501,8 @@ fn near_king_supported_count(board: &Board, side: Color, defender: Color) -> i32
 fn threat_index(board: &Board, attacker: Color, defender: Color) -> f32 {
     let attacker_files = pawn_file_counts(board, attacker);
     let defender_files = pawn_file_counts(board, defender);
-    let king_pressure = central_king_pressure(board, attacker, defender, &attacker_files, &defender_files);
+    let king_pressure =
+        central_king_pressure(board, attacker, defender, &attacker_files, &defender_files);
     let ring_pressure = king_ring_pressure(board, attacker, defender);
     let loose_pawns = loose_pawns_under_attack(board, attacker, defender) as f32;
     ring_pressure * 0.95 + king_pressure * 0.60 + loose_pawns * 0.18
@@ -2386,7 +2541,8 @@ fn opponent_break_options(board: &Board, side: Color, enemy: Color) -> f32 {
             let Some(capture_sq) = coords_to_square(nf as usize, next_rank as usize) else {
                 continue;
             };
-            if matches!(board.piece_at(capture_sq), Some(p) if p.color == enemy && p.role == Role::Pawn) {
+            if matches!(board.piece_at(capture_sq), Some(p) if p.color == enemy && p.role == Role::Pawn)
+            {
                 score += 0.4;
             }
         }
@@ -2433,7 +2589,13 @@ fn is_passed_pawn(board: &Board, color: Color, opponent: Color, file: usize, ran
 fn passed_advance_score(passers: &[(usize, usize)], color: Color) -> f32 {
     passers
         .iter()
-        .map(|&(_, rank)| if color == Color::White { rank as f32 } else { (7 - rank) as f32 })
+        .map(|&(_, rank)| {
+            if color == Color::White {
+                rank as f32
+            } else {
+                (7 - rank) as f32
+            }
+        })
         .sum::<f32>()
         / 7.0
 }
@@ -2614,10 +2776,7 @@ fn pawn_islands(file_counts: &[u8; 8]) -> i32 {
 }
 
 fn doubled_pawns(file_counts: &[u8; 8]) -> i32 {
-    file_counts
-        .iter()
-        .map(|c| (*c as i32 - 1).max(0))
-        .sum()
+    file_counts.iter().map(|c| (*c as i32 - 1).max(0)).sum()
 }
 
 fn isolated_pawns(board: &Board, color: Color, file_counts: &[u8; 8]) -> i32 {
@@ -2682,7 +2841,8 @@ fn loose_pawns_under_attack(board: &Board, attacker: Color, defender: Color) -> 
     let mut count = 0;
     let pawns = board.pawns() & board.by_color(defender);
     for sq in pawns {
-        if !is_square_defended_by(board, defender, sq) && is_square_attacked_by(board, attacker, sq) {
+        if !is_square_defended_by(board, defender, sq) && is_square_attacked_by(board, attacker, sq)
+        {
             count += 1;
         }
     }
@@ -2730,7 +2890,12 @@ fn central_control(board: &Board, color: Color) -> i32 {
     attacked_coords.len() as i32
 }
 
-fn heavy_piece_file_pressure(board: &Board, color: Color, own_pawns: &[u8; 8], opp_pawns: &[u8; 8]) -> f32 {
+fn heavy_piece_file_pressure(
+    board: &Board,
+    color: Color,
+    own_pawns: &[u8; 8],
+    opp_pawns: &[u8; 8],
+) -> f32 {
     let mut score = 0.0;
     for from in board.by_color(color) {
         let Some(piece) = board.piece_at(from) else {
@@ -2810,11 +2975,19 @@ fn central_king_pressure(
     } else {
         0.12
     };
-    score += heavy_piece_pressure_on_file(board, attacker, attacker_pawns, defender_pawns, king_file) * 0.60;
+    score +=
+        heavy_piece_pressure_on_file(board, attacker, attacker_pawns, defender_pawns, king_file)
+            * 0.60;
 
     if king_is_wing {
         let flank_file = if king_file >= 6 { 6 } else { 1 };
-        score += heavy_piece_pressure_on_file(board, attacker, attacker_pawns, defender_pawns, flank_file) * 0.35;
+        score += heavy_piece_pressure_on_file(
+            board,
+            attacker,
+            attacker_pawns,
+            defender_pawns,
+            flank_file,
+        ) * 0.35;
     }
 
     let attacked_by_attacker = attacked_coords(board, attacker);
@@ -2991,9 +3164,8 @@ mod tests {
         // Position after 11.a3 in Aronian-Carlsen (Norway Chess 2017),
         // where Black considers the thematic ...Bxa3.
         let moves = vec![
-            "d2d4", "d7d5", "c2c4", "c7c6", "g1f3", "g8f6", "b1c3", "e7e6", "e2e3", "a7a6",
-            "b2b3", "f8b4", "c1d2", "b8d7", "f1d3", "e8g8", "e1g1", "d8e7", "d3c2", "f8d8",
-            "a2a3",
+            "d2d4", "d7d5", "c2c4", "c7c6", "g1f3", "g8f6", "b1c3", "e7e6", "e2e3", "a7a6", "b2b3",
+            "f8b4", "c1d2", "b8d7", "f1d3", "e8g8", "e1g1", "d8e7", "d3c2", "f8d8", "a2a3",
         ]
         .into_iter()
         .map(String::from)
@@ -3149,9 +3321,9 @@ mod tests {
             &[
                 "e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "d3", "b5",
                 "Bb3", "d6", "a3", "O-O", "Nc3", "Nb8", "Ne2", "Nbd7", "c3", "Bb7", "Ng3", "c5",
-                "Re1", "Rc8", "Nf5", "c4", "dxc4", "Bxe4", "Nxe7+", "Qxe7", "cxb5", "axb5",
-                "Bg5", "Nc5", "Ba2", "h6", "Bh4", "g5", "Bg3", "Bh7", "Qe2", "Kg7", "Rad1",
-                "Nfe4", "Rd5", "f5",
+                "Re1", "Rc8", "Nf5", "c4", "dxc4", "Bxe4", "Nxe7+", "Qxe7", "cxb5", "axb5", "Bg5",
+                "Nc5", "Ba2", "h6", "Bh4", "g5", "Bg3", "Bh7", "Qe2", "Kg7", "Rad1", "Nfe4", "Rd5",
+                "f5",
             ],
         );
         let sac_mv = San::from_ascii(b"Rxe5")
@@ -3186,11 +3358,11 @@ mod tests {
             &[
                 "e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "d3", "b5",
                 "Bb3", "d6", "a3", "O-O", "Nc3", "Nb8", "Ne2", "Nbd7", "c3", "Bb7", "Ng3", "c5",
-                "Re1", "Rc8", "Nf5", "c4", "dxc4", "Bxe4", "Nxe7+", "Qxe7", "cxb5", "axb5",
-                "Bg5", "Nc5", "Ba2", "h6", "Bh4", "g5", "Bg3", "Bh7", "Qe2", "Kg7", "Rad1",
-                "Nfe4", "Rd5", "f5", "Rxe5", "dxe5", "Bxe5+", "Nf6", "Qxb5", "Ne4", "Bd4",
-                "Rfd8", "h3", "Rb8", "Qe2", "Bg8", "Bb1", "Qb7", "b4", "Re8", "c4", "Qc6",
-                "Qb2", "Rbd8", "c5", "Qe6", "b5", "Kf8",
+                "Re1", "Rc8", "Nf5", "c4", "dxc4", "Bxe4", "Nxe7+", "Qxe7", "cxb5", "axb5", "Bg5",
+                "Nc5", "Ba2", "h6", "Bh4", "g5", "Bg3", "Bh7", "Qe2", "Kg7", "Rad1", "Nfe4", "Rd5",
+                "f5", "Rxe5", "dxe5", "Bxe5+", "Nf6", "Qxb5", "Ne4", "Bd4", "Rfd8", "h3", "Rb8",
+                "Qe2", "Bg8", "Bb1", "Qb7", "b4", "Re8", "c4", "Qc6", "Qb2", "Rbd8", "c5", "Qe6",
+                "b5", "Kf8",
             ],
         );
         let avalanche_mv = San::from_ascii(b"c6")
@@ -3223,8 +3395,8 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "d4", "Nf6", "c4", "g6", "f3", "Bg7", "e4", "d6", "Nc3", "O-O", "Nge2", "a6",
-                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6",
-                "cxb6", "cxb5", "axb5", "Kb1", "b4", "Nb5",
+                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6", "cxb6",
+                "cxb5", "axb5", "Kb1", "b4", "Nb5",
             ],
         );
 
@@ -3258,8 +3430,8 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "d4", "Nf6", "c4", "g6", "f3", "Bg7", "e4", "d6", "Nc3", "O-O", "Nge2", "a6",
-                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6",
-                "cxb6", "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1",
+                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6", "cxb6",
+                "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1",
             ],
         );
 
@@ -3290,9 +3462,9 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "d4", "Nf6", "c4", "g6", "f3", "Bg7", "e4", "d6", "Nc3", "O-O", "Nge2", "a6",
-                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6",
-                "cxb6", "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1",
-                "Ra4", "Nc1", "Qd7", "Bc4", "Rc8", "Qe2",
+                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6", "cxb6",
+                "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1", "Ra4", "Nc1",
+                "Qd7", "Bc4", "Rc8", "Qe2",
             ],
         );
 
@@ -3325,10 +3497,9 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "d4", "Nf6", "c4", "g6", "f3", "Bg7", "e4", "d6", "Nc3", "O-O", "Nge2", "a6",
-                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6",
-                "cxb6", "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1",
-                "Ra4", "Nc1", "Qd7", "Bc4", "Rc8", "Qe2", "e4", "Bb3", "exf3", "gxf3", "Ra5",
-                "Bc4",
+                "Be3", "Nbd7", "Qd2", "b5", "h4", "h5", "O-O-O", "e5", "d5", "Nb6", "Bxb6", "cxb6",
+                "cxb5", "axb5", "Kb1", "b4", "Nb5", "Nxd5", "exd5", "Bf5+", "Ka1", "Ra4", "Nc1",
+                "Qd7", "Bc4", "Rc8", "Qe2", "e4", "Bb3", "exf3", "gxf3", "Ra5", "Bc4",
             ],
         );
 
@@ -3359,8 +3530,8 @@ mod tests {
             &[
                 "c4", "e6", "Nc3", "d5", "d4", "dxc4", "e4", "c5", "d5", "exd5", "exd5", "Bd6",
                 "Bxc4", "Ne7", "h3", "O-O", "Nf3", "Nd7", "O-O", "Nb6", "b3", "Nxc4", "bxc4",
-                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8",
-                "Be3", "h6", "Ra2", "Be4", "Nd2",
+                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8", "Be3",
+                "h6", "Ra2", "Be4", "Nd2",
             ],
         );
 
@@ -3395,8 +3566,8 @@ mod tests {
             &[
                 "c4", "e6", "Nc3", "d5", "d4", "dxc4", "e4", "c5", "d5", "exd5", "exd5", "Bd6",
                 "Bxc4", "Ne7", "h3", "O-O", "Nf3", "Nd7", "O-O", "Nb6", "b3", "Nxc4", "bxc4",
-                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8",
-                "Be3", "h6", "Ra2", "Be4", "Nd2", "Nh4", "Bxc5",
+                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8", "Be3",
+                "h6", "Ra2", "Be4", "Nd2", "Nh4", "Bxc5",
             ],
         );
 
@@ -3430,8 +3601,8 @@ mod tests {
             &[
                 "c4", "e6", "Nc3", "d5", "d4", "dxc4", "e4", "c5", "d5", "exd5", "exd5", "Bd6",
                 "Bxc4", "Ne7", "h3", "O-O", "Nf3", "Nd7", "O-O", "Nb6", "b3", "Nxc4", "bxc4",
-                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8",
-                "Be3", "h6", "Ra2", "Be4", "Nd2", "Nh4", "Bxc5", "Qg6", "g3", "Bg2", "Be7",
+                "Ng6", "Ne4", "Bf5", "Nxd6", "Qxd6", "Qb3", "b6", "a4", "a5", "Re1", "Rfe8", "Be3",
+                "h6", "Ra2", "Be4", "Nd2", "Nh4", "Bxc5", "Qg6", "g3", "Bg2", "Be7",
             ],
         );
 
@@ -3465,8 +3636,8 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6", "h3", "e6",
-                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2",
-                "Bf8", "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4",
+                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2", "Bf8",
+                "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4",
             ],
         );
 
@@ -3499,10 +3670,10 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6", "h3", "e6",
-                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2",
-                "Bf8", "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4", "Qb6",
-                "Qd2", "Nc5", "f5", "b4", "Na4", "Nxa4", "bxa4", "Bc6", "g6", "fxg6", "fxg6",
-                "Bxa4", "Rc1", "hxg6", "h5", "gxh5", "Rxh5",
+                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2", "Bf8",
+                "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4", "Qb6", "Qd2",
+                "Nc5", "f5", "b4", "Na4", "Nxa4", "bxa4", "Bc6", "g6", "fxg6", "fxg6", "Bxa4",
+                "Rc1", "hxg6", "h5", "gxh5", "Rxh5",
             ],
         );
 
@@ -3536,10 +3707,10 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
                 "e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6", "h3", "e6",
-                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2",
-                "Bf8", "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4", "Qb6",
-                "Qd2", "Nc5", "f5", "b4", "Na4", "Nxa4", "bxa4", "Bc6", "g6", "fxg6", "fxg6",
-                "Bxa4", "Rc1", "hxg6", "h5", "gxh5", "Rxh5", "Rc3", "Qg5", "Qe3", "Qh4",
+                "g4", "Be7", "g5", "Nfd7", "Bg2", "Nc6", "h4", "O-O", "b3", "Re8", "Bb2", "Bf8",
+                "Qd2", "Nxd4", "Qxd4", "b5", "O-O-O", "Bb7", "Kb1", "Rc8", "f4", "Qb6", "Qd2",
+                "Nc5", "f5", "b4", "Na4", "Nxa4", "bxa4", "Bc6", "g6", "fxg6", "fxg6", "Bxa4",
+                "Rc1", "hxg6", "h5", "gxh5", "Rxh5", "Rc3", "Qg5", "Qe3", "Qh4",
             ],
         );
 
@@ -3678,9 +3849,9 @@ mod tests {
         let root = build_position_from_san(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
-                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5",
-                "g6", "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3",
-                "Bxf8", "Bc4", "Bg7", "Bxb5",
+                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5", "g6",
+                "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3", "Bxf8",
+                "Bc4", "Bg7", "Bxb5",
             ],
         );
 
@@ -3703,10 +3874,10 @@ mod tests {
         let root = build_position_from_san(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
-                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5",
-                "g6", "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3",
-                "Bxf8", "Bc4", "Bg7", "Bxb5", "dxe5", "Rg8", "Bf6", "Nxe5", "Bxe5", "Qe7",
-                "O-O-O", "Bc6", "Qc3", "dxe5", "Nf3", "f6", "Rhe1", "Kf8",
+                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5", "g6",
+                "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3", "Bxf8",
+                "Bc4", "Bg7", "Bxb5", "dxe5", "Rg8", "Bf6", "Nxe5", "Bxe5", "Qe7", "O-O-O", "Bc6",
+                "Qc3", "dxe5", "Nf3", "f6", "Rhe1", "Kf8",
             ],
         );
 
@@ -3739,11 +3910,11 @@ mod tests {
         let root = build_position_from_san(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[
-                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5",
-                "g6", "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3",
-                "Bxf8", "Bc4", "Bg7", "Bxb5", "dxe5", "Rg8", "Bf6", "Nxe5", "Bxe5", "Qe7",
-                "O-O-O", "Bc6", "Qc3", "dxe5", "Nf3", "f6", "Rhe1", "Kf8", "Nxe5", "fxe5",
-                "Rxe5", "Qf6", "Re8+", "Kf7",
+                "e4", "e5", "Nc3", "Nf6", "Bc4", "Nxe4", "Qh5", "Nd6", "Bb3", "Nc6", "Nb5", "g6",
+                "Qf3", "Nf5", "Qd5", "Nh6", "d4", "d6", "Bxh6", "Be6", "Qf3", "Bxb3", "Bxf8",
+                "Bc4", "Bg7", "Bxb5", "dxe5", "Rg8", "Bf6", "Nxe5", "Bxe5", "Qe7", "O-O-O", "Bc6",
+                "Qc3", "dxe5", "Nf3", "f6", "Rhe1", "Kf8", "Nxe5", "fxe5", "Rxe5", "Qf6", "Re8+",
+                "Kf7",
             ],
         );
 

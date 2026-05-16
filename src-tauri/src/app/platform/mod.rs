@@ -19,9 +19,6 @@ pub async fn screen_capture(_window: Window) -> Result<(), String> {
             log::error!("{}", error_msg);
             String::from(error_msg)
         })?;
-
-        log::info!("Showing main window");
-
         main_window.show().map_err(|e| {
             let error_msg = format!("Failed to show main window: {}", e);
             log::error!("{}", error_msg);
@@ -46,7 +43,7 @@ pub async fn screen_capture(_window: Window) -> Result<(), String> {
 fn get_app_data_log_dir() -> std::path::PathBuf {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     const APP_IDENTIFIER: &str = "com.ocs";
-    
+
     #[cfg(target_os = "windows")]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
@@ -57,7 +54,7 @@ fn get_app_data_log_dir() -> std::path::PathBuf {
             return path;
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
@@ -69,7 +66,7 @@ fn get_app_data_log_dir() -> std::path::PathBuf {
             return path;
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
@@ -87,37 +84,18 @@ fn get_app_data_log_dir() -> std::path::PathBuf {
             return path;
         }
     }
-    
+
     // Fallback to temp directory if we can't determine the proper location
     std::env::temp_dir()
 }
 
-/// Gets the log level from environment variable or defaults to Info
+/// Gets the production log level for warning and error output.
 fn get_log_level() -> LevelFilter {
     match std::env::var("RUST_LOG").as_deref() {
-        Ok("trace") => LevelFilter::Trace,
-        Ok("debug") => LevelFilter::Debug,
-        Ok("info") => LevelFilter::Info,
         Ok("warn") => LevelFilter::Warn,
         Ok("error") => LevelFilter::Error,
         Ok("off") => LevelFilter::Off,
-        _ => {
-            if let Ok(rust_log) = std::env::var("RUST_LOG") {
-                if rust_log.contains("debug") {
-                    return LevelFilter::Debug;
-                } else if rust_log.contains("trace") {
-                    return LevelFilter::Trace;
-                } else if rust_log.contains("warn") {
-                    return LevelFilter::Warn;
-                } else if rust_log.contains("error") {
-                    return LevelFilter::Error;
-                }
-            }
-            #[cfg(debug_assertions)]
-            return LevelFilter::Debug;
-            #[cfg(not(debug_assertions))]
-            return LevelFilter::Info;
-        }
+        _ => LevelFilter::Warn,
     }
 }
 
@@ -126,10 +104,10 @@ pub fn setup_tauri_plugins(
     specta_builder: &tauri_specta::Builder,
 ) -> tauri::Builder<tauri::Wry> {
     let log_level = get_log_level();
-    
+
     // Get AppData directory path for logs (Roaming on Windows)
     let log_dir = get_app_data_log_dir();
-    
+
     let builder = builder
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_fs::init())
@@ -137,20 +115,17 @@ pub fn setup_tauri_plugins(
         .plugin(tauri_plugin_os::init())
         .plugin(
             tauri_plugin_log::Builder::new()
-                .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                .targets([tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Folder {
                         path: log_dir,
                         file_name: Some("obsidian-chess-studio".to_string()),
-                    }),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                ])
+                    },
+                )])
                 .level(log_level)
-                // Avoid extremely noisy dependency logs in dev (e.g. h2 frame spam during downloads).
-                // Users can still explicitly enable them via environment configuration if needed.
-                .level_for("h2", LevelFilter::Info)
-                .level_for("hyper", LevelFilter::Info)
-                .level_for("hyper_util", LevelFilter::Info)
-                .level_for("reqwest", LevelFilter::Info)
+                .level_for("h2", LevelFilter::Warn)
+                .level_for("hyper", LevelFilter::Warn)
+                .level_for("hyper_util", LevelFilter::Warn)
+                .level_for("reqwest", LevelFilter::Warn)
                 .build(),
         );
 
@@ -168,8 +143,6 @@ pub fn setup_tauri_plugins(
 }
 
 pub fn init_platform(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Initializing platform-specific features");
-
     #[cfg(desktop)]
     desktop::init_desktop_platform(app)?;
 

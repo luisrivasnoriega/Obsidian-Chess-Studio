@@ -47,9 +47,9 @@ impl PgnParser {
         let offset_index = n / GAME_OFFSET_FREQ;
         let n_left = n % GAME_OFFSET_FREQ;
 
-        let pgn_offsets = state
-            .get_offsets(file)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "PGN offsets not found for file"))?;
+        let pgn_offsets = state.get_offsets(file).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "PGN offsets not found for file")
+        })?;
 
         let offset = if offset_index == 0 {
             self.start
@@ -217,7 +217,11 @@ async fn read_games_impl<S: PgnOffsetStore>(
     Ok(games)
 }
 
-async fn delete_game_impl<S: PgnOffsetStore>(file: PathBuf, n: i32, state: &S) -> Result<(), Error> {
+async fn delete_game_impl<S: PgnOffsetStore>(
+    file: PathBuf,
+    n: i32,
+    state: &S,
+) -> Result<(), Error> {
     let file_r = File::open(&file)?;
     let mut parser = PgnParser::new(file_r.try_clone()?);
 
@@ -410,7 +414,10 @@ mod tests {
         assert_eq!(start, 0, "No BOM should return 0");
 
         let pos = reader.stream_position().unwrap();
-        assert_eq!(pos, 0, "Reader should be reset to the beginning when no BOM exists");
+        assert_eq!(
+            pos, 0,
+            "Reader should be reset to the beginning when no BOM exists"
+        );
     }
 
     #[test]
@@ -422,7 +429,10 @@ mod tests {
 
         let g1 = parser.read_game().unwrap();
         assert!(!g1.is_empty(), "First game should not be empty");
-        assert!(g1.contains(r#"[Site "site1"]"#), "Game 1 should contain site1 marker");
+        assert!(
+            g1.contains(r#"[Site "site1"]"#),
+            "Game 1 should contain site1 marker"
+        );
         assert!(g1.contains("1. e4 e5"), "Game should contain move text");
     }
 
@@ -528,8 +538,14 @@ mod tests {
             !content.contains(r#"[Site "site2"]"#),
             "Original game #2 markers should be gone after replacement"
         );
-        assert!(content.contains(r#"[Site "site1"]"#), "Game #1 should remain");
-        assert!(content.contains(r#"[Site "site3"]"#), "Game #3 should remain");
+        assert!(
+            content.contains(r#"[Site "site1"]"#),
+            "Game #1 should remain"
+        );
+        assert!(
+            content.contains(r#"[Site "site3"]"#),
+            "Game #3 should remain"
+        );
     }
 
     #[tokio::test]
@@ -550,8 +566,14 @@ mod tests {
             !content.contains(r#"[Site "site4"]"#),
             "Deleted game markers must be removed"
         );
-        assert!(content.contains(r#"[Site "site3"]"#), "Previous game must remain");
-        assert!(content.contains(r#"[Site "site5"]"#), "Next game must remain");
+        assert!(
+            content.contains(r#"[Site "site3"]"#),
+            "Previous game must remain"
+        );
+        assert!(
+            content.contains(r#"[Site "site5"]"#),
+            "Next game must remain"
+        );
 
         // Recount after deletion (refresh offsets + verify count)
         let new_count = count_pgn_games_impl(path.clone(), &state).await.unwrap();
@@ -569,7 +591,9 @@ mod tests {
 
         // Read a game > 100 so offset logic is used.
         // Index 150 corresponds to markers "site151" because generator is 1-based.
-        let games = read_games_impl(path.clone(), 150, 150, &state).await.unwrap();
+        let games = read_games_impl(path.clone(), 150, 150, &state)
+            .await
+            .unwrap();
         assert_eq!(games.len(), 1);
 
         let g = &games[0];
@@ -600,7 +624,9 @@ mod tests {
 
         for _ in 0..200 {
             let idx: i32 = rng.gen_range(0..5000);
-            let games = read_games_impl(path.clone(), idx, idx, &state).await.unwrap();
+            let games = read_games_impl(path.clone(), idx, idx, &state)
+                .await
+                .unwrap();
             assert_eq!(games.len(), 1);
 
             // Generator uses 1-based markers in content.

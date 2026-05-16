@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use log::{info, warn};
+use log::warn;
 use tauri_specta::Event;
 use tokio::sync::Mutex;
 
@@ -122,10 +122,6 @@ impl<'a> EngineManager<'a> {
         let key_cloned = key.clone();
         let engines_map = self.state.engine_processes.clone();
         tokio::spawn(async move {
-            info!(
-                "Engine loop started: tab={} engine={}",
-                key_cloned.0, key_cloned.1
-            );
             // OPTIMIZED: Increased emission rate from 5 to 10 events/sec for more responsive UI
             let lim = governor::RateLimiter::direct(governor::Quota::per_second(
                 nonzero_ext::nonzero!(10u32),
@@ -173,7 +169,8 @@ impl<'a> EngineManager<'a> {
                                     proc.best_moves.push(best_moves);
                                     if multipv == proc.real_multipv {
                                         // Only emit if all lines are at the same depth and rate limit allows.
-                                        let all_same_depth = proc.best_moves.iter().all(|x| x.depth == cur_depth);
+                                        let all_same_depth =
+                                            proc.best_moves.iter().all(|x| x.depth == cur_depth);
                                         let depth_ok = cur_depth >= proc.last_depth;
                                         if all_same_depth && depth_ok {
                                             let (progress, should_emit) = match proc.go_mode {
@@ -239,10 +236,6 @@ impl<'a> EngineManager<'a> {
                     proc.append_log(EngineLog::Engine(line));
                 }
             }
-            info!(
-                "Engine process finished: tab: {}, engine: {}",
-                key_cloned.0, key_cloned.1
-            );
             engines_map.remove(&key_cloned);
         });
 

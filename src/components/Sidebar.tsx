@@ -362,9 +362,7 @@ export function SideBar() {
       setActiveTab(existing.value);
       try {
         navigate({ to: route as never });
-      } catch (error) {
-        console.error("Navigation error in openRouteTab:", error);
-      }
+      } catch {}
       return;
     }
 
@@ -378,13 +376,9 @@ export function SideBar() {
       requestAnimationFrame(() => {
         try {
           navigate({ to: route as never });
-        } catch (error) {
-          console.error("Navigation error in openRouteTab (after createTab):", error);
-        }
+        } catch {}
       });
-    } catch (error) {
-      console.error("Navigation error in openRouteTab:", error);
-    }
+    } catch {}
   };
 
   const openProfilesPage = useCallback(async () => {
@@ -393,9 +387,7 @@ export function SideBar() {
       setActiveTab(existingProfileTab.value);
       try {
         navigate({ to: "/profiles" });
-      } catch (error) {
-        console.error("Navigation error in profiles link:", error);
-      }
+      } catch {}
       return;
     }
 
@@ -408,13 +400,9 @@ export function SideBar() {
       requestAnimationFrame(() => {
         try {
           navigate({ to: "/profiles" });
-        } catch (error) {
-          console.error("Navigation error in profiles link (after createTab):", error);
-        }
+        } catch {}
       });
-    } catch (error) {
-      console.error("Navigation error in profiles link:", error);
-    }
+    } catch {}
   }, [navigate, setActiveTab, setTabs, t, tabs]);
 
   const openTabAndNavigate = async ({
@@ -443,13 +431,9 @@ export function SideBar() {
       requestAnimationFrame(() => {
         try {
           navigate({ to: route });
-        } catch (error) {
-          console.error("Navigation error in openTabAndNavigate:", error);
-        }
+        } catch {}
       });
-    } catch (error) {
-      console.error("Navigation error in openTabAndNavigate:", error);
-    }
+    } catch {}
   };
 
   // Primary section: Dashboard and Profiles

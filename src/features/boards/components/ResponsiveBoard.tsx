@@ -57,6 +57,7 @@ interface ResponsiveBoardProps {
   hideFooterControls?: boolean;
   hideMobileAnalysisPanel?: boolean;
   desktopFooterContent?: ReactNode;
+  materialPlacement?: "flow" | "overlay";
   allowPremove?: boolean;
 }
 
@@ -106,6 +107,7 @@ function ResponsiveBoard({
   hideFooterControls = false,
   hideMobileAnalysisPanel = false,
   desktopFooterContent,
+  materialPlacement = "flow",
   allowPremove = false,
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
@@ -284,6 +286,7 @@ function ResponsiveBoard({
             hideEvalBar={hideEvalBar}
             hideFooterControls={hideFooterControls}
             desktopFooterContent={desktopFooterContent}
+            materialPlacement={materialPlacement}
             allowPremove={allowPremove}
           />
         </Box>

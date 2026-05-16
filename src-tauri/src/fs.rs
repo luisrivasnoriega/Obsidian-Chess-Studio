@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
 
-use log::{info, warn};
+use log::warn;
 use reqwest::{Client, Url};
 use specta::Type;
 use tauri::Manager;
@@ -62,7 +62,12 @@ fn parse_and_validate_url(url: &str) -> Result<Url, Error> {
     Ok(parsed_url)
 }
 
-fn emit_progress(app: &tauri::AppHandle, id: &str, progress: f32, finished: bool) -> Result<(), Error> {
+fn emit_progress(
+    app: &tauri::AppHandle,
+    id: &str,
+    progress: f32,
+    finished: bool,
+) -> Result<(), Error> {
     DownloadProgress {
         progress,
         id: id.to_string(),
@@ -90,8 +95,6 @@ pub async fn download_file(
 
     // Validate URL early
     let _parsed = parse_and_validate_url(&url)?;
-
-    info!("Downloading file from {} to {}", url, path.display());
 
     validate_destination_path(&app, &path)?;
 
@@ -156,8 +159,8 @@ fn sanitize_engine_filename(name: &str) -> String {
     let trimmed = name.trim();
     let mut out = String::with_capacity(trimmed.len());
     for ch in trimmed.chars() {
-        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-            || ch.is_control();
+        let is_invalid =
+            matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control();
         if is_invalid {
             out.push('_');
         } else {
@@ -295,7 +298,11 @@ pub async fn download_engine(
 
     // After Lc0 is installed on Windows, automatically download recommended networks.
     // This runs in the background and does not block returning the engine path.
-    maybe_spawn_lc0_network_downloads(app.clone(), &url_for_post_install, &engine_rel_path_for_post_install);
+    maybe_spawn_lc0_network_downloads(
+        app.clone(),
+        &url_for_post_install,
+        &engine_rel_path_for_post_install,
+    );
 
     Ok(engine_path.to_string_lossy().to_string())
 }
@@ -325,7 +332,10 @@ fn looks_like_lc0(engine_rel_path: &str, url: &str) -> bool {
     let u = url.to_ascii_lowercase();
 
     // Typical desktop installs: .../lc0.exe (from zip) and URLs containing lc0-v...
-    rel.ends_with("lc0.exe") || rel.contains("/lc0") || u.contains("/lc0-") || u.contains("leelachesszero")
+    rel.ends_with("lc0.exe")
+        || rel.contains("/lc0")
+        || u.contains("/lc0-")
+        || u.contains("leelachesszero")
 }
 
 /// Entry for one Lc0 neural network file (e.g. maia-1100.pb.gz).
@@ -368,7 +378,9 @@ pub fn list_lc0_networks(app: tauri::AppHandle) -> Result<Vec<Lc0NetworkEntry>, 
             // Parse maia-<elo>.pb.gz -> display "Maia <elo>", elo = Some(elo)
             let name_lc = name.to_lowercase();
             let (display_name, elo) = if name_lc.starts_with("maia-") {
-                let rest = name_lc.trim_start_matches("maia-").trim_end_matches(".pb.gz");
+                let rest = name_lc
+                    .trim_start_matches("maia-")
+                    .trim_end_matches(".pb.gz");
                 if let Ok(elo) = rest.parse::<u16>() {
                     (format!("Maia {}", elo), Some(elo))
                 } else {
@@ -388,13 +400,11 @@ pub fn list_lc0_networks(app: tauri::AppHandle) -> Result<Vec<Lc0NetworkEntry>, 
         .collect();
 
     // Sort: Maia by ELO ascending, then others by display_name
-    entries.sort_by(|a, b| {
-        match (a.elo, b.elo) {
-            (Some(ea), Some(eb)) => ea.cmp(&eb),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.display_name.cmp(&b.display_name),
-        }
+    entries.sort_by(|a, b| match (a.elo, b.elo) {
+        (Some(ea), Some(eb)) => ea.cmp(&eb),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.display_name.cmp(&b.display_name),
     });
 
     Ok(entries)
@@ -416,7 +426,9 @@ fn migrate_lc0_root_files_to_subdir(engines_dir: &Path, lc0_dir: &Path) -> Resul
             continue;
         }
 
-        let Some(name_os) = path.file_name() else { continue };
+        let Some(name_os) = path.file_name() else {
+            continue;
+        };
         let name = name_os.to_string_lossy();
         let name_lc = name.to_ascii_lowercase();
 
@@ -424,18 +436,17 @@ fn migrate_lc0_root_files_to_subdir(engines_dir: &Path, lc0_dir: &Path) -> Resul
             continue;
         }
 
-        let is_lc0_related =
-            name_lc == "lc0.exe"
-                || name_lc == "lc0-training-client.exe"
-                || name_lc == "copying"
-                || name_lc == "readme.txt"
-                || name_lc == "cuda.txt"
-                || name_lc.ends_with(".pb.gz")
-                || name_lc.starts_with("cublas")
-                || name_lc.starts_with("cudart")
-                || name_lc.starts_with("cudnn")
-                || name_lc.starts_with("onnxruntime")
-                || name_lc.starts_with("mimalloc-");
+        let is_lc0_related = name_lc == "lc0.exe"
+            || name_lc == "lc0-training-client.exe"
+            || name_lc == "copying"
+            || name_lc == "readme.txt"
+            || name_lc == "cuda.txt"
+            || name_lc.ends_with(".pb.gz")
+            || name_lc.starts_with("cublas")
+            || name_lc.starts_with("cudart")
+            || name_lc.starts_with("cudnn")
+            || name_lc.starts_with("onnxruntime")
+            || name_lc.starts_with("mimalloc-");
 
         if !is_lc0_related {
             continue;
@@ -495,7 +506,9 @@ async fn download_lc0_networks(app: tauri::AppHandle) -> Result<(), Error> {
         let id = format!("lc0_network_{}", file_name.replace(' ', "_"));
 
         // Best-effort: if one network fails, continue with the rest.
-        if let Err(e) = download_file(id, url.to_string(), dest, app.clone(), None, None, None).await {
+        if let Err(e) =
+            download_file(id, url.to_string(), dest, app.clone(), None, None, None).await
+        {
             warn!("Lc0 network download failed ({url}): {e}");
         }
     }
@@ -557,7 +570,11 @@ fn get_max_adapter_ram_bytes() -> Option<u64> {
         }
     }
 
-    if max > 0 { Some(max) } else { None }
+    if max > 0 {
+        Some(max)
+    } else {
+        None
+    }
 }
 
 async fn download_to_file(
@@ -581,7 +598,9 @@ async fn download_to_file(
 
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if downloaded > MAX_DOWNLOAD_SIZE {
-            return Err(Error::PackageManager("Download size limit exceeded".to_string()));
+            return Err(Error::PackageManager(
+                "Download size limit exceeded".to_string(),
+            ));
         }
 
         file.write_all(&chunk).await?;
@@ -594,8 +613,6 @@ async fn download_to_file(
     }
 
     file.sync_all().await?;
-
-    info!("Downloaded file to {}", path.display());
 
     if finalize {
         emit_progress(app, id, 100.0, true)?;
@@ -633,7 +650,9 @@ async fn download_and_extract(
 
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if downloaded > MAX_DOWNLOAD_SIZE {
-            return Err(Error::PackageManager("Download size limit exceeded".to_string()));
+            return Err(Error::PackageManager(
+                "Download size limit exceeded".to_string(),
+            ));
         }
 
         tmp_file.write_all(&chunk).await?;
@@ -647,12 +666,6 @@ async fn download_and_extract(
 
         emit_progress(app, id, progress, false)?;
     }
-
-    info!(
-        "Downloaded {} bytes, starting extraction to {}",
-        downloaded,
-        path.display()
-    );
 
     // Extraction phase: keep progress at 100 but `finished=false` so the UI shows the `finalizing` label.
     emit_progress(app, id, 100.0, false)?;
@@ -680,8 +693,6 @@ async fn download_and_extract(
 
     let _ = std::fs::remove_file(&tmp_path);
 
-    info!("Extraction complete");
-
     if finalize {
         emit_progress(app, id, 100.0, true)?;
     }
@@ -695,10 +706,16 @@ fn validate_destination_path(app: &tauri::AppHandle, path: &Path) -> Result<(), 
         app.path().app_cache_dir(),
         app.path().config_dir(),
     ];
-    validate_destination_path_with_roots(path, &allowed_roots.into_iter().flatten().collect::<Vec<_>>())
+    validate_destination_path_with_roots(
+        path,
+        &allowed_roots.into_iter().flatten().collect::<Vec<_>>(),
+    )
 }
 
-fn validate_destination_path_with_roots(path: &Path, allowed_roots: &[PathBuf]) -> Result<(), Error> {
+fn validate_destination_path_with_roots(
+    path: &Path,
+    allowed_roots: &[PathBuf],
+) -> Result<(), Error> {
     if !path.is_absolute() {
         return Err(Error::PackageManager(
             "Destination path must be absolute".to_string(),
@@ -808,7 +825,11 @@ fn unzip_file_from_path(dest_dir: &Path, archive_path: &Path) -> Result<(), Erro
     Ok(())
 }
 
-fn extract_tar_file_from_path(dest_dir: &Path, archive_path: &Path, is_gz: bool) -> Result<(), Error> {
+fn extract_tar_file_from_path(
+    dest_dir: &Path,
+    archive_path: &Path,
+    is_gz: bool,
+) -> Result<(), Error> {
     use flate2::read::GzDecoder;
     use std::io::{BufRead, BufReader, Read};
 
@@ -991,12 +1012,14 @@ pub async fn set_file_as_executable(path: String) -> Result<(), Error> {
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions)?;
-        info!("Set file as executable: {}", path.display());
     }
 
     #[cfg(not(unix))]
     {
-        warn!("set_file_as_executable called on Windows for: {}", path.display());
+        warn!(
+            "set_file_as_executable called on Windows for: {}",
+            path.display()
+        );
     }
 
     Ok(())
@@ -1073,17 +1096,15 @@ pub async fn save_welcome_card_image(
         })?;
 
     // Ensure directory exists
-    fs::create_dir_all(&dest_dir).map_err(|e| {
-        Error::PackageManager(format!("Failed to create directory: {}", e))
-    })?;
+    fs::create_dir_all(&dest_dir)
+        .map_err(|e| Error::PackageManager(format!("Failed to create directory: {}", e)))?;
 
     // Use a fixed filename: custom-image.{ext}
     let dest_path = dest_dir.join(format!("custom-image.{}", extension));
 
     // Copy the file
-    fs::copy(source, &dest_path).map_err(|e| {
-        Error::PackageManager(format!("Failed to copy file: {}", e))
-    })?;
+    fs::copy(source, &dest_path)
+        .map_err(|e| Error::PackageManager(format!("Failed to copy file: {}", e)))?;
 
     // Return the relative path that can be used with BaseDirectory::AppData
     Ok(format!("welcome-card-image/custom-image.{}", extension))
@@ -1179,7 +1200,8 @@ mod tests {
         let allowed = vec![root.clone()];
 
         // must be absolute
-        let err = validate_destination_path_with_roots(Path::new("relative/path"), &allowed).unwrap_err();
+        let err =
+            validate_destination_path_with_roots(Path::new("relative/path"), &allowed).unwrap_err();
         match err {
             Error::PackageManager(msg) => assert!(msg.contains("must be absolute")),
             other => panic!("expected PackageManager, got {:?}", other),
@@ -1311,7 +1333,7 @@ mod tests {
         let tar_path = dir.join("bad.tar");
         let out_dir = dir.join("out");
         let outside = dir.join("evil.txt");
-    
+
         // Craft a minimal tar file manually with a traversal entry: "../evil.txt"
         {
             fn write_octal(field: &mut [u8], value: u64) {
@@ -1321,69 +1343,68 @@ mod tests {
                 field[..width].copy_from_slice(s.as_bytes());
                 field[width] = 0;
             }
-    
+
             let mut header = [0u8; 512];
-    
+
             // name (0..100)
             let name = b"../evil.txt";
             header[..name.len()].copy_from_slice(name);
-    
+
             // mode (100..108), uid (108..116), gid (116..124)
             write_octal(&mut header[100..108], 0o644);
             write_octal(&mut header[108..116], 0);
             write_octal(&mut header[116..124], 0);
-    
+
             // size (124..136), mtime (136..148)
             let payload = b"nope";
             write_octal(&mut header[124..136], payload.len() as u64);
             write_octal(&mut header[136..148], 0);
-    
+
             // checksum field (148..156) must be spaces while computing checksum
             header[148..156].fill(b' ');
-    
+
             // typeflag (156) = '0' for regular file
             header[156] = b'0';
-    
+
             // magic/version for ustar
             header[257..263].copy_from_slice(b"ustar\0");
             header[263..265].copy_from_slice(b"00");
-    
+
             // compute checksum
             let chksum: u32 = header.iter().map(|b| *b as u32).sum();
-    
+
             // write checksum as 6 digits, NUL, space (tar convention)
             let chk = format!("{:06o}\0 ", chksum);
             header[148..156].copy_from_slice(chk.as_bytes());
-    
+
             let mut bytes = Vec::new();
             bytes.extend_from_slice(&header);
             bytes.extend_from_slice(payload);
-    
+
             // pad file contents to 512 boundary
             bytes.resize(((bytes.len() + 511) / 512) * 512, 0);
-    
+
             // two 512-byte zero blocks mark end of archive
             bytes.extend_from_slice(&[0u8; 1024]);
-    
+
             std::fs::write(&tar_path, bytes).unwrap();
         }
-    
+
         let res = extract_tar_file_from_path(&out_dir, &tar_path, false);
-    
+
         assert!(
             !outside.exists(),
             "Path traversal detected: wrote outside destination: {}",
             outside.display()
         );
-    
+
         if res.is_ok() {
             let inside = out_dir.join("evil.txt");
             let _ = inside;
         }
-    
+
         cleanup_dir(&dir);
     }
-    
 
     #[test]
     fn set_file_as_executable_errors_for_missing_and_dir() {

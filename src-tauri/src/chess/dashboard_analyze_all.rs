@@ -4,15 +4,13 @@
 //! The frontend sends a run payload, then listens to incremental events with
 //! per-game analysis results and progress updates.
 
-use serde::{Deserialize, Serialize};
-use pgn_reader::{BufferedReader, SanPlus as ReaderSanPlus, Skip, Visitor};
-use shakmaty::{
-    fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess,
-};
-use specta::Type;
-use tauri::Emitter;
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use pgn_reader::{BufferedReader, SanPlus as ReaderSanPlus, Skip, Visitor};
+use serde::{Deserialize, Serialize};
+use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess};
+use specta::Type;
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::error::Error;
@@ -289,15 +287,7 @@ fn collect_mainline_san_tokens_from_pgn(pgn: &str) -> Result<Vec<String>, Error>
 fn looks_like_move_start(ch: char) -> bool {
     matches!(
         ch,
-        'a'..='h'
-            | 'N'
-            | 'B'
-            | 'R'
-            | 'Q'
-            | 'K'
-            | 'O'
-            | 'o'
-            | '0'
+        'a'..='h' | 'N' | 'B' | 'R' | 'Q' | 'K' | 'O' | 'o' | '0'
     )
 }
 
@@ -349,8 +339,9 @@ fn find_first_move_index(text: &str) -> Option<usize> {
 }
 
 fn is_obvious_non_move_token(token: &str) -> bool {
-    let trimmed = token
-        .trim_matches(|c: char| c == '"' || c == '\'' || c == '[' || c == ']' || c == ',' || c == ';' || c == ':');
+    let trimmed = token.trim_matches(|c: char| {
+        c == '"' || c == '\'' || c == '[' || c == ']' || c == ',' || c == ';' || c == ':'
+    });
     if trimmed.is_empty() {
         return true;
     }
@@ -394,7 +385,10 @@ fn is_obvious_non_move_token(token: &str) -> bool {
     }
 
     // Plain words (no square digits) are not SAN/UCI moves.
-    if lower.chars().all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-') {
+    if lower
+        .chars()
+        .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
+    {
         return true;
     }
 
@@ -426,7 +420,8 @@ fn try_parse_move_from_token(token: &str, position: &Chess) -> Option<shakmaty::
         if candidate.is_empty() {
             continue;
         }
-        candidate = candidate.trim_end_matches(|c: char| matches!(c, '!' | '?' | ',' | ';' | ':' | '.'));
+        candidate =
+            candidate.trim_end_matches(|c: char| matches!(c, '!' | '?' | ',' | ';' | ':' | '.'));
         if candidate.len() < 2 {
             continue;
         }
@@ -532,11 +527,7 @@ fn pgn_mainline_to_uci_moves(initial_fen: &str, pgn: &str) -> Result<Vec<String>
 }
 
 fn resolve_job(job: &DashboardAnalyzeAllJobInput) -> Result<(String, Vec<String>), Error> {
-    let pgn_text = job
-        .pgn
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let pgn_text = job.pgn.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let pgn_setup_from_position = pgn_text.map(setup_is_from_position).unwrap_or(false);
     let pgn_fen = pgn_text.and_then(extract_fen_from_pgn);
 
@@ -576,8 +567,9 @@ fn resolve_job(job: &DashboardAnalyzeAllJobInput) -> Result<(String, Vec<String>
         }
     }
 
-    let pgn = pgn_text
-        .ok_or_else(|| Error::InvalidInput(format!("Analyze-all job '{}' has no PGN/moves", job.job_id)))?;
+    let pgn = pgn_text.ok_or_else(|| {
+        Error::InvalidInput(format!("Analyze-all job '{}' has no PGN/moves", job.job_id))
+    })?;
 
     let fen = job
         .fen

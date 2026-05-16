@@ -201,7 +201,26 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
       }
     }
 
-    const orderedIds = ["about", "check_for_updates", "settings", "quit", "force_reload"];
+    const orderedIds = [
+      "command_palette",
+      "go_dashboard",
+      "go_profiles",
+      "go_events",
+      "go_play_board",
+      "go_analysis_board",
+      "go_puzzles",
+      "go_files",
+      "go_databases",
+      "go_engines",
+      "go_variants",
+      "go_chessbase",
+      "go_tournaments",
+      "go_settings",
+      "go_keyboard_shortcuts",
+      "check_for_updates",
+      "about",
+      "quit",
+    ];
     return orderedIds.map((id) => byId.get(id) ?? null);
   }, [isCompactHeader, menuActions]);
 
@@ -251,10 +270,14 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
                 : menuActions.map((group) => (
                     <React.Fragment key={group.label}>
                       <Menu.Label>{group.label}</Menu.Label>
-                      {group.options.map((option, i) =>
-                        option.label === "divider" ? (
-                          <Menu.Divider key={`${group.label}-divider-${i}`} />
-                        ) : (
+                      {group.options.map((option, i) => {
+                        if (option.label === "divider") {
+                          const previousId = group.options[i - 1]?.id ?? "start";
+                          const nextId = group.options[i + 1]?.id ?? "end";
+                          return <Menu.Divider key={`${group.label}-divider-${previousId}-${nextId}`} />;
+                        }
+
+                        return (
                           <Menu.Item
                             key={option.id ?? `${group.label}-${option.label}`}
                             onClick={option.action}
@@ -268,8 +291,8 @@ export function MayaHeader({ menuActions }: { menuActions: MenuGroup[] }) {
                           >
                             {option.label}
                           </Menu.Item>
-                        ),
-                      )}
+                        );
+                      })}
                     </React.Fragment>
                   ))}
             </Menu.Dropdown>

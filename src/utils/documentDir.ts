@@ -1,6 +1,6 @@
 import { homeDir, resolve, documentDir as tauriDocumentDir } from "@tauri-apps/api/path";
 import { exists, mkdir } from "@tauri-apps/plugin-fs";
-import { error, info } from "@tauri-apps/plugin-log";
+import { error } from "@tauri-apps/plugin-log";
 import { getDefaultStore } from "jotai";
 import { storedDocumentDirAtom } from "@/state/atoms";
 
@@ -20,10 +20,8 @@ export async function getDocumentDir(): Promise<string> {
     // Ensure the directory exists
     if (!(await exists(docDir))) {
       await mkdir(docDir, { recursive: true });
-      info(`Created documents directory: ${docDir}`);
     }
 
-    info(`Using documents directory: ${docDir}`);
     return docDir;
   } catch (e) {
     error(`Failed to access documents directory: ${e}`);
@@ -35,10 +33,8 @@ export async function getDocumentDir(): Promise<string> {
       // Ensure the fallback directory exists
       if (!(await exists(homeDirPath))) {
         await mkdir(homeDirPath, { recursive: true });
-        info(`Created fallback documents directory: ${homeDirPath}`);
       }
 
-      info(`Fallback to home directory: ${homeDirPath}`);
       return homeDirPath;
     } catch (homeError) {
       error(`Failed to access home directory: ${homeError}`);

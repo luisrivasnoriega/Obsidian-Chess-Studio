@@ -1,6 +1,6 @@
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { exists, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { error, info } from "@tauri-apps/plugin-log";
+import { error } from "@tauri-apps/plugin-log";
 
 export interface FavoriteGame {
   gameId: string;
@@ -15,7 +15,6 @@ async function ensureFavoriteGamesFile(): Promise<void> {
 
   if (!(await exists(filePath))) {
     await writeTextFile(filePath, JSON.stringify([]));
-    info(`Created favorite games file: ${filePath}`);
   }
 }
 

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::db::{NormalizedGame, Outcome, PositionStats};
 use futures_util::{SinkExt, StreamExt};
 use shakmaty::fen::Fen;
 use shakmaty::san::San;
@@ -9,11 +10,10 @@ use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, EnPassantMode, Position as _};
 use tauri::State;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use crate::db::{NormalizedGame, Outcome, PositionStats};
+use tokio_tungstenite::tungstenite::Error as WsError;
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Serialize, specta::Type)]
 pub struct ChessbaseCredentialsSummary {
@@ -74,8 +74,8 @@ fn load_credentials() -> Result<Option<StoredCredentials>, String> {
     let entry = credentials_entry()?;
     match entry.get_password() {
         Ok(secret) => {
-            let creds: StoredCredentials =
-                serde_json::from_str(&secret).map_err(|e| format!("Invalid stored credentials: {e}"))?;
+            let creds: StoredCredentials = serde_json::from_str(&secret)
+                .map_err(|e| format!("Invalid stored credentials: {e}"))?;
             Ok(Some(creds))
         }
         Err(_) => Ok(None),
@@ -551,7 +551,11 @@ impl SearchMask {
 
     fn new_quick_search(free_text: String) -> Self {
         // FilterFlagsEnum from SearchMask.js: wins=0x10 draws=0x20 losses=0x40 white=0x100 black=0x200.
-        let flags = Self::OLSM_WINS | Self::OLSM_DRAWS | Self::OLSM_LOSSES | Self::OLSM_WHITE | Self::OLSM_BLACK;
+        let flags = Self::OLSM_WINS
+            | Self::OLSM_DRAWS
+            | Self::OLSM_LOSSES
+            | Self::OLSM_WHITE
+            | Self::OLSM_BLACK;
         Self {
             free_text,
             min_eco: 0,
@@ -805,7 +809,8 @@ fn fen_to_cb_board_and_side(fen: &str) -> Result<([u8; 64], u8), String> {
             if ch.is_ascii_digit() {
                 let empty = ch
                     .to_digit(10)
-                    .ok_or_else(|| format!("Invalid FEN digit: {ch}"))? as usize;
+                    .ok_or_else(|| format!("Invalid FEN digit: {ch}"))?
+                    as usize;
                 file += empty;
                 continue;
             }
@@ -915,8 +920,16 @@ fn parse_game_header(buf: &mut DataBuffer) -> Result<ParsedGameHeader, String> {
         black,
         event,
         site,
-        white_elo: if elo_wh > 0 { Some(elo_wh as i32) } else { None },
-        black_elo: if elo_bl > 0 { Some(elo_bl as i32) } else { None },
+        white_elo: if elo_wh > 0 {
+            Some(elo_wh as i32)
+        } else {
+            None
+        },
+        black_elo: if elo_bl > 0 {
+            Some(elo_bl as i32)
+        } else {
+            None
+        },
         date,
         result,
     })
@@ -1077,9 +1090,13 @@ fn build_san_moves(game: &ParsedGame) -> Result<(Vec<String>, bool), String> {
     let mut sans: Vec<String> = Vec::with_capacity(game.moves.len());
     for (from, to, prom) in &game.moves {
         let uci = cb_move_to_uci(*from, *to, *prom)?;
-        let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
+        let mv = uci
+            .to_move(&pos)
+            .map_err(|e| format!("Illegal move: {e}"))?;
         let san = San::from_move(&pos, &mv);
-        pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
+        pos = pos
+            .play(&mv)
+            .map_err(|e| format!("Failed to play move: {e}"))?;
         sans.push(san.to_string());
     }
 
@@ -1191,17 +1208,26 @@ fn parsed_game_to_normalized(game_no: u32, game: &ParsedGame) -> Result<Normaliz
     })
 }
 
-fn find_next_move_san_for_position(game: &ParsedGame, target_key: &str) -> Result<Option<String>, String> {
+fn find_next_move_san_for_position(
+    game: &ParsedGame,
+    target_key: &str,
+) -> Result<Option<String>, String> {
     let mut pos = starting_position_for_game(game)?;
     for (from, to, prom) in &game.moves {
         if position_key(&pos) == target_key {
             let uci = cb_move_to_uci(*from, *to, *prom)?;
-            let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
+            let mv = uci
+                .to_move(&pos)
+                .map_err(|e| format!("Illegal move: {e}"))?;
             return Ok(Some(San::from_move(&pos, &mv).to_string()));
         }
         let uci = cb_move_to_uci(*from, *to, *prom)?;
-        let mv = uci.to_move(&pos).map_err(|e| format!("Illegal move: {e}"))?;
-        pos = pos.play(&mv).map_err(|e| format!("Failed to play move: {e}"))?;
+        let mv = uci
+            .to_move(&pos)
+            .map_err(|e| format!("Illegal move: {e}"))?;
+        pos = pos
+            .play(&mv)
+            .map_err(|e| format!("Failed to play move: {e}"))?;
     }
     Ok(None)
 }
@@ -1290,7 +1316,12 @@ struct ActiveCount {
     respond_to: oneshot::Sender<Result<ChessbaseQuickSearchCount, String>>,
 }
 
-fn build_logon_message(username: &str, password: &str, mode: LoginMode, has_sock_ids: bool) -> Vec<u8> {
+fn build_logon_message(
+    username: &str,
+    password: &str,
+    mode: LoginMode,
+    has_sock_ids: bool,
+) -> Vec<u8> {
     let mut msg = WebSockMessage::new(SockMsgId::Logon);
     msg.id_sender = 0;
     msg.id_receiver = 1;
@@ -1329,7 +1360,14 @@ async fn start_ws_session(username: String, password: String) -> Arc<ChessbaseWs
     });
 
     tauri::async_runtime::spawn(async move {
-        let res = run_ws_session(username, password, &mut requests_rx, ready_tx, Arc::clone(&last_error)).await;
+        let res = run_ws_session(
+            username,
+            password,
+            &mut requests_rx,
+            ready_tx,
+            Arc::clone(&last_error),
+        )
+        .await;
         if let Err(e) = res {
             *last_error.lock().await = Some(e);
         }
@@ -1662,7 +1700,10 @@ async fn send_next_games_batch(
     req_games.n_val = 2;
     req_games.id_sender = connect_id;
     req_games.id_receiver = 1;
-    req_games.msg_id = { *msg_cnt += 1; *msg_cnt };
+    req_games.msg_id = {
+        *msg_cnt += 1;
+        *msg_cnt
+    };
     req_games.buf.write_u32_le(batch.len() as u32);
     for id in batch {
         req_games.buf.write_u32_le(id);
@@ -1675,8 +1716,7 @@ async fn send_next_games_batch(
     Ok(batch_len)
 }
 
-async fn connect_chessbase_ws(
-) -> Result<
+async fn connect_chessbase_ws() -> Result<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     String,
 > {
@@ -1700,7 +1740,11 @@ async fn connect_chessbase_ws(
         Err(e) => {
             // If we got an HTTP response, include the status/headers for debugging.
             let extra = match &e {
-                WsError::Http(resp) => format!(" (http status={}, headers={:?})", resp.status(), resp.headers()),
+                WsError::Http(resp) => format!(
+                    " (http status={}, headers={:?})",
+                    resp.status(),
+                    resp.headers()
+                ),
                 _ => String::new(),
             };
 
@@ -1767,7 +1811,9 @@ pub async fn chessbase_clear_credentials(state: State<'_, crate::AppState>) -> R
 
 #[tauri::command]
 #[specta::specta]
-pub async fn chessbase_session_status(state: State<'_, crate::AppState>) -> Result<ChessbaseSessionStatus, String> {
+pub async fn chessbase_session_status(
+    state: State<'_, crate::AppState>,
+) -> Result<ChessbaseSessionStatus, String> {
     let session = {
         let ws = state.chessbase_ws.lock().await;
         ws.session.clone()
@@ -1802,13 +1848,19 @@ pub async fn chessbase_session_status(state: State<'_, crate::AppState>) -> Resu
 
 #[tauri::command]
 #[specta::specta]
-pub async fn chessbase_login_background(state: State<'_, crate::AppState>) -> Result<ChessbaseSessionStatus, String> {
+pub async fn chessbase_login_background(
+    state: State<'_, crate::AppState>,
+) -> Result<ChessbaseSessionStatus, String> {
     let session = ensure_session(state.inner()).await?;
     let mut connected = *session.ready_rx.borrow();
 
     if !connected && session.last_error.lock().await.is_none() {
         let mut rx = session.ready_rx.clone();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(LOGIN_WAIT_SECS), rx.changed()).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(LOGIN_WAIT_SECS),
+            rx.changed(),
+        )
+        .await;
         connected = *session.ready_rx.borrow();
     }
 
@@ -1851,7 +1903,8 @@ pub async fn chessbase_download_games_quick_search(
         })
         .map_err(|_| "ChessBase session unavailable".to_string())?;
 
-    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+    rx.await
+        .map_err(|_| "ChessBase request canceled".to_string())?
 }
 
 #[tauri::command]
@@ -1891,7 +1944,8 @@ pub async fn chessbase_search_position(
         })
         .map_err(|_| "ChessBase session unavailable".to_string())?;
 
-    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+    rx.await
+        .map_err(|_| "ChessBase request canceled".to_string())?
 }
 
 #[tauri::command]
@@ -1908,15 +1962,21 @@ pub async fn chessbase_quick_search_count(
     let (tx, rx) = oneshot::channel();
     session
         .requests_tx
-        .send(ChessbaseWsRequest::CountByQuickSearch { query, respond_to: tx })
+        .send(ChessbaseWsRequest::CountByQuickSearch {
+            query,
+            respond_to: tx,
+        })
         .map_err(|_| "ChessBase session unavailable".to_string())?;
 
-    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+    rx.await
+        .map_err(|_| "ChessBase request canceled".to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn chessbase_cancel_active_request(state: State<'_, crate::AppState>) -> Result<(), String> {
+pub async fn chessbase_cancel_active_request(
+    state: State<'_, crate::AppState>,
+) -> Result<(), String> {
     let ws = state.chessbase_ws.lock().await;
     let session = ws
         .session
@@ -1931,5 +1991,6 @@ pub async fn chessbase_cancel_active_request(state: State<'_, crate::AppState>) 
         .send(ChessbaseWsRequest::CancelActive { respond_to: tx })
         .map_err(|_| "ChessBase session unavailable".to_string())?;
 
-    rx.await.map_err(|_| "ChessBase request canceled".to_string())?
+    rx.await
+        .map_err(|_| "ChessBase request canceled".to_string())?
 }

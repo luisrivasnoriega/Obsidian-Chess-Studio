@@ -169,10 +169,16 @@ type PositionGames = {
   month: string;
 }[];
 
-export async function convertToNormalized(data: PositionGames): Promise<NormalizedGame[]> {
+function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
+}
+
+export async function convertToNormalized(data: PositionGames, signal?: AbortSignal): Promise<NormalizedGame[]> {
+  throwIfAborted(signal);
   const results = await Promise.allSettled(
     data.map(async (game, i) => {
-      const pgn = await getLichessGame(game.id);
+      const pgn = await getLichessGame(game.id, signal);
       const { headers, root } = await parsePGN(pgn);
       const normalized: NormalizedGame = {
         ...headers,
@@ -188,6 +194,7 @@ export async function convertToNormalized(data: PositionGames): Promise<Normaliz
       return normalized;
     }),
   );
+  throwIfAborted(signal);
   return results
     .filter((r) => r.status === "fulfilled")
     .map((r) => (r as PromiseFulfilledResult<NormalizedGame>).value);
@@ -416,7 +423,10 @@ export async function getBestMoves(
       const normalizedUciMoves: string[] = [];
 
       const sanMoves = uciMoves.map((m) => {
-        const move = parseUci(m)!;
+        const move = parseUci(m);
+        if (!move) {
+          throw new Error(`Invalid cloud evaluation move: ${m}`);
+        }
         const san = makeSan(posCopy, move);
         normalizedUciMoves.push(
           uciNormalize(
@@ -465,8 +475,10 @@ type LichessMate = {
 };
 
 async function getCloudEvaluation(fen: string, multipv: number): Promise<LichessCloudData> {
-  if (cache.has(`${fen}-${multipv}`)) {
-    return cache.get(`${fen}-${multipv}`)!;
+  const cacheKey = `${fen}-${multipv}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
   const url = new URL(`${baseURL}/cloud-eval`);
   url.searchParams.append("fen", fen);
@@ -474,7 +486,7 @@ async function getCloudEvaluation(fen: string, multipv: number): Promise<Lichess
 
   const response = await fetch(url.toString());
   const data = await parseJsonResponse<LichessCloudData>(response as unknown as Response, "Lichess cloud evaluation");
-  cache.set(`${fen}-${multipv}`, data);
+  cache.set(cacheKey, data);
   return data;
 }
 
@@ -483,16 +495,19 @@ export async function getLichessGames(
   options: LichessGamesOptions,
   token?: string,
   signal?: AbortSignal,
+  useCoverageCache: boolean = true,
 ): Promise<PositionData> {
   const cacheConfigJson = normalizeLichessAllCacheConfig(options);
   const sourceSignature = cacheConfigJson;
-  try {
-    const cached = await getCoverageExplorerCache(sourceSignature, fen);
-    if (cached) {
-      return positionDataFromCoverageCache(cached);
+  if (useCoverageCache) {
+    try {
+      const cached = await getCoverageExplorerCache(sourceSignature, fen);
+      if (cached) {
+        return positionDataFromCoverageCache(cached);
+      }
+    } catch {
+      // Coverage cache is best effort and should not block explorer usage.
     }
-  } catch {
-    // Coverage cache is best effort and should not block explorer usage.
   }
 
   const url = match(options.player)
@@ -593,8 +608,8 @@ export async function downloadLichess(
   );
 }
 
-export async function getLichessGame(gameId: string): Promise<string> {
-  const response = await window.fetch(`https://lichess.org/game/export/${gameId.slice(0, 8)}`);
+export async function getLichessGame(gameId: string, signal?: AbortSignal): Promise<string> {
+  const response = await window.fetch(`https://lichess.org/game/export/${gameId.slice(0, 8)}`, { signal });
   if (!response.ok) {
     throw new Error(`Failed to load lichess game ${gameId} - ${response.statusText}`);
   }

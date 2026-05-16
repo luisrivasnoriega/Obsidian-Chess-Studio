@@ -3,8 +3,8 @@
 //! This module provides the `EngineProcess` struct for managing a UCI chess engine process,
 //! sending commands, updating options, and parsing engine output for best-move analysis.
 
-use std::path::PathBuf;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use std::time::Instant;
 
@@ -93,11 +93,7 @@ impl EngineProcess {
         }
     }
 
-    async fn write_with_timeout(
-        &mut self,
-        msg: &str,
-        timeout_error: Error,
-    ) -> Result<(), Error> {
+    async fn write_with_timeout(&mut self, msg: &str, timeout_error: Error) -> Result<(), Error> {
         let write_result = timeout(UCI_COMMAND_TIMEOUT, self.stdin.write_all(msg.as_bytes())).await;
         match write_result {
             Ok(Ok(())) => {
@@ -164,7 +160,8 @@ impl EngineProcess {
 
     /// Ask the engine to report when it has processed all pending commands.
     pub async fn request_ready(&mut self) -> Result<(), Error> {
-        self.write_with_timeout("isready\n", Error::EngineTimeout).await
+        self.write_with_timeout("isready\n", Error::EngineTimeout)
+            .await
     }
 
     /// Set all engine options, including FEN, moves, and extra UCI options.
@@ -199,7 +196,10 @@ impl EngineProcess {
             self.set_position(&options.fen, &options.moves).await?;
         }
         // Send isready after setting options to ensure engine is ready
-        let has_uci_showwdl = options.extra_options.iter().any(|o| o.name == "UCI_ShowWDL");
+        let has_uci_showwdl = options
+            .extra_options
+            .iter()
+            .any(|o| o.name == "UCI_ShowWDL");
         if has_uci_showwdl {
             self.write_with_timeout("isready\n", Error::EngineTimeout)
                 .await?;
@@ -447,7 +447,8 @@ pub fn parse_uci_attrs_with_line(
     }
 
     // If no PV was found in attributes but we have WDL, try to parse PV manually from original line
-    if best_moves.san_moves.is_empty() && best_moves.score.wdl.is_some() && original_line.is_some() {
+    if best_moves.san_moves.is_empty() && best_moves.score.wdl.is_some() && original_line.is_some()
+    {
         if let Some(line) = original_line {
             // Try to extract PV from line like "info ... pv e2e4 d7d5 ..."
             if let Some(pv_start) = line.find(" pv ") {
@@ -464,7 +465,7 @@ pub fn parse_uci_attrs_with_line(
             }
         }
     }
-    
+
     if best_moves.san_moves.is_empty() {
         return Err(Error::NoMovesFound);
     }

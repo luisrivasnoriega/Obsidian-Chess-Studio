@@ -87,10 +87,13 @@ pub fn build_annotated_pgn(request: BuildAnnotatedPgnRequest) -> Result<String, 
         }
     }
 
-    let (mut headers, result_token) = extract_or_build_headers(original_pgn.as_deref(), &initial_fen);
+    let (mut headers, result_token) =
+        extract_or_build_headers(original_pgn.as_deref(), &initial_fen);
     ensure_annotator_header(
         &mut headers,
-        annotator.as_deref().unwrap_or("OCS Human Strategic Analyzer"),
+        annotator
+            .as_deref()
+            .unwrap_or("OCS Human Strategic Analyzer"),
     );
 
     let movetext = tree.to_string().trim().to_string();
@@ -179,7 +182,10 @@ fn is_start_position(initial_fen: &str) -> bool {
     normalize_fen_key(trimmed) == start_key
 }
 
-fn extract_or_build_headers(original_pgn: Option<&str>, initial_fen: &str) -> (Vec<String>, String) {
+fn extract_or_build_headers(
+    original_pgn: Option<&str>,
+    initial_fen: &str,
+) -> (Vec<String>, String) {
     let mut headers = extract_headers_from_pgn(original_pgn.unwrap_or_default());
     let mut result = find_tag_value(&headers, "Result").unwrap_or_else(|| "*".to_string());
     if result.trim().is_empty() {

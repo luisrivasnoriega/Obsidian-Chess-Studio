@@ -1,12 +1,12 @@
-﻿use crate::error::{Error, Result};
+use crate::error::{Error, Result};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel::sql_types::{Double, Integer, Nullable, Text};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use specta::Type;
 use shakmaty::{fen::Fen, uci::UciMove, Board, CastlingMode, Chess, Color, Position, Role, Square};
+use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -69,7 +69,10 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         perspective: "both",
         ply_from: 8,
         ply_to: 16,
-        required: &["opponent pawns on c5+g6", "opponent d-pawn not fixed on d6 by window end"],
+        required: &[
+            "opponent pawns on c5+g6",
+            "opponent d-pawn not fixed on d6 by window end",
+        ],
         contextual: &["sicilian opening family", "early ...d5 pressure motifs"],
         exclusions: &["classical dragon with fixed d6 and no acceleration evidence"],
     },
@@ -78,26 +81,47 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         perspective: "both",
         ply_from: 12,
         ply_to: 30,
-        required: &["profile isolated d-pawn", "profile no c/e pawn support on adjacent files"],
-        contextual: &["open files around isolated pawn", "minor-piece activity compensation"],
-        exclusions: &["hanging pawns c+d", "fully blocked center where isolation is irrelevant"],
+        required: &[
+            "profile isolated d-pawn",
+            "profile no c/e pawn support on adjacent files",
+        ],
+        contextual: &[
+            "open files around isolated pawn",
+            "minor-piece activity compensation",
+        ],
+        exclusions: &[
+            "hanging pawns c+d",
+            "fully blocked center where isolation is irrelevant",
+        ],
     },
     StructureCatalogRuleV1 {
         key: "IQP_OPPONENT",
         perspective: "both",
         ply_from: 12,
         ply_to: 30,
-        required: &["opponent isolated d-pawn", "opponent no c/e pawn support on adjacent files"],
+        required: &[
+            "opponent isolated d-pawn",
+            "opponent no c/e pawn support on adjacent files",
+        ],
         contextual: &["pressure squares in front of IQP (d5/d4)"],
-        exclusions: &["hanging pawns c+d", "transient isolation resolved within window"],
+        exclusions: &[
+            "hanging pawns c+d",
+            "transient isolation resolved within window",
+        ],
     },
     StructureCatalogRuleV1 {
         key: "HANGING_PAWNS_PROFILE",
         perspective: "both",
         ply_from: 12,
         ply_to: 30,
-        required: &["profile connected c+d pawns", "no b/e pawn support on adjacent files"],
-        contextual: &["central expansion potential", "file-opening risk when overextended"],
+        required: &[
+            "profile connected c+d pawns",
+            "no b/e pawn support on adjacent files",
+        ],
+        contextual: &[
+            "central expansion potential",
+            "file-opening risk when overextended",
+        ],
         exclusions: &["iqp on only one file", "fixed chain with full side support"],
     },
     StructureCatalogRuleV1 {
@@ -105,9 +129,15 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         perspective: "both",
         ply_from: 12,
         ply_to: 30,
-        required: &["opponent connected c+d pawns", "no b/e pawn support on adjacent files"],
+        required: &[
+            "opponent connected c+d pawns",
+            "no b/e pawn support on adjacent files",
+        ],
         contextual: &["blockade targets on c/d files"],
-        exclusions: &["iqp on only one file", "temporary hanging pair that resolves immediately"],
+        exclusions: &[
+            "iqp on only one file",
+            "temporary hanging pair that resolves immediately",
+        ],
     },
     StructureCatalogRuleV1 {
         key: "CARLSBAD_PROFILE",
@@ -115,8 +145,14 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         ply_from: 12,
         ply_to: 32,
         required: &["carlsbad strict pawn skeleton present for profile side"],
-        contextual: &["minority-attack plans (b4-b5) if profile is white side", "central break timing"],
-        exclusions: &["slav-like structure missing c6/d5 anchors", "symmetrical structure without c-pawn imbalance"],
+        contextual: &[
+            "minority-attack plans (b4-b5) if profile is white side",
+            "central break timing",
+        ],
+        exclusions: &[
+            "slav-like structure missing c6/d5 anchors",
+            "symmetrical structure without c-pawn imbalance",
+        ],
     },
     StructureCatalogRuleV1 {
         key: "CARLSBAD_OPPONENT",
@@ -124,7 +160,10 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         ply_from: 12,
         ply_to: 32,
         required: &["carlsbad strict pawn skeleton present for opponent side"],
-        contextual: &["minority-attack defense resources", "c-file pressure handling"],
+        contextual: &[
+            "minority-attack defense resources",
+            "c-file pressure handling",
+        ],
         exclusions: &["pseudo-carlsbad with missing c6/d5 pair"],
     },
     StructureCatalogRuleV1 {
@@ -133,7 +172,10 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         ply_from: 10,
         ply_to: 25,
         required: &["profile stonewall pawn chain (c/d/e/f)"],
-        contextual: &["dark-square control", "light-square weaknesses around e5/e4"],
+        contextual: &[
+            "dark-square control",
+            "light-square weaknesses around e5/e4",
+        ],
         exclusions: &["three-pawn partial chain without full stonewall lock"],
     },
     StructureCatalogRuleV1 {
@@ -151,7 +193,10 @@ const STRUCTURE_CATALOG_V1: &[StructureCatalogRuleV1] = &[
         ply_from: 8,
         ply_to: 22,
         required: &["french chain core (d4/e5 vs d5/e6)"],
-        contextual: &["base-of-chain attack plans", "light-squared bishop restrictions"],
+        contextual: &[
+            "base-of-chain attack plans",
+            "light-squared bishop restrictions",
+        ],
         exclusions: &["caro-kann structures without e5/e6 lock"],
     },
     StructureCatalogRuleV1 {
@@ -382,7 +427,12 @@ fn opponent(color: Color) -> Color {
     }
 }
 
-fn detect_castle_move(mover: Color, role: Role, from: Option<Square>, to: Square) -> Option<CastleSide> {
+fn detect_castle_move(
+    mover: Color,
+    role: Role,
+    from: Option<Square>,
+    to: Square,
+) -> Option<CastleSide> {
     if role != Role::King {
         return None;
     }
@@ -472,7 +522,10 @@ fn semi_open_file_control_delta(board: &Board, profile_color: Color) -> i32 {
 
     for file in 0..8 {
         // Semi-open for profile side.
-        if own_pawns[file] == 0 && opp_pawns[file] > 0 && rooks_on_file(board, profile_color, file) > 0 {
+        if own_pawns[file] == 0
+            && opp_pawns[file] > 0
+            && rooks_on_file(board, profile_color, file) > 0
+        {
             profile_count += 1;
         }
         // Semi-open for opponent side.
@@ -844,8 +897,12 @@ fn detect_grunfeld_broad_center_for_side(board: &Board, side: Color) -> bool {
     let black_not_kid_lock = !board_has_pawn(board, Color::Black, 4, 4); // avoid e5 KID lock
 
     match side {
-        Color::White => white_broad_center && black_hypermodern_shell && black_not_kid_lock && !black_d5,
-        Color::Black => white_broad_center && black_hypermodern_shell && black_not_kid_lock && black_d5,
+        Color::White => {
+            white_broad_center && black_hypermodern_shell && black_not_kid_lock && !black_d5
+        }
+        Color::Black => {
+            white_broad_center && black_hypermodern_shell && black_not_kid_lock && black_d5
+        }
     }
 }
 
@@ -1021,11 +1078,12 @@ pub fn compute_weakness_features_v1(
         let mover = pos.turn();
         let before = pos.board().clone();
 
-        let uci = UciMove::from_ascii(m.as_bytes())
-            .map_err(|_| Error::PackageManager(format!("Invalid UCI move in weakness features: {m}")))?;
-        let mv = uci
-            .to_move(&pos)
-            .map_err(|_| Error::PackageManager(format!("Illegal move in weakness features: {m}")))?;
+        let uci = UciMove::from_ascii(m.as_bytes()).map_err(|_| {
+            Error::PackageManager(format!("Invalid UCI move in weakness features: {m}"))
+        })?;
+        let mv = uci.to_move(&pos).map_err(|_| {
+            Error::PackageManager(format!("Illegal move in weakness features: {m}"))
+        })?;
 
         if let Some(side) = detect_castle_move(mover, mv.role(), mv.from(), mv.to()) {
             match mover {
@@ -1168,7 +1226,9 @@ pub fn compute_weakness_features_v1(
         }
     }
 
-    let total_ply = game_ply_count.unwrap_or(moves.len() as i32).max(moves.len() as i32);
+    let total_ply = game_ply_count
+        .unwrap_or(moves.len() as i32)
+        .max(moves.len() as i32);
     let profile_castle = match profile_color {
         Color::White => white_castle,
         Color::Black => black_castle,
@@ -1295,8 +1355,7 @@ pub fn replace_weakness_snapshot(
 ) -> Result<()> {
     ensure_profile_weakness_tables(db)?;
 
-    let filters_json_s =
-        serde_json::to_string(filters_json).unwrap_or_else(|_| "{}".to_string());
+    let filters_json_s = serde_json::to_string(filters_json).unwrap_or_else(|_| "{}".to_string());
 
     db.transaction::<_, Error, _>(|tx| {
         sql_query("DELETE FROM WeaknessEvidence WHERE SnapshotKey = ?1")
@@ -1571,7 +1630,11 @@ fn mean(sum: f64, count: usize) -> Option<f64> {
 fn accumulate_metrics(agg: &mut MetricAggregate, row: &WeaknessAggregationInputRow) {
     if let Some(outcome) = row.profile_outcome.as_deref() {
         if !outcome.eq_ignore_ascii_case("unknown") {
-            agg.loss_sum += if outcome.eq_ignore_ascii_case("loss") { 1.0 } else { 0.0 };
+            agg.loss_sum += if outcome.eq_ignore_ascii_case("loss") {
+                1.0
+            } else {
+                0.0
+            };
             agg.loss_count += 1;
         }
     }
@@ -1763,9 +1826,9 @@ fn signal_portfolio_cluster(signal_key: &str) -> &'static str {
             "rookDevelopment"
         }
         "WM_OPEN_FILE_CONTROL_LOSS" | "WM_SEMIOPEN_FILE_CONTROL_LOSS" => "fileControl",
-        "WM_H7_H2_PRESSURE_DAMAGE" | "WM_F3_F6_PRESSURE_DAMAGE" | "WM_OPPOSITE_CASTLING_COLLAPSE" => {
-            "kingAttackDefense"
-        }
+        "WM_H7_H2_PRESSURE_DAMAGE"
+        | "WM_F3_F6_PRESSURE_DAMAGE"
+        | "WM_OPPOSITE_CASTLING_COLLAPSE" => "kingAttackDefense",
         "WM_LONG_ENDGAME_CONVERSION" => "endgameConversion",
         "WM_MAROCZY_10_15" | "WM_VS_DRAGON_10_18" | "WM_VS_ACCELERATED_DRAGON_8_16" => {
             "sicilianStructures"
@@ -1872,8 +1935,12 @@ fn signal_title(signal_key: &str, perspective: SignalColorPerspective) -> &'stat
         "WM_OPPOSITE_CASTLING_COLLAPSE" => "Opposite Castling: Race Collapse",
         "WM_LONG_ENDGAME_CONVERSION" => "Endgame: Long Conversion Drop",
         "WM_MAROCZY_10_15" => match perspective {
-            SignalColorPerspective::White => "Structure: Maroczy Window Stress as White (ply 10-15)",
-            SignalColorPerspective::Black => "Structure: Maroczy Window Stress as Black (ply 10-15)",
+            SignalColorPerspective::White => {
+                "Structure: Maroczy Window Stress as White (ply 10-15)"
+            }
+            SignalColorPerspective::Black => {
+                "Structure: Maroczy Window Stress as Black (ply 10-15)"
+            }
             SignalColorPerspective::Mixed => "Structure: Maroczy Window Stress (ply 10-15)",
         },
         "WM_VS_DRAGON_10_18" => match perspective {
@@ -1892,12 +1959,8 @@ fn signal_title(signal_key: &str, perspective: SignalColorPerspective) -> &'stat
             SignalColorPerspective::Mixed => "Structure: Carlsbad Stress (ply 12-32)",
         },
         "WM_HANGING_PAWNS_12_30" => match perspective {
-            SignalColorPerspective::White => {
-                "Structure: Hanging-Pawns Stress as White (ply 12-30)"
-            }
-            SignalColorPerspective::Black => {
-                "Structure: Hanging-Pawns Stress as Black (ply 12-30)"
-            }
+            SignalColorPerspective::White => "Structure: Hanging-Pawns Stress as White (ply 12-30)",
+            SignalColorPerspective::Black => "Structure: Hanging-Pawns Stress as Black (ply 12-30)",
             SignalColorPerspective::Mixed => "Structure: Hanging-Pawns Stress (ply 12-30)",
         },
         "WM_STONEWALL_10_25" => match perspective {
@@ -1911,8 +1974,12 @@ fn signal_title(signal_key: &str, perspective: SignalColorPerspective) -> &'stat
             SignalColorPerspective::Mixed => "Structure: Benoni Stress (ply 10-25)",
         },
         "WM_VS_ACCELERATED_DRAGON_8_16" => match perspective {
-            SignalColorPerspective::White => "Structure: Accelerated Dragon Stress as White (ply 8-16)",
-            SignalColorPerspective::Black => "Structure: Accelerated Dragon Stress as Black (ply 8-16)",
+            SignalColorPerspective::White => {
+                "Structure: Accelerated Dragon Stress as White (ply 8-16)"
+            }
+            SignalColorPerspective::Black => {
+                "Structure: Accelerated Dragon Stress as Black (ply 8-16)"
+            }
             SignalColorPerspective::Mixed => "Structure: Accelerated Dragon Stress (ply 8-16)",
         },
         "WM_FRENCH_CHAIN_8_22" => match perspective {
@@ -1921,13 +1988,21 @@ fn signal_title(signal_key: &str, perspective: SignalColorPerspective) -> &'stat
             SignalColorPerspective::Mixed => "Structure: French Chain Stress (ply 8-22)",
         },
         "WM_KID_LOCKED_CENTER_10_25" => match perspective {
-            SignalColorPerspective::White => "Structure: KID Locked-Center Stress as White (ply 10-25)",
-            SignalColorPerspective::Black => "Structure: KID Locked-Center Stress as Black (ply 10-25)",
+            SignalColorPerspective::White => {
+                "Structure: KID Locked-Center Stress as White (ply 10-25)"
+            }
+            SignalColorPerspective::Black => {
+                "Structure: KID Locked-Center Stress as Black (ply 10-25)"
+            }
             SignalColorPerspective::Mixed => "Structure: KID Locked-Center Stress (ply 10-25)",
         },
         "WM_GRUNFELD_BROAD_CENTER_8_18" => match perspective {
-            SignalColorPerspective::White => "Structure: Grunfeld Broad-Center Stress as White (ply 8-18)",
-            SignalColorPerspective::Black => "Structure: Grunfeld Broad-Center Stress as Black (ply 8-18)",
+            SignalColorPerspective::White => {
+                "Structure: Grunfeld Broad-Center Stress as White (ply 8-18)"
+            }
+            SignalColorPerspective::Black => {
+                "Structure: Grunfeld Broad-Center Stress as Black (ply 8-18)"
+            }
             SignalColorPerspective::Mixed => "Structure: Grunfeld Broad-Center Stress (ply 8-18)",
         },
         _ => "Strategic Weakness",
@@ -2304,7 +2379,12 @@ fn signal_trigger_text(
     }
 }
 
-fn matched_structure_plies(row: &WeaknessAggregationInputRow, from_ply: i32, to_ply: i32, key: &str) -> Vec<i32> {
+fn matched_structure_plies(
+    row: &WeaknessAggregationInputRow,
+    from_ply: i32,
+    to_ply: i32,
+    key: &str,
+) -> Vec<i32> {
     let mut matched = Vec::new();
     for ply in from_ply..=to_ply {
         if bucket_bool(&row.ply_bucket_features_json, ply, &["structures", key]).unwrap_or(false) {
@@ -2314,12 +2394,16 @@ fn matched_structure_plies(row: &WeaknessAggregationInputRow, from_ply: i32, to_
     matched
 }
 
-fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Option<(Option<i32>, Option<i32>, Value)> {
+fn detect_signal_hit(
+    signal_key: &str,
+    row: &WeaknessAggregationInputRow,
+) -> Option<(Option<i32>, Option<i32>, Value)> {
     let signal_key = normalize_signal_key(signal_key);
     match signal_key {
         "WM_UNCASTLED_EARLY" => {
             if value_bool(&row.features_json, &["castling", "uncastledByPly12"]).unwrap_or(false) {
-                let profile_ply = value_i64(&row.features_json, &["castling", "profilePly"]).map(|v| v as i32);
+                let profile_ply =
+                    value_i64(&row.features_json, &["castling", "profilePly"]).map(|v| v as i32);
                 Some((
                     Some(1),
                     Some(12),
@@ -2333,10 +2417,22 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_LATE_ROOK_CONNECTION" => {
-            let connected = value_bool(&row.features_json, &["rookActivity", "rooksConnectedByPly20"])
-                .or_else(|| value_bool(&row.features_json, &["rookActivity", "rooksConnectedByPly18"]))
-                .unwrap_or(false);
-            let first_rook = value_i64(&row.features_json, &["rookActivity", "firstRookActivationPly"]).map(|v| v as i32);
+            let connected = value_bool(
+                &row.features_json,
+                &["rookActivity", "rooksConnectedByPly20"],
+            )
+            .or_else(|| {
+                value_bool(
+                    &row.features_json,
+                    &["rookActivity", "rooksConnectedByPly18"],
+                )
+            })
+            .unwrap_or(false);
+            let first_rook = value_i64(
+                &row.features_json,
+                &["rookActivity", "firstRookActivationPly"],
+            )
+            .map(|v| v as i32);
             let late_activation = first_rook.map(|p| p > 20).unwrap_or(true);
             if late_activation {
                 Some((
@@ -2352,11 +2448,21 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_NO_ROOK_ACTIVATION_20" => {
-            let first_rook = value_i64(&row.features_json, &["rookActivity", "firstRookActivationPly"]).map(|v| v as i32);
-            let missed_activation_blunder =
-                value_bool(&row.features_json, &["rookActivity", "missedActivationBlunder"]).unwrap_or(false);
-            let missed_activation_blunder_ply =
-                value_i64(&row.features_json, &["rookActivity", "missedActivationBlunderPly"]).map(|v| v as i32);
+            let first_rook = value_i64(
+                &row.features_json,
+                &["rookActivity", "firstRookActivationPly"],
+            )
+            .map(|v| v as i32);
+            let missed_activation_blunder = value_bool(
+                &row.features_json,
+                &["rookActivity", "missedActivationBlunder"],
+            )
+            .unwrap_or(false);
+            let missed_activation_blunder_ply = value_i64(
+                &row.features_json,
+                &["rookActivity", "missedActivationBlunderPly"],
+            )
+            .map(|v| v as i32);
             let missing_or_late = first_rook.map(|p| p > 40).unwrap_or(true);
             if missing_or_late || missed_activation_blunder {
                 let ply_from = missed_activation_blunder_ply.or(Some(30));
@@ -2377,8 +2483,16 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_OPEN_FILE_CONTROL_LOSS" => {
-            let delta_20 = value_i64(&row.features_json, &["fileControl", "openFileControlDeltaPly20"]).unwrap_or(0);
-            let delta_final = value_i64(&row.features_json, &["fileControl", "openFileControlDeltaFinal"]).unwrap_or(0);
+            let delta_20 = value_i64(
+                &row.features_json,
+                &["fileControl", "openFileControlDeltaPly20"],
+            )
+            .unwrap_or(0);
+            let delta_final = value_i64(
+                &row.features_json,
+                &["fileControl", "openFileControlDeltaFinal"],
+            )
+            .unwrap_or(0);
             if delta_20 < 0 || delta_final < 0 {
                 Some((
                     Some(15),
@@ -2393,8 +2507,16 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_SEMIOPEN_FILE_CONTROL_LOSS" => {
-            let delta_20 = value_i64(&row.features_json, &["fileControl", "semiOpenFileControlDeltaPly20"]).unwrap_or(0);
-            let delta_final = value_i64(&row.features_json, &["fileControl", "semiOpenFileControlDeltaFinal"]).unwrap_or(0);
+            let delta_20 = value_i64(
+                &row.features_json,
+                &["fileControl", "semiOpenFileControlDeltaPly20"],
+            )
+            .unwrap_or(0);
+            let delta_final = value_i64(
+                &row.features_json,
+                &["fileControl", "semiOpenFileControlDeltaFinal"],
+            )
+            .unwrap_or(0);
             if delta_20 < 0 || delta_final < 0 {
                 Some((
                     Some(15),
@@ -2409,7 +2531,11 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_H7_H2_PRESSURE_DAMAGE" => {
-            let pressure = value_i64(&row.features_json, &["pressureTargets", "hTargetPressurePly"]).map(|v| v as i32);
+            let pressure = value_i64(
+                &row.features_json,
+                &["pressureTargets", "hTargetPressurePly"],
+            )
+            .map(|v| v as i32);
             if let Some(ply) = pressure {
                 if ply <= 25 {
                     return Some((
@@ -2426,7 +2552,11 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             None
         }
         "WM_F3_F6_PRESSURE_DAMAGE" => {
-            let pressure = value_i64(&row.features_json, &["pressureTargets", "fTargetPressurePly"]).map(|v| v as i32);
+            let pressure = value_i64(
+                &row.features_json,
+                &["pressureTargets", "fTargetPressurePly"],
+            )
+            .map(|v| v as i32);
             if let Some(ply) = pressure {
                 if ply <= 25 {
                     return Some((
@@ -2443,7 +2573,8 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             None
         }
         "WM_OPPOSITE_CASTLING_COLLAPSE" => {
-            let opposite = value_bool(&row.features_json, &["castling", "oppositeSideCastling"]).unwrap_or(false);
+            let opposite = value_bool(&row.features_json, &["castling", "oppositeSideCastling"])
+                .unwrap_or(false);
             if opposite {
                 Some((
                     Some(8),
@@ -2459,8 +2590,11 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
             }
         }
         "WM_LONG_ENDGAME_CONVERSION" => {
-            let length = value_i64(&row.features_json, &["gameLengthPly"]).map(|v| v as i32).or(row.game_length_ply);
-            let is_long = value_bool(&row.features_json, &["longEndgame"]).unwrap_or(false) || length.map(|v| v >= 40).unwrap_or(false);
+            let length = value_i64(&row.features_json, &["gameLengthPly"])
+                .map(|v| v as i32)
+                .or(row.game_length_ply);
+            let is_long = value_bool(&row.features_json, &["longEndgame"]).unwrap_or(false)
+                || length.map(|v| v >= 40).unwrap_or(false);
             if is_long {
                 Some((
                     Some(40),
@@ -2775,7 +2909,11 @@ fn detect_signal_hit(signal_key: &str, row: &WeaknessAggregationInputRow) -> Opt
     }
 }
 
-fn compute_recency_score(rows: &[WeaknessAggregationInputRow], hits: &[SignalHit], now_ms: i64) -> f64 {
+fn compute_recency_score(
+    rows: &[WeaknessAggregationInputRow],
+    hits: &[SignalHit],
+    now_ms: i64,
+) -> f64 {
     let mut weighted_sum = 0.0f64;
     let mut n = 0usize;
     let lambda = std::f64::consts::LN_2 / HALF_LIFE_DAYS;
@@ -2823,9 +2961,18 @@ fn build_evidence_text(
     hit: &SignalHit,
 ) -> String {
     let signal_key = normalize_signal_key(signal_key);
-    let outcome = row.profile_outcome.clone().unwrap_or_else(|| "unknown".to_string());
-    let acpl = row.acpl.map(|v| format!("{:.1}", v)).unwrap_or_else(|| "-".to_string());
-    let acc = row.accuracy.map(|v| format!("{:.1}", v)).unwrap_or_else(|| "-".to_string());
+    let outcome = row
+        .profile_outcome
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string());
+    let acpl = row
+        .acpl
+        .map(|v| format!("{:.1}", v))
+        .unwrap_or_else(|| "-".to_string());
+    let acc = row
+        .accuracy
+        .map(|v| format!("{:.1}", v))
+        .unwrap_or_else(|| "-".to_string());
     let opponent = row
         .opponent_name
         .clone()
@@ -3147,9 +3294,16 @@ fn build_fallback_loss_cluster_signal(
     });
 
     let mut evidence_rows = Vec::new();
-    for (idx, row_idx) in evidence_order.into_iter().take(max_evidence_per_signal.max(1)).enumerate() {
+    for (idx, row_idx) in evidence_order
+        .into_iter()
+        .take(max_evidence_per_signal.max(1))
+        .enumerate()
+    {
         let row = &rows[row_idx];
-        let outcome = row.profile_outcome.clone().unwrap_or_else(|| "unknown".to_string());
+        let outcome = row
+            .profile_outcome
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         let evidence_text = format!(
             "Game {} ({}): fallback cluster hit ({}).",
             row.game_id, group_key, outcome
@@ -3224,13 +3378,19 @@ pub fn build_weakness_snapshot_v1(
         accumulate_metrics(&mut global_baseline, row);
     }
 
-    let global_loss_rate = mean(global_baseline.loss_sum, global_baseline.loss_count).unwrap_or(0.0);
+    let global_loss_rate =
+        mean(global_baseline.loss_sum, global_baseline.loss_count).unwrap_or(0.0);
     let global_acpl = mean(global_baseline.acpl_sum, global_baseline.acpl_count);
     let global_acc = mean(global_baseline.acc_sum, global_baseline.acc_count);
-    let global_blunder_rate = mean(global_baseline.blunder_sum, global_baseline.blunder_count).unwrap_or(0.0);
-    let global_mistake_rate = mean(global_baseline.mistake_sum, global_baseline.mistake_count).unwrap_or(0.0);
-    let global_inaccuracy_rate =
-        mean(global_baseline.inaccuracy_sum, global_baseline.inaccuracy_count).unwrap_or(0.0);
+    let global_blunder_rate =
+        mean(global_baseline.blunder_sum, global_baseline.blunder_count).unwrap_or(0.0);
+    let global_mistake_rate =
+        mean(global_baseline.mistake_sum, global_baseline.mistake_count).unwrap_or(0.0);
+    let global_inaccuracy_rate = mean(
+        global_baseline.inaccuracy_sum,
+        global_baseline.inaccuracy_count,
+    )
+    .unwrap_or(0.0);
 
     let mut row_context_keys: Vec<String> = Vec::with_capacity(rows.len());
     let mut rows_by_context: HashMap<String, Vec<usize>> = HashMap::new();
@@ -3272,8 +3432,10 @@ pub fn build_weakness_snapshot_v1(
         let trigger_loss_rate = mean(triggered.loss_sum, triggered.loss_count).unwrap_or(0.0);
         let trigger_acpl = mean(triggered.acpl_sum, triggered.acpl_count);
         let trigger_acc = mean(triggered.acc_sum, triggered.acc_count);
-        let trigger_blunder_rate = mean(triggered.blunder_sum, triggered.blunder_count).unwrap_or(0.0);
-        let trigger_mistake_rate = mean(triggered.mistake_sum, triggered.mistake_count).unwrap_or(0.0);
+        let trigger_blunder_rate =
+            mean(triggered.blunder_sum, triggered.blunder_count).unwrap_or(0.0);
+        let trigger_mistake_rate =
+            mean(triggered.mistake_sum, triggered.mistake_count).unwrap_or(0.0);
         let trigger_inaccuracy_rate =
             mean(triggered.inaccuracy_sum, triggered.inaccuracy_count).unwrap_or(0.0);
 
@@ -3305,9 +3467,14 @@ pub fn build_weakness_snapshot_v1(
         let context_loss_rate = mean(context_baseline.loss_sum, context_baseline.loss_count);
         let context_acpl = mean(context_baseline.acpl_sum, context_baseline.acpl_count);
         let context_acc = mean(context_baseline.acc_sum, context_baseline.acc_count);
-        let context_blunder_rate = mean(context_baseline.blunder_sum, context_baseline.blunder_count);
-        let context_mistake_rate = mean(context_baseline.mistake_sum, context_baseline.mistake_count);
-        let context_inaccuracy_rate = mean(context_baseline.inaccuracy_sum, context_baseline.inaccuracy_count);
+        let context_blunder_rate =
+            mean(context_baseline.blunder_sum, context_baseline.blunder_count);
+        let context_mistake_rate =
+            mean(context_baseline.mistake_sum, context_baseline.mistake_count);
+        let context_inaccuracy_rate = mean(
+            context_baseline.inaccuracy_sum,
+            context_baseline.inaccuracy_count,
+        );
 
         let baseline_loss_rate = context_loss_rate.unwrap_or(global_loss_rate);
         let baseline_acpl = context_acpl.or(global_acpl);
@@ -3315,14 +3482,18 @@ pub fn build_weakness_snapshot_v1(
         let baseline_blunder_rate = context_blunder_rate.unwrap_or(global_blunder_rate);
         let baseline_mistake_rate = context_mistake_rate.unwrap_or(global_mistake_rate);
         let baseline_inaccuracy_rate = context_inaccuracy_rate.unwrap_or(global_inaccuracy_rate);
-        let trigger_loss_ci = wilson_interval(triggered.loss_sum.round() as usize, triggered.loss_count);
+        let trigger_loss_ci =
+            wilson_interval(triggered.loss_sum.round() as usize, triggered.loss_count);
         let baseline_loss_ci = if context_baseline_rows > 0 {
             wilson_interval(
                 context_baseline.loss_sum.round() as usize,
                 context_baseline.loss_count,
             )
         } else {
-            wilson_interval(global_baseline.loss_sum.round() as usize, global_baseline.loss_count)
+            wilson_interval(
+                global_baseline.loss_sum.round() as usize,
+                global_baseline.loss_count,
+            )
         };
         let baseline_mode = if context_baseline_rows > 0 {
             "contextMatched"
@@ -3331,8 +3502,14 @@ pub fn build_weakness_snapshot_v1(
         };
 
         let delta_loss_rate = trigger_loss_rate - baseline_loss_rate;
-        let delta_acpl = trigger_acpl.zip(baseline_acpl).map(|(t, b)| t - b).unwrap_or(0.0);
-        let delta_accuracy = trigger_acc.zip(baseline_acc).map(|(t, b)| t - b).unwrap_or(0.0);
+        let delta_acpl = trigger_acpl
+            .zip(baseline_acpl)
+            .map(|(t, b)| t - b)
+            .unwrap_or(0.0);
+        let delta_accuracy = trigger_acc
+            .zip(baseline_acc)
+            .map(|(t, b)| t - b)
+            .unwrap_or(0.0);
         let delta_blunder_rate = trigger_blunder_rate - baseline_blunder_rate;
         let delta_mistake_rate = trigger_mistake_rate - baseline_mistake_rate;
         let delta_inaccuracy_rate = trigger_inaccuracy_rate - baseline_inaccuracy_rate;
@@ -3382,9 +3559,8 @@ pub fn build_weakness_snapshot_v1(
         let support_weight = support_weight_from_support(hits.len());
         let confidence_weight = confidence.powf(1.25);
         let severity_weight = severity.powf(1.05);
-        let score_without_recency = round2(
-            severity_weight * confidence_weight * controllability * support_weight * 100.0,
-        );
+        let score_without_recency =
+            round2(severity_weight * confidence_weight * controllability * support_weight * 100.0);
         let score = round2(score_without_recency * recency * priority_weight * trend.weight);
 
         let n_eff = Some(round2((hits.len() as f64) * recency.max(0.25)));
@@ -3464,10 +3640,14 @@ pub fn build_weakness_snapshot_v1(
         for h in &hits {
             let row = &rows[h.row_index];
             if let Some(tc) = &row.time_control_bucket {
-                *context_counter.entry(format!("timeControl:{tc}")).or_insert(0) += 1;
+                *context_counter
+                    .entry(format!("timeControl:{tc}"))
+                    .or_insert(0) += 1;
             }
             if let Some(of) = &row.opening_family {
-                *context_counter.entry(format!("openingFamily:{of}")).or_insert(0) += 1;
+                *context_counter
+                    .entry(format!("openingFamily:{of}"))
+                    .or_insert(0) += 1;
             }
             if let Some(color) = &row.color_played {
                 *context_counter.entry(format!("color:{color}")).or_insert(0) += 1;
@@ -3790,11 +3970,12 @@ mod tests {
     }
 
     fn isabeast_row(game_id: i32, is_signal_hit: bool) -> WeaknessAggregationInputRow {
-        let (outcome, acpl, accuracy, blunder_rate, mistake_rate, inaccuracy_rate) = if is_signal_hit {
-            ("loss", 88.0, 71.0, 0.18, 0.24, 0.30)
-        } else {
-            ("win", 24.0, 93.0, 0.03, 0.06, 0.11)
-        };
+        let (outcome, acpl, accuracy, blunder_rate, mistake_rate, inaccuracy_rate) =
+            if is_signal_hit {
+                ("loss", 88.0, 71.0, 0.18, 0.24, 0.30)
+            } else {
+                ("win", 24.0, 93.0, 0.03, 0.06, 0.11)
+            };
 
         WeaknessAggregationInputRow {
             game_id,
@@ -3883,7 +4064,10 @@ mod tests {
             "Expected at least one weakness signal for Isabeast under all/any/all/all-time filters"
         );
         assert!(
-            build.signals.iter().any(|s| s.signal_key == "WM_UNCASTLED_EARLY"),
+            build
+                .signals
+                .iter()
+                .any(|s| s.signal_key == "WM_UNCASTLED_EARLY"),
             "Expected WM_UNCASTLED_EARLY to be present in the generated signals"
         );
     }
@@ -3971,7 +4155,10 @@ mod tests {
             }),
         );
         let hit = detect_signal_hit("WM_VS_DRAGON_10_18", &row);
-        assert!(hit.is_some(), "Expected Dragon signal hit from bucket flags");
+        assert!(
+            hit.is_some(),
+            "Expected Dragon signal hit from bucket flags"
+        );
     }
 
     #[test]
@@ -3986,7 +4173,10 @@ mod tests {
         let hit = detect_signal_hit("WM_IQP_12_30", &row);
         assert!(hit.is_some(), "Expected IQP signal hit in profile mode");
         let payload = hit.unwrap().2;
-        assert_eq!(payload.get("mode").and_then(|v| v.as_str()), Some("profileIqp"));
+        assert_eq!(
+            payload.get("mode").and_then(|v| v.as_str()),
+            Some("profileIqp")
+        );
     }
 
     #[test]
@@ -4002,7 +4192,10 @@ mod tests {
         let hit = detect_signal_hit("WM_CARLSBAD_12_32", &row);
         assert!(hit.is_some(), "Expected Carlsbad signal hit in vs mode");
         let payload = hit.unwrap().2;
-        assert_eq!(payload.get("mode").and_then(|v| v.as_str()), Some("vsCarlsbad"));
+        assert_eq!(
+            payload.get("mode").and_then(|v| v.as_str()),
+            Some("vsCarlsbad")
+        );
     }
 
     #[test]
@@ -4031,7 +4224,10 @@ mod tests {
         let hit = detect_signal_hit("WM_FRENCH_CHAIN_8_22", &row);
         assert!(hit.is_some(), "Expected French-chain signal hit");
         let payload = hit.unwrap().2;
-        assert_eq!(payload.get("mode").and_then(|v| v.as_str()), Some("profileFrenchChain"));
+        assert_eq!(
+            payload.get("mode").and_then(|v| v.as_str()),
+            Some("profileFrenchChain")
+        );
     }
 
     #[test]
@@ -4047,7 +4243,10 @@ mod tests {
         let hit = detect_signal_hit("WM_KID_LOCKED_CENTER_10_25", &row);
         assert!(hit.is_some(), "Expected KID locked-center signal hit");
         let payload = hit.unwrap().2;
-        assert_eq!(payload.get("mode").and_then(|v| v.as_str()), Some("vsKidLockedCenter"));
+        assert_eq!(
+            payload.get("mode").and_then(|v| v.as_str()),
+            Some("vsKidLockedCenter")
+        );
     }
 
     #[test]
@@ -4101,7 +4300,10 @@ mod tests {
         let hit = detect_signal_hit("WM_STONEWALL_10_25", &row);
         assert!(hit.is_some(), "Expected Stonewall signal hit");
         let payload = hit.unwrap().2;
-        assert_eq!(payload.get("mode").and_then(|v| v.as_str()), Some("vsStonewall"));
+        assert_eq!(
+            payload.get("mode").and_then(|v| v.as_str()),
+            Some("vsStonewall")
+        );
     }
 
     #[test]
@@ -4140,8 +4342,14 @@ mod tests {
         let near_min = support_weight_from_support(MIN_SIGNAL_SUPPORT);
         let medium = support_weight_from_support(30);
         let high = support_weight_from_support(80);
-        assert!(medium > near_min, "Support weight should increase after minimum support");
-        assert!(high > medium, "Support weight should keep increasing with larger support");
+        assert!(
+            medium > near_min,
+            "Support weight should increase after minimum support"
+        );
+        assert!(
+            high > medium,
+            "Support weight should keep increasing with larger support"
+        );
         assert!(high <= 1.0, "Support weight must stay normalized");
     }
 
@@ -4149,7 +4357,10 @@ mod tests {
     fn context_weight_reflects_baseline_coverage() {
         let low = context_weight_from_rows(4, 20);
         let high = context_weight_from_rows(60, 20);
-        assert!(high > low, "Context weight should grow with richer context baseline");
+        assert!(
+            high > low,
+            "Context weight should grow with richer context baseline"
+        );
         assert!(high <= 1.0, "Context weight must stay normalized");
     }
 
@@ -4174,7 +4385,11 @@ mod tests {
             rows.push(WeaknessAggregationInputRow {
                 game_id: (100 + i) as i32,
                 timestamp_ms: Some(base_ts + (i as i64) * 86_400_000),
-                profile_outcome: Some(if is_recent { "loss".to_string() } else { "win".to_string() }),
+                profile_outcome: Some(if is_recent {
+                    "loss".to_string()
+                } else {
+                    "win".to_string()
+                }),
                 opponent_name: Some("opp".to_string()),
                 accuracy: Some(if is_recent { 73.0 } else { 91.0 }),
                 acpl: Some(if is_recent { 84.0 } else { 28.0 }),
@@ -4203,7 +4418,10 @@ mod tests {
             .collect();
         let trend = compute_signal_trend(&rows, &hits);
         assert_eq!(trend.label, "worsening");
-        assert!(trend.weight > 1.0, "Worsening trend should boost score weight");
+        assert!(
+            trend.weight > 1.0,
+            "Worsening trend should boost score weight"
+        );
         assert!(
             trend.delta_loss_rate_pp.unwrap_or(0.0) > 0.0,
             "Recent loss rate should be above previous window"
@@ -4276,7 +4494,10 @@ struct SignalTrendSummary {
     weight: f64,
 }
 
-fn compute_signal_trend(rows: &[WeaknessAggregationInputRow], hits: &[SignalHit]) -> SignalTrendSummary {
+fn compute_signal_trend(
+    rows: &[WeaknessAggregationInputRow],
+    hits: &[SignalHit],
+) -> SignalTrendSummary {
     let mut dated_indices: Vec<usize> = hits
         .iter()
         .filter_map(|hit| rows[hit.row_index].timestamp_ms.map(|_| hit.row_index))
@@ -4403,4 +4624,3 @@ fn compute_signal_trend(rows: &[WeaknessAggregationInputRow], hits: &[SignalHit]
         weight: round2(weight.clamp(0.85, 1.15)),
     }
 }
-

@@ -5,7 +5,6 @@ import { atomWithStorage } from "jotai/utils";
 import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { isSplitNode, isTabsNode, Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
-import { debugNavLog } from "@/utils/debugNav";
 import type { Tab } from "@/utils/tabs";
 
 import "react-mosaic-component/react-mosaic-component.css";
@@ -43,15 +42,6 @@ export default function BoardsPage() {
     }
     return tabs[0]?.value ?? null;
   }, [activeTab, tabs]);
-
-  useEffect(() => {
-    debugNavLog("boards-page", {
-      tabs: tabs.length,
-      activeTab,
-      resolvedActiveTab,
-      resolvedType: tabs.find((t) => t.value === resolvedActiveTab)?.type ?? null,
-    });
-  }, [activeTab, resolvedActiveTab, tabs]);
 
   if (tabs.length === 0) {
     return null;
@@ -200,11 +190,6 @@ const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: bo
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
 
-  useEffect(() => {
-    debugNavLog("tab-switch:mount", { tab: tab.value, type: tab.type, name: tab.name });
-    return () => debugNavLog("tab-switch:unmount", { tab: tab.value, type: tab.type });
-  }, [tab.name, tab.type, tab.value]);
-
   const resizeOptions = useMemo(
     () => ({
       minimumPaneSizePercentage: MOSAIC_PANE_CONSTRAINTS.MINIMUM_PERCENTAGE,
@@ -224,7 +209,6 @@ const TabSwitch = function TabSwitch({ tab, isActive }: { tab: Tab; isActive: bo
   useEffect(() => {
     if (isMobileLayout) return;
     if (isValidMosaicLayout(windowsState.currentNode)) return;
-    debugNavLog("tab-switch: resetting invalid mosaic layout", { currentNode: windowsState.currentNode });
     setWindowsState({ currentNode: DEFAULT_MOSAIC_LAYOUT });
   }, [isMobileLayout, setWindowsState, windowsState.currentNode]);
 

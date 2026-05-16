@@ -10,8 +10,8 @@ use crate::db::{is_position_in_db, GameQueryJs, PositionQueryJs};
 use crate::error::Error;
 use crate::AppState;
 
-use super::evaluation::naive_eval;
 use super::engine_path::resolve_engine_path;
+use super::evaluation::naive_eval;
 use super::process::{parse_uci_attrs, EngineProcess};
 use super::types::{AnalysisOptions, EngineOption, MoveAnalysis, ReportProgress};
 use tauri_specta::Event;

@@ -10,6 +10,7 @@ import { type BestMoves, type EngineOptions, events, type GoMode } from "@/bindi
 import { TreeStateContext } from "@/components/TreeStateContext";
 import {
   activeTabAtom,
+  boardInteractionActiveAtom,
   currentThreatAtom,
   engineMovesFamily,
   engineProgressFamily,
@@ -156,7 +157,11 @@ function upsertEngineVariationCache(
 function EvalListener() {
   const loadableEngines = useAtomValue(loadableEnginesAtom);
   const threat = useAtomValue(currentThreatAtom);
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("EvalListener must be used within a TreeStateProvider");
+  }
+
   const is960 = useStore(store, (s) => s.headers.variant === "Chess960");
   const fen = useStore(store, (s) => s.root.fen);
 
@@ -237,17 +242,23 @@ function EngineListener({
   threat: boolean;
   chess960: boolean;
 }) {
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("EngineListener must be used within a TreeStateProvider");
+  }
+
   const setScore = useStore(store, (s) => s.setScore);
   const activeTab = useAtomValue(activeTabAtom);
-  const setProgress = useSetAtom(engineProgressFamily({ engine: engine.name, tab: activeTab! }));
-  const setEngineVariation = useSetAtom(engineMovesFamily({ engine: engine.name, tab: activeTab! }));
+  const activeTabKey = activeTab ?? "";
+  const boardInteractionActive = useAtomValue(boardInteractionActiveAtom);
+  const setProgress = useSetAtom(engineProgressFamily({ engine: engine.name, tab: activeTabKey }));
+  const setEngineVariation = useSetAtom(engineMovesFamily({ engine: engine.name, tab: activeTabKey }));
   const settings = useAtomValue(
     tabEngineSettingsFamily({
       engineName: engine.name,
       defaultSettings: engine.settings ?? undefined,
       defaultGo: engine.go ?? undefined,
-      tab: activeTab!,
+      tab: activeTabKey,
     }),
   );
   const throttleMs = 100;
@@ -263,10 +274,11 @@ function EngineListener({
   );
   const settingsKey = useMemo(() => JSON.stringify(settings.settings), [settings.settings]);
   const pendingRef = useRef<{
-    ev: typeof settings extends any ? any : any;
+    ev: BestMoves[];
     progress: number;
   } | null>(null);
   const timerRef = useRef<number | null>(null);
+  const boardInteractionActiveRef = useRef(boardInteractionActive);
 
   const flushPending = useCallback(() => {
     const pending = pendingRef.current;
@@ -294,6 +306,37 @@ function EngineListener({
     threat,
     threatVariationCacheKey,
   ]);
+
+  const queueEngineUpdate = useCallback(
+    (ev: BestMoves[], progress: number) => {
+      pendingRef.current = { ev, progress };
+      if (boardInteractionActiveRef.current) {
+        if (timerRef.current != null) {
+          window.clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        return;
+      }
+      if (timerRef.current == null) {
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null;
+          flushPending();
+        }, throttleMs);
+      }
+    },
+    [flushPending],
+  );
+
+  useEffect(() => {
+    boardInteractionActiveRef.current = boardInteractionActive;
+    if (!boardInteractionActive && pendingRef.current) {
+      if (timerRef.current != null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      flushPending();
+    }
+  }, [boardInteractionActive, flushPending]);
 
   useEffect(() => {
     return () => {
@@ -327,13 +370,7 @@ function EngineListener({
         payload.tab !== "variants-builder-backend"
       ) {
         // Throttle UI updates to keep analysis smooth (avoid dozens of renders/sec)
-        pendingRef.current = { ev, progress: payload.progress };
-        if (timerRef.current == null) {
-          timerRef.current = window.setTimeout(() => {
-            timerRef.current = null;
-            flushPending();
-          }, throttleMs);
-        }
+        queueEngineUpdate(ev, payload.progress);
       }
     });
     return () => {
@@ -348,7 +385,7 @@ function EngineListener({
           // Ignore unlisten errors (e.g. already removed)
         });
     };
-  }, [activeTab, settings.enabled, isGameOver, searchingFen, engine.name, flushPending, searchingMoves]);
+  }, [activeTab, settings.enabled, isGameOver, searchingFen, engine.name, queueEngineUpdate, searchingMoves]);
 
   const getBestMoves = useMemo(
     () =>
@@ -366,8 +403,10 @@ function EngineListener({
 
   useThrottledEffect(
     () => {
+      if (!activeTab) return;
+
       // Skip if this is the variants-builder-backend tab (used during build variants)
-      if (activeTab?.includes("variants-builder")) {
+      if (activeTab.includes("variants-builder")) {
         if (engine.type === "local") {
           killEngine(engine, activeTab);
         }
@@ -377,7 +416,7 @@ function EngineListener({
       if (settings.enabled) {
         if (isGameOver) {
           if (engine.type === "local") {
-            killEngine(engine, activeTab!);
+            killEngine(engine, activeTab);
           }
         } else {
           const options =
@@ -388,23 +427,20 @@ function EngineListener({
           if (chess960 && !options.find((o) => o.name === "UCI_Chess960")) {
             options.push({ name: "UCI_Chess960", value: "true" });
           }
-          getBestMoves(activeTab!, settings.go, {
+          getBestMoves(activeTab, settings.go, {
             moves: searchingMoves,
             fen: searchingFen,
             extraOptions: options,
           }).then((moves) => {
             if (moves) {
               const [progress, bestMoves] = moves;
-              setEngineVariation((prev) => {
-                return upsertEngineVariationCache(prev, searchingVariationCacheKey, bestMoves);
-              });
-              setProgress(progress);
+              queueEngineUpdate(bestMoves, progress);
             }
           });
         }
       } else {
         if (engine.type === "local") {
-          killEngine(engine, activeTab!);
+          killEngine(engine, activeTab);
         }
       }
     },
@@ -419,10 +455,9 @@ function EngineListener({
       isGameOver,
       activeTab,
       getBestMoves,
-      setEngineVariation,
-      setProgress,
       engine,
       searchingVariationCacheKey,
+      queueEngineUpdate,
     ],
   );
   return null;

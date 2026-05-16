@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 #[cfg(target_os = "android")]
-use log::{info, warn};
+use log::warn;
 
 use tauri::AppHandle;
 #[cfg(target_os = "android")]
@@ -35,12 +35,7 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                     let p = PathBuf::from(lib_path);
                     if let Some(parent) = p.parent() {
                         let candidate = parent.join("libstockfish.so");
-                        info!(
-                            "Checking for libstockfish.so via /proc/self/maps: {}",
-                            candidate.display()
-                        );
                         if candidate.is_file() {
-                            info!("Found libstockfish.so via /proc/self/maps: {}", candidate.display());
                             return Some(candidate);
                         } else {
                             warn!(
@@ -59,19 +54,9 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                             .filter(|s| !s.is_empty())
                         {
                             if let Some(apk_parent) = std::path::Path::new(apk_path).parent() {
-                                let candidate = apk_parent
-                                    .join("lib")
-                                    .join(abi)
-                                    .join("libstockfish.so");
-                                info!(
-                                    "Checking for extracted libstockfish.so derived from APK path: {}",
-                                    candidate.display()
-                                );
+                                let candidate =
+                                    apk_parent.join("lib").join(abi).join("libstockfish.so");
                                 if candidate.is_file() {
-                                    info!(
-                                        "Found libstockfish.so via APK-derived lib dir: {}",
-                                        candidate.display()
-                                    );
                                     return Some(candidate);
                                 }
                             }
@@ -86,11 +71,9 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
 
     // Method 2: Check LD_LIBRARY_PATH
     if let Ok(ld_library_path) = std::env::var("LD_LIBRARY_PATH") {
-        info!("LD_LIBRARY_PATH = {}", ld_library_path);
         for dir in ld_library_path.split(':').filter(|s| !s.is_empty()) {
             let candidate = PathBuf::from(dir).join("libstockfish.so");
             if candidate.is_file() {
-                info!("Found libstockfish.so via LD_LIBRARY_PATH: {}", candidate.display());
                 return Some(candidate);
             }
         }
@@ -115,13 +98,11 @@ fn find_bundled_stockfish() -> Option<PathBuf> {
                             // Try arm64-v8a path
                             let candidate = sub_path.join("lib/arm64/libstockfish.so");
                             if candidate.is_file() {
-                                info!("Found libstockfish.so via /data/app scan: {}", candidate.display());
                                 return Some(candidate);
                             }
                             // Also try arm64-v8a naming
                             let candidate2 = sub_path.join("lib/arm64-v8a/libstockfish.so");
                             if candidate2.is_file() {
-                                info!("Found libstockfish.so via /data/app scan: {}", candidate2.display());
                                 return Some(candidate2);
                             }
                         }
@@ -154,13 +135,7 @@ pub fn resolve_engine_path(engine: &str, app: &AppHandle) -> PathBuf {
         let is_stockfish = engine_lc.contains("stockfish") || file_lc.contains("stockfish");
 
         if is_stockfish {
-            info!("Resolving Stockfish engine path for: {}", engine);
             if let Some(bundled) = find_bundled_stockfish() {
-                info!(
-                    "Using bundled libstockfish.so: {} (instead of {})",
-                    bundled.display(),
-                    engine
-                );
                 return bundled;
             } else {
                 warn!(

@@ -3,15 +3,15 @@
 //! These stats are derived from engine analysis output and persisted into the profile DB.
 //! The table is intentionally forward-compatible: additional computed stats should go into `extra` JSON.
 
+use crate::analysis_storage::{
+    analysis_db_get_analyzed_game_ids, analysis_db_get_analyzed_games_bulk,
+    analysis_db_get_game_stats_bulk, AnalyzedGameEntry,
+};
 use crate::chess::types::{BestMoves, MoveAnalysis, ScoreValue};
 use crate::db::encoding::extract_main_line_moves;
 use crate::db::pgn::get_material_count;
 use crate::db::{GameOutcome, PlatformFilter, PlayerStatsFilters, TimeControlFilter};
 use crate::error::{Error, Result};
-use crate::analysis_storage::{
-    analysis_db_get_analyzed_game_ids, analysis_db_get_analyzed_games_bulk,
-    analysis_db_get_game_stats_bulk, AnalyzedGameEntry,
-};
 use chrono::{SecondsFormat, Utc};
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
@@ -19,7 +19,8 @@ use diesel::sql_query;
 use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use serde_json::{json, Value};
 use shakmaty::{
-    fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move, Position, Role,
+    fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, EnPassantMode, Move,
+    Position, Role,
 };
 use std::collections::HashSet;
 use tauri::AppHandle;
@@ -192,11 +193,7 @@ fn detect_win_ply(winner: WinnerSide, analysis: &[MoveAnalysis]) -> Option<i32> 
 
     let scores: Vec<Option<i32>> = analysis
         .iter()
-        .map(|a| {
-            a.best
-                .first()
-                .map(|b| score_to_white_cp(&b.score.value))
-        })
+        .map(|a| a.best.first().map(|b| score_to_white_cp(&b.score.value)))
         .collect();
 
     for (i, s) in scores.iter().enumerate() {
@@ -218,11 +215,7 @@ fn detect_win_ply_relaxed(winner: WinnerSide, analysis: &[MoveAnalysis]) -> Opti
 
     let scores: Vec<Option<i32>> = analysis
         .iter()
-        .map(|a| {
-            a.best
-                .first()
-                .map(|b| score_to_white_cp(&b.score.value))
-        })
+        .map(|a| a.best.first().map(|b| score_to_white_cp(&b.score.value)))
         .collect();
 
     const RELAXED_WIN_CP: i32 = 200;
@@ -282,10 +275,12 @@ fn compute_phase_at_ply(initial_fen: &str, moves: &[String], ply: usize) -> Resu
     let mut chess: Chess = fen.into_position(CastlingMode::Chess960)?;
 
     for m in moves.iter().take(ply) {
-        let uci = UciMove::from_ascii(m.as_bytes())
-            .map_err(|_| Error::PackageManager(format!("Invalid UCI move in analysis moves: {m}")))?;
-        let mv = uci.to_move(&chess)
-            .map_err(|_| Error::PackageManager(format!("Illegal move for position in analysis moves: {m}")))?;
+        let uci = UciMove::from_ascii(m.as_bytes()).map_err(|_| {
+            Error::PackageManager(format!("Invalid UCI move in analysis moves: {m}"))
+        })?;
+        let mv = uci.to_move(&chess).map_err(|_| {
+            Error::PackageManager(format!("Illegal move for position in analysis moves: {m}"))
+        })?;
         chess.play_unchecked(&mv);
         if chess.is_game_over() {
             break;
@@ -423,7 +418,9 @@ fn extract_eval_scores_from_analyzed_pgn(pgn: &str) -> Vec<i32> {
     //
     // We read them in textual order and treat them as consecutive position evals (white POV).
     let re = regex::Regex::new(r#"\[%eval\s+([^\]]+)\]"#).ok();
-    let Some(re) = re else { return vec![]; };
+    let Some(re) = re else {
+        return vec![];
+    };
 
     let mut out: Vec<i32> = Vec::new();
     for cap in re.captures_iter(pgn) {
@@ -472,7 +469,8 @@ pub fn backfill_profile_phase_stats_from_analysis_db(
     // that correspond to profile DB Games.ID and are missing GameAnalysisStats.
     //
     // This avoids missing older Games.IDs when the profile DB is large but only a subset was analyzed.
-    let analyzed_game_ids = analysis_db_get_analyzed_game_ids(app.clone(), Some(profile_id.to_string()), max_games)?;
+    let analyzed_game_ids =
+        analysis_db_get_analyzed_game_ids(app.clone(), Some(profile_id.to_string()), max_games)?;
     let analyzed_game_ids: Vec<i32> = analyzed_game_ids
         .into_iter()
         .filter_map(|s| s.parse::<i32>().ok())
@@ -510,8 +508,11 @@ pub fn backfill_profile_phase_stats_from_analysis_db(
     }
 
     let missing_ids: Vec<String> = missing.iter().map(|r| r.id.to_string()).collect();
-    let mut analyzed_rows: Vec<AnalyzedGameEntry> =
-        analysis_db_get_analyzed_games_bulk(app.clone(), missing_ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows: Vec<AnalyzedGameEntry> = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        missing_ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         // Backwards compatibility: allow looking up legacy entries stored under the empty profile id.
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app, missing_ids.clone(), None)?;
@@ -905,19 +906,12 @@ pub fn compute_engine_validated_forks_extra(
                                 *role_bucket_mut(&mut out.missed.by_piece, fork_role) += 1;
 
                                 let fen_before =
-                                    Fen::from_position(pos.clone(), EnPassantMode::Legal).to_string();
-                                let pv_san: Vec<String> = best
-                                    .san_moves
-                                    .iter()
-                                    .take(fork_idx + 1)
-                                    .cloned()
-                                    .collect();
-                                let pv_uci: Vec<String> = best
-                                    .uci_moves
-                                    .iter()
-                                    .take(fork_idx + 1)
-                                    .cloned()
-                                    .collect();
+                                    Fen::from_position(pos.clone(), EnPassantMode::Legal)
+                                        .to_string();
+                                let pv_san: Vec<String> =
+                                    best.san_moves.iter().take(fork_idx + 1).cloned().collect();
+                                let pv_uci: Vec<String> =
+                                    best.uci_moves.iter().take(fork_idx + 1).cloned().collect();
                                 let alt_pv_san: Vec<String> = alt.san_moves.clone();
                                 out.missed_occurrences.push(MissedForkOccurrenceV1 {
                                     ply: ply_idx as u32,
@@ -1095,10 +1089,14 @@ fn pgn_last_mainline_token(pgn: &str) -> Option<String> {
         if token.starts_with('$') {
             continue;
         }
-        let is_move_number =
-            token.ends_with('.') && token[..token.len().saturating_sub(1)].chars().all(|c| c.is_ascii_digit())
-                || token.ends_with("...")
-                    && token[..token.len().saturating_sub(3)].chars().all(|c| c.is_ascii_digit());
+        let is_move_number = token.ends_with('.')
+            && token[..token.len().saturating_sub(1)]
+                .chars()
+                .all(|c| c.is_ascii_digit())
+            || token.ends_with("...")
+                && token[..token.len().saturating_sub(3)]
+                    .chars()
+                    .all(|c| c.is_ascii_digit());
         if is_move_number {
             continue;
         }
@@ -1153,10 +1151,7 @@ fn classify_outcome_reason_from_pgn(pgn: &str) -> OutcomeReasonKind {
 }
 
 fn classify_outcome_reason(termination: Option<&str>, pgn: Option<&str>) -> OutcomeReasonKind {
-    let term = termination
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
+    let term = termination.unwrap_or("").trim().to_ascii_lowercase();
 
     if !term.is_empty() {
         if term.contains("checkmate") {
@@ -1353,7 +1348,11 @@ fn detect_draw_reason_from_game_bytes(moves: &[u8], fen: Option<&str>) -> DrawRe
     DrawReasonKind::Unknown
 }
 
-fn classify_unknown_reason_fallback(site: &str, time_control: Option<&str>, ply_count: Option<i32>) -> OutcomeReasonKind {
+fn classify_unknown_reason_fallback(
+    site: &str,
+    time_control: Option<&str>,
+    ply_count: Option<i32>,
+) -> OutcomeReasonKind {
     let plies = ply_count.unwrap_or(0).max(0);
     if plies > 0 && plies <= 12 {
         return OutcomeReasonKind::Abandon;
@@ -1497,10 +1496,7 @@ fn classify_game_intensity_from_scores(raw_scores: &[i32]) -> IntensityKind {
     }
 
     // Subita: one defining blow after normal play, then game mostly decided.
-    if max_jump >= 620
-        && decisive_after_max_jump
-        && big_jump_count <= 2
-        && max_jump_idx > early_cut
+    if max_jump >= 620 && decisive_after_max_jump && big_jump_count <= 2 && max_jump_idx > early_cut
     {
         return IntensityKind::Sudden;
     }
@@ -1622,7 +1618,11 @@ fn is_tactical_fork(after: &Chess, from_sq: shakmaty::Square, attacker: Color) -
     major_minor_targets > 0 && loose_targets > 0
 }
 
-fn count_double_attack_targets(board: &shakmaty::Board, from_sq: shakmaty::Square, defender: Color) -> (u32, i32) {
+fn count_double_attack_targets(
+    board: &shakmaty::Board,
+    from_sq: shakmaty::Square,
+    defender: Color,
+) -> (u32, i32) {
     let attacked = board.attacks_from(from_sq) & board.by_color(defender);
     let mut count: u32 = 0;
     let mut sum_value: i32 = 0;
@@ -1645,7 +1645,10 @@ struct ForkOpportunity {
 }
 
 #[allow(dead_code)]
-fn detect_actual_and_best_fork(pos: &Chess, actual: &Move) -> (Option<Role>, Option<ForkOpportunity>) {
+fn detect_actual_and_best_fork(
+    pos: &Chess,
+    actual: &Move,
+) -> (Option<Role>, Option<ForkOpportunity>) {
     let mut actual_fork_role: Option<Role> = None;
     let mut best_opportunity: Option<ForkOpportunity> = None;
 
@@ -1670,7 +1673,10 @@ fn detect_actual_and_best_fork(pos: &Chess, actual: &Move) -> (Option<Role>, Opt
         }
 
         let replace_best = match &best_opportunity {
-            Some(best) => targets > best.targets || (targets == best.targets && target_value > best.target_value),
+            Some(best) => {
+                targets > best.targets
+                    || (targets == best.targets && target_value > best.target_value)
+            }
             None => true,
         };
         if replace_best {
@@ -1991,7 +1997,11 @@ fn parse_date_to_timestamp(date: &str) -> Option<i64> {
 
     use chrono::{NaiveDate, TimeZone};
     let nd = NaiveDate::from_ymd_opt(year, month, day)?;
-    Some(chrono::Utc.from_utc_datetime(&nd.and_hms_opt(0, 0, 0)?).timestamp_millis())
+    Some(
+        chrono::Utc
+            .from_utc_datetime(&nd.and_hms_opt(0, 0, 0)?)
+            .timestamp_millis(),
+    )
 }
 
 // Copied (with minimal adjustments) from `player_stats.rs` to keep filter behavior consistent.
@@ -2108,13 +2118,14 @@ fn load_or_infer_profile_player_id(db: &mut SqliteConnection) -> Result<Option<i
         _c: i64,
     }
 
-    let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
-        .load::<InfoRow>(db)?
-        .into_iter()
-        .next()
-        .and_then(|r| r.value)
-        .and_then(|v| v.trim().parse::<i32>().ok())
-        .filter(|v| *v > 0);
+    let existing: Option<i32> =
+        sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
+            .load::<InfoRow>(db)?
+            .into_iter()
+            .next()
+            .and_then(|r| r.value)
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .filter(|v| *v > 0);
 
     let existing_total_count = if let Some(existing_id) = existing {
         sql_query("SELECT COUNT(*) AS c FROM Games WHERE WhiteID = ?1 OR BlackID = ?1")
@@ -2316,7 +2327,11 @@ pub fn compute_profile_phase_outcomes(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -2326,10 +2341,7 @@ pub fn compute_profile_phase_outcomes(
             }
         }
 
-        let ts = r
-            .date
-            .as_deref()
-            .and_then(parse_date_to_timestamp);
+        let ts = r.date.as_deref().and_then(parse_date_to_timestamp);
         filtered.push((r, site, ts));
     }
 
@@ -2359,15 +2371,43 @@ pub fn compute_profile_phase_outcomes(
     }
 
     let mut buckets = [
-        ("opening", PhaseOutcomeBucket { phase: "opening".to_string(), won: 0, drawn: 0, lost: 0 }),
-        ("middlegame", PhaseOutcomeBucket { phase: "middlegame".to_string(), won: 0, drawn: 0, lost: 0 }),
-        ("endgame", PhaseOutcomeBucket { phase: "endgame".to_string(), won: 0, drawn: 0, lost: 0 }),
+        (
+            "opening",
+            PhaseOutcomeBucket {
+                phase: "opening".to_string(),
+                won: 0,
+                drawn: 0,
+                lost: 0,
+            },
+        ),
+        (
+            "middlegame",
+            PhaseOutcomeBucket {
+                phase: "middlegame".to_string(),
+                won: 0,
+                drawn: 0,
+                lost: 0,
+            },
+        ),
+        (
+            "endgame",
+            PhaseOutcomeBucket {
+                phase: "endgame".to_string(),
+                won: 0,
+                drawn: 0,
+                lost: 0,
+            },
+        ),
     ];
 
     for (r, _site, _ts) in filtered {
-        let Some(result) = r.result.as_deref() else { continue };
+        let Some(result) = r.result.as_deref() else {
+            continue;
+        };
         let is_player_white = r.white_id == profile_player_id;
-        let Some(outcome) = GameOutcome::from_str(result, is_player_white) else { continue };
+        let Some(outcome) = GameOutcome::from_str(result, is_player_white) else {
+            continue;
+        };
         let key = phase_key(&r.win_phase);
         let bucket = if key == "opening" {
             &mut buckets[0].1
@@ -2396,9 +2436,21 @@ pub fn compute_profile_phase_accuracy(
 
     let Some(profile_player_id) = load_or_infer_profile_player_id(db)? else {
         return Ok(vec![
-            PhaseAccuracyBucket { phase: "opening".to_string(), avg_accuracy: None, count: 0 },
-            PhaseAccuracyBucket { phase: "middlegame".to_string(), avg_accuracy: None, count: 0 },
-            PhaseAccuracyBucket { phase: "endgame".to_string(), avg_accuracy: None, count: 0 },
+            PhaseAccuracyBucket {
+                phase: "opening".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            PhaseAccuracyBucket {
+                phase: "middlegame".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            PhaseAccuracyBucket {
+                phase: "endgame".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
         ]);
     };
 
@@ -2485,7 +2537,11 @@ pub fn compute_profile_phase_accuracy(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -2523,12 +2579,27 @@ pub fn compute_profile_phase_accuracy(
         }
     }
 
-    let ids: Vec<String> = filtered.iter().map(|(r, _)| r.game_id.to_string()).collect();
+    let ids: Vec<String> = filtered
+        .iter()
+        .map(|(r, _)| r.game_id.to_string())
+        .collect();
     if ids.is_empty() {
         return Ok(vec![
-            PhaseAccuracyBucket { phase: "opening".to_string(), avg_accuracy: None, count: 0 },
-            PhaseAccuracyBucket { phase: "middlegame".to_string(), avg_accuracy: None, count: 0 },
-            PhaseAccuracyBucket { phase: "endgame".to_string(), avg_accuracy: None, count: 0 },
+            PhaseAccuracyBucket {
+                phase: "opening".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            PhaseAccuracyBucket {
+                phase: "middlegame".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            PhaseAccuracyBucket {
+                phase: "endgame".to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
         ]);
     }
 
@@ -2537,11 +2608,8 @@ pub fn compute_profile_phase_accuracy(
         .map(|(r, _)| (r.game_id.to_string(), phase_key(&r.win_phase).to_string()))
         .collect();
 
-    let mut stats_rows = analysis_db_get_game_stats_bulk(
-        app.clone(),
-        ids.clone(),
-        Some(profile_id.to_string()),
-    )?;
+    let mut stats_rows =
+        analysis_db_get_game_stats_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
     if stats_rows.is_empty() && !profile_id.trim().is_empty() {
         stats_rows = analysis_db_get_game_stats_bulk(app, ids, None)?;
     }
@@ -2576,7 +2644,11 @@ pub fn compute_profile_phase_accuracy(
     Ok(vec![
         PhaseAccuracyBucket {
             phase: "opening".to_string(),
-            avg_accuracy: if opening_count > 0 { Some(opening_sum / opening_count as f64) } else { None },
+            avg_accuracy: if opening_count > 0 {
+                Some(opening_sum / opening_count as f64)
+            } else {
+                None
+            },
             count: opening_count,
         },
         PhaseAccuracyBucket {
@@ -2590,7 +2662,11 @@ pub fn compute_profile_phase_accuracy(
         },
         PhaseAccuracyBucket {
             phase: "endgame".to_string(),
-            avg_accuracy: if endgame_count > 0 { Some(endgame_sum / endgame_count as f64) } else { None },
+            avg_accuracy: if endgame_count > 0 {
+                Some(endgame_sum / endgame_count as f64)
+            } else {
+                None
+            },
             count: endgame_count,
         },
     ])
@@ -2712,7 +2788,11 @@ pub fn get_profile_phase_games(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -2872,7 +2952,11 @@ pub fn compute_profile_outcome_accuracy(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -2936,11 +3020,8 @@ pub fn compute_profile_outcome_accuracy(
         });
     }
 
-    let mut stats_rows = analysis_db_get_game_stats_bulk(
-        app.clone(),
-        ids.clone(),
-        Some(profile_id.to_string()),
-    )?;
+    let mut stats_rows =
+        analysis_db_get_game_stats_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
     if stats_rows.is_empty() && !profile_id.trim().is_empty() {
         stats_rows = analysis_db_get_game_stats_bulk(app, ids, None)?;
     }
@@ -3101,7 +3182,11 @@ pub fn compute_profile_fork_stats(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -3267,7 +3352,11 @@ pub fn generate_profile_missed_fork_puzzles(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -3454,7 +3543,11 @@ pub fn get_profile_missed_fork_games(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -3547,7 +3640,12 @@ pub fn get_profile_missed_fork_games(
     }
 
     all_rows.sort_by(|a, b| b.0.cmp(&a.0));
-    let page = all_rows.into_iter().skip(offset).take(limit).map(|(_, r)| r).collect();
+    let page = all_rows
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(_, r)| r)
+        .collect();
     Ok(page)
 }
 
@@ -3658,7 +3756,11 @@ pub fn get_profile_intensity_games(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -3704,8 +3806,11 @@ pub fn get_profile_intensity_games(
         return Ok(vec![]);
     }
 
-    let mut analyzed_rows =
-        analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app, ids, None)?;
     }
@@ -3866,7 +3971,11 @@ pub fn compute_profile_outcome_reason_breakdown(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -3907,7 +4016,8 @@ pub fn compute_profile_outcome_reason_breakdown(
     let mut outcome_by_game_id = std::collections::HashMap::<String, GameOutcome>::new();
     let mut termination_by_game_id = std::collections::HashMap::<String, Option<String>>::new();
     let mut checkmate_by_game_id = std::collections::HashMap::<String, bool>::new();
-    let mut draw_state_reason_by_game_id = std::collections::HashMap::<String, DrawReasonKind>::new();
+    let mut draw_state_reason_by_game_id =
+        std::collections::HashMap::<String, DrawReasonKind>::new();
     let mut fallback_meta_by_game_id =
         std::collections::HashMap::<String, (String, Option<String>, Option<i32>)>::new();
     let mut ids: Vec<String> = Vec::new();
@@ -3933,7 +4043,11 @@ pub fn compute_profile_outcome_reason_breakdown(
         );
         fallback_meta_by_game_id.insert(
             r.game_id.to_string(),
-            (r.site.clone().unwrap_or_default(), r.time_control.clone(), r.ply_count),
+            (
+                r.site.clone().unwrap_or_default(),
+                r.time_control.clone(),
+                r.ply_count,
+            ),
         );
     }
 
@@ -3956,8 +4070,11 @@ pub fn compute_profile_outcome_reason_breakdown(
         });
     }
 
-    let mut analyzed_rows =
-        analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app, ids, None)?;
     }
@@ -4020,14 +4137,22 @@ pub fn compute_profile_outcome_reason_breakdown(
                     parsed
                 };
                 match (outcome, reason) {
-                    (GameOutcome::Won, OutcomeReasonKind::Checkmate) => out.won_checkmate_count += 1,
+                    (GameOutcome::Won, OutcomeReasonKind::Checkmate) => {
+                        out.won_checkmate_count += 1
+                    }
                     (GameOutcome::Won, OutcomeReasonKind::Timeout) => out.won_timeout_count += 1,
                     (GameOutcome::Won, OutcomeReasonKind::Abandon) => out.won_abandon_count += 1,
-                    (GameOutcome::Won, OutcomeReasonKind::ResignForfeit) => out.won_resign_forfeit_count += 1,
-                    (GameOutcome::Lost, OutcomeReasonKind::Checkmate) => out.lost_checkmate_count += 1,
+                    (GameOutcome::Won, OutcomeReasonKind::ResignForfeit) => {
+                        out.won_resign_forfeit_count += 1
+                    }
+                    (GameOutcome::Lost, OutcomeReasonKind::Checkmate) => {
+                        out.lost_checkmate_count += 1
+                    }
                     (GameOutcome::Lost, OutcomeReasonKind::Timeout) => out.lost_timeout_count += 1,
                     (GameOutcome::Lost, OutcomeReasonKind::Abandon) => out.lost_abandon_count += 1,
-                    (GameOutcome::Lost, OutcomeReasonKind::ResignForfeit) => out.lost_resign_forfeit_count += 1,
+                    (GameOutcome::Lost, OutcomeReasonKind::ResignForfeit) => {
+                        out.lost_resign_forfeit_count += 1
+                    }
                     _ => {}
                 }
             }
@@ -4070,7 +4195,9 @@ pub fn compute_profile_outcome_reason_breakdown(
                     DrawReasonKind::TimeoutVsInsufficientMaterial => {
                         out.drawn_timeout_vs_insufficient_material_count += 1
                     }
-                    DrawReasonKind::InsufficientMaterial => out.drawn_insufficient_material_count += 1,
+                    DrawReasonKind::InsufficientMaterial => {
+                        out.drawn_insufficient_material_count += 1
+                    }
                     DrawReasonKind::Repetition => out.drawn_repetition_count += 1,
                     DrawReasonKind::Stalemate => out.drawn_stalemate_count += 1,
                     DrawReasonKind::Unknown => out.drawn_agreement_count += 1,
@@ -4175,7 +4302,11 @@ pub fn compute_profile_intensity_breakdown(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -4230,8 +4361,11 @@ pub fn compute_profile_intensity_breakdown(
         });
     }
 
-    let mut analyzed_rows =
-        analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app, ids, None)?;
     }
@@ -4394,7 +4528,11 @@ pub fn compute_profile_intensity_outcomes(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -4494,8 +4632,11 @@ pub fn compute_profile_intensity_outcomes(
         ]);
     }
 
-    let mut analyzed_rows =
-        analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app, ids, None)?;
     }
@@ -4558,13 +4699,41 @@ pub fn compute_profile_intensity_accuracy(
 
     let Some(profile_player_id) = load_or_infer_profile_player_id(db)? else {
         return Ok(vec![
-            IntensityAccuracyBucket { intensity: IntensityKind::Calm.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Balanced.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Edge.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Intense.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Sudden.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Wild.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Gifted.as_str().to_string(), avg_accuracy: None, count: 0 },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Calm.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Balanced.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Edge.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Intense.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Sudden.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Wild.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Gifted.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
         ]);
     };
 
@@ -4641,7 +4810,11 @@ pub fn compute_profile_intensity_accuracy(
             if let Ok(start) = bucket.parse::<i32>() {
                 let end = start + 199;
                 let is_player_white = r.white_id == profile_player_id;
-                let opp = if is_player_white { r.black_elo } else { r.white_elo };
+                let opp = if is_player_white {
+                    r.black_elo
+                } else {
+                    r.white_elo
+                };
                 let Some(opp_elo) = opp else {
                     continue;
                 };
@@ -4686,18 +4859,49 @@ pub fn compute_profile_intensity_accuracy(
 
     if ids.is_empty() {
         return Ok(vec![
-            IntensityAccuracyBucket { intensity: IntensityKind::Calm.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Balanced.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Edge.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Intense.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Sudden.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Wild.as_str().to_string(), avg_accuracy: None, count: 0 },
-            IntensityAccuracyBucket { intensity: IntensityKind::Gifted.as_str().to_string(), avg_accuracy: None, count: 0 },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Calm.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Balanced.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Edge.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Intense.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Sudden.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Wild.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
+            IntensityAccuracyBucket {
+                intensity: IntensityKind::Gifted.as_str().to_string(),
+                avg_accuracy: None,
+                count: 0,
+            },
         ]);
     }
 
-    let mut analyzed_rows =
-        analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), Some(profile_id.to_string()))?;
+    let mut analyzed_rows = analysis_db_get_analyzed_games_bulk(
+        app.clone(),
+        ids.clone(),
+        Some(profile_id.to_string()),
+    )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
         analyzed_rows = analysis_db_get_analyzed_games_bulk(app.clone(), ids.clone(), None)?;
     }
@@ -4748,7 +4952,11 @@ pub fn compute_profile_intensity_accuracy(
         let (sum, count) = sums.get(key).copied().unwrap_or((0.0, 0));
         out.push(IntensityAccuracyBucket {
             intensity: key.to_string(),
-            avg_accuracy: if count > 0 { Some(sum / (count as f64)) } else { None },
+            avg_accuracy: if count > 0 {
+                Some(sum / (count as f64))
+            } else {
+                None
+            },
             count,
         });
     }

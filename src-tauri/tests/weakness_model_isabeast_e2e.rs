@@ -1,7 +1,8 @@
 use diesel::Connection as DieselConnection;
 use ocs_lib::db::{
-    backfill_profile_weakness_features_for_player, build_weakness_snapshot_v1, ensure_profile_weakness_tables,
-    get_weakness_evidence, get_weakness_signals, replace_weakness_snapshot, WeaknessAggregationInputRow,
+    backfill_profile_weakness_features_for_player, build_weakness_snapshot_v1,
+    ensure_profile_weakness_tables, get_weakness_evidence, get_weakness_signals,
+    replace_weakness_snapshot, WeaknessAggregationInputRow,
 };
 use rusqlite::{Connection as RusqliteConnection, OptionalExtension};
 use serde_json::json;
@@ -42,7 +43,10 @@ fn find_profile_by_name(db_dir: &Path, profile_name: &str) -> Option<(String, Pa
         if path.extension().and_then(|e| e.to_str()) != Some("db3") {
             continue;
         }
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
         if !file_name.starts_with("profile_") {
             continue;
         }
@@ -107,8 +111,10 @@ fn normalize_opt_text(v: Option<String>) -> Option<String> {
 }
 
 fn ensure_profile_analysis_tables(conn: &RusqliteConnection) {
-    conn.execute_batch(include_str!("../../database/schema/profile_analysis_tables.sql"))
-        .expect("ensure profile analysis tables");
+    conn.execute_batch(include_str!(
+        "../../database/schema/profile_analysis_tables.sql"
+    ))
+    .expect("ensure profile analysis tables");
 }
 
 fn analysis_game_key_to_db_id(
@@ -131,7 +137,11 @@ fn analysis_game_key_to_db_id(
         return None;
     }
 
-    let suffix_digits_rev: String = key.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
+    let suffix_digits_rev: String = key
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     if suffix_digits_rev.is_empty() {
         return None;
     }
@@ -322,10 +332,12 @@ fn isabeast_real_profile_generates_weakness_signals_e2e() {
     let seeded = seed_game_analysis_stats(&profile_conn, &analysis_stats_map, &profile_game_ids);
 
     let mut diesel_conn =
-        diesel::SqliteConnection::establish(temp_copy.path().to_string_lossy().as_ref()).expect("open temp profile db with diesel");
+        diesel::SqliteConnection::establish(temp_copy.path().to_string_lossy().as_ref())
+            .expect("open temp profile db with diesel");
     ensure_profile_weakness_tables(&mut diesel_conn).expect("ensure weakness tables");
-    let backfilled = backfill_profile_weakness_features_for_player(&mut diesel_conn, profile_player_id)
-        .expect("backfill weakness features for Isabeast");
+    let backfilled =
+        backfill_profile_weakness_features_for_player(&mut diesel_conn, profile_player_id)
+            .expect("backfill weakness features for Isabeast");
 
     let source_rows = load_profile_rows(&profile_conn, profile_player_id);
     assert!(
@@ -358,7 +370,8 @@ fn isabeast_real_profile_generates_weakness_signals_e2e() {
             time_control_bucket: normalize_opt_text(row.time_control_bucket),
             color_played: normalize_opt_text(row.color_played),
             game_length_ply: row.ply_count,
-            ply_bucket_features_json: serde_json::from_str(&row.ply_bucket_features_json).unwrap_or_else(|_| json!({})),
+            ply_bucket_features_json: serde_json::from_str(&row.ply_bucket_features_json)
+                .unwrap_or_else(|_| json!({})),
             features_json: serde_json::from_str(&row.features_json).unwrap_or_else(|_| json!({})),
         });
     }
@@ -393,14 +406,21 @@ fn isabeast_real_profile_generates_weakness_signals_e2e() {
     )
     .expect("persist weakness snapshot");
 
-    let signals = get_weakness_signals(&mut diesel_conn, &snapshot_key, 12, 0).expect("load persisted signals");
+    let signals = get_weakness_signals(&mut diesel_conn, &snapshot_key, 12, 0)
+        .expect("load persisted signals");
     assert!(
         !signals.is_empty(),
         "Expected persisted weakness signals for Isabeast"
     );
 
-    let evidence = get_weakness_evidence(&mut diesel_conn, &snapshot_key, &signals[0].signal_key, 4, 0)
-        .expect("load persisted evidence");
+    let evidence = get_weakness_evidence(
+        &mut diesel_conn,
+        &snapshot_key,
+        &signals[0].signal_key,
+        4,
+        0,
+    )
+    .expect("load persisted evidence");
     assert!(
         !evidence.is_empty(),
         "Expected at least one evidence row for first signal"

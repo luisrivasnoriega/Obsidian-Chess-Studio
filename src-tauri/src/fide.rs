@@ -491,7 +491,8 @@ mod tests {
 
         let cfg = config::standard();
         let bytes = bincode::encode_to_vec(&players, cfg).unwrap();
-        let (decoded, _len): (Vec<FidePlayer>, usize) = bincode::decode_from_slice(&bytes, cfg).unwrap();
+        let (decoded, _len): (Vec<FidePlayer>, usize) =
+            bincode::decode_from_slice(&bytes, cfg).unwrap();
 
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].fideid, 1);
@@ -633,7 +634,9 @@ mod tests {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             let data_uri = format!("data:image/jpeg;base64,{}", b64);
 
-            let out = save_fide_photo_to_dir("12345", &data_uri, &dir).await.unwrap();
+            let out = save_fide_photo_to_dir("12345", &data_uri, &dir)
+                .await
+                .unwrap();
             assert!(out.exists());
 
             let written = std::fs::read(&out).unwrap();

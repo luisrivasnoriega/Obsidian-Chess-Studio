@@ -599,7 +599,10 @@ fn analyze_opening_characteristics(opening_name: &str) -> OpeningCharacteristics
 
     if lower.contains("english opening") || lower.contains("english") {
         c.is_positional = true;
-        if lower.contains("king's english") || lower.contains("kings english") || lower.contains("fianchetto") {
+        if lower.contains("king's english")
+            || lower.contains("kings english")
+            || lower.contains("fianchetto")
+        {
             c.is_hypermodern = true;
             c.is_dynamic = true;
             c.is_offbeat = false;
@@ -902,7 +905,8 @@ fn extract_eco_from_opening_uncached(opening_name: &str) -> Option<String> {
         if let Some(code) = find_eco_for_letters(name, &[b'A', b'B', b'C', b'D']) {
             let letter = code.as_bytes()[0] as char;
             if let Some(num) = eco_num(&code) {
-                let ok = (letter == 'D' && (2..=5).contains(&num)) || (letter == 'A' && (46..=48).contains(&num));
+                let ok = (letter == 'D' && (2..=5).contains(&num))
+                    || (letter == 'A' && (46..=48).contains(&num));
                 if ok {
                     return Some(code);
                 }
@@ -995,7 +999,9 @@ fn extract_eco_from_opening_cached(
     v
 }
 
-fn extract_ecos_from_site_stats_data(site_stats_data: &[SiteStatsData]) -> Vec<(String, String, usize)> {
+fn extract_ecos_from_site_stats_data(
+    site_stats_data: &[SiteStatsData],
+) -> Vec<(String, String, usize)> {
     // Port of `extractEcosFromPlayerInfo` (TS) with caching to improve performance.
     let mut opening_counts: HashMap<String, usize> = HashMap::new(); // key = "{eco}:{opening}"
     let mut opening_meta: HashMap<String, (String, String)> = HashMap::new(); // key -> (eco, opening)
@@ -1083,7 +1089,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- A00–A03: irregular (Grob, Polish, etc.) ---
         if letter == 'A' && (0..=3).contains(&num) {
             v.offbeat += (if characteristics.is_offbeat { 4.0 } else { 3.0 }) * weight;
-            v.tactico += (if characteristics.is_tactical { 2.0 } else { 1.0 }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                2.0
+            } else {
+                1.0
+            }) * weight;
 
             if characteristics.is_hypermodern {
                 v.hipermoderno += 3.0 * weight;
@@ -1117,8 +1127,16 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
 
         // --- A04–A09: Reti / Zukertort / KIA ---
         if letter == 'A' && (4..=9).contains(&num) {
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
-            v.sistematico += (if characteristics.is_systematic { 3.0 } else { 2.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
+            v.sistematico += (if characteristics.is_systematic {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.solido += (if characteristics.is_solid { 2.0 } else { 1.0 }) * weight;
 
             if num == 4 || characteristics.is_hypermodern {
@@ -1146,7 +1164,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
                 v.posicional += 2.0 * weight;
                 v.dinamico += 2.0 * weight;
             } else {
-                v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
+                v.posicional += (if characteristics.is_positional {
+                    3.0
+                } else {
+                    2.0
+                }) * weight;
                 v.solido += (if characteristics.is_solid { 2.0 } else { 1.0 }) * weight;
                 v.dinamico += (if characteristics.is_dynamic { 2.0 } else { 1.0 }) * weight;
             }
@@ -1209,13 +1231,21 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         if letter == 'B' && num == 1 {
             v.offbeat += 2.0 * weight;
             v.dinamico += 2.0 * weight;
-            v.tactico += (if characteristics.is_tactical { 2.0 } else { 1.0 }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                2.0
+            } else {
+                1.0
+            }) * weight;
         }
 
         // --- B02–B09: Alekhine / Modern / Pirc ---
         if letter == 'B' && (2..=9).contains(&num) {
             v.dinamico += (if characteristics.is_dynamic { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 2.0 } else { 1.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                2.0
+            } else {
+                1.0
+            }) * weight;
 
             if characteristics.is_hypermodern {
                 // Modern Defense and Pirc are hypermodern, NOT offbeat
@@ -1227,7 +1257,10 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
                 v.offbeat += 1.0 * weight;
             }
 
-            if (6..=9).contains(&num) || lower_opening.contains("modern") || lower_opening.contains("pirc") {
+            if (6..=9).contains(&num)
+                || lower_opening.contains("modern")
+                || lower_opening.contains("pirc")
+            {
                 v.posicional += 1.0 * weight;
                 if characteristics.is_hypermodern {
                     v.hipermoderno += 1.0 * weight;
@@ -1240,8 +1273,16 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- B10–B19: Caro-Kann ---
         if letter == 'B' && (10..=19).contains(&num) {
             v.solido += (if characteristics.is_solid { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
-            v.tactico += (if characteristics.is_tactical { 2.0 } else { 1.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                2.0
+            } else {
+                1.0
+            }) * weight;
         }
 
         // --- B20–B29: generic Sicilian ---
@@ -1253,9 +1294,17 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
 
         // --- B30–B99: Sicilian mainline ---
         if letter == 'B' && (30..=99).contains(&num) {
-            v.tactico += (if characteristics.is_tactical { 3.0 } else { 2.0 }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.dinamico += (if characteristics.is_dynamic { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 2.0 } else { 1.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                2.0
+            } else {
+                1.0
+            }) * weight;
 
             if characteristics.is_hypermodern {
                 // Hyperaccelerated Dragon is hypermodern
@@ -1271,7 +1320,9 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
             }
 
             // Only add offbeat if it's truly offbeat and NOT hypermodern
-            if ((30..=39).contains(&num) || characteristics.is_offbeat) && !characteristics.is_hypermodern {
+            if ((30..=39).contains(&num) || characteristics.is_offbeat)
+                && !characteristics.is_hypermodern
+            {
                 v.offbeat += 1.0 * weight;
             }
 
@@ -1284,8 +1335,16 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- C00–C19: French ---
         if letter == 'C' && (0..=19).contains(&num) {
             v.solido += (if characteristics.is_solid { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
-            v.tactico += (if characteristics.is_tactical { 2.0 } else { 1.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                2.0
+            } else {
+                1.0
+            }) * weight;
 
             if lower_opening.contains("winawer") || lower_opening.contains("variation") {
                 v.dinamico += 1.0 * weight;
@@ -1383,8 +1442,16 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
 
         // --- D02–D05: London / Colle / Torre ---
         if letter == 'D' && (2..=5).contains(&num) {
-            v.sistematico += (if characteristics.is_systematic { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
+            v.sistematico += (if characteristics.is_systematic {
+                3.0
+            } else {
+                2.0
+            }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.solido += (if characteristics.is_solid { 2.0 } else { 1.0 }) * weight;
         }
 
@@ -1402,7 +1469,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- D10–D19: Slav ---
         if letter == 'D' && (10..=19).contains(&num) {
             v.solido += (if characteristics.is_solid { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.dinamico += (if characteristics.is_dynamic { 2.0 } else { 1.0 }) * weight;
         }
 
@@ -1416,7 +1487,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- D30–D49: QGD / Semi-Slav ---
         if letter == 'D' && (30..=49).contains(&num) {
             v.solido += (if characteristics.is_solid { 3.0 } else { 2.0 }) * weight;
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.dinamico += (if characteristics.is_dynamic { 2.0 } else { 1.0 }) * weight;
             if lower_opening.contains("semi-slav") || lower_opening.contains("semislav") {
                 v.dinamico += 1.0 * weight;
@@ -1433,7 +1508,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- D80–D99: Grünfeld and friends ---
         if letter == 'D' && (80..=99).contains(&num) {
             v.dinamico += (if characteristics.is_dynamic { 3.0 } else { 2.0 }) * weight;
-            v.tactico += (if characteristics.is_tactical { 3.0 } else { 2.0 }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             if characteristics.is_hypermodern {
                 v.hipermoderno += 4.0 * weight;
                 v.posicional += 2.0 * weight;
@@ -1466,7 +1545,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
 
         // --- E20–E59: Nimzo / Bogo families ---
         if letter == 'E' && (20..=59).contains(&num) {
-            v.posicional += (if characteristics.is_positional { 3.0 } else { 2.0 }) * weight;
+            v.posicional += (if characteristics.is_positional {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             v.dinamico += (if characteristics.is_dynamic { 3.0 } else { 2.0 }) * weight;
             if characteristics.is_hypermodern {
                 v.hipermoderno += 3.0 * weight;
@@ -1483,7 +1566,11 @@ fn style_from_eco_list(openings: &[(String, String, usize)]) -> StyleVector {
         // --- E60–E99: King's Indian family ---
         if letter == 'E' && (60..=99).contains(&num) {
             v.dinamico += (if characteristics.is_dynamic { 3.0 } else { 2.0 }) * weight;
-            v.tactico += (if characteristics.is_tactical { 3.0 } else { 2.0 }) * weight;
+            v.tactico += (if characteristics.is_tactical {
+                3.0
+            } else {
+                2.0
+            }) * weight;
             if characteristics.is_hypermodern {
                 v.hipermoderno += 4.0 * weight;
                 v.posicional += 2.0 * weight;
@@ -1609,11 +1696,14 @@ fn get_player_style_label(vector: StyleVector) -> PlayerStyleLabel {
         && gambitero >= posicional * 0.6;
     let creative_gambiteer = gambit_core && offbeat >= 15.0;
     let systems_player = sistematico >= 22.0 && posicional >= 18.0;
-    let offbeat_heavy = offbeat >= 35.0 && gambitero < 20.0 && !positional_core && hipermoderno < 20.0;
+    let offbeat_heavy =
+        offbeat >= 35.0 && gambitero < 20.0 && !positional_core && hipermoderno < 20.0;
     let classic_solid = solido >= 24.0 && posicional >= 22.0 && dinamico < 26.0;
     let dynamic_tactician = dinamico >= 25.0 && tactico >= 20.0 && gambitero < 24.0;
-    let hypermodern_dynamic =
-        hipermoderno >= 20.0 && dinamico >= 20.0 && tactico >= 15.0 && (hipermoderno >= offbeat || offbeat < 25.0);
+    let hypermodern_dynamic = hipermoderno >= 20.0
+        && dinamico >= 20.0
+        && tactico >= 15.0
+        && (hipermoderno >= offbeat || offbeat < 25.0);
 
     // Complex labels (order matters)
     if creative_gambiteer {
@@ -1702,7 +1792,8 @@ fn get_player_style_label(vector: StyleVector) -> PlayerStyleLabel {
             color: "teal".to_string(),
         };
     }
-    if posicional >= 26.0 && posicional >= tactico && posicional >= dinamico && hipermoderno < 18.0 {
+    if posicional >= 26.0 && posicional >= tactico && posicional >= dinamico && hipermoderno < 18.0
+    {
         return PlayerStyleLabel {
             label: "playerStyle.positional".to_string(),
             description: "playerStyle.positionalSimpleDescription".to_string(),
@@ -1793,4 +1884,3 @@ pub fn analyze_player_style_label(site_stats_data: &[SiteStatsData]) -> PlayerSt
     let vector = style_from_eco_list(&openings);
     get_player_style_label(vector)
 }
-

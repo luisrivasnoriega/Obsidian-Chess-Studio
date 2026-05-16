@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import BoardsPage from "@/features/boards/BoardsPage";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { debugNavLog } from "@/utils/debugNav";
 import { createTab } from "@/utils/tabs";
 
 export default function ProfilesRouteEntry() {
@@ -23,8 +22,6 @@ export default function ProfilesRouteEntry() {
     // Check if there's an existing profiles tab
     const existing = tabs.find((tab) => tab.type === "profiles") ?? null;
 
-    debugNavLog("profiles-route-entry:init", { tabs: tabs.length, activeTab, activeType: active?.type ?? null });
-
     if (existing) {
       // If there is no active tab (e.g. after storage restore), activate the existing profiles tab.
       if (!active) {
@@ -39,7 +36,7 @@ export default function ProfilesRouteEntry() {
       setTabs,
       setActiveTab,
     });
-  }, [active, activeTab, setActiveTab, setTabs, tabs, t]);
+  }, [active, setActiveTab, setTabs, tabs, t]);
 
   // Always render BoardsPage which will handle the tab rendering
   return <BoardsPage />;

@@ -8,13 +8,15 @@
 //! - keeps engine guardrails and human strategic selector compatibility
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use shakmaty::{
-    fen::Fen, san::{San, SanPlus}, uci::UciMove, Board, CastlingMode, Chess, Color, EnPassantMode,
-    Move, Position, Role, Square,
+    fen::Fen,
+    san::{San, SanPlus},
+    uci::UciMove,
+    Board, CastlingMode, Chess, Color, EnPassantMode, Move, Position, Role, Square,
 };
 use specta::Type;
+use std::collections::{HashMap, HashSet};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::{error::Error, opening::get_opening_info_from_fen, AppState};
 
@@ -232,8 +234,7 @@ pub async fn analyze_game_human_report(
 
     if options.reversed {
         return Err(Error::InvalidInput(
-            "El reporte humano anotado requiere análisis cronológico (reversed=false)"
-                .to_string(),
+            "El reporte humano anotado requiere análisis cronológico (reversed=false)".to_string(),
         ));
     }
 
@@ -262,16 +263,9 @@ pub async fn analyze_game_human_report(
 
     ensure_min_multipv(&mut uci_options, HUMAN_REPORT_MULTIPV_MIN);
 
-    let analysis = GameAnalysisService::analyze_game(
-        id,
-        engine,
-        go_mode,
-        options,
-        uci_options,
-        state,
-        app,
-    )
-    .await?;
+    let analysis =
+        GameAnalysisService::analyze_game(id, engine, go_mode, options, uci_options, state, app)
+            .await?;
 
     let max_variation_plies = strategic_variation_max_plies.unwrap_or(5).clamp(1, 12) as usize;
 
@@ -407,7 +401,8 @@ pub fn build_human_strategic_live_report(
 
         let strategic_axes = extract_top_macro_axes(&candidate.macro_components);
         let concrete_themes = extract_top_concrete_themes(&candidate.components);
-        let strategic_plan = build_plan_sentence(&strategic_axes, &concrete_themes, &concrete_bundle);
+        let strategic_plan =
+            build_plan_sentence(&strategic_axes, &concrete_themes, &concrete_bundle);
 
         let mut suggested_variation_uci = candidate
             .pv_uci_line
@@ -422,7 +417,8 @@ pub fn build_human_strategic_live_report(
             suggested_variation_uci.insert(0, played_uci.clone());
         }
         suggested_variation_uci.truncate(max_plies);
-        let suggested_variation_san = uci_line_to_san(root.clone(), &suggested_variation_uci, max_plies);
+        let suggested_variation_san =
+            uci_line_to_san(root.clone(), &suggested_variation_uci, max_plies);
 
         let comment_short = if !concrete_bundle.atoms.is_empty() {
             sentence(&summarize_atoms_as_short_phrase(&concrete_bundle.atoms, 2))
@@ -482,7 +478,6 @@ pub fn build_human_strategic_live_report(
         lines,
     })
 }
-
 
 fn pgn_mainline_to_uci_moves(initial_fen: &str, pgn: &str) -> Result<Vec<String>, Error> {
     let mut position = parse_position(initial_fen)?;
@@ -627,7 +622,9 @@ fn build_annotated_pgn_and_narratives(
         let current_analysis = analysis.get(ply);
         let next_analysis = analysis.get(ply + 1);
 
-        let sorted_lines = current_analysis.map(sorted_lines_by_multipv).unwrap_or_default();
+        let sorted_lines = current_analysis
+            .map(sorted_lines_by_multipv)
+            .unwrap_or_default();
         let best_engine_line = sorted_lines.first().copied();
         let engine_best_uci = best_engine_line
             .and_then(|bm| bm.uci_moves.first())
@@ -652,10 +649,16 @@ fn build_annotated_pgn_and_narratives(
                 config: None,
             };
 
-            match catch_unwind(AssertUnwindSafe(|| pick_human_strategic_move(strategic_request))) {
+            match catch_unwind(AssertUnwindSafe(|| {
+                pick_human_strategic_move(strategic_request)
+            })) {
                 Ok(Ok(sel)) => Some(sel),
                 Ok(Err(err)) => {
-                    log::warn!("Falló el módulo estratégico humano en la ply {}: {:?}", ply + 1, err);
+                    log::warn!(
+                        "Falló el módulo estratégico humano en la ply {}: {:?}",
+                        ply + 1,
+                        err
+                    );
                     None
                 }
                 Err(_) => {
@@ -671,7 +674,9 @@ fn build_annotated_pgn_and_narratives(
         let strategic_choice_uci = strategic_selection
             .as_ref()
             .map(|sel| normalize_move_key(&sel.selected_uci));
-        let strategic_choice_san = strategic_selection.as_ref().map(|sel| sel.selected_san.clone());
+        let strategic_choice_san = strategic_selection
+            .as_ref()
+            .map(|sel| sel.selected_san.clone());
 
         let played_candidate = strategic_selection.as_ref().and_then(|sel| {
             sel.candidates
@@ -694,7 +699,9 @@ fn build_annotated_pgn_and_narratives(
         // Important: comments for the played move must use the played candidate only.
         // The selected candidate is reserved for alternative-line comments.
         let played_strategic_score = played_candidate.map(|c| c.strategic_score);
-        let played_motifs = played_candidate.map(|c| c.motifs.clone()).unwrap_or_default();
+        let played_motifs = played_candidate
+            .map(|c| c.motifs.clone())
+            .unwrap_or_default();
         let strategic_axes = played_candidate
             .map(|c| extract_top_macro_axes(&c.macro_components))
             .unwrap_or_default();
@@ -789,12 +796,15 @@ fn build_annotated_pgn_and_narratives(
             );
         }
 
-        concrete_bundle.atoms.sort_by(|a, b| b.priority.cmp(&a.priority));
+        concrete_bundle
+            .atoms
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
         collapse_redundant_atoms(&mut concrete_bundle.atoms);
         concrete_bundle
             .atoms
             .dedup_by(|a, b| a.short == b.short || a.sentence == b.sentence);
-        let strategic_plan = build_plan_sentence(&strategic_axes, &concrete_themes, &concrete_bundle);
+        let strategic_plan =
+            build_plan_sentence(&strategic_axes, &concrete_themes, &concrete_bundle);
 
         let suggested_variation_uci = build_suggested_variation_uci(
             &played_uci,
@@ -803,8 +813,11 @@ fn build_annotated_pgn_and_narratives(
             &sorted_lines,
             max_variation_plies,
         );
-        let suggested_variation_san =
-            uci_line_to_san(before.clone(), &suggested_variation_uci, max_variation_plies);
+        let suggested_variation_san = uci_line_to_san(
+            before.clone(),
+            &suggested_variation_uci,
+            max_variation_plies,
+        );
 
         let punishment_text = build_engine_punishment_comment(
             after.clone(),
@@ -850,8 +863,7 @@ fn build_annotated_pgn_and_narratives(
         );
 
         let opening_phase = is_opening_phase(&before, ply);
-        let in_known_opening_theory =
-            is_known_opening_theory_position(&before_fen, &before, ply);
+        let in_known_opening_theory = is_known_opening_theory_position(&before_fen, &before, ply);
         let after_fen = Fen::from_position(after.clone(), EnPassantMode::Legal).to_string();
         let remains_in_known_opening_theory =
             is_known_opening_theory_position(&after_fen, &after, ply + 1);
@@ -897,7 +909,11 @@ fn build_annotated_pgn_and_narratives(
             } else {
                 Vec::new()
             },
-            variation_comment: if emit_variation { variation_comment } else { None },
+            variation_comment: if emit_variation {
+                variation_comment
+            } else {
+                None
+            },
         });
 
         narratives.push(HumanMoveNarrative {
@@ -1028,7 +1044,7 @@ fn should_comment_move(
         return true;
     }
 
-// A normal opening move with superficial atoms should not be annotated.
+    // A normal opening move with superficial atoms should not be annotated.
     // This is position-aware, not only ply-based: many games are still in the
     // opening after move 10 if most pieces are not developed and no real
     // strategic transformation happened.
@@ -1185,7 +1201,12 @@ fn has_opening_plan_signal(
         return true;
     }
 
-    let strong_atoms = bundle.atoms.iter().take(3).filter(|a| a.priority >= 84).count();
+    let strong_atoms = bundle
+        .atoms
+        .iter()
+        .take(3)
+        .filter(|a| a.priority >= 84)
+        .count();
     let explicit_plan_atom = bundle.atoms.iter().any(|a| {
         let short = a.short.to_ascii_lowercase();
         short.contains("sacrificio estructural")
@@ -1291,10 +1312,7 @@ fn classify_verdict_phase2(
         return HumanMoveVerdict::Interesting;
     }
 
-    if played_matches_strategic
-        && played_strategic_score.unwrap_or(0.0) >= 0.68
-        && cp_drop <= 120
-    {
+    if played_matches_strategic && played_strategic_score.unwrap_or(0.0) >= 0.68 && cp_drop <= 120 {
         return HumanMoveVerdict::Practical;
     }
 
@@ -1543,7 +1561,10 @@ fn build_engine_punishment_comment(
         "La posicion se inclina a favor del rival"
     };
 
-    Some(format!("{}: {}. Linea critica: {}.", consequence, first, pv))
+    Some(format!(
+        "{}: {}. Linea critica: {}.",
+        consequence, first, pv
+    ))
 }
 
 fn build_concrete_comment_bundle(
@@ -1839,7 +1860,12 @@ fn real_flank_attack_sectors_for_move(
     sectors
 }
 
-fn flank_attack_score(board: &Board, attacker: Color, defender: Color, sector: &'static str) -> f32 {
+fn flank_attack_score(
+    board: &Board,
+    attacker: Color,
+    defender: Color,
+    sector: &'static str,
+) -> f32 {
     let mut score = 0.0;
 
     for sq in board.by_color(defender) {
@@ -1874,7 +1900,8 @@ fn flank_attack_score(board: &Board, attacker: Color, defender: Color, sector: &
     // two-flank detector.
     if let Some(king_sq) = king_square(board, defender) {
         if sector_for_square(king_sq) == sector {
-            score += normalize_local(attackers_around_king(board, attacker, defender) as f32, 4.0) * 1.4;
+            score +=
+                normalize_local(attackers_around_king(board, attacker, defender) as f32, 4.0) * 1.4;
         }
     }
 
@@ -1888,7 +1915,10 @@ fn normalize_local(value: f32, cap: f32) -> f32 {
     (value / cap).clamp(0.0, 1.0)
 }
 
-fn two_weakness_state_mut(tracker: &mut TwoWeaknessTracker, mover: Color) -> &mut TwoWeaknessSideState {
+fn two_weakness_state_mut(
+    tracker: &mut TwoWeaknessTracker,
+    mover: Color,
+) -> &mut TwoWeaknessSideState {
     match mover {
         Color::White => &mut tracker.white,
         Color::Black => &mut tracker.black,
@@ -1908,7 +1938,12 @@ fn pawn_structure_damage_delta(before: &Board, after: &Board, mover: Color) -> u
     islands.saturating_add(doubled).saturating_add(isolated)
 }
 
-fn newly_created_target_squares(before: &Board, after: &Board, mover: Color, opponent: Color) -> Vec<Square> {
+fn newly_created_target_squares(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+) -> Vec<Square> {
     let before_targets = loose_or_overloaded_targets(before, mover, opponent);
     loose_or_overloaded_targets(after, mover, opponent)
         .into_iter()
@@ -1940,9 +1975,15 @@ fn newly_fixed_pawn_squares(before: &Board, after: &Board, mover: Color) -> Vec<
             continue;
         };
 
-        let after_fixed = after.piece_at(push_sq).map(|p| p.color == mover).unwrap_or(false)
+        let after_fixed = after
+            .piece_at(push_sq)
+            .map(|p| p.color == mover)
+            .unwrap_or(false)
             || is_square_attacked_by(after, mover, push_sq);
-        let before_fixed = before.piece_at(push_sq).map(|p| p.color == mover).unwrap_or(false)
+        let before_fixed = before
+            .piece_at(push_sq)
+            .map(|p| p.color == mover)
+            .unwrap_or(false)
             || is_square_attacked_by(before, mover, push_sq);
 
         if after_fixed && !before_fixed {
@@ -1968,7 +2009,13 @@ fn is_structural_pawn_sacrifice_pattern(before: &Board, mv: &Move, mover: Color)
         && !pawn_attackers_of_square(before, mover.other(), mv.to()).is_empty()
 }
 
-fn central_king_pressure_signal(before: &Board, after: &Board, mover: Color, opponent: Color, mv: &Move) -> bool {
+fn central_king_pressure_signal(
+    before: &Board,
+    after: &Board,
+    mover: Color,
+    opponent: Color,
+    mv: &Move,
+) -> bool {
     let Some(king_sq) = king_square(after, opponent) else {
         return false;
     };
@@ -1976,7 +2023,8 @@ fn central_king_pressure_signal(before: &Board, after: &Board, mover: Color, opp
         return false;
     };
     let central_king = matches!(king_file, 2..=5)
-        && ((opponent == Color::White && king_rank <= 1) || (opponent == Color::Black && king_rank >= 6));
+        && ((opponent == Color::White && king_rank <= 1)
+            || (opponent == Color::Black && king_rank >= 6));
     if !central_king {
         return false;
     }
@@ -2058,8 +2106,9 @@ fn add_rook_activity_atoms(
     atoms.push(ConcreteCommentAtom {
         priority: 85,
         short: format!("activa la torre en la {}ª fila", rank + 1),
-        sentence: "La torre entra en una fila activa y empieza a presionar peones o cortes del rey rival."
-            .to_string(),
+        sentence:
+            "La torre entra en una fila activa y empieza a presionar peones o cortes del rey rival."
+                .to_string(),
     });
 }
 
@@ -2329,7 +2378,11 @@ fn apply_tactical_reality_filter(
     atoms.retain(|atom| atom.priority >= 88 || atom.short.contains("jaque"));
     atoms.push(ConcreteCommentAtom {
         priority: 120,
-        short: format!("tiene un problema táctico: {} puede responderse con {}", mv.to(), reply_san),
+        short: format!(
+            "tiene un problema táctico: {} puede responderse con {}",
+            mv.to(),
+            reply_san
+        ),
         sentence: format!(
             "La idea falla tacticamente: la mejor respuesta es {}, y captura {} en {}.",
             reply_san,
@@ -2498,7 +2551,8 @@ fn add_king_exposure_atoms(
     };
 
     let central_king = matches!(king_file, 2..=5)
-        && ((opponent == Color::White && king_rank <= 1) || (opponent == Color::Black && king_rank >= 6));
+        && ((opponent == Color::White && king_rank <= 1)
+            || (opponent == Color::Black && king_rank >= 6));
     let direct_attack = is_square_attacked_by(after, mover, king_sq);
     let pressure_before = attackers_around_king(before, mover, opponent);
     let pressure_after = attackers_around_king(after, mover, opponent);
@@ -2741,7 +2795,10 @@ fn add_central_space_push_atoms(
 
     // Specific but still rule-based: a central pawn push that reduces a knight's
     // activity on g3/g6 and supports a further advance.
-    if can_advance_again && mover == Color::Black && has_piece(after, Color::White, Role::Knight, "g3") {
+    if can_advance_again
+        && mover == Color::Black
+        && has_piece(after, Color::White, Role::Knight, "g3")
+    {
         atoms.push(ConcreteCommentAtom {
             priority: 88,
             short: "restringe al caballo de g3".to_string(),
@@ -2749,7 +2806,10 @@ fn add_central_space_push_atoms(
                 .to_string(),
         });
     }
-    if can_advance_again && mover == Color::White && has_piece(after, Color::Black, Role::Knight, "g6") {
+    if can_advance_again
+        && mover == Color::White
+        && has_piece(after, Color::Black, Role::Knight, "g6")
+    {
         atoms.push(ConcreteCommentAtom {
             priority: 88,
             short: "restringe al caballo de g6".to_string(),
@@ -2867,7 +2927,9 @@ fn add_pawn_fixation_atoms(
             .unwrap_or(false);
         let was_already_controlled = is_square_attacked_by(before, mover, push_sq);
 
-        if (blocked_by_mover && !was_already_blocked) || (controlled_by_mover && !was_already_controlled) {
+        if (blocked_by_mover && !was_already_blocked)
+            || (controlled_by_mover && !was_already_controlled)
+        {
             // Ignore home-rank pawns. This should describe fixed advanced pawns,
             // not normal undeveloped opening pawns.
             let advanced = match opponent {
@@ -2884,7 +2946,11 @@ fn add_pawn_fixation_atoms(
     fixed_pawns.dedup();
 
     if !fixed_pawns.is_empty() {
-        let pawns = fixed_pawns.into_iter().take(3).collect::<Vec<_>>().join(", ");
+        let pawns = fixed_pawns
+            .into_iter()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(", ");
         atoms.push(ConcreteCommentAtom {
             priority: 84,
             short: format!("fija la estructura de peones alrededor de {}", pawns),
@@ -2945,7 +3011,11 @@ fn add_central_break_control_atoms(
     restrained_breaks.dedup();
 
     if !restrained_breaks.is_empty() {
-        let breaks = restrained_breaks.into_iter().take(2).collect::<Vec<_>>().join("/");
+        let breaks = restrained_breaks
+            .into_iter()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("/");
         atoms.push(ConcreteCommentAtom {
             priority: 86,
             short: format!("frena la ruptura {}", breaks),
@@ -3031,7 +3101,11 @@ fn add_piece_restriction_atoms(
     newly_restricted.dedup();
 
     if drop >= 3 && !newly_restricted.is_empty() {
-        let pieces = newly_restricted.into_iter().take(2).collect::<Vec<_>>().join(", ");
+        let pieces = newly_restricted
+            .into_iter()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(", ");
         atoms.push(ConcreteCommentAtom {
             priority: 57,
             short: format!("restringe {}", pieces),
@@ -3054,7 +3128,11 @@ fn add_outpost_or_infiltration_atoms(
     let Some((_, to_rank)) = square_to_coords(mv.to()) else {
         return;
     };
-    let advanced = if mover == Color::White { to_rank >= 4 } else { to_rank <= 3 };
+    let advanced = if mover == Color::White {
+        to_rank >= 4
+    } else {
+        to_rank <= 3
+    };
     if !advanced {
         return;
     }
@@ -3110,19 +3188,22 @@ fn add_pawn_structure_atoms(
         details.push(format!("{} isla(s) de peones adicional(es)", islands_delta));
     }
     if doubled_delta > 0 {
-        details.push(format!("{} peón(es) doblado(s) adicional(es)", doubled_delta));
+        details.push(format!(
+            "{} peón(es) doblado(s) adicional(es)",
+            doubled_delta
+        ));
     }
     if isolated_delta > 0 {
-        details.push(format!("{} peón(es) aislado(s) adicional(es)", isolated_delta));
+        details.push(format!(
+            "{} peón(es) aislado(s) adicional(es)",
+            isolated_delta
+        ));
     }
 
     atoms.push(ConcreteCommentAtom {
         priority: 82,
         short: "daña la estructura de peones".to_string(),
-        sentence: format!(
-            "La estructura de peones empeora: {}.",
-            details.join(", ")
-        ),
+        sentence: format!("La estructura de peones empeora: {}.", details.join(", ")),
     });
 }
 
@@ -3132,7 +3213,10 @@ fn add_atom_once(
     short: &str,
     sentence_text: &str,
 ) {
-    if atoms.iter().any(|a| a.short == short || a.sentence == sentence_text) {
+    if atoms
+        .iter()
+        .any(|a| a.short == short || a.sentence == sentence_text)
+    {
         return;
     }
     atoms.push(ConcreteCommentAtom {
@@ -3225,14 +3309,23 @@ fn extract_top_concrete_themes(
             components.pawn_structure_damage,
             "daña la estructura de peones para crear objetivos a largo plazo",
         ),
-        (components.weak_pawn_pressure, "aumenta la presión sobre peones débiles"),
-        (components.space_gain, "gana espacio y limita la libertad de las piezas"),
+        (
+            components.weak_pawn_pressure,
+            "aumenta la presión sobre peones débiles",
+        ),
+        (
+            components.space_gain,
+            "gana espacio y limita la libertad de las piezas",
+        ),
         (
             components.open_file_pressure,
             "abre columnas y mejora la actividad de piezas mayores",
         ),
         (components.central_king_pressure, "abre líneas hacia el rey"),
-        (components.piece_restriction, "restringe piezas defensivas clave"),
+        (
+            components.piece_restriction,
+            "restringe piezas defensivas clave",
+        ),
         (components.wing_clamp, "fija peones en un flanco"),
     ];
     items.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -3367,14 +3460,12 @@ fn derive_gm_plan_hint(
     {
         return Some(format!(
             "Plan: {}.",
-            plan_atom
-                .sentence
-                .trim()
-                .trim_end_matches('.')
+            plan_atom.sentence.trim().trim_end_matches('.')
         ));
     }
 
-    if has("prepara h5-h4 contra el caballo de g3") || has("prepara h4-h5 contra el caballo de g6") {
+    if has("prepara h5-h4 contra el caballo de g3") || has("prepara h4-h5 contra el caballo de g6")
+    {
         return Some(
             "Plan: limitar el caballo defensor y crear un segundo frente de ataque en el flanco del rey."
                 .to_string(),
@@ -3609,14 +3700,24 @@ fn build_summary(narratives: &[HumanMoveNarrative]) -> HumanStrategicGameSummary
             *theme_counts.entry(key).or_insert(0) += 1;
         }
 
-        if n.comment_long.contains("dos debilidades") || n.strategic_plan.contains("dos debilidades") {
-            *theme_counts.entry("twoWeaknessStrategy".to_string()).or_insert(0) += 1;
+        if n.comment_long.contains("dos debilidades")
+            || n.strategic_plan.contains("dos debilidades")
+        {
+            *theme_counts
+                .entry("twoWeaknessStrategy".to_string())
+                .or_insert(0) += 1;
         }
-        if n.comment_long.contains("cambio de frente") || n.strategic_plan.contains("cambio de frente") {
-            *theme_counts.entry("targetSwitching".to_string()).or_insert(0) += 1;
+        if n.comment_long.contains("cambio de frente")
+            || n.strategic_plan.contains("cambio de frente")
+        {
+            *theme_counts
+                .entry("targetSwitching".to_string())
+                .or_insert(0) += 1;
         }
         if n.comment_long.contains("sobrecarg") || n.strategic_plan.contains("sobrecarg") {
-            *theme_counts.entry("overloadedDefense".to_string()).or_insert(0) += 1;
+            *theme_counts
+                .entry("overloadedDefense".to_string())
+                .or_insert(0) += 1;
         }
     }
 
@@ -3684,8 +3785,10 @@ fn is_opening_phase(position: &Chess, ply: usize) -> bool {
     }
 
     let board = position.board();
-    let undeveloped_white = undeveloped_minor_count(board, Color::White) + undeveloped_rook_count(board, Color::White);
-    let undeveloped_black = undeveloped_minor_count(board, Color::Black) + undeveloped_rook_count(board, Color::Black);
+    let undeveloped_white =
+        undeveloped_minor_count(board, Color::White) + undeveloped_rook_count(board, Color::White);
+    let undeveloped_black =
+        undeveloped_minor_count(board, Color::Black) + undeveloped_rook_count(board, Color::Black);
     undeveloped_white + undeveloped_black >= 5 && !central_files_are_open(board)
 }
 
@@ -3865,7 +3968,11 @@ fn capture_square_for_move(board: &Board, mv: &Move, mover: Color) -> Option<Squ
 fn moved_piece_square(board: &Board, mv: &Move, mover: Color) -> Option<Square> {
     let sq = mv.to();
     let piece = board.piece_at(sq)?;
-    if piece.color == mover { Some(sq) } else { None }
+    if piece.color == mover {
+        Some(sq)
+    } else {
+        None
+    }
 }
 
 fn king_square(board: &Board, color: Color) -> Option<Square> {
@@ -3956,7 +4063,8 @@ fn is_meaningful_pawn_target(board: &Board, attacker: Color, defender: Color, sq
 
     // Do not call normal home-rank shelter pawns like g7/g2 a strategic target
     // just because a queen or bishop happens to see them from far away.
-    let home_rank_pawn = (defender == Color::White && rank == 1) || (defender == Color::Black && rank == 6);
+    let home_rank_pawn =
+        (defender == Color::White && rank == 1) || (defender == Color::Black && rank == 6);
     let adjacent_support = (file > 0
         && coords_to_square(file - 1, rank)
             .and_then(|s| board.piece_at(s))
@@ -3972,9 +4080,8 @@ fn is_meaningful_pawn_target(board: &Board, attacker: Color, defender: Color, sq
     }
 
     let files = pawn_file_counts(board, defender);
-    let isolated = files[file] > 0
-        && !(file > 0 && files[file - 1] > 0)
-        && !(file < 7 && files[file + 1] > 0);
+    let isolated =
+        files[file] > 0 && !(file > 0 && files[file - 1] > 0) && !(file < 7 && files[file + 1] > 0);
     let doubled = files[file] > 1;
     let advanced_or_backward = match defender {
         Color::White => rank >= 3,
@@ -4013,7 +4120,12 @@ fn restricted_minor_pieces(board: &Board, color: Color) -> Vec<String> {
         }
         let mobility = pseudo_attacks_from(board, sq, piece.role, color)
             .into_iter()
-            .filter(|target| board.piece_at(*target).map(|p| p.color != color).unwrap_or(true))
+            .filter(|target| {
+                board
+                    .piece_at(*target)
+                    .map(|p| p.color != color)
+                    .unwrap_or(true)
+            })
             .count();
         if mobility <= 2 {
             out.push(format!("{} en {}", role_name(piece.role), sq));
@@ -4050,7 +4162,10 @@ fn is_initial_minor_square(color: Color, role: Role, sq: Square) -> bool {
 
 fn heavy_piece_on_file(board: &Board, color: Color, file: usize) -> bool {
     for sq in (board.rooks() | board.queens()) & board.by_color(color) {
-        if square_to_coords(sq).map(|(f, _)| f == file).unwrap_or(false) {
+        if square_to_coords(sq)
+            .map(|(f, _)| f == file)
+            .unwrap_or(false)
+        {
             return true;
         }
     }
@@ -4118,7 +4233,11 @@ fn pseudo_attacks_from(board: &Board, from: Square, role: Role, color: Color) ->
                 continue;
             }
             if piece_attacks_square(board, from, role, color, target) {
-                if board.piece_at(target).map(|p| p.color != color).unwrap_or(true) {
+                if board
+                    .piece_at(target)
+                    .map(|p| p.color != color)
+                    .unwrap_or(true)
+                {
                     out.push(target);
                 }
             }
@@ -4215,7 +4334,11 @@ fn square_to_coords(sq: Square) -> Option<(usize, usize)> {
     }
     let file = bytes[0].to_ascii_lowercase().checked_sub(b'a')? as usize;
     let rank = bytes[1].checked_sub(b'1')? as usize;
-    if file <= 7 && rank <= 7 { Some((file, rank)) } else { None }
+    if file <= 7 && rank <= 7 {
+        Some((file, rank))
+    } else {
+        None
+    }
 }
 
 fn coords_to_square(file: usize, rank: usize) -> Option<Square> {
@@ -4413,7 +4536,13 @@ fn sentence_key(input: &str) -> String {
     input
         .to_ascii_lowercase()
         .chars()
-        .map(|ch| if ch.is_alphanumeric() || ch.is_whitespace() { ch } else { ' ' })
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -4642,7 +4771,8 @@ mod tests {
 "#;
 
         let initial_fen = "startpos";
-        let moves = pgn_mainline_to_uci_moves(initial_fen, pgn).expect("must recover moves from PGN");
+        let moves =
+            pgn_mainline_to_uci_moves(initial_fen, pgn).expect("must recover moves from PGN");
         assert!(!moves.is_empty(), "PGN should contain moves");
 
         let mut analysis = Vec::with_capacity(moves.len());
@@ -4650,8 +4780,8 @@ mod tests {
 
         for (idx, played_uci) in moves.iter().enumerate() {
             let played_uci_norm = normalize_move_key(played_uci);
-            let played_uci_move = UciMove::from_ascii(played_uci_norm.as_bytes())
-                .expect("valid uci");
+            let played_uci_move =
+                UciMove::from_ascii(played_uci_norm.as_bytes()).expect("valid uci");
             let played_move = played_uci_move.to_move(&position).expect("legal uci move");
             let played_san = SanPlus::from_move(position.clone(), &played_move).to_string();
 
@@ -4698,30 +4828,22 @@ mod tests {
             SanPlus::from_move_and_play_unchecked(&mut position, &played_move);
         }
 
-        let (annotated_pgn, narratives) = build_annotated_pgn_and_narratives(
-            initial_fen,
-            &moves,
-            &analysis,
-            Some(pgn),
-            5,
-        )
-        .expect("annotated pgn should be generated");
+        let (annotated_pgn, narratives) =
+            build_annotated_pgn_and_narratives(initial_fen, &moves, &analysis, Some(pgn), 5)
+                .expect("annotated pgn should be generated");
 
         let comment_count = narratives
             .iter()
             .filter(|n| !n.comment_long.trim().is_empty() || !n.comment_short.trim().is_empty())
             .count();
 
-        println!("=== USER PGN ANNOTATED OUTPUT START ===");
-        println!("{annotated_pgn}");
-        println!("=== USER PGN ANNOTATED OUTPUT END ===");
-        println!("narratives: {}", narratives.len());
-        println!("narratives_with_text_comments: {}", comment_count);
-
         assert!(
             comment_count > 0,
             "expected at least one move comment from human analyzer"
         );
-        assert!(annotated_pgn.contains('{'), "annotated pgn should contain comments");
+        assert!(
+            annotated_pgn.contains('{'),
+            "annotated pgn should contain comments"
+        );
     }
 }

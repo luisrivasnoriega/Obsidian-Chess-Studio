@@ -39,9 +39,11 @@ fn ensure_sync_schema(db: &mut diesel::SqliteConnection) -> Result<(), Error> {
     db.batch_execute(SYNC_STATE_SCHEMA)?;
     // Backwards-compatible schema upgrade for existing databases.
     // Ignore errors (e.g., "duplicate column name") when the column already exists.
-    let _ =
-        sql_query("ALTER TABLE account_sync_state ADD COLUMN since_ms INTEGER").execute(db);
-    let _ = sql_query("ALTER TABLE account_sync_state ADD COLUMN mode TEXT NOT NULL DEFAULT 'incremental'").execute(db);
+    let _ = sql_query("ALTER TABLE account_sync_state ADD COLUMN since_ms INTEGER").execute(db);
+    let _ = sql_query(
+        "ALTER TABLE account_sync_state ADD COLUMN mode TEXT NOT NULL DEFAULT 'incremental'",
+    )
+    .execute(db);
     Ok(())
 }
 

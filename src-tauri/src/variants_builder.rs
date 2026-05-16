@@ -93,7 +93,6 @@ pub(crate) async fn fetch_explorer(
 
     for attempt in 0..=MAX_RETRIES {
         throttle_lichess().await;
-        log::debug!("Lichess explorer request start: {}", url);
 
         let mut request = HTTP_CLIENT
             .get(url.clone())
@@ -1016,12 +1015,6 @@ async fn get_opening_moves(
             let url = lichess_explorer_url(fen, opt)?;
             let key = url.to_string();
             if let Some(v) = explorer_cache.get(&key) {
-                log::debug!(
-                    "get_opening_moves: cache hit ({} moves) for {} (budget_left={})",
-                    v.len(),
-                    key,
-                    *requests_left
-                );
                 return Ok(v.clone());
             }
             if *requests_left == 0 {
@@ -1029,11 +1022,6 @@ async fn get_opening_moves(
                 vec![]
             } else {
                 *requests_left = requests_left.saturating_sub(1);
-                log::debug!(
-                    "get_opening_moves: cache miss, fetching {} (budget_left={})",
-                    key,
-                    *requests_left
-                );
                 match fetch_explorer(url, req.lichess_token.as_deref()).await {
                     Ok(data) => {
                         explorer_cache.insert(key, data.moves.clone());
@@ -1058,12 +1046,6 @@ async fn get_opening_moves(
             let url = masters_explorer_url(fen, opt)?;
             let key = url.to_string();
             if let Some(v) = explorer_cache.get(&key) {
-                log::debug!(
-                    "get_opening_moves: cache hit ({} moves) for {} (budget_left={})",
-                    v.len(),
-                    key,
-                    *requests_left
-                );
                 return Ok(v.clone());
             }
             if *requests_left == 0 {
@@ -1071,11 +1053,6 @@ async fn get_opening_moves(
                 vec![]
             } else {
                 *requests_left = requests_left.saturating_sub(1);
-                log::debug!(
-                    "get_opening_moves: cache miss, fetching {} (budget_left={})",
-                    key,
-                    *requests_left
-                );
                 match fetch_explorer(url, req.lichess_token.as_deref()).await {
                     Ok(data) => {
                         explorer_cache.insert(key, data.moves.clone());
@@ -1120,11 +1097,6 @@ async fn get_opening_moves(
 
     if allow_existing_fallback && fetched.is_empty() {
         if let Some(existing) = existing_fallback {
-            log::debug!(
-                "get_opening_moves: DB/explorer empty, falling back to existing tree moves ({} moves) for fen_key={}",
-                existing.len(),
-                k
-            );
             return Ok(existing);
         }
     }
@@ -1195,13 +1167,6 @@ async fn get_engine_best_move(
 
     if let Some(entry) = cached {
         if entry.ms >= requested_ms_i64 && !entry.recommended_move.trim().is_empty() {
-            log::debug!(
-                "variants_builder engine cache hit: fen_key={} engine={} cached_ms={} requested_ms={}",
-                fen_identity_key(fen),
-                engine_sig,
-                entry.ms,
-                requested_ms_i64
-            );
             return Ok(Some(entry.recommended_move));
         }
     }
@@ -1467,7 +1432,6 @@ mod smart {
     #[derive(Debug, Clone, Copy)]
     pub(super) struct SmartConfig {
         pub candidate_multi_pv: usize,
-        pub validation_full_moves: u32,
         pub validation_plies: u32,
         pub playable_threshold_cp: i32,
         pub max_validation_opponent_branches: usize,
@@ -1497,7 +1461,6 @@ mod smart {
                     .and_then(|cfg| cfg.candidate_multi_pv)
                     .unwrap_or(5)
                     .clamp(1, 16) as usize,
-                validation_full_moves,
                 validation_plies,
                 playable_threshold_cp: dto
                     .and_then(|cfg| cfg.playable_threshold_cp)
@@ -1871,22 +1834,6 @@ mod smart {
                 ))
                 .await?
                 {
-                    log::debug!(
-                        "SMART candidate scored: fen_key={} move={} rank={} eval_cp={} all_lines={:.3} principal={:.3} principal_worst={:.3} principal_terminal={:.3} rare_refutation={:.3} surprise={:.3} reliability={:.3} complete={} final={:.3}",
-                        fen_identity_key(fen),
-                        evaluation.candidate.san,
-                        evaluation.candidate.engine_rank + 1,
-                        evaluation.candidate.target_eval_cp,
-                        evaluation.outcome.practical_score,
-                        evaluation.outcome.mainline_score,
-                        evaluation.outcome.worst_branch_score,
-                        evaluation.outcome.terminal_score,
-                        evaluation.outcome.rare_refutation_score,
-                        evaluation.outcome.surprise_value,
-                        evaluation.outcome.sample_reliability,
-                        evaluation.outcome.validation_complete,
-                        evaluation.final_score
-                    );
                     scored.push(evaluation);
                 }
             }
@@ -2225,17 +2172,6 @@ mod smart {
     ) -> Result<Option<SmartPick>> {
         let cfg = SmartConfig::from_request(req);
         let mut validation_lichess_requests_left = validation_lichess_request_budget();
-        log::debug!(
-            "SMART build candidate selection: fen_key={} multipv={} validation_full_moves={} validation_plies={} threshold_cp={} opponent_branches={} beam={} validation_lichess_budget={}",
-            fen_identity_key(fen),
-            cfg.candidate_multi_pv,
-            cfg.validation_full_moves,
-            cfg.validation_plies,
-            cfg.playable_threshold_cp,
-            cfg.max_validation_opponent_branches,
-            cfg.validation_beam_width,
-            validation_lichess_requests_left
-        );
         let mut runtime = SmartRuntime {
             req,
             app,
@@ -2258,7 +2194,6 @@ mod smart {
         fn cfg() -> SmartConfig {
             SmartConfig {
                 candidate_multi_pv: 5,
-                validation_full_moves: 8,
                 validation_plies: 16,
                 playable_threshold_cp: -100,
                 max_validation_opponent_branches: 4,
@@ -2299,7 +2234,6 @@ mod smart {
         fn config_defaults_to_hidden_eight_full_move_validation() {
             let req = request_with_smart_config(None);
             let config = SmartConfig::from_request(&req);
-            assert_eq!(config.validation_full_moves, 8);
             assert_eq!(config.validation_plies, 16);
         }
 
@@ -2315,7 +2249,6 @@ mod smart {
             }));
             let config = SmartConfig::from_request(&req);
             assert_eq!(config.candidate_multi_pv, 1);
-            assert_eq!(config.validation_full_moves, 8);
             assert_eq!(config.validation_plies, 16);
             assert_eq!(config.max_validation_opponent_branches, 1);
             assert_eq!(config.validation_beam_width, 1);
@@ -2332,7 +2265,6 @@ mod smart {
                 validation_beam_width: Some(24),
             }));
             let config = SmartConfig::from_request(&req);
-            assert_eq!(config.validation_full_moves, 12);
             assert_eq!(config.validation_plies, 24);
         }
 

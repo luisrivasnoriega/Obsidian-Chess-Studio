@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { fetch } from "@tauri-apps/plugin-http";
-import { error, info } from "@tauri-apps/plugin-log";
+import { error } from "@tauri-apps/plugin-log";
 import { Chess } from "chessops";
 import { ChildNode, defaultGame, makePgn, type PgnNodeData } from "chessops/pgn";
 import { makeSan } from "chessops/san";
@@ -194,7 +194,6 @@ export async function downloadChessCom(
   const approximateDate = new Date(timestampDate.getFullYear(), timestampDate.getMonth(), 1);
   const archives = await getGameArchives(player);
   const file = outputPath ?? (await resolve(await appDataDir(), "db", `${player}_chesscom.pgn`));
-  info(`Found ${archives.archives.length} archives for ${player}`);
   await writeTextFile(file, "", {
     append: false,
   });
@@ -208,7 +207,6 @@ export async function downloadChessCom(
   const minTimestamp = timestamp ?? 0;
 
   for (const archive of filteredArchives) {
-    info(`Fetching games for ${player} from ${archive}`);
     const response = await fetch(archive, {
       headers,
       method: "GET",

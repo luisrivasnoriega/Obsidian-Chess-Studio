@@ -74,7 +74,6 @@ import {
   getRecentGames,
   updateGameRecord,
 } from "@/utils/gameRecords";
-import { finishPerfBaselineSpan, perfBaselinePoint, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import {
   configForProfileCloudSyncTarget,
   getProfileCloudSyncTarget,
@@ -2565,21 +2564,6 @@ export default function DashboardPage() {
                 return;
               }
 
-              const analyzeAllRunSpan = startPerfBaselineSpan({
-                scope: "dashboard.analyze_all",
-                label: "run",
-                metadata: {
-                  profileId: activeProfileId ?? "none",
-                  target: analyzeAllGameType ?? "none",
-                  analyzeMode: config.analyzeMode,
-                  engine: selectedEngine.name,
-                  timeMs: config.timeMs,
-                },
-              });
-              let baselineStatus = "running";
-              let baselineCandidateGames = 0;
-              let baselineGamesToAnalyze = 0;
-
               let warnedMissingInternalId = false;
               let warnedStatsPersistFailed = false;
 
@@ -2714,7 +2698,6 @@ export default function DashboardPage() {
                   }
                   return { type: "chessbase" as const, game: row };
                 });
-              baselineCandidateGames = allGames.length;
 
               let analyzedGameIds = new Set<string>();
               if (config.analyzeMode === "unanalyzed") {
@@ -2752,11 +2735,6 @@ export default function DashboardPage() {
                       error: String(e),
                     }),
                     color: "red",
-                  });
-                  baselineStatus = "precheck_failed";
-                  await finishPerfBaselineSpan(analyzeAllRunSpan, {
-                    status: baselineStatus,
-                    candidateGames: baselineCandidateGames,
                   });
                   return;
                 }
@@ -2817,17 +2795,6 @@ export default function DashboardPage() {
                 gamesToAnalyze = fallbackRows.map((row) => ({ type: "chessbase" as const, game: row }));
               }
 
-              baselineGamesToAnalyze = gamesToAnalyze.length;
-              await perfBaselinePoint({
-                scope: "dashboard.analyze_all",
-                label: "selection_ready",
-                metadata: {
-                  candidateGames: baselineCandidateGames,
-                  gamesToAnalyze: baselineGamesToAnalyze,
-                  analyzeMode: config.analyzeMode,
-                },
-              });
-
               if (gamesToAnalyze.length === 0) {
                 notifications.show({
                   title: "No Games to Analyze",
@@ -2836,12 +2803,6 @@ export default function DashboardPage() {
                       ? "No unanalyzed games available to analyze."
                       : "No games with PGN data available to analyze.",
                   color: "orange",
-                });
-                baselineStatus = "no_games";
-                await finishPerfBaselineSpan(analyzeAllRunSpan, {
-                  status: baselineStatus,
-                  candidateGames: baselineCandidateGames,
-                  gamesToAnalyze: baselineGamesToAnalyze,
                 });
                 return;
               }
@@ -2876,12 +2837,6 @@ export default function DashboardPage() {
                   }),
                   color: "red",
                 });
-                baselineStatus = "setup_failed";
-                await finishPerfBaselineSpan(analyzeAllRunSpan, {
-                  status: baselineStatus,
-                  candidateGames: baselineCandidateGames,
-                  gamesToAnalyze: baselineGamesToAnalyze,
-                });
                 return;
               }
 
@@ -2906,7 +2861,6 @@ export default function DashboardPage() {
               let pendingRefreshUpdates = 0;
               let cancellationNotified = false;
               let warnedBackendJobError = false;
-              const backendJobErrors: string[] = [];
               let stopRequested = false;
               let currentRunId: string | null = null;
               let gamesHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3246,19 +3200,6 @@ export default function DashboardPage() {
                     const bookErrors = bookReview.errors;
                     const bookUnknowns = bookReview.unknowns;
                     const variantBookPlies = bookReview.matchedPlies;
-                    if (import.meta.env.DEV) {
-                      console.debug("[analyze-all] variants book check", {
-                        gameType,
-                        index,
-                        orientation,
-                        humanColor,
-                        effectiveBookProfileId,
-                        errors: bookErrors.length,
-                        unknowns: bookUnknowns.length,
-                        matches: variantBookPlies.length,
-                        first: bookErrors[0] ?? null,
-                      });
-                    }
                     clearBookErrorAnnotations(tree.root);
                     applyProfileBookPriorityToMainline(tree.root, {
                       matchedPlies: variantBookPlies,
@@ -3564,32 +3505,11 @@ export default function DashboardPage() {
                       color: "blue",
                     });
                   }
-                  if (completedCount % 50 === 0 || completedCount === gamesToAnalyze.length) {
-                    void perfBaselinePoint({
-                      scope: "dashboard.analyze_all",
-                      label: "progress_checkpoint",
-                      metadata: {
-                        completed: completedCount,
-                        total: gamesToAnalyze.length,
-                        success: successCount,
-                        failed: failCount,
-                      },
-                    });
-                  }
                 }
               };
 
               const runId = `dashboard_analyze_all_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
               currentRunId = runId;
-              const errorLogPath = await resolve(folderName, `analyze-all-errors-${runId}.log`);
-              const flushErrorLog = async () => {
-                if (backendJobErrors.length === 0) return;
-                try {
-                  await writeTextFile(errorLogPath, backendJobErrors.join("\n"));
-                } catch {
-                  // best-effort
-                }
-              };
               const jobsForBackend: DashboardAnalyzeAllBackendJob[] = [];
               for (let index = 0; index < gamesToAnalyze.length; index++) {
                 const item = gamesToAnalyze[index];
@@ -3688,12 +3608,6 @@ export default function DashboardPage() {
 
                     const handled = (async () => {
                       if (!payload.success || !payload.analysis || payload.analysis.length === 0) {
-                        if (payload.error) {
-                          backendJobErrors.push(
-                            `[${new Date().toISOString()}] run=${runId} job=${payload.jobId} cancelled=${payload.cancelled} error=${payload.error}`,
-                          );
-                          await flushErrorLog();
-                        }
                         if (!payload.cancelled && payload.error && !warnedBackendJobError) {
                           warnedBackendJobError = true;
                           notifications.show({
@@ -3764,19 +3678,9 @@ export default function DashboardPage() {
                     message: `Analyzed ${successCount} games successfully. Files saved to: ${folderName}`,
                     color: "green",
                   });
-                  if (backendJobErrors.length > 0) {
-                    await flushErrorLog();
-                  }
-                  baselineStatus = "completed";
                 } else {
                   notifyCancellation();
-                  baselineStatus = "cancelled";
                 }
-              } catch (error) {
-                backendJobErrors.push(`[${new Date().toISOString()}] run=${runId} fatal=${String(error)}`);
-                await flushErrorLog();
-                baselineStatus = "failed";
-                throw error;
               } finally {
                 clearInterval(cancellationWatcher);
                 if (gamesHistoryRefreshTimer) {
@@ -3787,15 +3691,6 @@ export default function DashboardPage() {
                 if (unlistenResultEvent) {
                   await unlistenResultEvent();
                 }
-                await finishPerfBaselineSpan(analyzeAllRunSpan, {
-                  status: baselineStatus,
-                  candidateGames: baselineCandidateGames,
-                  gamesToAnalyze: baselineGamesToAnalyze,
-                  completed: completedCount,
-                  success: successCount,
-                  failed: failCount,
-                  cancelled: isCancelled(),
-                });
               }
 
               // Return stop function for immediate cancellation

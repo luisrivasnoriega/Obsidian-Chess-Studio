@@ -244,7 +244,6 @@
       "help": "Hjelp",
       "documentation": "Dokumentasjon",
       "clearSavedData": "Fjern lagrede data",
-      "openLogs": "Åpne logger",
       "checkUpdate": "Se etter oppdateringer",
       "about": "Om Obsidian Chess Studio",
       "pawnAppetit": "Obsidian Chess Studio",
@@ -518,10 +517,6 @@
       "error": "Feil",
       "errorOpeningGame": "Kunne ikke åpne parti",
       "analyzed": "Analysert",
-      "debug": "Feilsøk",
-      "debugPgns": "Feilsøk-PGN",
-      "debugPgnsDescription": "PGN-er sendt til analysefunksjonen:",
-      "noDebugPgns": "Ingen feilsøk-PGN tilgjengelig",
       "showing": "Viser",
       "count": "Antall",
       "maxGames": "Maks antall partier",
@@ -1254,8 +1249,6 @@
       "errors": "Feil",
       "precacheCompleted": "Forhåndslagring fullført!"
     },
-    "telemetry": "Telemetri",
-    "telemetryDesc": "Hjelp med å forbedre Obsidian Chess Studio ved å dele anonym bruksdata",
     "about": "Om",
     "aboutDesc": "Lær mer om Obsidian Chess Studio",
     "moveNotation": "Notasjon",
@@ -1274,8 +1267,6 @@
     "analysis": "Analyse",
     "interface": "Grensesnitt",
     "system": "System",
-    "telemetryLoading": "Laster telemetriinnstillinger...",
-    "telemetryDetails": "Telemetridata er anonym og hjelper oss å forstå hvordan Obsidian Chess Studio brukes for å forbedre opplevelsen. Vi samler aldri inn personlig informasjon eller spillinnhold. Data lagres sikkert med Supabase.",
     "pickValue": "Velg verdi",
     "pressAnyKey": "Trykk en tast"
   },
@@ -1294,7 +1285,6 @@
   "error": {
     "title": "En feil oppstod",
     "unexpectedError": "Uventet feil:",
-    "copyStackTrace": "Kopier stakksporing",
     "reportPrompt": "Vennligst rapporter dette på",
     "reportOr": "eller på"
   },

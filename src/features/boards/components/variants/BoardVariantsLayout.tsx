@@ -282,6 +282,7 @@ export function BoardVariantsLayout({
                   disableVariations={false}
                   currentTabSourceType={state.currentTab?.source?.type || undefined}
                   desktopFooterContent={desktopLayout.collapsedDesktopPanels.pgn ? <OpeningName compact /> : undefined}
+                  materialPlacement="overlay"
                 />
               </Box>
               {!state.editingMode && (

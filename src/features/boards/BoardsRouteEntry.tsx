@@ -3,7 +3,6 @@ import { useAtom } from "jotai";
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { debugNavLog } from "@/utils/debugNav";
 import { createTab, type Tab } from "@/utils/tabs";
 import BoardsPage from "./BoardsPage";
 
@@ -38,7 +37,6 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
   const lastEnsureKey = useRef<string | null>(null);
 
   useEffect(() => {
-    debugNavLog("route-entry", { mode, tabs: tabs.length, activeTab, activeType: active?.type ?? null, currentPath });
     if (lastEnsureKey.current === ensureKey) return;
     lastEnsureKey.current = ensureKey;
 
@@ -46,10 +44,6 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
     // This allows tabs created from profiles (like analysis tabs from openings) to remain active
     // without forcing navigation away from /profiles
     if (currentPath === "/profiles" && active && !isTabMode(active, mode)) {
-      debugNavLog("route-entry: skipping navigation - on /profiles with different tab type", {
-        activeType: active.type,
-        mode,
-      });
       return;
     }
 
@@ -62,7 +56,6 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
         }
       } catch {}
 
-      debugNavLog("route-entry: creating initial tab", mode);
       void createTab({
         tab:
           mode === "play"
@@ -84,7 +77,6 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
     }
 
     if (active && isTabMode(active, mode)) {
-      debugNavLog("route-entry: active tab already matches", { tab: active.value, type: active.type });
       return;
     }
 
@@ -97,9 +89,6 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
         if (active) {
           // Don't navigate if we're on /profiles - allow the user to stay there
           if (currentPath === "/profiles") {
-            debugNavLog("route-entry: skipping navigation after tab close - on /profiles", {
-              activeType: active.type,
-            });
             return;
           }
           navigate({ to: getRouteForTab(active) });
@@ -112,18 +101,12 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
     if (existing) {
       // Don't switch tabs if we're on /profiles - allow the user to stay there
       if (currentPath === "/profiles") {
-        debugNavLog("route-entry: skipping tab switch - on /profiles", {
-          existingTab: existing.value,
-          activeTab: active?.value,
-        });
         return;
       }
-      debugNavLog("route-entry: switching to existing tab", { tab: existing.value, type: existing.type });
       setActiveTab(existing.value);
       return;
     }
 
-    debugNavLog("route-entry: creating new tab", mode);
     void createTab({
       tab:
         mode === "play"
@@ -141,7 +124,7 @@ export default function BoardsRouteEntry({ mode }: { mode: EntryMode }) {
           }
         : {}),
     });
-  }, [active, ensureKey, mode, navigate, setActiveTab, setTabs, tabs, t, activeTab, currentPath]);
+  }, [active, ensureKey, mode, navigate, setActiveTab, setTabs, tabs, t, currentPath]);
 
   return <BoardsPage />;
 }

@@ -8,10 +8,7 @@ use chrono::Local;
 use pgn_reader::BufferedReader;
 use serde::{Deserialize, Serialize};
 use shakmaty::{
-    fen::Fen,
-    san::SanPlus,
-    uci::UciMove,
-    CastlingMode, Chess, EnPassantMode, Position,
+    fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, EnPassantMode, Position,
 };
 use specta::Type;
 
@@ -664,7 +661,10 @@ fn decide_variant_action(
     }
 
     if let Some(self_ply) = best.self_deviation_ply {
-        if best.opp_deviation_ply.map_or(true, |opp_ply| self_ply <= opp_ply) {
+        if best
+            .opp_deviation_ply
+            .map_or(true, |opp_ply| self_ply <= opp_ply)
+        {
             return Decision {
                 detected: true,
                 ply: Some(self_ply),
@@ -697,7 +697,11 @@ fn decide_variant_action(
     }
 }
 
-fn build_line_pgn(initial_fen: &str, moves: &[String], until_ply: usize) -> Option<(String, String)> {
+fn build_line_pgn(
+    initial_fen: &str,
+    moves: &[String],
+    until_ply: usize,
+) -> Option<(String, String)> {
     if moves.is_empty() {
         return None;
     }
@@ -734,14 +738,22 @@ fn build_line_pgn(initial_fen: &str, moves: &[String], until_ply: usize) -> Opti
         && normalize_fen_key(initial_trimmed) != start_key
     {
         tags.push(r#"[SetUp "1"]"#.to_string());
-        tags.push(format!(r#"[FEN "{}"]"#, initial_trimmed.replace('"', "\\\"")));
+        tags.push(format!(
+            r#"[FEN "{}"]"#,
+            initial_trimmed.replace('"', "\\\"")
+        ));
     }
 
     let pgn = format!("{}\n\n{} *\n", tags.join("\n"), line_text);
     Some((pgn, line_text))
 }
 
-fn append_line_to_book(book_path: &str, initial_fen: &str, moves: &[String], until_ply: usize) -> Option<(String, String)> {
+fn append_line_to_book(
+    book_path: &str,
+    initial_fen: &str,
+    moves: &[String],
+    until_ply: usize,
+) -> Option<(String, String)> {
     let (line_pgn, line_text) = build_line_pgn(initial_fen, moves, until_ply)?;
     let current = fs::read_to_string(book_path).ok()?;
     let next = format!("{}\n\n{}\n", line_pgn.trim(), current.trim_start());
@@ -760,16 +772,8 @@ fn extract_book_name(path: Option<&str>) -> Option<String> {
 pub async fn post_game_review_variants(
     input: PostGameReviewVariantsInput,
 ) -> Result<PostGameReviewVariantsResult> {
-    log::info!(
-        "post_game_review_variants:start dir={} human_color={:?} moves={} initial_fen={}",
-        input.document_dir,
-        input.human_color,
-        input.moves.len(),
-        input.initial_fen
-    );
     let human = input.human_color.as_deref().and_then(Side::parse);
     let Some(human_color) = human else {
-        log::info!("post_game_review_variants:skip no-human-color");
         return Ok(PostGameReviewVariantsResult {
             detected: false,
             variant_deviation_ply: None,
@@ -786,30 +790,18 @@ pub async fn post_game_review_variants(
     };
 
     let books = load_variant_books(&input.document_dir);
-    let scoped_books = books
-        .iter()
-        .filter(|book| book.side.map_or(false, |s| s == human_color))
-        .count();
     let decision = decide_variant_action(&input.initial_fen, &input.moves, human_color, &books);
     let (book_match_plies, book_errors, book_unknowns) =
         detect_book_errors(&input.initial_fen, &input.moves, human_color, &books);
-    log::info!(
-        "post_game_review_variants:loaded books_total={} books_scoped={} matches={} errors={} unknowns={} decision_kind={} decision_ply={:?}",
-        books.len(),
-        scoped_books,
-        book_match_plies.len(),
-        book_errors.len(),
-        book_unknowns.len(),
-        decision.kind,
-        decision.ply
-    );
 
     let mut new_line_added = false;
     let mut variants_book_path = decision.book_path.clone();
     let mut added_variant_line: Option<String> = None;
 
     if let (Some(target), Some(ply)) = (decision.target_book_path.as_deref(), decision.ply) {
-        if let Some((path, line)) = append_line_to_book(target, &input.initial_fen, &input.moves, ply) {
+        if let Some((path, line)) =
+            append_line_to_book(target, &input.initial_fen, &input.moves, ply)
+        {
             new_line_added = true;
             variants_book_path = Some(path);
             added_variant_line = Some(line);

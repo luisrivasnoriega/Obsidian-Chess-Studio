@@ -67,7 +67,10 @@ fn init_variant_positions_schema(conn: &Connection) -> Result<()> {
             return Err(err.into());
         }
     }
-    if let Err(err) = conn.execute("ALTER TABLE variant_positions ADD COLUMN engine_advantage TEXT", []) {
+    if let Err(err) = conn.execute(
+        "ALTER TABLE variant_positions ADD COLUMN engine_advantage TEXT",
+        [],
+    ) {
         let msg = err.to_string();
         if !msg.contains("duplicate column name") {
             return Err(err.into());
@@ -279,7 +282,11 @@ pub fn upsert_variant_position_engine_eval(
     let engine = engine.trim();
     let recommended_move = recommended_move.trim();
     let engine_advantage = engine_advantage.trim();
-    if fen.is_empty() || engine.is_empty() || recommended_move.is_empty() || engine_advantage.is_empty() {
+    if fen.is_empty()
+        || engine.is_empty()
+        || recommended_move.is_empty()
+        || engine_advantage.is_empty()
+    {
         return Ok(());
     }
     upsert_variant_position_entry(
@@ -401,7 +408,10 @@ mod tests {
             )
             .optional()
             .unwrap();
-        assert_eq!(idx2.as_deref(), Some("uniq_variant_positions_fen_key_engine"));
+        assert_eq!(
+            idx2.as_deref(),
+            Some("uniq_variant_positions_fen_key_engine")
+        );
 
         let idx3: Option<String> = conn
             .query_row(
@@ -446,7 +456,9 @@ mod tests {
         init_variant_positions_schema(&conn).unwrap();
 
         // Column exists?
-        let mut stmt = conn.prepare("PRAGMA table_info(variant_positions)").unwrap();
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(variant_positions)")
+            .unwrap();
         let cols: Vec<String> = stmt
             .query_map([], |r| r.get::<_, String>(1))
             .unwrap()
@@ -455,8 +467,7 @@ mod tests {
         assert!(cols.iter().any(|c| c == "fen_key"));
 
         // Backfilled?
-        let expected_key =
-            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -".to_string();
+        let expected_key = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -".to_string();
         let stored_key: Option<String> = conn
             .query_row(
                 "SELECT fen_key FROM variant_positions WHERE engine=?1",
@@ -500,7 +511,9 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, 1000).unwrap();
 
-        let got = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
+        let got = fetch_variant_position_conn(&conn, fen, "sf")
+            .unwrap()
+            .unwrap();
         assert_eq!(got.engine, "sf");
         assert_eq!(got.recommended_move, "e2e4");
         assert_eq!(got.ms, 1000);
@@ -514,7 +527,9 @@ mod tests {
         let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, -50).unwrap();
 
-        let got = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
+        let got = fetch_variant_position_conn(&conn, fen, "sf")
+            .unwrap()
+            .unwrap();
         assert_eq!(got.ms, 0);
     }
 
@@ -558,11 +573,16 @@ mod tests {
         upsert_variant_position_conn(&conn, fen_b, "sf", "d2d4", None, 1500).unwrap();
 
         let row = read_row(&conn, &key, "sf").unwrap();
-        assert_eq!(row.0, fen_b, "fen should be updated to the latest (best ms) entry");
+        assert_eq!(
+            row.0, fen_b,
+            "fen should be updated to the latest (best ms) entry"
+        );
         assert_eq!(row.1, "d2d4");
         assert_eq!(row.2, 1500);
 
-        let got = fetch_variant_position_conn(&conn, fen_a, "sf").unwrap().unwrap();
+        let got = fetch_variant_position_conn(&conn, fen_a, "sf")
+            .unwrap()
+            .unwrap();
         assert_eq!(got.fen, fen_b);
         assert_eq!(got.recommended_move, "d2d4");
         assert_eq!(got.ms, 1500);
@@ -577,8 +597,12 @@ mod tests {
         upsert_variant_position_conn(&conn, fen, "sf", "e2e4", None, 1000).unwrap();
         upsert_variant_position_conn(&conn, fen, "lc0", "d2d4", None, 2000).unwrap();
 
-        let a = fetch_variant_position_conn(&conn, fen, "sf").unwrap().unwrap();
-        let b = fetch_variant_position_conn(&conn, fen, "lc0").unwrap().unwrap();
+        let a = fetch_variant_position_conn(&conn, fen, "sf")
+            .unwrap()
+            .unwrap();
+        let b = fetch_variant_position_conn(&conn, fen, "lc0")
+            .unwrap()
+            .unwrap();
 
         assert_eq!(a.recommended_move, "e2e4");
         assert_eq!(b.recommended_move, "d2d4");

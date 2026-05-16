@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    collections::HashSet,
-    fs::OpenOptions,
-    io::Write,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, collections::HashSet, time::Duration};
 
 use chrono::{DateTime, Datelike, FixedOffset, Utc};
 use futures_util::StreamExt;
@@ -12,7 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use specta::Type;
-use tauri::{path::BaseDirectory, Emitter, Manager};
+use tauri::Emitter;
 use tokio::sync::Mutex;
 
 use crate::error::{Error, Result};
@@ -34,8 +28,9 @@ static ONLINE_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .expect("Failed to build online HTTP client")
 });
 
-static LICHESS_BOARD_STREAM_TASKS: Lazy<Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static LICHESS_BOARD_STREAM_TASKS: Lazy<
+    Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 const LICHESS_BOARD_STREAM_EVENT: &str = "lichess-board-stream-snapshot";
 
@@ -236,7 +231,12 @@ fn lichess_query_pairs_for_orion(fen: &str, opt: &OrionLichessOptions) -> Vec<(S
     let mut parts: Vec<(String, String)> = Vec::new();
     parts.push(("fen".to_string(), fen.to_string()));
 
-    if let Some(player) = opt.player.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+    if let Some(player) = opt
+        .player
+        .as_ref()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
         parts.push(("player".to_string(), player.to_string()));
         let color = opt
             .color
@@ -247,7 +247,12 @@ fn lichess_query_pairs_for_orion(fen: &str, opt: &OrionLichessOptions) -> Vec<(S
         parts.push(("color".to_string(), color.to_string()));
     }
 
-    if let Some(v) = opt.variant.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(v) = opt
+        .variant
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         parts.push(("variant".to_string(), v.to_string()));
     }
     if let Some(speeds) = &opt.speeds {
@@ -381,7 +386,11 @@ fn round4(v: f64) -> f64 {
     (v * 10_000.0).round() / 10_000.0
 }
 
-fn format_lichess_stats_json(source: &str, options: &Value, data: &OrionExplorerPositionData) -> Value {
+fn format_lichess_stats_json(
+    source: &str,
+    options: &Value,
+    data: &OrionExplorerPositionData,
+) -> Value {
     let total_games = data.white + data.black + data.draws;
     let moves = data
         .moves
@@ -492,7 +501,8 @@ async fn fetch_lichess_stats_for_orion(
 
         match fetch_explorer_position_data(configured_url, lichess_token).await {
             Ok(data) => {
-                let formatted = format_lichess_stats_json("lch_master", &configured_options_json, &data);
+                let formatted =
+                    format_lichess_stats_json("lch_master", &configured_options_json, &data);
                 let total = total_games_from_lichess_stats(&formatted);
                 if total > 0 || !has_master_filters(&configured) {
                     return formatted;
@@ -505,9 +515,14 @@ async fn fetch_lichess_stats_for_orion(
                     Err(_) => return formatted,
                 };
 
-                if let Ok(fallback_data) = fetch_explorer_position_data(fallback_url, lichess_token).await {
-                    let fallback_formatted =
-                        format_lichess_stats_json("lch_master", &fallback_options_json, &fallback_data);
+                if let Ok(fallback_data) =
+                    fetch_explorer_position_data(fallback_url, lichess_token).await
+                {
+                    let fallback_formatted = format_lichess_stats_json(
+                        "lch_master",
+                        &fallback_options_json,
+                        &fallback_data,
+                    );
                     if total_games_from_lichess_stats(&fallback_formatted) > total {
                         return serde_json::json!({
                             "source": "lch_master",
@@ -546,7 +561,8 @@ async fn fetch_lichess_stats_for_orion(
 
         match fetch_explorer_position_data(configured_url, lichess_token).await {
             Ok(data) => {
-                let formatted = format_lichess_stats_json("lch_all", &configured_options_json, &data);
+                let formatted =
+                    format_lichess_stats_json("lch_all", &configured_options_json, &data);
                 let total = total_games_from_lichess_stats(&formatted);
                 if total > 0 || !has_lichess_filters(&configured) {
                     return formatted;
@@ -566,9 +582,14 @@ async fn fetch_lichess_stats_for_orion(
                     Err(_) => return formatted,
                 };
 
-                if let Ok(fallback_data) = fetch_explorer_position_data(fallback_url, lichess_token).await {
-                    let fallback_formatted =
-                        format_lichess_stats_json("lch_all", &fallback_options_json, &fallback_data);
+                if let Ok(fallback_data) =
+                    fetch_explorer_position_data(fallback_url, lichess_token).await
+                {
+                    let fallback_formatted = format_lichess_stats_json(
+                        "lch_all",
+                        &fallback_options_json,
+                        &fallback_data,
+                    );
                     if total_games_from_lichess_stats(&fallback_formatted) > total {
                         return serde_json::json!({
                             "source": "lch_all",
@@ -748,7 +769,10 @@ fn inject_lichess_wdl_into_engine_lines(engine_lines: &mut [Value], lichess_stat
                         .unwrap_or(Value::Null),
                 );
             }
-            obj.insert("scoreWdlSource".to_string(), Value::String(source.to_string()));
+            obj.insert(
+                "scoreWdlSource".to_string(),
+                Value::String(source.to_string()),
+            );
         }
     }
 }
@@ -937,33 +961,6 @@ Before final output, verify every structural claim and pawn square against FEN."
     (system_prompt.to_string(), user_prompt)
 }
 
-fn mask_api_key(api_key: &str) -> String {
-    let trimmed = api_key.trim();
-    if trimmed.len() <= 8 {
-        return "***".to_string();
-    }
-
-    let first = &trimmed[..4];
-    let last = &trimmed[trimmed.len() - 4..];
-    format!("{first}***{last}")
-}
-
-fn append_foundry_log(app: &tauri::AppHandle, entry: &Value) {
-    let Ok(path) = app.path().resolve("logs/foundry_requests.log", BaseDirectory::AppData) else {
-        return;
-    };
-
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
-
-    let Ok(line) = serde_json::to_string(entry) else {
-        return;
-    };
-
-    let _ = writeln!(file, "{line}");
-}
-
 fn normalize_orientation(orientation: &str) -> &'static str {
     match orientation.trim().to_ascii_lowercase().as_str() {
         "black" => "black",
@@ -1022,7 +1019,10 @@ fn choose_fallback_model(requested: &str, available: &[String]) -> Option<String
         return None;
     }
 
-    if available.iter().any(|id| id.eq_ignore_ascii_case(requested)) {
+    if available
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(requested))
+    {
         return Some(requested.to_string());
     }
 
@@ -1085,7 +1085,7 @@ async fn send_orion_responses_request(
 }
 
 async fn consult_orion_plan_with_context_json(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     api_key: &str,
     orientation: &str,
     model: Option<&str>,
@@ -1100,23 +1100,14 @@ async fn consult_orion_plan_with_context_json(
     let (system_prompt, user_prompt) = build_orion_prompts(orientation, context_json, ui_language);
     let mut selected_model = requested_model.to_string();
     let mut payload = build_orion_payload(&selected_model, &system_prompt, &user_prompt);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|v| v.as_millis())
-        .unwrap_or(0);
-
     let client = reqwest_client().await?;
     let (mut status, mut raw) = send_orion_responses_request(&client, api_key, &payload).await?;
-    let mut fallback_attempted: Option<String> = None;
-    let mut available_models: Vec<String> = Vec::new();
 
     if !status.is_success() && is_deployment_not_found_error(&raw) {
         if let Ok(models) = fetch_foundry_models(api_key).await {
-            available_models = models;
-            if let Some(fallback_model) = choose_fallback_model(requested_model, &available_models) {
+            if let Some(fallback_model) = choose_fallback_model(requested_model, &models) {
                 if !fallback_model.eq_ignore_ascii_case(requested_model) {
                     selected_model = fallback_model.clone();
-                    fallback_attempted = Some(fallback_model);
                     payload = build_orion_payload(&selected_model, &system_prompt, &user_prompt);
                     (status, raw) =
                         send_orion_responses_request(&client, api_key, &payload).await?;
@@ -1126,57 +1117,16 @@ async fn consult_orion_plan_with_context_json(
     }
 
     if !status.is_success() {
-        append_foundry_log(
-            &app,
-            &serde_json::json!({
-                "timestampMs": now,
-                "endpoint": ORION_RESPONSES_ENDPOINT,
-                "orientation": orientation,
-                "requestedModel": requested_model,
-                "model": selected_model,
-                "fallbackModelAttempted": fallback_attempted,
-                "availableModels": available_models,
-                "apiKeyMasked": mask_api_key(api_key),
-                "systemPrompt": system_prompt,
-                "userPrompt": user_prompt,
-                "payload": payload,
-                "httpStatus": status.as_u16(),
-                "responseRaw": raw,
-                "error": "non-success status"
-            }),
-        );
         return Err(Error::PackageManager(format!(
             "Azure Foundry request failed ({status}): {raw}"
         )));
     }
 
     let parsed: Value = serde_json::from_str(&raw).map_err(|err| {
-        Error::PackageManager(format!(
-            "Azure Foundry response is not valid JSON: {err}"
-        ))
+        Error::PackageManager(format!("Azure Foundry response is not valid JSON: {err}"))
     })?;
 
     let plan = extract_orion_plan_text(&parsed).unwrap_or_else(|| raw.clone());
-
-    append_foundry_log(
-        &app,
-        &serde_json::json!({
-            "timestampMs": now,
-            "endpoint": ORION_RESPONSES_ENDPOINT,
-            "orientation": orientation,
-            "requestedModel": requested_model,
-            "model": selected_model,
-            "fallbackModelAttempted": fallback_attempted,
-            "availableModels": available_models,
-            "apiKeyMasked": mask_api_key(api_key),
-            "systemPrompt": system_prompt,
-            "userPrompt": user_prompt,
-            "payload": payload,
-            "httpStatus": status.as_u16(),
-            "responseRaw": raw,
-            "planExtracted": plan
-        }),
-    );
 
     Ok(OrionPlanResponse {
         plan,
@@ -1189,7 +1139,10 @@ async fn consult_orion_plan_with_context_json(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn consult_orion_plan(app: tauri::AppHandle, request: OrionPlanRequest) -> Result<OrionPlanResponse> {
+pub async fn consult_orion_plan(
+    app: tauri::AppHandle,
+    request: OrionPlanRequest,
+) -> Result<OrionPlanResponse> {
     let api_key = request.api_key.trim();
     if api_key.is_empty() {
         return Err(Error::InvalidInput("API key cannot be empty".to_string()));
@@ -1351,9 +1304,7 @@ pub struct LichessTournamentCreateRequest {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn create_lichess_tournament(
-    input: LichessTournamentCreateRequest,
-) -> Result<String> {
+pub async fn create_lichess_tournament(input: LichessTournamentCreateRequest) -> Result<String> {
     let client = reqwest_client().await?;
 
     let res = client
@@ -1526,9 +1477,7 @@ fn parse_lichess_board_stream_snapshot(
     raw: &str,
 ) -> Result<Option<LichessBoardGameSnapshot>> {
     let parsed: Value = serde_json::from_str(raw).map_err(|e| {
-        Error::PackageManager(format!(
-            "Lichess board stream line is not valid JSON: {e}"
-        ))
+        Error::PackageManager(format!("Lichess board stream line is not valid JSON: {e}"))
     })?;
 
     let type_name = parsed
@@ -1568,8 +1517,12 @@ fn parse_lichess_board_stream_snapshot(
         .and_then(|v| v.get("winner"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
-    let wtime = state_value.and_then(|v| v.get("wtime")).and_then(Value::as_i64);
-    let btime = state_value.and_then(|v| v.get("btime")).and_then(Value::as_i64);
+    let wtime = state_value
+        .and_then(|v| v.get("wtime"))
+        .and_then(Value::as_i64);
+    let btime = state_value
+        .and_then(|v| v.get("btime"))
+        .and_then(Value::as_i64);
 
     let turn = if status == "started" {
         Some(infer_turn(initial_fen.as_deref(), moves.len()))
@@ -1957,7 +1910,10 @@ pub async fn lichess_find_human_game(
                 continue;
             };
 
-            let event_type = parsed.get("type").and_then(Value::as_str).unwrap_or_default();
+            let event_type = parsed
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if event_type != "gameStart" {
                 continue;
             }
@@ -2036,7 +1992,9 @@ pub async fn lichess_find_human_game(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn lichess_challenge_ai(input: LichessAiChallengeInput) -> Result<LichessAiChallengeResponse> {
+pub async fn lichess_challenge_ai(
+    input: LichessAiChallengeInput,
+) -> Result<LichessAiChallengeResponse> {
     let client = reqwest_client().await?;
     let level = input.level.clamp(1, 8);
     let color = normalize_color(&input.color);
@@ -2054,11 +2012,21 @@ pub async fn lichess_challenge_ai(input: LichessAiChallengeInput) -> Result<Lich
         ("color".to_string(), color.to_string()),
     ];
 
-    if let Some(variant) = input.variant.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(variant) = input
+        .variant
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         form.push(("variant".to_string(), variant.to_string()));
     }
 
-    if let Some(fen) = input.fen.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(fen) = input
+        .fen
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         form.push(("fen".to_string(), fen.to_string()));
     }
 
@@ -2112,7 +2080,10 @@ pub async fn lichess_challenge_ai(input: LichessAiChallengeInput) -> Result<Lich
 
 #[tauri::command]
 #[specta::specta]
-pub async fn lichess_get_board_game_state(token: String, game_id: String) -> Result<LichessBoardGameSnapshot> {
+pub async fn lichess_get_board_game_state(
+    token: String,
+    game_id: String,
+) -> Result<LichessBoardGameSnapshot> {
     let client = reqwest_client().await?;
 
     let url = format!("https://lichess.org/api/board/game/stream/{game_id}");
@@ -2132,8 +2103,9 @@ pub async fn lichess_get_board_game_state(token: String, game_id: String) -> Res
     }
 
     let raw = read_first_ndjson_line(res).await?;
-    let snapshot = parse_lichess_board_stream_snapshot(&game_id, &raw)?
-        .ok_or_else(|| Error::PackageManager("Unexpected Lichess board stream event type".to_string()))?;
+    let snapshot = parse_lichess_board_stream_snapshot(&game_id, &raw)?.ok_or_else(|| {
+        Error::PackageManager("Unexpected Lichess board stream event type".to_string())
+    })?;
     Ok(snapshot)
 }
 
@@ -2180,7 +2152,9 @@ pub async fn lichess_resign_board_game(token: String, game_id: String) -> Result
     let client = reqwest_client().await?;
 
     let res = client
-        .post(format!("https://lichess.org/api/board/game/{game_id}/resign"))
+        .post(format!(
+            "https://lichess.org/api/board/game/{game_id}/resign"
+        ))
         .bearer_auth(token.trim())
         .send()
         .await?;
@@ -2249,15 +2223,22 @@ mod tests {
         let payload = build_orion_payload("gpt-4.1", "sys", "usr");
         let input = payload.get("input").and_then(Value::as_array).unwrap();
         assert_eq!(input.len(), 2);
-        assert_eq!(input[0].get("type").and_then(Value::as_str), Some("message"));
-        assert_eq!(input[1].get("type").and_then(Value::as_str), Some("message"));
+        assert_eq!(
+            input[0].get("type").and_then(Value::as_str),
+            Some("message")
+        );
+        assert_eq!(
+            input[1].get("type").and_then(Value::as_str),
+            Some("message")
+        );
         assert_eq!(input[0].get("role").and_then(Value::as_str), Some("system"));
         assert_eq!(input[1].get("role").and_then(Value::as_str), Some("user"));
     }
 
     #[test]
     fn build_orion_prompts_enforces_fen_as_source_of_truth() {
-        let (system_prompt, user_prompt) = build_orion_prompts("white", "{\"fen\":\"...\"}", Some("es-MX"));
+        let (system_prompt, user_prompt) =
+            build_orion_prompts("white", "{\"fen\":\"...\"}", Some("es-MX"));
         assert!(system_prompt.contains("FEN is the single source of truth"));
         assert!(system_prompt.contains("Return Markdown only, never JSON"));
         assert!(system_prompt.contains("## POSITION_VERDICT"));
@@ -2272,7 +2253,10 @@ mod tests {
             "payload": { "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" }
         });
         let found = extract_fen_from_context_json(&context.to_string()).unwrap();
-        assert_eq!(found, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        assert_eq!(
+            found,
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
     }
 
     #[test]
@@ -2286,5 +2270,3 @@ mod tests {
         assert!(gt.contains("N@d4"));
     }
 }
-
-

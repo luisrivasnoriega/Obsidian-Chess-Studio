@@ -705,12 +705,8 @@ export function ProfileGamesTab({
     ];
   }, [analyzeAllTypeCounts, localGames.length, chessComGames.length, lichessGames.length, t, totalCount]);
 
-  const handleOpenGame = async (
-    url: string | null,
-    debug?: { kind: GamesHistoryKind; gameKey: string; externalUrl: string | null },
-  ) => {
+  const handleOpenGame = async (url: string | null) => {
     if (!url) {
-      console.warn("[games-table] openGame skipped: empty URL", debug ?? null);
       notifications.show({
         title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
         message: "Missing game URL",
@@ -718,30 +714,20 @@ export function ProfileGamesTab({
       });
       return;
     }
-    console.info("[games-table] openGame start", { url, ...(debug ?? {}) });
     try {
       await openUrl(url, "inAppBrowser");
-      console.info("[games-table] openGame success via inAppBrowser", { url, ...(debug ?? {}) });
       return;
-    } catch (error) {
-      console.warn("[games-table] openGame inAppBrowser failed", { url, error: String(error), ...(debug ?? {}) });
-    }
+    } catch {}
 
     try {
       await openUrl(url);
-      console.info("[games-table] openGame success via openUrl", { url, ...(debug ?? {}) });
       return;
-    } catch (error) {
-      console.warn("[games-table] openGame openUrl failed", { url, error: String(error), ...(debug ?? {}) });
-    }
+    } catch {}
 
     try {
       window.open(url, "_blank", "noopener,noreferrer");
-      console.info("[games-table] openGame attempted via window.open", { url, ...(debug ?? {}) });
       return;
-    } catch (error) {
-      console.warn("[games-table] openGame window.open failed", { url, error: String(error), ...(debug ?? {}) });
-    }
+    } catch {}
 
     notifications.show({
       title: t("features.dashboard.openGameFailedTitle", "Could not open game"),
@@ -762,12 +748,7 @@ export function ProfileGamesTab({
         gameId,
       });
       return _normalizeGameUrl(resolved);
-    } catch (error) {
-      console.warn("[games-table] resolveChessComUrlFromProfileData failed", {
-        profileId,
-        gameId,
-        error: String(error),
-      });
+    } catch {
       return null;
     }
   };
@@ -1442,11 +1423,7 @@ export function ProfileGamesTab({
                                 if (!finalUrl && canResolveChessComUrl) {
                                   finalUrl = await resolveChessComUrlFromProfileData(row);
                                 }
-                                await handleOpenGame(finalUrl, {
-                                  kind: row.kind,
-                                  gameKey: row.gameKey,
-                                  externalUrl: row.externalUrl,
-                                });
+                                await handleOpenGame(finalUrl);
                               }}
                               disabled={!canOpenGame}
                             >

@@ -1,4 +1,3 @@
-use log::info;
 use serde::{Deserialize, Serialize};
 use shakmaty::{fen::Fen, san::San, CastlingMode, Chess, EnPassantMode, Position, Setup};
 use std::collections::{BTreeMap, HashSet};
@@ -103,14 +102,10 @@ fn setup_from_move_text(move_text: &str, opening_name: &str) -> Setup {
         if let Ok(san) = token.parse::<San>() {
             if let Ok(mv) = san.to_move(&pos) {
                 pos.play_unchecked(&mv);
-            } else {
-                info!(
-                    "Skipping invalid SAN token in opening {}: {}",
-                    opening_name, token
-                );
             }
         }
     }
+    let _ = opening_name;
     pos.into_setup(EnPassantMode::Legal)
 }
 
@@ -181,7 +176,7 @@ fn get_opening_info_from_fen_in(fen: &str, openings: &[Opening]) -> Result<Openi
     }
 
     let opening = opening.ok_or_else(|| {
-        info!("No opening found for FEN: {}", fen_str);
+        let _ = fen_str;
         Error::NoOpeningFound
     })?;
 
@@ -264,25 +259,19 @@ lazy_static! {
         ];
 
         // Load standard openings from eco.json chunks (A-E + interpolated)
-        let mut total_loaded = 0usize;
-        for (json_idx, json_data) in ECO_JSON_DATA.iter().enumerate() {
+        for json_data in ECO_JSON_DATA.iter() {
             let parsed: Result<BTreeMap<String, EcoOpeningRecord>, serde_json::Error> =
                 serde_json::from_slice(json_data);
             let eco_map = match parsed {
                 Ok(map) => map,
-                Err(e) => {
-                    info!("Failed to parse eco json chunk {}: {}", json_idx, e);
-                    continue;
-                }
+                Err(_) => continue,
             };
-            let mut file_count = 0usize;
 
             for (fen_key, record) in eco_map {
                 let setup = match normalize_fen_to_setup(&fen_key) {
                     Ok(setup) => setup,
                     Err(_) => {
                         let Some(moves) = record.moves.as_deref() else {
-                            info!("Skipping opening with invalid FEN and no moves: {}", record.name);
                             continue;
                         };
                         setup_from_move_text(moves, &record.name)
@@ -295,24 +284,8 @@ lazy_static! {
                     setup,
                     pgn: record.moves.clone(),
                 });
-
-                file_count += 1;
-                total_loaded += 1;
             }
-
-            let file_name = match json_idx {
-                0 => "ecoA.json",
-                1 => "ecoB.json",
-                2 => "ecoC.json",
-                3 => "ecoD.json",
-                4 => "ecoE.json",
-                5 => "eco_interpolated.json",
-                _ => "unknown",
-            };
-            info!("Loaded {} openings from file {}", file_count, file_name);
         }
-
-        info!("Total openings loaded: {}", total_loaded);
 
         // Load Fischer Random (FRC) positions
         let mut rdr = csv::ReaderBuilder::new()
@@ -332,14 +305,10 @@ lazy_static! {
                                 pgn: None,
                             });
                         }
-                        Err(e) => {
-                            info!("Failed to parse FEN for opening {}: {}", record.name, e);
-                        }
+                        Err(_) => {}
                     }
                 }
-                Err(e) => {
-                    info!("Failed to deserialize Fischer Random opening: {}", e);
-                }
+                Err(_) => {}
             }
         }
 
@@ -411,7 +380,12 @@ mod tests {
     #[test]
     fn get_opening_from_setup_in_exact_match() {
         let setup = setup_after_sans(&["e4", "e5", "Nf3", "Nc6"]);
-        let openings = vec![mk_opening("C50", "Italian Game", setup.clone(), Some("1. e4 e5 2. Nf3 Nc6"))];
+        let openings = vec![mk_opening(
+            "C50",
+            "Italian Game",
+            setup.clone(),
+            Some("1. e4 e5 2. Nf3 Nc6"),
+        )];
 
         let got = get_opening_from_setup_in(setup, &openings).unwrap();
         assert_eq!(got, "Italian Game");
@@ -529,7 +503,9 @@ mod tests {
         let results = search_opening_name_in("sicilian defense", &openings);
         assert!(results.len() <= 15);
         // all must include a fen and name
-        assert!(results.iter().all(|r| !r.name.is_empty() && !r.fen.is_empty()));
+        assert!(results
+            .iter()
+            .all(|r| !r.name.is_empty() && !r.fen.is_empty()));
     }
 
     #[test]

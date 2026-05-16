@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getMatches } from "@tauri-apps/plugin-cli";
-import { attachConsole, error, info } from "@tauri-apps/plugin-log";
 import { useAtom, useAtomValue } from "jotai";
 import { ContextMenuProvider } from "mantine-contextmenu";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,14 +33,12 @@ import "@/styles/chessgroundColorsOverride.css";
 import "@/styles/global.css";
 
 import ErrorComponent from "@/components/ErrorComponent";
-import { EventMonitor } from "@/components/EventMonitor";
 import { showUpdateNotification, UpdateNotificationModal } from "@/components/UpdateNotification";
 import { VERSION_CHECK_SETTINGS } from "@/config";
 import ThemeProvider from "@/features/themes/components/ThemeProvider";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
 import type { Dirs } from "@/types/dirs";
 import { commands } from "./bindings";
-import { isMemoryTelemetryEnabled } from "./config";
 import i18n from "./i18n";
 import { routeTree } from "./routeTree.gen";
 import type { VersionCheckResult } from "./services/version-checker";
@@ -116,47 +113,6 @@ export const clearDirectoriesCache = () => {
 export const updateDirectoriesCache = async (): Promise<Dirs> => {
   clearDirectoriesCache();
   return loadDirectories();
-};
-
-// Singleton to prevent multiple console attachments (prevents "Cannot have two MultiBackends" error)
-let consoleAttachmentPromise: Promise<(() => void) | null> | null = null;
-let isConsoleAttached = false;
-
-export const attachConsoleOnce = async (): Promise<(() => void) | null> => {
-  // If already attached, return a no-op detach function
-  if (isConsoleAttached) {
-    return () => {
-      // No-op: console is already attached and managed elsewhere
-    };
-  }
-
-  // If there's an ongoing attachment, wait for it
-  if (consoleAttachmentPromise) {
-    return consoleAttachmentPromise;
-  }
-
-  // Create new attachment promise
-  consoleAttachmentPromise = (async () => {
-    try {
-      const detach = await attachConsole();
-      isConsoleAttached = true;
-      return detach;
-    } catch (error) {
-      // If attachment fails (e.g., already attached), mark as attached anyway
-      // to prevent retry loops
-      const errorMsg = String(error);
-      if (errorMsg.includes("MultiBackend") || errorMsg.includes("already")) {
-        isConsoleAttached = true;
-        return () => {
-          // No-op: console was already attached
-        };
-      }
-      // Re-throw other errors
-      throw error;
-    }
-  })();
-
-  return consoleAttachmentPromise;
 };
 
 const queryClient = new QueryClient({
@@ -252,46 +208,30 @@ function useAppInitialization() {
     try {
       const matches = await getMatches();
       if (matches.args.file.occurrences > 0 && typeof matches.args.file.value === "string") {
-        info(`Opening file from command line: ${matches.args.file.value}`);
         await openFile(matches.args.file.value, setTabs, setActiveTab);
       }
-    } catch (e) {
-      error(`Failed to handle command line file: ${e}`);
-    }
+    } catch {}
   }, [setTabs, setActiveTab]);
 
   const initializeApp = useCallback(async () => {
-    let detachConsole: (() => void) | null = null;
-
     try {
-      info("Starting React app initialization");
-
-      const [, detach] = await Promise.all([loadDirectories(), attachConsoleOnce()]);
-
-      detachConsole = detach;
-      info("Console logging attached successfully");
+      await loadDirectories();
 
       // Minimize window at startup
       try {
         const webviewWindow = getCurrentWebviewWindow();
         await webviewWindow.minimize();
-        info("Window minimized at startup");
-      } catch (e) {
-        error(`Failed to minimize window at startup: ${e}`);
-      }
+      } catch {}
 
       // Detect system locale on first run and set language accordingly
       try {
         const hasLang = localStorage.getItem("lang");
         if (!hasLang) {
-          info("No language set in localStorage, detecting system locale...");
           const localeResult = await commands.getSystemLocale();
           let systemLocale: string | null = null;
 
           if (localeResult.status === "ok") {
             systemLocale = localeResult.data;
-          } else {
-            error(`System locale detection returned error: ${localeResult.error}`);
           }
 
           if (systemLocale) {
@@ -300,17 +240,14 @@ function useAppInitialization() {
             // Detect Spanish variants (es-MX, es-ES, es, etc.)
             if (localeLower.startsWith("es")) {
               detectedLang = "es-ES";
-              info(`Detected Spanish locale (${systemLocale}), setting language to es-ES`);
             }
             // Detect English variants (en-US, en-GB, en, etc.)
             else if (localeLower.startsWith("en")) {
               detectedLang = "en-US";
-              info(`Detected English locale (${systemLocale}), setting language to en-US`);
             }
             // For other locales, default to English
             else {
               detectedLang = "en-US";
-              info(`Detected locale ${systemLocale}, defaulting to en-US`);
             }
             localStorage.setItem("lang", detectedLang);
             i18n.changeLanguage(detectedLang);
@@ -328,13 +265,9 @@ function useAppInitialization() {
             }
             localStorage.setItem("lang", fallbackLang);
             i18n.changeLanguage(fallbackLang);
-            info(`System locale detection returned null, using browser locale (${browserLang}) -> ${fallbackLang}`);
           }
-        } else {
-          info(`Language already set in localStorage: ${hasLang}`);
         }
-      } catch (e) {
-        error(`Failed to detect system locale: ${e}`);
+      } catch {
         // If detection fails, ensure we have a language set
         const hasLang = localStorage.getItem("lang");
         if (!hasLang) {
@@ -350,7 +283,6 @@ function useAppInitialization() {
           }
           localStorage.setItem("lang", fallbackLang);
           i18n.changeLanguage(fallbackLang);
-          info(`Using browser locale as fallback after error: ${browserLang} -> ${fallbackLang}`);
         }
       }
 
@@ -363,29 +295,21 @@ function useAppInitialization() {
         const isMaximized = await webviewWindow.isMaximized();
         if (!isMaximized) {
           await webviewWindow.toggleMaximize();
-          info("Window maximized after initialization");
         }
-      } catch (e) {
-        error(`Failed to maximize window: ${e}`);
-      }
+      } catch {}
 
       setInitState("initialized");
-      info("React app initialization completed successfully");
-
-      return detachConsole;
+      return null;
     } catch (e) {
       const errorMsg = `Failed to initialize app: ${e}`;
-      error(errorMsg);
       setInitError(errorMsg);
       setInitState("error");
 
       try {
         await commands.screenCapture();
-      } catch (_error) {
-        error(`Failed to capture screen after error: ${_error}`);
-      }
+      } catch {}
 
-      return detachConsole;
+      return null;
     }
   }, [handleCommandLineFile]);
 
@@ -427,7 +351,6 @@ function useFontSizeManager(fontSize: number | null) {
 
 export default function App() {
   const { t } = useTranslation();
-  const shouldMountEventMonitor = useMemo(() => isMemoryTelemetryEnabled(), []);
   const pieceSet = useAtomValue(pieceSetAtom);
   const fontSize = useAtomValue(fontSizeAtom);
   const [sessions, setSessions] = useAtom(sessionsAtom);
@@ -459,12 +382,6 @@ export default function App() {
         );
       }
     },
-    onCheckError: (error) => {
-      info(`Version check failed: ${error}`);
-    },
-    onNoUpdates: () => {
-      info("No updates available");
-    },
   });
 
   const handleUpdateModalClose = useCallback(() => {
@@ -477,28 +394,11 @@ export default function App() {
   }, [installUpdate]);
 
   useEffect(() => {
-    let detachConsole: (() => void) | null = null;
-    let mounted = true;
-
     const init = async () => {
-      detachConsole = await initializeApp();
+      await initializeApp();
     };
 
     init();
-
-    return () => {
-      mounted = false;
-      if (detachConsole) {
-        try {
-          detachConsole();
-        } catch (e) {
-          // Only log error if component is still mounted
-          if (mounted) {
-            error(`Failed to detach console: ${e}`);
-          }
-        }
-      }
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initializeApp]); // Only run once on mount, not when initializeApp changes
 
@@ -567,9 +467,7 @@ export default function App() {
       }
     };
 
-    bootstrapSharedState().catch((e) => {
-      error(`Failed to bootstrap shared profile state: ${e}`);
-    });
+    bootstrapSharedState().catch(() => {});
 
     return () => {
       canceled = true;
@@ -591,9 +489,7 @@ export default function App() {
 
     lastSharedStateHashRef.current = nextHash;
     const timeout = window.setTimeout(() => {
-      writeSharedProfileState(snapshot).catch((e) => {
-        error(`Failed to persist shared profile state: ${e}`);
-      });
+      writeSharedProfileState(snapshot).catch(() => {});
     }, 150);
 
     return () => {
@@ -710,9 +606,7 @@ export default function App() {
   // Auto-register bundled engines (e.g., Stockfish on Android) on app startup
   useEffect(() => {
     if (initState === "initialized") {
-      autoRegisterBundledEngines().catch((error) => {
-        error(`Failed to auto-register bundled engines: ${error}`);
-      });
+      autoRegisterBundledEngines().catch(() => {});
     }
   }, [initState]);
 
@@ -735,7 +629,6 @@ export default function App() {
       <ThemeProvider>
         <ContextMenuProvider>
           <Notifications />
-          {shouldMountEventMonitor && <EventMonitor />}
           <Suspense fallback={<AppLoading />}>
             <RouterProvider router={router} />
           </Suspense>

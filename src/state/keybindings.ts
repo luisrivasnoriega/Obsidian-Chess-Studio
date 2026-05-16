@@ -30,6 +30,7 @@ const baseKeys: Record<string, KeyDef> = {
   // === Navigation - Primary Section ===
   GO_TO_DASHBOARD: { name: "keybindings.goToDashboard", keys: "mod+shift+d" },
   GO_TO_PROFILES: { name: "keybindings.goToProfiles", keys: "mod+shift+p" },
+  GO_TO_EVENTS: { name: "keybindings.goToEvents", keys: "mod+alt+c" },
 
   // === Navigation - Primary Actions ===
   PLAY_BOARD: { name: "keybindings.playBoard", keys: "mod+1" },
@@ -40,6 +41,8 @@ const baseKeys: Record<string, KeyDef> = {
   GO_TO_DATABASES: { name: "keybindings.goToDatabases", keys: "mod+shift+b" },
   GO_TO_ENGINES: { name: "keybindings.goToEngines", keys: "mod+alt+e" },
   GO_TO_FILES: { name: "keybindings.goToFiles", keys: "mod+alt+f" },
+  GO_TO_VARIANTS: { name: "keybindings.goToVariants", keys: "mod+alt+v" },
+  GO_TO_CHESSBASE: { name: "keybindings.goToChessbase", keys: "mod+alt+h" },
 
   // === Navigation - Tertiary Section ===
   GO_TO_TOURNAMENTS: { name: "keybindings.goToTournaments", keys: "mod+alt+t" },
@@ -142,6 +145,13 @@ const baseKeys: Record<string, KeyDef> = {
   OPEN_SETTINGS: { name: "keybindings.openSettings", keys: "mod+," },
   SHOW_KEYBINDINGS: { name: "keybindings.showKeybindings", keys: "mod+/" },
   TOGGLE_HELP: { name: "keybindings.toggleHelp", keys: "mod+?" },
+  ABOUT: { name: "keybindings.about", keys: "f1" },
+  CHECK_FOR_UPDATES: { name: "keybindings.checkForUpdates", keys: "mod+shift+u" },
+  REPORT_ISSUE: { name: "keybindings.reportIssue", keys: "mod+alt+i" },
+  CLEAR_SAVED_DATA: { name: "keybindings.clearSavedData", keys: "mod+alt+delete" },
+  MINIMIZE_WINDOW: { name: "keybindings.minimizeWindow", keys: "mod+m" },
+  TOGGLE_MAXIMIZE_WINDOW: { name: "keybindings.toggleMaximizeWindow", keys: "mod+shift+m" },
+  CLOSE_ALL_TABS: { name: "keybindings.closeAllTabs", keys: "mod+shift+w" },
 
   // === Navigation Enhancement ===
   JUMP_TO_MOVE: { name: "keybindings.jumpToMove", keys: "mod+g" },

@@ -1190,8 +1190,7 @@ export default function StatsPanel({
         message: t("features.dashboard.gameOpenedMessage", { defaultValue: "Opened in a new tab." }),
         color: "green",
       });
-    } catch (error) {
-      console.error("Error opening game:", error);
+    } catch {
       notifications.show({
         title: t("features.dashboard.error", { defaultValue: "Error" }),
         message: t("features.dashboard.errorOpeningGame", { defaultValue: "Error opening game." }),

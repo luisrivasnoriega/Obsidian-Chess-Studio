@@ -47,6 +47,7 @@ import { annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getMaterialDiff, getVariationLine } from "@/utils/chess";
 import { chessopsError, positionFromFen } from "@/utils/chessops";
 import { getDocumentDir } from "@/utils/documentDir";
+import type { TreeNode } from "@/utils/treeReducer";
 import AnnotationHint from "./AnnotationHint";
 import EvalBar from "./EvalBar";
 import MoveInput from "./MoveInput";
@@ -55,6 +56,11 @@ import PromotionModal from "./PromotionModal";
 const LARGE_BRUSH = 11;
 const MEDIUM_BRUSH = 7.5;
 const SMALL_BRUSH = 4;
+const MATERIAL_OVERLAY_HEIGHT = 34;
+
+type BoardNodeSnapshot = Pick<TreeNode, "annotations" | "fen" | "halfMoves" | "move" | "san" | "shapes"> & {
+  childrenLength: number;
+};
 
 interface ChessboardProps {
   dirty: boolean;
@@ -96,7 +102,35 @@ interface ChessboardProps {
   hideEvalBar?: boolean;
   hideFooterControls?: boolean;
   desktopFooterContent?: ReactNode;
+  materialPlacement?: "flow" | "overlay";
   allowPremove?: boolean;
+}
+
+function CurrentEvalBar({ orientation, turn }: { orientation: "white" | "black"; turn: "white" | "black" }) {
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("CurrentEvalBar must be used within a TreeStateProvider");
+  }
+
+  const score = useStore(store, (s) => s.currentNode().score);
+  const engines = useAtomValue(enginesAtom);
+  const [, setEvalOpen] = useAtom(currentEvalOpenAtom);
+
+  const hasUCI_ShowWDL = useMemo(() => {
+    const loadedEngines = engines.filter((engine) => engine.loaded);
+    const hasInSettings = loadedEngines.some((engine) => {
+      return engine.settings?.some(
+        (setting) => setting.name === "UCI_ShowWDL" && (setting.value === true || setting.value === "true"),
+      );
+    });
+    return hasInSettings || score?.wdl != null;
+  }, [engines, score]);
+
+  return (
+    <Box h="100%" onClick={() => setEvalOpen((prevState) => !prevState)}>
+      <EvalBar score={score ?? null} orientation={orientation} turn={turn} showWDL={hasUCI_ShowWDL} />
+    </Box>
+  );
 }
 
 function Board({
@@ -137,6 +171,7 @@ function Board({
   hideEvalBar = false,
   hideFooterControls = false,
   desktopFooterContent,
+  materialPlacement = "flow",
   allowPremove = false,
 }: ChessboardProps) {
   const { t } = useTranslation();
@@ -185,7 +220,33 @@ function Board({
   const rootFen = useStore(store, (s) => s.root.fen);
   const position = useStore(store, (s) => s.position);
   const headers = useStore(store, (s) => s.headers);
-  const currentNode = useStore(store, (s) => s.currentNode());
+  const currentNodeAnnotations = useStore(store, (s) => s.currentNode().annotations);
+  const currentNodeChildrenLength = useStore(store, (s) => s.currentNode().children.length);
+  const currentNodeFen = useStore(store, (s) => s.currentNode().fen);
+  const currentNodeHalfMoves = useStore(store, (s) => s.currentNode().halfMoves);
+  const currentNodeMove = useStore(store, (s) => s.currentNode().move);
+  const currentNodeSan = useStore(store, (s) => s.currentNode().san);
+  const currentNodeShapes = useStore(store, (s) => s.currentNode().shapes);
+  const currentNode = useMemo<BoardNodeSnapshot>(
+    () => ({
+      annotations: currentNodeAnnotations,
+      childrenLength: currentNodeChildrenLength,
+      fen: currentNodeFen,
+      halfMoves: currentNodeHalfMoves,
+      move: currentNodeMove,
+      san: currentNodeSan,
+      shapes: currentNodeShapes,
+    }),
+    [
+      currentNodeAnnotations,
+      currentNodeChildrenLength,
+      currentNodeFen,
+      currentNodeHalfMoves,
+      currentNodeMove,
+      currentNodeSan,
+      currentNodeShapes,
+    ],
+  );
 
   const goToNext = useStore(store, (s) => s.goToNext);
   const goToPrevious = useStore(store, (s) => s.goToPrevious);
@@ -207,21 +268,7 @@ function Board({
   const showCoordinates = useAtomValue(showCoordinatesAtom);
   const isBlindfold = useAtomValue(blindfoldAtom);
   const setBlindfold = useSetAtom(blindfoldAtom);
-  const engines = useAtomValue(enginesAtom);
   const _activeTab = useAtomValue(currentTabAtom);
-
-  // Check if any enabled engine has UCI_ShowWDL activated
-  // We check the engine's default settings, and also check if the score has WDL data
-  // (which only exists if UCI_ShowWDL is active and the engine is running)
-  const hasUCI_ShowWDL = useMemo(() => {
-    const loadedEngines = engines.filter((e) => e.loaded);
-    const hasInSettings = loadedEngines.some((engine) => {
-      return engine.settings?.some((s) => s.name === "UCI_ShowWDL" && (s.value === true || s.value === "true"));
-    });
-    // Also check if current score has WDL data (indicates UCI_ShowWDL is active)
-    const hasWDLInScore = currentNode.score?.wdl != null;
-    return hasInSettings || hasWDLInScore;
-  }, [engines, currentNode.score]);
 
   const dests: Map<SquareName, SquareName[]> = useMemo(() => {
     if (!pos) return new Map();
@@ -448,11 +495,23 @@ function Board({
   const [snapArrows] = useAtom(snapArrowsAtom);
 
   const showDesktopSideControls = !hideFooterControls && layout.chessBoard.layoutType !== "mobile";
+  const topMaterialColor = orientation === "white" ? "black" : "white";
+  const bottomMaterialColor = orientation;
+  const materialHasVisibleContent = (color: "white" | "black") => {
+    if (!materialDiff) return false;
+    return color === "white" ? materialDiff.diff > 0 : materialDiff.diff < 0;
+  };
+  const useOverlayMaterial = materialPlacement === "overlay" && !hideClockSpaces && !!materialDiff;
 
   const boardSquareSize = useMemo(() => {
     const size = Math.floor(Math.min(boardAreaSize.width, boardAreaSize.height));
     return Number.isFinite(size) && size > 0 ? size : null;
   }, [boardAreaSize.height, boardAreaSize.width]);
+
+  const materialOverlayOffset = useMemo(() => {
+    if (!boardSquareSize) return 0;
+    return Math.max(0, Math.floor((boardAreaSize.height - boardSquareSize) / 2 - MATERIAL_OVERLAY_HEIGHT));
+  }, [boardAreaSize.height, boardSquareSize]);
 
   const setBoardFen = useCallback(
     (fen: string) => {
@@ -465,7 +524,7 @@ function Board({
         setFen(newFen);
       }
     },
-    [editingMode, currentNode, setFen],
+    [editingMode, currentNode.fen, setFen],
   );
 
   useEffect(() => {
@@ -584,22 +643,13 @@ function Board({
       free: editingMode,
       color: movableColor,
       dests:
-        editingMode || viewOnly ? undefined : disableVariations && currentNode.children.length > 0 ? undefined : dests,
+        editingMode || viewOnly ? undefined : disableVariations && currentNode.childrenLength > 0 ? undefined : dests,
       showDests,
       events: {
         after: onAfterMove,
       },
     }),
-    [
-      currentNode.children.length,
-      dests,
-      disableVariations,
-      editingMode,
-      movableColor,
-      onAfterMove,
-      showDests,
-      viewOnly,
-    ],
+    [currentNode.childrenLength, dests, disableVariations, editingMode, movableColor, onAfterMove, showDests, viewOnly],
   );
 
   const draggableConfig = useMemo(
@@ -653,7 +703,7 @@ function Board({
           minWidth: 0,
         }}
       >
-        {!hideClockSpaces && materialDiff && (
+        {!useOverlayMaterial && !hideClockSpaces && materialDiff && (
           <Group ml="2.5rem" h="2.125rem">
             {hasClock && (
               <Clock
@@ -691,18 +741,12 @@ function Board({
             </Box>
           )}
           {!hideEvalBar && layout.chessBoard.layoutType !== "mobile" && (
-            <Box h="100%" onClick={() => setEvalOpen((prevState) => !prevState)}>
-              <EvalBar
-                score={currentNode.score ?? null}
-                orientation={orientation}
-                turn={turn}
-                showWDL={hasUCI_ShowWDL}
-              />
-            </Box>
+            <CurrentEvalBar orientation={orientation} turn={turn} />
           )}
           <Box
             ref={boardAreaRef}
             style={{
+              position: "relative",
               flex: "1 1 0",
               height: "100%",
               minWidth: 0,
@@ -712,6 +756,38 @@ function Board({
               justifyContent: "center",
             }}
           >
+            {useOverlayMaterial && boardSquareSize && materialHasVisibleContent(topMaterialColor) && (
+              <Group
+                h="2.125rem"
+                style={{
+                  position: "absolute",
+                  top: `${materialOverlayOffset}px`,
+                  left: `calc(50% - ${boardSquareSize / 2}px)`,
+                  width: `${boardSquareSize}px`,
+                  overflow: "hidden",
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              >
+                <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={topMaterialColor} />
+              </Group>
+            )}
+            {useOverlayMaterial && boardSquareSize && materialHasVisibleContent(bottomMaterialColor) && (
+              <Group
+                h="2.125rem"
+                style={{
+                  position: "absolute",
+                  bottom: `${materialOverlayOffset}px`,
+                  left: `calc(50% - ${boardSquareSize / 2}px)`,
+                  width: `${boardSquareSize}px`,
+                  overflow: "hidden",
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              >
+                <ShowMaterial diff={materialDiff.diff} pieces={materialDiff.pieces} color={bottomMaterialColor} />
+              </Group>
+            )}
             <Box
               style={{
                 ...(isBasicAnnotation(currentNode.annotations[0])
@@ -817,6 +893,8 @@ function Board({
               <Box ml={hideClockSpaces ? 0 : "2.5rem"} style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden" }}>
                 {desktopFooterContent}
               </Box>
+            ) : useOverlayMaterial ? (
+              <Box ml="2.5rem" style={{ flex: "1 1 auto", minWidth: 0 }} />
             ) : !hideClockSpaces && materialDiff ? (
               <Group ml="2.5rem">
                 {hasClock && <Clock color={orientation} turn={turn} whiteTime={whiteTime} blackTime={blackTime} />}
@@ -830,7 +908,7 @@ function Board({
               </Text>
             )}
 
-            {moveInput && <MoveInput currentNode={currentNode} />}
+            {moveInput && <MoveInput currentFen={currentNode.fen} />}
 
             {showDesktopSideControls && !hasBoardControlsRail && (
               <BoardControlsMenu

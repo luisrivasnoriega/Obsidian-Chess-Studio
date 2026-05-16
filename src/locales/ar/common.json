@@ -262,7 +262,6 @@
       "documentation": "التوثيق",
       "reportIssue": "الإبلاغ عن مشكلة",
       "clearSavedData": "مسح البيانات المحفوظة",
-      "openLogs": "فتح السجلات",
       "checkUpdate": "التحقق من التحديثات",
       "about": "حول"
     },
@@ -500,10 +499,6 @@
       "error": "خطأ",
       "errorOpeningGame": "فشل فتح اللعبة",
       "analyzed": "محلل",
-      "debug": "تصحيح",
-      "debugPgns": "PGNs للتصحيح",
-      "debugPgnsDescription": "PGNs المرسلة إلى دالة التحليل:",
-      "noDebugPgns": "لا توجد PGNs للتصحيح متاحة",
       "showing": "عرض",
       "count": "العدد",
       "maxGames": "الحد الأقصى للألعاب",
@@ -1219,8 +1214,6 @@
       "errors": "الأخطاء",
       "precacheCompleted": "اكتمل التخزين المسبق بنجاح!"
     },
-    "telemetry": "القياس عن بُعد",
-    "telemetryDesc": "ساعد في تحسين Obsidian Chess Studio من خلال مشاركة بيانات الاستخدام المجهولة",
     "about": "حول",
     "aboutDesc": "تعرف على المزيد حول Obsidian Chess Studio",
     "moveNotation": "تدوين النقلات",
@@ -1239,8 +1232,6 @@
     "analysis": "التحليل",
     "interface": "واجهة المستخدم",
     "system": "النظام",
-    "telemetryLoading": "جاري تحميل إعدادات القياس عن بُعد...",
-    "telemetryDetails": "بيانات القياس عن بُعد مجهولة وتساعدنا على فهم كيفية استخدام Obsidian Chess Studio لتحسين التجربة. لا نجمع أبداً معلومات شخصية أو محتوى اللعبة. يتم تخزين البيانات بشكل آمن باستخدام Supabase.",
     "pickValue": "اختر القيمة",
     "pressAnyKey": "اضغط أي مفتاح"
   },
@@ -1259,7 +1250,6 @@
   "error": {
     "title": "حدث خطأ",
     "unexpectedError": "خطأ غير متوقع:",
-    "copyStackTrace": "نسخ تتبع المكدس",
     "reportPrompt": "يرجى الإبلاغ عن هذا على",
     "reportOr": "أو على"
   },

@@ -99,19 +99,13 @@ pub async fn chessbase_import_prepared_download(
         return Err("No ChessBase download is ready to import".to_string());
     };
 
-    let imported = db::add_profile_games_from_pgn(
-        profile_id,
-        cached.query.clone(),
-        cached.pgn,
-        state,
-        app,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    let imported =
+        db::add_profile_games_from_pgn(profile_id, cached.query.clone(), cached.pgn, state, app)
+            .await
+            .map_err(|e| e.to_string())?;
 
     Ok(ChessbaseImportPreparedResult {
         downloaded_games: cached.downloaded_games,
         imported_games: imported,
     })
 }
-

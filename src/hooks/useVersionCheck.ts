@@ -1,4 +1,4 @@
-import { info, error as logError } from "@tauri-apps/plugin-log";
+import { error as logError } from "@tauri-apps/plugin-log";
 import { platform } from "@tauri-apps/plugin-os";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -64,7 +64,6 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
     setIsChecking(true);
 
     try {
-      info("Starting version check");
       const config = getVersionCheckConfig();
       const result = await checkForUpdates(config);
 
@@ -79,14 +78,11 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
 
       if (result.hasUpdate && result.versionInfo) {
         if (isVersionSkipped(result.versionInfo.version)) {
-          info(`Version ${result.versionInfo.version} was previously skipped by user`);
           return;
         }
 
-        info(`Update available: ${result.versionInfo.version}`);
         onUpdateAvailable?.(result);
       } else {
-        info("No updates available");
         onNoUpdates?.();
       }
     } catch (error) {
@@ -116,12 +112,9 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
           throw new Error(t("notifications.apkNotAvailable"));
         }
 
-        info("Starting update installation via direct APK (Android)");
-
         showApkUpdateProgressNotification(t);
 
         const downloaded = await downloadApkToTemp({ url: apkUrl, version });
-        info(`APK downloaded to: ${downloaded.path} (${downloaded.bytes} bytes)`);
 
         hideUpdateProgressNotification();
 
@@ -130,20 +123,16 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
         return;
       }
 
-      info("Starting update installation via Tauri updater");
-
       showUpdateProgressNotification(t);
 
       const update = await check();
 
       if (update) {
-        info(`Installing update: ${update.version}`);
         await update.downloadAndInstall();
 
         hideUpdateProgressNotification();
         showUpdateSuccessNotification(t);
 
-        info("Update installed successfully, restarting application");
         setTimeout(() => relaunch(), 2000);
       } else {
         throw new Error("No update available through Tauri updater");

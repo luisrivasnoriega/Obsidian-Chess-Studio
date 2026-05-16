@@ -356,6 +356,7 @@ export const reportTypeAtom = atom<"CP" | "WDL">("CP");
 export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
 export const coverageEngineAnalysisActiveAtom = atom(false);
+export const boardInteractionActiveAtom = atom(false);
 
 // Per tab settings
 

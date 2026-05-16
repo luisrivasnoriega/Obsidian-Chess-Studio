@@ -28,7 +28,8 @@ fn compute_balanced_metrics(stats: &StoredGameStats) -> (f64, i64) {
     let opponent_estimated = normalize_elo_opt(stats.opponent_estimated_elo)
         .or_else(|| normalize_elo_opt(stats.opponent_rating_elo))
         .unwrap_or(player_estimated);
-    let opponent_reference = normalize_elo_opt(stats.opponent_rating_elo).unwrap_or(opponent_estimated);
+    let opponent_reference =
+        normalize_elo_opt(stats.opponent_rating_elo).unwrap_or(opponent_estimated);
 
     let resistance = (0.70 * opponent_estimated) + (0.30 * opponent_reference);
     let collapse_gap = (opponent_reference - opponent_estimated).max(0.0);
@@ -215,7 +216,9 @@ fn init_schema(conn: &Connection) -> Result<()> {
             conn.execute_batch("ALTER TABLE game_analysis ADD COLUMN resistance REAL;")?;
         }
         if !has_elo_estimated_balanced {
-            conn.execute_batch("ALTER TABLE game_analysis ADD COLUMN elo_estimated_balanced INTEGER;")?;
+            conn.execute_batch(
+                "ALTER TABLE game_analysis ADD COLUMN elo_estimated_balanced INTEGER;",
+            )?;
         }
 
         // Ensure indexes exist.
@@ -254,7 +257,11 @@ fn set_analyzed_game_conn(
     Ok(())
 }
 
-fn get_analyzed_game_conn(conn: &Connection, profile_id: &str, game_id: &str) -> Result<Option<String>> {
+fn get_analyzed_game_conn(
+    conn: &Connection,
+    profile_id: &str,
+    game_id: &str,
+) -> Result<Option<String>> {
     let mut stmt = conn.prepare(
         "SELECT analyzed_pgn FROM game_analysis WHERE profile_id = ?1 AND game_id = ?2 AND analyzed_pgn IS NOT NULL",
     )?;
@@ -264,7 +271,10 @@ fn get_analyzed_game_conn(conn: &Connection, profile_id: &str, game_id: &str) ->
     Ok(res)
 }
 
-fn get_all_analyzed_games_conn(conn: &Connection, profile_id: &str) -> Result<Vec<AnalyzedGameEntry>> {
+fn get_all_analyzed_games_conn(
+    conn: &Connection,
+    profile_id: &str,
+) -> Result<Vec<AnalyzedGameEntry>> {
     let mut stmt = conn.prepare(
         r#"
         SELECT profile_id, game_id, analyzed_pgn
@@ -681,7 +691,12 @@ mod tests {
 
     fn temp_db_path(test_name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("ocs_{}_{}_{}.db3", test_name, unique_suffix(), "analysis"));
+        p.push(format!(
+            "ocs_{}_{}_{}.db3",
+            test_name,
+            unique_suffix(),
+            "analysis"
+        ));
         // best-effort cleanup if exists
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(p.with_extension("db3-wal"));

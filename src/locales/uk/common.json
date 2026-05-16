@@ -244,7 +244,6 @@
       "help": "Допомога",
       "documentation": "Документація",
       "clearSavedData": "Очистити збережені дані",
-      "openLogs": "Відкрити логи",
       "checkUpdate": "Перевірити оновлення",
       "about": "Про програму",
       "pawnAppetit": "Obsidian Chess Studio",
@@ -518,10 +517,6 @@
       "error": "Помилка",
       "errorOpeningGame": "Не вдалося відкрити гру",
       "analyzed": "Проаналізовано",
-      "debug": "Налагодження",
-      "debugPgns": "Налагоджувальні PGN",
-      "debugPgnsDescription": "PGN, передані у функцію аналізу:",
-      "noDebugPgns": "Немає налагоджувальних PGN",
       "showing": "Відображення",
       "count": "Кількість",
       "maxGames": "Макс. партій",
@@ -1254,8 +1249,6 @@
       "errors": "Помилки",
       "precacheCompleted": "Кешування успішно завершено!"
     },
-    "telemetry": "Телеметрія",
-    "telemetryDesc": "Допоможіть покращити Obsidian Chess Studio, надсилаючи анонімні дані використання",
     "about": "Про програму",
     "aboutDesc": "Дізнайтеся більше про Obsidian Chess Studio",
     "moveNotation": "Нотація ходів",
@@ -1274,8 +1267,6 @@
     "analysis": "Аналіз",
     "interface": "Інтерфейс",
     "system": "Система",
-    "telemetryLoading": "Завантаження налаштувань телеметрії...",
-    "telemetryDetails": "Дані телеметрії є анонімними й допомагають нам зрозуміти, як використовується Obsidian Chess Studio, щоб покращити досвід. Ми ніколи не збираємо особисту інформацію або вміст партій. Дані надійно зберігаються в Supabase.",
     "pickValue": "Виберіть значення",
     "pressAnyKey": "Натисніть будь-яку клавішу"
   },
@@ -1294,7 +1285,6 @@
   "error": {
     "title": "Сталася помилка",
     "unexpectedError": "Несподівана помилка:",
-    "copyStackTrace": "Копіювати трасування стеку",
     "reportPrompt": "Будь ласка, повідомте про це на",
     "reportOr": "або на"
   },

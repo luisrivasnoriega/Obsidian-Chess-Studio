@@ -487,10 +487,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
           const player =
             players.data.find((p) => (p.name ?? "").trim().toLowerCase() === normalizedAccountKey) ?? players.data[0];
           if (player?.id != null) playerIds.add(player.id);
-        } catch (error) {
-          // Continue if one account key fails
-          console.warn(`Failed to find player for account key ${accountKey}:`, error);
-        }
+        } catch {}
       }
 
       if (playerIds.size === 0) {
@@ -592,8 +589,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
       setPawnProgress(100);
       // Small delay to show 100% before hiding
       await new Promise((resolve) => setTimeout(resolve, 300));
-    } catch (error) {
-      console.error("Error computing pawn structures:", error);
+    } catch {
       notifications.show({
         title: t("common.error", { defaultValue: "Error" }),
         message: t("features.dashboard.errorAnalyzingPawns"),
@@ -701,8 +697,7 @@ export default function PawnStructuresPanel({ playerName, databaseFile, profileI
         message: t("features.dashboard.gameOpenedMessage"),
         color: "green",
       });
-    } catch (error) {
-      console.error("Error opening game:", error);
+    } catch {
       notifications.show({
         title: t("features.dashboard.error"),
         message: t("features.dashboard.errorOpeningGame"),

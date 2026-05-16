@@ -423,14 +423,14 @@ The frontend test suite uses **Vitest** with v8 coverage instrumentation. Curren
 
 | Metric | Coverage |
 |--------|----------|
-| **Statements** | 20.73% |
-| **Branches** | 14.12% |
-| **Functions** | 16.35% |
-| **Lines** | 21.9% |
+| **Statements** | 21.04% |
+| **Branches** | 14.14% |
+| **Functions** | 16.64% |
+| **Lines** | 22.26% |
 
 **Test Statistics:**
-- ✅ **180 test files** passing
-- ✅ **319 tests** passing
+- ✅ **182 test files** passing
+- ✅ **320 tests** passing
 - ⏱️ Test execution time: ~0 seconds
 
 **Well-Tested Areas:**
@@ -575,20 +575,20 @@ Obsidian Chess Studio is for chess players **all around the world**! We're commi
 | Language  | Progress   | Link                        |
 |-----------|----------|-----------------------------|
 | 🇺🇸 **English US** | ✅ 100% | [View](./src/locales/en-US) |
-| 🇪🇸 **Español (Spanish)** | 🟡 99% | [View](./src/locales/es) |
-| 🇧🇾 **Беларуская (Belarusian)** | 🟡 57% | [View](./src/locales/be) |
-| 🇩🇪 **Deutsch (German)** | 🟡 57% | [View](./src/locales/de) |
-| 🇬🇧 **English UK** | 🟡 57% | [View](./src/locales/en-GB) |
-| 🇫🇷 **Français (French)** | 🟡 57% | [View](./src/locales/fr) |
-| 🇦🇲 **Հայերեն (Armenian)** | 🟡 57% | [View](./src/locales/hy) |
-| 🇮🇹 **Italiano (Italian)** | 🟡 57% | [View](./src/locales/it) |
-| 🇯🇵 **日本語 (Japanese)** | 🟡 57% | [View](./src/locales/ja) |
-| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 57% | [View](./src/locales/nb) |
-| 🇵🇱 **Polski (Polish)** | 🟡 57% | [View](./src/locales/pl) |
-| 🇵🇹 **Português (Portuguese)** | 🟡 57% | [View](./src/locales/pt) |
-| 🇷🇺 **Русский (Russian)** | 🟡 57% | [View](./src/locales/ru) |
-| 🇺🇦 **Українська (Ukrainian)** | 🟡 57% | [View](./src/locales/uk) |
-| 🇨🇳 **中文 (Chinese)** | 🟡 57% | [View](./src/locales/zh) |
+| 🇪🇸 **Español (Spanish)** | ✅ 100% | [View](./src/locales/es) |
+| 🇧🇾 **Беларуская (Belarusian)** | 🟡 56% | [View](./src/locales/be) |
+| 🇩🇪 **Deutsch (German)** | 🟡 56% | [View](./src/locales/de) |
+| 🇬🇧 **English UK** | 🟡 56% | [View](./src/locales/en-GB) |
+| 🇫🇷 **Français (French)** | 🟡 56% | [View](./src/locales/fr) |
+| 🇦🇲 **Հայերեն (Armenian)** | 🟡 56% | [View](./src/locales/hy) |
+| 🇮🇹 **Italiano (Italian)** | 🟡 56% | [View](./src/locales/it) |
+| 🇯🇵 **日本語 (Japanese)** | 🟡 56% | [View](./src/locales/ja) |
+| 🇳🇴 **Norsk (Norwegian Bokmål)** | 🟡 56% | [View](./src/locales/nb) |
+| 🇵🇱 **Polski (Polish)** | 🟡 56% | [View](./src/locales/pl) |
+| 🇵🇹 **Português (Portuguese)** | 🟡 56% | [View](./src/locales/pt) |
+| 🇷🇺 **Русский (Russian)** | 🟡 56% | [View](./src/locales/ru) |
+| 🇺🇦 **Українська (Ukrainian)** | 🟡 56% | [View](./src/locales/uk) |
+| 🇨🇳 **中文 (Chinese)** | 🟡 56% | [View](./src/locales/zh) |
 | 🇸🇦 **العربية (Arabic)** | 🟡 54% | [View](./src/locales/ar) |
 | 🇹🇷 **Türkçe (Turkish)** | 🔴 43% | [View](./src/locales/tr) |
 <!-- TRANSLATIONS_END -->

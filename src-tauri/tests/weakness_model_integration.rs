@@ -19,12 +19,9 @@ fn create_minimal_games_table(conn: &mut SqliteConnection) {
 
 fn seed_games(conn: &mut SqliteConnection, rows: &[WeaknessAggregationInputRow]) {
     for row in rows {
-        diesel::sql_query(format!(
-            "INSERT INTO Games (ID) VALUES ({})",
-            row.game_id
-        ))
-        .execute(conn)
-        .expect("seed game id");
+        diesel::sql_query(format!("INSERT INTO Games (ID) VALUES ({})", row.game_id))
+            .execute(conn)
+            .expect("seed game id");
     }
 }
 
@@ -128,8 +125,8 @@ fn isabeast_scope_all_any_all_all_time_generates_and_persists_signals() {
     );
 
     let first_signal_key = signals[0].signal_key.clone();
-    let evidence =
-        get_weakness_evidence(&mut conn, &snapshot_key, &first_signal_key, 4, 0).expect("load evidence");
+    let evidence = get_weakness_evidence(&mut conn, &snapshot_key, &first_signal_key, 4, 0)
+        .expect("load evidence");
     assert!(
         !evidence.is_empty(),
         "Expected at least one evidence row for top signal"

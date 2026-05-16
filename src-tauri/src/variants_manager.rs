@@ -404,7 +404,9 @@ fn resolve_variant_index(
         }
     }
 
-    variants.iter().position(|variant| normalize_path_key(&variant.path) == resolved)
+    variants
+        .iter()
+        .position(|variant| normalize_path_key(&variant.path) == resolved)
 }
 
 fn normalize_fen_key(fen: &str) -> String {
@@ -430,7 +432,11 @@ fn active_color_from_headers(headers: &PgnHeaderFallback, game: &TempGame) -> St
         Some("black") => "black".to_string(),
         Some("white") => "white".to_string(),
         _ => {
-            let fen = headers.fen.as_deref().or(game.fen.as_deref()).unwrap_or_default();
+            let fen = headers
+                .fen
+                .as_deref()
+                .or(game.fen.as_deref())
+                .unwrap_or_default();
             if fen.split_whitespace().nth(1) == Some("b") {
                 "black".to_string()
             } else {
@@ -469,17 +475,21 @@ fn collect_validation_moves(
                 let before_path_moves = path_moves.clone();
                 let move_san = san_plus.to_string();
                 let chess_move = san_plus.san.to_move(&current_position)?;
-                let move_uci = Some(UciMove::from_move(&chess_move, CastlingMode::Standard).to_string());
+                let move_uci =
+                    Some(UciMove::from_move(&chess_move, CastlingMode::Standard).to_string());
 
                 path_moves.push(move_san.clone());
                 if before_position.turn() == active_color {
                     let fen_key = position_fen_key(&before_position);
                     let moves = fen_moves.entry(fen_key).or_default();
-                    let entry = moves.entry(move_san.clone()).or_insert_with(|| VariantValidationMoveDto {
-                        san: move_san.clone(),
-                        uci: move_uci.clone(),
-                        occurrences: Vec::new(),
-                    });
+                    let entry =
+                        moves
+                            .entry(move_san.clone())
+                            .or_insert_with(|| VariantValidationMoveDto {
+                                san: move_san.clone(),
+                                uci: move_uci.clone(),
+                                occurrences: Vec::new(),
+                            });
                     if entry.uci.is_none() {
                         entry.uci = move_uci.clone();
                     }
@@ -523,7 +533,10 @@ pub fn variants_list_fast(variants_dir: String) -> Result<Vec<VariantInfoDto>> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn variants_validate_consistency(variants_dir: String, target_path: String) -> Result<VariantValidationReportDto> {
+pub fn variants_validate_consistency(
+    variants_dir: String,
+    target_path: String,
+) -> Result<VariantValidationReportDto> {
     let mut variants = Vec::new();
     collect_variants(Path::new(&variants_dir), &mut variants)?;
     variants.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
@@ -667,8 +680,15 @@ pub fn variants_validate_consistency(variants_dir: String, target_path: String) 
         };
 
         let mut path_moves = Vec::new();
-        if collect_validation_moves(&game.tree, game.position.clone(), color, variant, &mut path_moves, &mut fen_moves)
-            .is_err()
+        if collect_validation_moves(
+            &game.tree,
+            game.position.clone(),
+            color,
+            variant,
+            &mut path_moves,
+            &mut fen_moves,
+        )
+        .is_err()
         {
             skipped_variants.push(variant.name.clone());
             continue;
@@ -679,7 +699,9 @@ pub fn variants_validate_consistency(variants_dir: String, target_path: String) 
     }
 
     let Some(active_color) = active_color else {
-        return Err(Error::InvalidInput("No readable variants were found".to_string()));
+        return Err(Error::InvalidInput(
+            "No readable variants were found".to_string(),
+        ));
     };
 
     let mut conflicts = Vec::new();

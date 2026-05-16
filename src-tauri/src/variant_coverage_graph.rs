@@ -3660,18 +3660,6 @@ pub fn variant_coverage_read_graph_cache(
     read_graph_cache_from_path(&file_path)
 }
 
-fn count_coverage_graph_nodes(root: &VariantCoverageGraphNodeDto) -> usize {
-    let mut count = 0usize;
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
-        count += 1;
-        for child in &node.children {
-            stack.push(child);
-        }
-    }
-    count
-}
-
 #[tauri::command]
 #[specta::specta]
 pub fn variant_coverage_write_graph_cache(
@@ -3682,19 +3670,12 @@ pub fn variant_coverage_write_graph_cache(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let node_count = count_coverage_graph_nodes(&cache.graph_root);
     let tmp_path = path.with_file_name(format!(
         "{}.tmp",
         path.file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("coverage-graph-cache.json")
     ));
-    log::debug!(
-        "variant coverage graph cache write begin: path={} nodes={} positions={}",
-        path.display(),
-        node_count,
-        cache.positions.len()
-    );
     {
         let file = std::fs::File::create(&tmp_path)?;
         let mut writer = BufWriter::new(file);
@@ -3711,12 +3692,6 @@ pub fn variant_coverage_write_graph_cache(
         }
         Err(err) => return Err(err.into()),
     }
-    log::debug!(
-        "variant coverage graph cache write done: path={} nodes={} positions={}",
-        path.display(),
-        node_count,
-        cache.positions.len()
-    );
     Ok(())
 }
 

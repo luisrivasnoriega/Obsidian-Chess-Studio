@@ -6,31 +6,31 @@
 mod analysis_storage;
 mod app;
 mod chess;
+mod chessbase;
+mod chessbase_service;
 mod coverage_explorer_cache;
 mod dashboard_games_history;
 pub mod db;
 mod error;
 mod fide;
 mod fs;
-mod chessbase;
-mod chessbase_service;
 mod lexer;
 mod oauth;
 mod online;
 mod opening;
 mod package_manager;
-mod post_game_review;
-mod player_match_planner;
 mod pawn_structures;
 mod pgn;
+mod player_match_planner;
+mod post_game_review;
 mod puzzle;
 mod puzzle_variants;
 mod tab_state_storage;
+mod variant_coverage_graph;
+mod variant_positions;
 mod variants_builder;
 mod variants_manager;
 mod variants_opening;
-mod variant_coverage_graph;
-mod variant_positions;
 
 #[cfg(target_os = "windows")]
 use std::process::Command;
@@ -48,111 +48,107 @@ use sysinfo::{PidExt, ProcessExt, SystemExt};
 use tauri::AppHandle;
 
 use crate::analysis_storage::{
-    analysis_db_clear_analyzed_pgns, analysis_db_delete_entries, analysis_db_get_all_analyzed_games,
-    analysis_db_get_analyzed_game, analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
+    analysis_db_clear_analyzed_pgns, analysis_db_delete_entries,
+    analysis_db_get_all_analyzed_games, analysis_db_get_analyzed_game,
+    analysis_db_get_analyzed_games_bulk, analysis_db_get_game_stats,
     analysis_db_get_game_stats_bulk, analysis_db_set_analyzed_game, analysis_db_set_game_stats,
+};
+use crate::chess::{
+    analyze_game, analyze_game_human_report, build_human_strategic_live_report,
+    dashboard_analyze_all_cancel, dashboard_analyze_all_run,
+    evaluate_coverage_engine_session_position, evaluate_engine_position_once,
+    evaluate_engine_positions_batch, get_best_moves, get_engine_config, get_engine_logs,
+    kill_engine, kill_engines, pick_human_strategic_move, run_coverage_engine_analysis,
+    start_coverage_engine_session, stop_coverage_engine_session, stop_engine,
+};
+use crate::chessbase::{
+    chessbase_cancel_active_request, chessbase_clear_credentials,
+    chessbase_download_games_quick_search, chessbase_get_credentials, chessbase_login_background,
+    chessbase_quick_search_count, chessbase_search_position, chessbase_session_status,
+    chessbase_set_credentials,
+};
+use crate::chessbase_service::{
+    chessbase_clear_prepared_download, chessbase_get_prepared_download,
+    chessbase_import_prepared_download, chessbase_prepare_download,
 };
 use crate::coverage_explorer_cache::{coverage_cache_get, coverage_cache_set};
 use crate::dashboard_games_history::{
-    dashboard_get_analyze_all_counts, dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_rows,
-    dashboard_get_games_history_filter_meta,
-    dashboard_get_overview_metrics,
-    dashboard_decode_profile_game_blob_moves,
-    dashboard_resolve_chesscom_game_url,
-    dashboard_resolve_profile_db_game_id,
+    dashboard_decode_profile_game_blob_moves, dashboard_get_analyze_all_counts,
+    dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_filter_meta,
+    dashboard_get_games_history_rows, dashboard_get_overview_metrics,
+    dashboard_resolve_chesscom_game_url, dashboard_resolve_profile_db_game_id,
     dashboard_search_profile_opponents,
 };
-use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
-use crate::chess::{
-    analyze_game, analyze_game_human_report, build_human_strategic_live_report,
-    evaluate_coverage_engine_session_position, evaluate_engine_position_once, evaluate_engine_positions_batch,
-    get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines, pick_human_strategic_move,
-    run_coverage_engine_analysis, start_coverage_engine_session, stop_coverage_engine_session, stop_engine,
-    dashboard_analyze_all_run, dashboard_analyze_all_cancel,
-};
 use crate::db::{
-    calculate_earliest_date_from_range, calculate_player_elo_buckets, calculate_player_elo_domain,
-    calculate_player_game_stats, calculate_player_openings_stats, calculate_player_rating_timeline,
-    calculate_player_sidebar_model,
-    clear_games, convert_pgn, create_indexes, delete_database, delete_db_game, delete_empty_games, optimize_database,
-    replace_profile_db_file,
-    delete_indexes, download_position_cache, export_position_games_to_pgn,
-    export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data, get_player,
-    get_players_game_info, get_profile_accounts_game_info, get_profile_sidebar_stats, get_profile_game_stats, get_profile_rating_timeline, get_tournaments, init_profile_db, merge_player_site_stats,
-    merge_years_data, precache_openings, search_position, import_online_tournament, get_account_sync_state,
-    upsert_account_sync_state, mark_account_sync_batch_complete, list_account_sync_completed_batches,
-    get_account_import_stats, sync_account_games_to_profile_db,
-    save_profile_game_analysis_stats,
-    get_profile_phase_outcomes,
-    get_profile_phase_accuracy,
-    get_profile_outcome_accuracy,
-    get_profile_fork_stats,
-    generate_profile_missed_fork_puzzles,
-    get_profile_missed_fork_games,
-    get_profile_outcome_reason_breakdown,
-    get_profile_intensity_breakdown,
-    get_profile_intensity_outcomes,
-    get_profile_intensity_accuracy,
-    get_profile_phase_games,
-    get_profile_intensity_games,
-    get_profile_weakness_model,
-    upsert_managed_event, list_managed_events, delete_managed_event, add_event_games_from_pgn,
-    add_profile_games_from_pgn,
-    create_event_game,
-    get_db_source, set_db_source,
-    merge_profile_event_from_db_player,
-    download_game_database,
+    add_event_games_from_pgn, add_profile_games_from_pgn, calculate_earliest_date_from_range,
+    calculate_player_elo_buckets, calculate_player_elo_domain, calculate_player_game_stats,
+    calculate_player_openings_stats, calculate_player_rating_timeline,
+    calculate_player_sidebar_model, clear_games, convert_pgn, create_event_game, create_indexes,
+    delete_database, delete_db_game, delete_empty_games, delete_indexes, delete_managed_event,
+    download_game_database, download_position_cache, export_position_games_to_pgn,
+    export_selected_games_to_pgn, export_to_pgn, fill_missing_months_data,
+    generate_profile_missed_fork_puzzles, get_account_import_stats, get_account_sync_state,
+    get_db_source, get_player, get_players_game_info, get_profile_accounts_game_info,
+    get_profile_fork_stats, get_profile_game_stats, get_profile_intensity_accuracy,
+    get_profile_intensity_breakdown, get_profile_intensity_games, get_profile_intensity_outcomes,
+    get_profile_missed_fork_games, get_profile_outcome_accuracy,
+    get_profile_outcome_reason_breakdown, get_profile_phase_accuracy, get_profile_phase_games,
+    get_profile_phase_outcomes, get_profile_rating_timeline, get_profile_sidebar_stats,
+    get_profile_weakness_model, get_tournaments, import_online_tournament, init_profile_db,
+    list_account_sync_completed_batches, list_managed_events, mark_account_sync_batch_complete,
+    merge_player_site_stats, merge_profile_event_from_db_player, merge_years_data,
+    optimize_database, precache_openings, replace_profile_db_file,
+    save_profile_game_analysis_stats, search_position, set_db_source,
+    sync_account_games_to_profile_db, upsert_account_sync_state, upsert_managed_event,
 };
 use crate::fide::{download_fide_db, fetch_fide_profile_html, find_fide_player, save_fide_photo};
 use crate::fs::{download_engine, list_lc0_networks, set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
 use crate::oauth::authenticate;
 use crate::online::{
-    consult_orion_plan, consult_orion_plan_from_analysis, create_lichess_tournament, get_chesscom_account, get_lichess_account,
-    lichess_challenge_ai, lichess_find_human_game, lichess_get_board_game_state, lichess_make_board_move,
-    lichess_resign_board_game, lichess_start_board_game_stream, lichess_stop_board_game_stream,
+    consult_orion_plan, consult_orion_plan_from_analysis, create_lichess_tournament,
+    get_chesscom_account, get_lichess_account, lichess_challenge_ai, lichess_find_human_game,
+    lichess_get_board_game_state, lichess_make_board_move, lichess_resign_board_game,
+    lichess_start_board_game_stream, lichess_stop_board_game_stream,
 };
 use crate::package_manager::{
     check_package_installed, check_package_manager_available, find_executable_path, install_package,
 };
-use crate::post_game_review::post_game_review_variants;
+use crate::pawn_structures::compute_pawn_structures;
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
+use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
+use crate::post_game_review::post_game_review_variants;
 use crate::puzzle::{
-    check_puzzle_db_columns, get_puzzle, get_puzzle_batch, get_puzzle_db_info, get_puzzle_opening_tags,
-    get_puzzle_dependent_filters_metadata, get_puzzle_filters_metadata, get_puzzle_rating_range, get_puzzle_themes,
-    import_puzzle_file, validate_puzzle_database,
-    download_puzzle_database,
+    check_puzzle_db_columns, download_puzzle_database, get_puzzle, get_puzzle_batch,
+    get_puzzle_db_info, get_puzzle_dependent_filters_metadata, get_puzzle_filters_metadata,
+    get_puzzle_opening_tags, get_puzzle_rating_range, get_puzzle_themes, import_puzzle_file,
+    validate_puzzle_database,
 };
 use crate::puzzle_variants::{
     generate_puzzle_variants_from_coverage_node, generate_puzzle_variants_from_tree,
 };
-use crate::tab_state_storage::{tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write};
-use crate::variants_builder::build_variants_tree;
-use crate::variants_manager::{variants_delete_files, variants_list_fast, variants_validate_consistency};
-use crate::variants_opening::{variants_compress_variant_family, variants_create_opening_variants};
+use crate::tab_state_storage::{
+    tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write,
+};
 use crate::variant_coverage_graph::{
     variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
-    variant_coverage_apply_profile_position_flags, variant_coverage_build_source_signature,
-    variant_coverage_build_graph, variant_coverage_classify_position, variant_coverage_get_cached_position,
+    variant_coverage_apply_profile_position_flags, variant_coverage_build_graph,
+    variant_coverage_build_source_signature, variant_coverage_classify_position,
+    variant_coverage_critical_line_report, variant_coverage_get_cached_position,
     variant_coverage_get_profile_position, variant_coverage_graph_cache_path,
     variant_coverage_parse_build_config_tags, variant_coverage_read_graph_cache,
-    variant_coverage_critical_line_report,
     variant_coverage_trim_graph_by_depth, variant_coverage_write_graph_cache,
 };
-use crate::pawn_structures::compute_pawn_structures;
 use crate::variant_positions::{
     get_variant_position, get_variant_position_engine_eval, upsert_variant_position,
     upsert_variant_position_engine_eval,
 };
-use crate::chessbase::{
-    chessbase_cancel_active_request,
-    chessbase_clear_credentials, chessbase_download_games_quick_search, chessbase_get_credentials,
-    chessbase_login_background, chessbase_quick_search_count, chessbase_search_position,
-    chessbase_session_status, chessbase_set_credentials,
+use crate::variants_builder::build_variants_tree;
+use crate::variants_manager::{
+    variants_delete_files, variants_list_fast, variants_validate_consistency,
 };
-use crate::chessbase_service::{
-    chessbase_clear_prepared_download, chessbase_get_prepared_download, chessbase_import_prepared_download,
-    chessbase_prepare_download,
+pub use crate::variants_opening::{
+    variants_compress_variant_family, variants_create_opening_variants,
 };
 use crate::{
     db::{
@@ -161,8 +157,7 @@ use crate::{
     },
     fs::{download_file, file_exists, get_file_metadata, save_welcome_card_image},
     opening::{
-        get_opening_from_fen, get_opening_from_name, get_opening_info_from_fen,
-        search_opening_name,
+        get_opening_from_fen, get_opening_from_name, get_opening_info_from_fen, search_opening_name,
     },
 };
 use tokio::sync::{Mutex, RwLock, Semaphore};
@@ -220,9 +215,9 @@ pub async fn run() {
 
     let specta_builder = tauri_specta::Builder::new()
         .commands(tauri_specta::collect_commands!(
-        get_system_locale,
-        get_preferred_lc0_engine_name,
-        get_preferred_stockfish_build_key,
+            get_system_locale,
+            get_preferred_lc0_engine_name,
+            get_preferred_stockfish_build_key,
             app::platform::screen_capture,
             find_fide_player,
             fetch_fide_profile_html,
@@ -312,9 +307,9 @@ pub async fn run() {
             edit_db_info,
             set_profile_metadata,
             delete_db_game,
-    delete_database,
-    optimize_database,
-    export_to_pgn,
+            delete_database,
+            optimize_database,
+            export_to_pgn,
             export_position_games_to_pgn,
             export_selected_games_to_pgn,
             authenticate,
@@ -462,19 +457,21 @@ pub async fn run() {
                 let mut webview_data_folder = std::path::PathBuf::from(appdata);
                 webview_data_folder.push("com.ocs");
                 webview_data_folder.push("EBWebView");
-                
+
                 // Create the directory if it doesn't exist
                 if let Some(parent) = webview_data_folder.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                
+
                 // Set the environment variable for WebView2
-                std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", webview_data_folder.to_string_lossy().as_ref());
-                log::info!("WebView2 user data folder set to: {}", webview_data_folder.display());
+                std::env::set_var(
+                    "WEBVIEW2_USER_DATA_FOLDER",
+                    webview_data_folder.to_string_lossy().as_ref(),
+                );
             }
         }
     }
-    
+
     let builder = tauri::Builder::default();
     let builder = app::platform::setup_tauri_plugins(builder, &specta_builder);
 
@@ -662,7 +659,12 @@ fn get_preferred_stockfish_build_key() -> String {
 
 // --- Fallback ---
 
-#[cfg(not(any(target_os = "android", target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "android",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos"
+)))]
 #[tauri::command]
 #[specta::specta]
 fn get_preferred_stockfish_build_key() -> String {
@@ -708,7 +710,10 @@ fn has_avx512_icl_like() -> bool {
         && is_x86_feature_detected!("avx512vnni")
 }
 
-#[cfg(all(any(target_os = "windows", target_os = "linux"), target_arch = "aarch64"))]
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    target_arch = "aarch64"
+))]
 fn has_aarch64_dotprod() -> bool {
     // `dotprod` is optional on ARMv8; gate selection for dotprod builds.
     //
@@ -909,7 +914,10 @@ fn get_system_locale() -> Result<Option<String>, String> {
             // Try PowerShell command as fallback
             use std::process::Command;
             if let Ok(output) = Command::new("powershell")
-                .args(["-Command", "[System.Globalization.CultureInfo]::CurrentCulture.Name"])
+                .args([
+                    "-Command",
+                    "[System.Globalization.CultureInfo]::CurrentCulture.Name",
+                ])
                 .output()
             {
                 if output.status.success() {
@@ -1039,7 +1047,11 @@ mod tests {
             "http://[::1]/test",
         ] {
             let err = validate_external_url(u).unwrap_err();
-            assert!(err.contains("Refusing to open private/local URLs"), "url: {}", u);
+            assert!(
+                err.contains("Refusing to open private/local URLs"),
+                "url: {}",
+                u
+            );
         }
     }
 
@@ -1062,6 +1074,9 @@ mod tests {
     fn memory_size_returns_something_reasonable() {
         // We only assert it doesn't panic and is not obviously invalid.
         let m = memory_size();
-        assert!(m > 0, "memory_size() returned 0 MB (unexpected in most environments)");
+        assert!(
+            m > 0,
+            "memory_size() returned 0 MB (unexpected in most environments)"
+        );
     }
 }

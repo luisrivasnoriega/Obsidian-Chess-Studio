@@ -1,5 +1,4 @@
 use axum::{extract::Query, response::IntoResponse, routing::get, Extension, Router};
-use log::info;
 use oauth2::{
     basic::BasicClient, reqwest::async_http_client, AuthUrl, AuthorizationCode, ClientId,
     CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
@@ -63,7 +62,6 @@ pub async fn authenticate(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), Error> {
-    info!("Authenticating user {}", username);
     let (auth_url, _) = state
         .auth
         .client

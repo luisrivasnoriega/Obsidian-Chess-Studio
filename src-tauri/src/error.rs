@@ -169,8 +169,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::Serialize;
     use serde::ser::{Error as SerErrorTrait, Impossible, Serializer};
+    use serde::Serialize;
     use std::time::SystemTime;
 
     // Minimal serializer that only supports serialize_str, so we can test Error's Serialize impl
@@ -261,7 +261,10 @@ mod tests {
         fn serialize_unit(self) -> std::result::Result<Self::Ok, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
-        fn serialize_unit_struct(self, _name: &'static str) -> std::result::Result<Self::Ok, Self::Error> {
+        fn serialize_unit_struct(
+            self,
+            _name: &'static str,
+        ) -> std::result::Result<Self::Ok, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
         fn serialize_unit_variant(
@@ -294,10 +297,16 @@ mod tests {
         {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
-        fn serialize_seq(self, _len: Option<usize>) -> std::result::Result<Self::SerializeSeq, Self::Error> {
+        fn serialize_seq(
+            self,
+            _len: Option<usize>,
+        ) -> std::result::Result<Self::SerializeSeq, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
-        fn serialize_tuple(self, _len: usize) -> std::result::Result<Self::SerializeTuple, Self::Error> {
+        fn serialize_tuple(
+            self,
+            _len: usize,
+        ) -> std::result::Result<Self::SerializeTuple, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
         fn serialize_tuple_struct(
@@ -316,7 +325,10 @@ mod tests {
         ) -> std::result::Result<Self::SerializeTupleVariant, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
-        fn serialize_map(self, _len: Option<usize>) -> std::result::Result<Self::SerializeMap, Self::Error> {
+        fn serialize_map(
+            self,
+            _len: Option<usize>,
+        ) -> std::result::Result<Self::SerializeMap, Self::Error> {
             Err(OnlyStrSerError::custom("only serialize_str supported"))
         }
         fn serialize_struct(

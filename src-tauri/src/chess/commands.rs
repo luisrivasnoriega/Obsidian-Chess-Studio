@@ -20,19 +20,23 @@ use vampirc_uci::parse_one;
 use crate::error::Error;
 use crate::variant_coverage_graph::{
     get_next_fen_from_san, variant_coverage_graph_cache_path, variant_coverage_read_graph_cache,
-    variant_coverage_write_graph_cache, VariantCoverageGraphNodeDto, VariantCoverageResponseRarityDto,
-    VariantCoverageTierDto,
+    variant_coverage_write_graph_cache, VariantCoverageGraphNodeDto,
+    VariantCoverageResponseRarityDto, VariantCoverageTierDto,
 };
 use crate::variant_positions::{fetch_variant_position, upsert_variant_position_entry};
 use crate::AppState;
 
 use super::analysis::GameAnalysisService;
 use super::human_game_analyzer::{
-    analyze_game_human_report as analyze_game_human_report_inner, HumanAnnotatedGameReport,
-    HumanGameAnalysisRequest, HumanStrategicLiveRequest, HumanStrategicLiveResponse,
+    analyze_game_human_report as analyze_game_human_report_inner,
     build_human_strategic_live_report as build_human_strategic_live_report_inner,
+    HumanAnnotatedGameReport, HumanGameAnalysisRequest, HumanStrategicLiveRequest,
+    HumanStrategicLiveResponse,
 };
-use super::human_strategy::{pick_human_strategic_move as pick_human_strategic_move_inner, HumanStrategicRequest, HumanStrategicSelection};
+use super::human_strategy::{
+    pick_human_strategic_move as pick_human_strategic_move_inner, HumanStrategicRequest,
+    HumanStrategicSelection,
+};
 use super::manager::EngineManager;
 use super::process::EngineProcess;
 use super::types::*;
@@ -162,43 +166,15 @@ fn coverage_engine_exited_error(trace_id: &str, phase: &str) -> Error {
     ))
 }
 
-fn emit_coverage_engine_session_progress(app: &tauri::AppHandle, payload: CoverageEngineSessionProgressPayload) {
-    log::trace!(
-        "coverage engine progress emit schedule: run_id={} session_id={} index={} total={} completed={} has_score={} has_error={}",
-        coverage_run_id_for_log(&payload.run_id),
-        payload.session_id,
-        payload.index,
-        payload.total,
-        payload.completed,
-        payload.has_score,
-        payload.error.is_some()
-    );
-    let run_id = payload.run_id.clone();
-    let session_id = payload.session_id.clone();
-    let index = payload.index;
-    let total = payload.total;
-    let completed = payload.completed;
+fn emit_coverage_engine_session_progress(
+    app: &tauri::AppHandle,
+    payload: CoverageEngineSessionProgressPayload,
+) {
     let app_for_emit = app.clone();
     if let Err(err) = app.run_on_main_thread(move || {
-        log::trace!(
-            "coverage engine progress emit begin: run_id={} session_id={} index={} total={} completed={}",
-            coverage_run_id_for_log(&run_id),
-            session_id,
-            index,
-            total,
-            completed
-        );
         if let Err(emit_err) = app_for_emit.emit(COVERAGE_ENGINE_SESSION_PROGRESS_EVENT, payload) {
             log::warn!("failed to emit coverage engine session progress event: {emit_err}");
         }
-        log::trace!(
-            "coverage engine progress emit done: run_id={} session_id={} index={} total={} completed={}",
-            coverage_run_id_for_log(&run_id),
-            session_id,
-            index,
-            total,
-            completed
-        );
     }) {
         log::warn!("failed to schedule coverage engine session progress event: {err}");
     }
@@ -267,7 +243,11 @@ fn coverage_engine_runtime_options(settings: Vec<EngineOption>) -> Vec<EngineOpt
     options
 }
 
-fn coverage_engine_cache_signature(engine_name: &str, engine_path: &str, options: &[EngineOption]) -> String {
+fn coverage_engine_cache_signature(
+    engine_name: &str,
+    engine_path: &str,
+    options: &[EngineOption],
+) -> String {
     let mut option_parts: Vec<String> = options
         .iter()
         .map(|option| format!("{}={}", option.name.trim(), option.value.trim()))
@@ -392,11 +372,7 @@ fn coverage_engine_fen_key(fen: &str) -> String {
 }
 
 fn coverage_label_target_name(label: &str, fallback: &str) -> String {
-    let value = label
-        .split('|')
-        .next()
-        .unwrap_or(label)
-        .trim();
+    let value = label.split('|').next().unwrap_or(label).trim();
     if value.is_empty() {
         fallback.to_string()
     } else {
@@ -425,8 +401,16 @@ fn coverage_forced_reply_primary_label(label: &str) -> Option<String> {
 
 fn extract_san_from_root_label(label: &str) -> Vec<String> {
     let before_arrow = label.split("->").next().unwrap_or(label).trim();
-    let before_pipe = before_arrow.split('|').next().unwrap_or(before_arrow).trim();
-    let before_variant_name = before_pipe.split(" - ").next().unwrap_or(before_pipe).trim();
+    let before_pipe = before_arrow
+        .split('|')
+        .next()
+        .unwrap_or(before_arrow)
+        .trim();
+    let before_variant_name = before_pipe
+        .split(" - ")
+        .next()
+        .unwrap_or(before_pipe)
+        .trim();
     if before_variant_name.is_empty() {
         return Vec::new();
     }
@@ -489,16 +473,21 @@ fn get_coverage_engine_target_node(
         return allow_root.then(|| node.clone());
     }
 
-    let forced_reply = if node.children.len() == 1 && node.children[0].tier == VariantCoverageTierDto::Root {
-        Some(&node.children[0])
-    } else {
-        None
-    }?;
+    let forced_reply =
+        if node.children.len() == 1 && node.children[0].tier == VariantCoverageTierDto::Root {
+            Some(&node.children[0])
+        } else {
+            None
+        }?;
 
-    let forced_san = extract_san_from_root_label(&forced_reply.label).into_iter().next();
-    let computed_result_fen = forced_san
-        .as_deref()
-        .and_then(|san| node.fen.as_deref().and_then(|fen| get_next_fen_from_san(fen, san)));
+    let forced_san = extract_san_from_root_label(&forced_reply.label)
+        .into_iter()
+        .next();
+    let computed_result_fen = forced_san.as_deref().and_then(|san| {
+        node.fen
+            .as_deref()
+            .and_then(|fen| get_next_fen_from_san(fen, san))
+    });
     let result_fen = computed_result_fen
         .or_else(|| forced_reply.fen.clone())
         .or_else(|| node.fen.clone());
@@ -506,9 +495,13 @@ fn get_coverage_engine_target_node(
     let mut target = node.clone();
     target.label = merge_coverage_label_with_forced_reply(&node.label, &forced_reply.label);
     target.response_percent = forced_reply.percent.or(node.response_percent);
-    target.response_rarity = coverage_response_rarity(forced_reply.percent).or(node.response_rarity);
+    target.response_rarity =
+        coverage_response_rarity(forced_reply.percent).or(node.response_rarity);
     target.fen = result_fen;
-    target.opening_name = forced_reply.opening_name.clone().or_else(|| node.opening_name.clone());
+    target.opening_name = forced_reply
+        .opening_name
+        .clone()
+        .or_else(|| node.opening_name.clone());
     target.active_moves_used = forced_reply.active_moves_used.or(node.active_moves_used);
     target.active_win_rate = forced_reply.active_win_rate;
     target.active_loss_rate = forced_reply.active_loss_rate;
@@ -530,7 +523,12 @@ fn collect_coverage_engine_targets_from_node(
         seen: &mut HashSet<String>,
         targets: &mut Vec<CoverageEngineAnalysisTarget>,
     ) {
-        let fen = candidate.fen.as_deref().unwrap_or_default().trim().to_string();
+        let fen = candidate
+            .fen
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if fen.is_empty() {
             return;
         }
@@ -580,7 +578,12 @@ fn apply_coverage_engine_info_to_graph(
         .map(|child| apply_coverage_engine_info_to_graph(child, engine_info_by_fen))
         .collect();
 
-    let Some(fen) = node.fen.as_deref().map(str::trim).filter(|fen| !fen.is_empty()) else {
+    let Some(fen) = node
+        .fen
+        .as_deref()
+        .map(str::trim)
+        .filter(|fen| !fen.is_empty())
+    else {
         return node;
     };
     let Some(engine_info) = engine_info_by_fen.get(&coverage_engine_fen_key(fen)) else {
@@ -620,7 +623,11 @@ fn is_likely_uci_move(value: &str) -> bool {
         return false;
     }
 
-    bytes.len() == 4 || matches!(bytes[4], b'b' | b'n' | b'q' | b'r' | b'B' | b'N' | b'Q' | b'R')
+    bytes.len() == 4
+        || matches!(
+            bytes[4],
+            b'b' | b'n' | b'q' | b'r' | b'B' | b'N' | b'Q' | b'R'
+        )
 }
 
 fn parse_engine_info_line(line: &str, fen: &Fen) -> Result<Option<BestMoves>, Error> {
@@ -668,7 +675,9 @@ fn parse_engine_info_line(line: &str, fen: &Fen) -> Result<Option<BestMoves>, Er
                 index += 2;
             }
             "score" => {
-                if let (Some(kind), Some(raw_value)) = (tokens.get(index + 1), tokens.get(index + 2)) {
+                if let (Some(kind), Some(raw_value)) =
+                    (tokens.get(index + 1), tokens.get(index + 2))
+                {
                     if let Ok(value) = raw_value.parse::<i32>() {
                         match *kind {
                             "cp" => {
@@ -686,10 +695,14 @@ fn parse_engine_info_line(line: &str, fen: &Fen) -> Result<Option<BestMoves>, Er
                 index += 3;
             }
             "wdl" => {
-                if let (Some(w), Some(d), Some(l)) =
-                    (tokens.get(index + 1), tokens.get(index + 2), tokens.get(index + 3))
-                {
-                    if let (Ok(w), Ok(d), Ok(l)) = (w.parse::<u32>(), d.parse::<u32>(), l.parse::<u32>()) {
+                if let (Some(w), Some(d), Some(l)) = (
+                    tokens.get(index + 1),
+                    tokens.get(index + 2),
+                    tokens.get(index + 3),
+                ) {
+                    if let (Ok(w), Ok(d), Ok(l)) =
+                        (w.parse::<u32>(), d.parse::<u32>(), l.parse::<u32>())
+                    {
                         best_moves.score.wdl = Some((w, d, l));
                     }
                 }
@@ -735,21 +748,19 @@ fn parse_engine_info_line(line: &str, fen: &Fen) -> Result<Option<BestMoves>, Er
 async fn drain_until_bestmove(
     reader: &mut tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
     max_wait: Duration,
-    trace_id: &str,
+    _trace_id: &str,
 ) {
     let started_at = Instant::now();
-    let mut drained_lines = 0_u32;
     while started_at.elapsed() < max_wait {
         let remaining = max_wait.saturating_sub(started_at.elapsed());
-        match timeout(remaining.min(Duration::from_millis(250)), reader.next_line()).await {
+        match timeout(
+            remaining.min(Duration::from_millis(250)),
+            reader.next_line(),
+        )
+        .await
+        {
             Ok(Ok(Some(line))) => {
-                drained_lines = drained_lines.saturating_add(1);
                 if is_uci_bestmove_line(&line) {
-                    log::trace!(
-                        "coverage engine eval drain bestmove done: trace_id={} drained_lines={}",
-                        trace_id,
-                        drained_lines
-                    );
                     break;
                 }
             }
@@ -770,7 +781,12 @@ async fn drain_until_readyok(
     let mut drained_lines = 0_u32;
     while started_at.elapsed() < max_wait {
         let remaining = max_wait.saturating_sub(started_at.elapsed());
-        match timeout(remaining.min(Duration::from_millis(250)), reader.next_line()).await {
+        match timeout(
+            remaining.min(Duration::from_millis(250)),
+            reader.next_line(),
+        )
+        .await
+        {
             Ok(Ok(Some(line))) => {
                 let is_ready = line.trim() == "readyok";
                 drained_lines = drained_lines.saturating_add(1);
@@ -778,11 +794,6 @@ async fn drain_until_readyok(
                     process.append_log(EngineLog::Engine(line));
                 }
                 if is_ready {
-                    log::trace!(
-                        "coverage engine eval ready drain done: trace_id={} drained_lines={}",
-                        trace_id,
-                        drained_lines
-                    );
                     return true;
                 }
             }
@@ -808,14 +819,6 @@ async fn evaluate_engine_position_with_process(
     capture_logs: bool,
 ) -> Result<Option<BestMoves>, Error> {
     let fen_log = coverage_fen_for_log(fen);
-    log::trace!(
-        "coverage engine eval step begin: trace_id={} fen={} ms={} option_count={} capture_logs={}",
-        trace_id,
-        fen_log,
-        requested_ms,
-        extra_options.len(),
-        capture_logs
-    );
     if check_coverage_engine_child_exit(process, trace_id, "begin")? {
         return Err(coverage_engine_exited_error(trace_id, "begin"));
     }
@@ -823,12 +826,6 @@ async fn evaluate_engine_position_with_process(
     let set_options_requests_ready = extra_options
         .iter()
         .any(|option| option.name.trim().eq_ignore_ascii_case("UCI_ShowWDL"));
-    log::trace!(
-        "coverage engine eval set_options begin: trace_id={} fen={} set_options_requests_ready={}",
-        trace_id,
-        fen_log,
-        set_options_requests_ready
-    );
     process
         .set_options(EngineOptions {
             fen: fen.trim().to_string(),
@@ -836,21 +833,13 @@ async fn evaluate_engine_position_with_process(
             extra_options,
         })
         .await?;
-    log::trace!(
-        "coverage engine eval set_options done: trace_id={} running={}",
-        trace_id,
-        process.running
-    );
     if check_coverage_engine_child_exit(process, trace_id, "after_set_options")? {
         return Err(coverage_engine_exited_error(trace_id, "after_set_options"));
     }
 
     if !set_options_requests_ready {
-        log::trace!("coverage engine eval request_ready begin: trace_id={}", trace_id);
         process.request_ready().await?;
-        log::trace!("coverage engine eval request_ready done: trace_id={}", trace_id);
     }
-    log::trace!("coverage engine eval ready drain begin: trace_id={}", trace_id);
     let ready = drain_until_readyok(
         process,
         reader,
@@ -865,9 +854,7 @@ async fn evaluate_engine_position_with_process(
         }
         return Err(Error::EngineTimeout);
     }
-    log::trace!("coverage engine eval go begin: trace_id={} ms={}", trace_id, requested_ms);
     process.go(&GoMode::Time(requested_ms)).await?;
-    log::trace!("coverage engine eval go done: trace_id={}", trace_id);
     if check_coverage_engine_child_exit(process, trace_id, "after_go")? {
         return Err(coverage_engine_exited_error(trace_id, "after_go"));
     }
@@ -876,9 +863,7 @@ async fn evaluate_engine_position_with_process(
     let started_at = Instant::now();
     let max_wait = Duration::from_millis(requested_ms.saturating_add(7000) as u64);
     let mut best_line: Option<BestMoves> = None;
-    let mut info_lines = 0_u32;
     let mut timeout_ticks = 0_u32;
-    let mut last_logged_depth = 0_u32;
 
     loop {
         if started_at.elapsed() >= max_wait {
@@ -894,7 +879,11 @@ async fn evaluate_engine_position_with_process(
         }
 
         let remaining = max_wait.saturating_sub(started_at.elapsed());
-        let line_result = timeout(remaining.min(Duration::from_millis(500)), reader.next_line()).await;
+        let line_result = timeout(
+            remaining.min(Duration::from_millis(500)),
+            reader.next_line(),
+        )
+        .await;
         let line = match line_result {
             Ok(Ok(Some(line))) => line,
             Ok(Ok(None)) => {
@@ -916,12 +905,6 @@ async fn evaluate_engine_position_with_process(
                     if check_coverage_engine_child_exit(process, trace_id, "read_wait")? {
                         return Err(coverage_engine_exited_error(trace_id, "read_wait"));
                     }
-                    log::trace!(
-                        "coverage engine eval waiting for output: trace_id={} elapsed_ms={} timeout_ticks={}",
-                        trace_id,
-                        started_at.elapsed().as_millis(),
-                        timeout_ticks
-                    );
                 }
                 continue;
             }
@@ -929,31 +912,12 @@ async fn evaluate_engine_position_with_process(
 
         match parse_engine_info_line(&line, &parsed_fen) {
             Ok(Some(candidate)) => {
-                info_lines = info_lines.saturating_add(1);
                 if candidate.multipv == 1 {
-                    if candidate.depth >= last_logged_depth.saturating_add(5) || last_logged_depth == 0 {
-                        last_logged_depth = candidate.depth;
-                        log::trace!(
-                            "coverage engine eval candidate: trace_id={} depth={} nodes={} nps={} has_pv={}",
-                            trace_id,
-                            candidate.depth,
-                            candidate.nodes,
-                            candidate.nps,
-                            !candidate.uci_moves.is_empty()
-                        );
-                    }
                     best_line = Some(candidate);
                 }
             }
             Ok(None) => {
                 if is_uci_bestmove_line(&line) {
-                    log::trace!(
-                        "coverage engine eval bestmove received: trace_id={} elapsed_ms={} info_lines={} has_score={}",
-                        trace_id,
-                        started_at.elapsed().as_millis(),
-                        info_lines,
-                        best_line.is_some()
-                    );
                     break;
                 }
             }
@@ -972,14 +936,6 @@ async fn evaluate_engine_position_with_process(
     }
 
     process.running = false;
-    log::trace!(
-        "coverage engine eval step done: trace_id={} elapsed_ms={} info_lines={} timeout_ticks={} has_score={}",
-        trace_id,
-        started_at.elapsed().as_millis(),
-        info_lines,
-        timeout_ticks,
-        best_line.is_some()
-    );
     Ok(best_line)
 }
 
@@ -1157,15 +1113,6 @@ pub async fn evaluate_engine_position_once(
 
     let _ = process.kill().await;
 
-    let fen_log = fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
-    log::debug!(
-        "coverage engine eval completed: engine={} fen={} ms={} has_score={}",
-        engine_name,
-        fen_log,
-        requested_ms,
-        best_line.is_some()
-    );
-
     Ok(best_line)
 }
 
@@ -1179,16 +1126,10 @@ pub async fn start_coverage_engine_session(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, Error> {
-    log::debug!(
-        "coverage engine session start requested: run_id={} engine={} option_count={}",
-        coverage_run_id_for_log(&run_id),
-        engine_name,
-        extra_options.len()
-    );
+    let _ = run_id;
     let resolved_path = super::engine_path::resolve_engine_path(&engine_path, &app);
     let filtered_options = sanitize_coverage_engine_options(extra_options);
     let (process, reader) = EngineProcess::new(resolved_path).await?;
-    let engine_pid = process.child.id();
     let session_id = uuid::Uuid::new_v4().to_string();
 
     state.coverage_engine_sessions.insert(
@@ -1201,12 +1142,6 @@ pub async fn start_coverage_engine_session(
         })),
     );
 
-    log::debug!(
-        "coverage engine session started: run_id={} session_id={} engine_pid={:?}",
-        coverage_run_id_for_log(&run_id),
-        session_id,
-        engine_pid
-    );
     Ok(session_id)
 }
 
@@ -1229,31 +1164,16 @@ pub async fn evaluate_coverage_engine_session_position(
         .get(&session_id)
         .map(|entry| entry.value().clone())
     else {
-        return Err(Error::InvalidInput("Coverage engine session not found".to_string()));
+        return Err(Error::InvalidInput(
+            "Coverage engine session not found".to_string(),
+        ));
     };
 
     let requested_ms = ms.clamp(100, 60_000);
     let fen_log = fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
-    log::trace!(
-        "coverage engine session eval requested: run_id={} session_id={} index={} total={} fen={} ms={} emit_progress={}",
-        coverage_run_id_for_log(&run_id),
-        session_id,
-        index,
-        total,
-        fen_log,
-        requested_ms,
-        emit_progress
-    );
     let eval_started_at = Instant::now();
     let (engine_name, eval_result) = {
         let mut session = session_arc.lock().await;
-        log::trace!(
-            "coverage engine session eval lock acquired: run_id={} session_id={} index={} total={}",
-            coverage_run_id_for_log(&run_id),
-            session_id,
-            index,
-            total
-        );
         let CoverageEngineSession {
             engine_name,
             process,
@@ -1287,18 +1207,6 @@ pub async fn evaluate_coverage_engine_session_position(
 
     match eval_result {
         Ok(best_line) => {
-            log::debug!(
-                "coverage engine session eval completed: run_id={} session_id={} engine={} index={} total={} fen={} ms={} elapsed_ms={} has_score={}",
-                coverage_run_id_for_log(&run_id),
-                session_id,
-                engine_name,
-                index,
-                total,
-                fen_log,
-                requested_ms,
-                elapsed_ms,
-                best_line.is_some()
-            );
             if emit_progress {
                 let payload = CoverageEngineSessionProgressPayload {
                     run_id: run_id.clone(),
@@ -1315,22 +1223,7 @@ pub async fn evaluate_coverage_engine_session_position(
                     error: None,
                 };
                 emit_coverage_engine_session_progress(&app, payload);
-            } else {
-                log::trace!(
-                    "coverage engine progress emit skipped: run_id={} session_id={} index={} total={} reason=disabled",
-                    coverage_run_id_for_log(&run_id),
-                    session_id,
-                    index,
-                    total
-                );
             }
-            log::trace!(
-                "coverage engine session eval returning ok: run_id={} session_id={} index={} total={}",
-                coverage_run_id_for_log(&run_id),
-                session_id,
-                index,
-                total
-            );
             Ok(best_line)
         }
         Err(err) => {
@@ -1363,22 +1256,7 @@ pub async fn evaluate_coverage_engine_session_position(
                     has_score: false,
                 };
                 emit_coverage_engine_session_progress(&app, payload);
-            } else {
-                log::trace!(
-                    "coverage engine progress emit skipped: run_id={} session_id={} index={} total={} reason=disabled",
-                    coverage_run_id_for_log(&run_id),
-                    session_id,
-                    index,
-                    total
-                );
             }
-            log::trace!(
-                "coverage engine session eval returning error: run_id={} session_id={} index={} total={}",
-                coverage_run_id_for_log(&run_id),
-                session_id,
-                index,
-                total
-            );
             Err(err)
         }
     }
@@ -1391,20 +1269,11 @@ pub async fn stop_coverage_engine_session(
     run_id: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    log::debug!(
-        "coverage engine session stop requested: run_id={} session_id={}",
-        coverage_run_id_for_log(&run_id),
-        session_id
-    );
+    let _ = run_id;
     if let Some((_key, session_arc)) = state.coverage_engine_sessions.remove(&session_id) {
         let mut session = session_arc.lock().await;
         let _ = session.process.kill().await;
     }
-    log::debug!(
-        "coverage engine session stopped: run_id={} session_id={}",
-        coverage_run_id_for_log(&run_id),
-        session_id
-    );
     Ok(())
 }
 
@@ -1439,15 +1308,19 @@ pub async fn run_coverage_engine_analysis(
         .as_ref()
         .and_then(|root| find_coverage_node_by_id(root, &source_node_id))
         .or(source_node)
-        .ok_or_else(|| Error::InvalidInput("Coverage engine analysis source node not found".to_string()))?;
+        .ok_or_else(|| {
+            Error::InvalidInput("Coverage engine analysis source node not found".to_string())
+        })?;
 
     let requested_ms = ms.clamp(100, 60_000);
     let targets = collect_coverage_engine_targets_from_node(&source_node);
     let total = targets.len().min(u32::MAX as usize) as u32;
     let session_id = uuid::Uuid::new_v4().to_string();
     let cache_options = coverage_engine_cache_options(engine_settings.clone());
-    let engine_cache_signature = coverage_engine_cache_signature(&engine_name, &engine_path, &cache_options);
-    let filtered_options = sanitize_coverage_engine_options(coverage_engine_runtime_options(engine_settings));
+    let engine_cache_signature =
+        coverage_engine_cache_signature(&engine_name, &engine_path, &cache_options);
+    let filtered_options =
+        sanitize_coverage_engine_options(coverage_engine_runtime_options(engine_settings));
     let resolved_graph_cache_path = graph_cache_path
         .as_deref()
         .map(str::trim)
@@ -1480,20 +1353,6 @@ pub async fn run_coverage_engine_analysis(
     let mut failed = 0_u32;
     let mut pending = Vec::new();
     let mut failed_details = Vec::new();
-
-    log::debug!(
-        "coverage engine backend run started: run_id={} session_id={} engine={} source_node={} source_children={} total={} ms={} cache_option_count={} runtime_option_count={} graph_cache_path={}",
-        coverage_run_id_for_log(&run_id),
-        session_id,
-        engine_name,
-        source_node.id.as_str(),
-        source_node.children.len(),
-        total,
-        requested_ms,
-        cache_options.len(),
-        filtered_options.len(),
-        resolved_graph_cache_path.as_deref().unwrap_or("none")
-    );
 
     for target in targets {
         let fen = target.fen.trim().to_string();
@@ -1732,7 +1591,8 @@ pub async fn run_coverage_engine_analysis(
         if let Some(cache_path) = resolved_graph_cache_path.as_deref() {
             match variant_coverage_read_graph_cache(cache_path.to_string()) {
                 Ok(Some(mut cache)) => {
-                    cache.graph_root = apply_coverage_engine_info_to_graph(cache.graph_root, &engine_info_by_fen);
+                    cache.graph_root =
+                        apply_coverage_engine_info_to_graph(cache.graph_root, &engine_info_by_fen);
                     cache.generated_at = Utc::now().to_rfc3339();
                     match variant_coverage_write_graph_cache(cache_path.to_string(), cache) {
                         Ok(()) => {
@@ -1770,19 +1630,6 @@ pub async fn run_coverage_engine_analysis(
         }
     }
     let applied = engine_info_by_fen.len().min(u32::MAX as usize) as u32;
-
-    log::debug!(
-        "coverage engine backend run completed: run_id={} session_id={} total={} completed={} saved={} cached={} failed={} applied={} graph_cache_written={}",
-        coverage_run_id_for_log(&run_id),
-        session_id,
-        total,
-        completed,
-        saved,
-        cached,
-        failed,
-        applied,
-        graph_cache_written
-    );
 
     Ok(CoverageEngineAnalysisRunResult {
         total,
@@ -1852,14 +1699,6 @@ pub async fn evaluate_engine_positions_batch(
             }
         };
 
-        let fen_log = fen.split_whitespace().take(4).collect::<Vec<_>>().join(" ");
-        log::debug!(
-            "coverage engine batch eval completed: engine={} fen={} ms={} has_score={}",
-            engine_name,
-            fen_log,
-            requested_ms,
-            best_line.is_some()
-        );
         results.push(best_line);
     }
 
@@ -1915,7 +1754,10 @@ pub fn build_human_strategic_live_report(
 /// FIXED: Proper process cleanup with timeout to prevent zombie processes
 #[tauri::command]
 #[specta::specta]
-pub async fn get_engine_config(path: PathBuf, app: tauri::AppHandle) -> Result<EngineConfig, Error> {
+pub async fn get_engine_config(
+    path: PathBuf,
+    app: tauri::AppHandle,
+) -> Result<EngineConfig, Error> {
     use tokio::io::AsyncBufReadExt;
     use tokio::time::{timeout, Duration};
 

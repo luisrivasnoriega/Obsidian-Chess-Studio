@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc, Weekday};
-use log::{debug, info, warn};
+use log::warn;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use shakmaty::{
@@ -113,7 +113,9 @@ pub struct PlanOptions {
 impl PlanOptions {
     fn validate(&self) -> Result<()> {
         if self.opponent_top_k == 0 {
-            return Err(Error::PackageManager("opponentTopK must be >= 1".to_string()));
+            return Err(Error::PackageManager(
+                "opponentTopK must be >= 1".to_string(),
+            ));
         }
         if self.our_multipv == 0 {
             return Err(Error::PackageManager("ourMultipv must be >= 1".to_string()));
@@ -121,7 +123,10 @@ impl PlanOptions {
         if self.max_nodes == 0 {
             return Err(Error::PackageManager("maxNodes must be >= 1".to_string()));
         }
-        if !self.min_branch_prob.is_finite() || self.min_branch_prob < 0.0 || self.min_branch_prob > 1.0 {
+        if !self.min_branch_prob.is_finite()
+            || self.min_branch_prob < 0.0
+            || self.min_branch_prob > 1.0
+        {
             return Err(Error::PackageManager(
                 "minBranchProb must be a finite value in [0, 1]".to_string(),
             ));
@@ -132,7 +137,9 @@ impl PlanOptions {
             ));
         }
         if !self.backoff_k.is_finite() || self.backoff_k <= 0.0 {
-            return Err(Error::PackageManager("backoffK must be a finite value > 0".to_string()));
+            return Err(Error::PackageManager(
+                "backoffK must be a finite value > 0".to_string(),
+            ));
         }
         Ok(())
     }
@@ -237,25 +244,6 @@ pub async fn planner_build_variant_book(
     let engine_path = resolve_engine_path(&req.engine_path, &app);
     let engine = PlannerEngine::new(engine_path, req.uci_options);
 
-    info!(
-        "planner_build_variant_book: profile_id={} target_player_id={} our_color={:?} time_control={} our_elo={} start_fen={} opts={{horizon_plies={} opponent_top_k={} min_branch_prob={} max_nodes={} our_multipv={} quick={:?} candidate={:?} backoff_k={} smoothing_alpha={}}}",
-        profile_id,
-        req.ctx.target_player_id,
-        req.ctx.our_color,
-        req.ctx.time_control,
-        req.ctx.our_elo,
-        req.ctx.start_fen,
-        req.opts.horizon_plies,
-        req.opts.opponent_top_k,
-        req.opts.min_branch_prob,
-        req.opts.max_nodes,
-        req.opts.our_multipv,
-        req.opts.quick_eval_limits,
-        req.opts.candidate_limits,
-        req.opts.backoff_k,
-        req.opts.smoothing_alpha,
-    );
-
     let mut planner = PlayerMatchPlanner::new(core_db_path, analysis_db_path, engine, profile_id)?;
     planner.build_book(req.ctx, req.opts).await
 }
@@ -279,19 +267,13 @@ pub async fn planner_build_variant_pgn(
     let engine = PlannerEngine::new(engine_path, req.uci_options);
 
     let mut planner = PlayerMatchPlanner::new(core_db_path, analysis_db_path, engine, profile_id)?;
-    let target_name = planner.lookup_player_name(req.ctx.target_player_id).unwrap_or_else(|| {
-        format!("Opponent({})", req.ctx.target_player_id)
-    });
+    let target_name = planner
+        .lookup_player_name(req.ctx.target_player_id)
+        .unwrap_or_else(|| format!("Opponent({})", req.ctx.target_player_id));
 
-    info!(
-        "planner_build_variant_pgn: target_player_id={} target_name={} start_fen={} horizon_plies={}",
-        req.ctx.target_player_id,
-        target_name,
-        req.ctx.start_fen,
-        req.opts.horizon_plies
-    );
-
-    let book = planner.build_book(req.ctx.clone(), req.opts.clone()).await?;
+    let book = planner
+        .build_book(req.ctx.clone(), req.opts.clone())
+        .await?;
     let pgn = variant_book_to_pgn(&book, &req.ctx, &target_name, req.opts.horizon_plies)?;
     Ok(PlannerBuildPgnResponse { pgn })
 }
@@ -356,7 +338,11 @@ impl ClockStats {
         if !(seconds.is_finite() && seconds >= 0.0) {
             return;
         }
-        let w = if weight.is_finite() && weight > 0.0 { weight } else { 1.0 };
+        let w = if weight.is_finite() && weight > 0.0 {
+            weight
+        } else {
+            1.0
+        };
         self.weighted_sum += seconds * w;
         self.weight_sum += w;
     }
@@ -394,7 +380,12 @@ impl PlannerEngine {
         Self { path, uci_options }
     }
 
-    async fn multipv(&mut self, fen: &str, limits: EngineLimits, multipv: usize) -> Result<Vec<EngineLine>> {
+    async fn multipv(
+        &mut self,
+        fen: &str,
+        limits: EngineLimits,
+        multipv: usize,
+    ) -> Result<Vec<EngineLine>> {
         let go = to_go_mode(limits);
         let max_wall = engine_wall_timeout(limits);
 
@@ -422,7 +413,8 @@ impl PlannerEngine {
             while let Ok(Some(line)) = reader.next_line().await {
                 match vampirc_uci::parse_one(&line) {
                     vampirc_uci::UciMessage::Info(attrs) => {
-                        if let Ok(best_moves) = parse_uci_attrs(attrs, &fen_parsed, &options.moves) {
+                        if let Ok(best_moves) = parse_uci_attrs(attrs, &fen_parsed, &options.moves)
+                        {
                             let multipv_idx = best_moves.multipv;
                             let cur_depth = best_moves.depth;
 
@@ -430,7 +422,9 @@ impl PlannerEngine {
                                 proc.best_moves.push(best_moves);
 
                                 if multipv_idx == proc.real_multipv {
-                                    if proc.best_moves.iter().all(|x| x.depth == cur_depth) && cur_depth >= proc.last_depth {
+                                    if proc.best_moves.iter().all(|x| x.depth == cur_depth)
+                                        && cur_depth >= proc.last_depth
+                                    {
                                         last_best = proc.best_moves.clone();
                                         proc.last_depth = cur_depth;
                                     }
@@ -456,7 +450,10 @@ impl PlannerEngine {
             let _ = proc.stop().await;
             let _ = tokio::time::timeout(Duration::from_secs(2), async {
                 while let Ok(Some(line)) = reader.next_line().await {
-                    if matches!(vampirc_uci::parse_one(&line), vampirc_uci::UciMessage::BestMove { .. }) {
+                    if matches!(
+                        vampirc_uci::parse_one(&line),
+                        vampirc_uci::UciMessage::BestMove { .. }
+                    ) {
                         break;
                     }
                 }
@@ -518,14 +515,20 @@ struct PlayerMatchPlanner {
 }
 
 type GlobalModelCacheKey = (String, i64);
-static GLOBAL_POLICY_MODEL_CACHE: OnceLock<Mutex<HashMap<GlobalModelCacheKey, Arc<PolicyModel>>>> = OnceLock::new();
+static GLOBAL_POLICY_MODEL_CACHE: OnceLock<Mutex<HashMap<GlobalModelCacheKey, Arc<PolicyModel>>>> =
+    OnceLock::new();
 
 fn global_policy_model_cache() -> &'static Mutex<HashMap<GlobalModelCacheKey, Arc<PolicyModel>>> {
     GLOBAL_POLICY_MODEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 impl PlayerMatchPlanner {
-    fn new(core_db_path: PathBuf, analysis_db_path: PathBuf, engine: PlannerEngine, profile_id: String) -> Result<Self> {
+    fn new(
+        core_db_path: PathBuf,
+        analysis_db_path: PathBuf,
+        engine: PlannerEngine,
+        profile_id: String,
+    ) -> Result<Self> {
         let core_db = Connection::open(core_db_path)?;
         let analysis_db = if analysis_db_path.exists() {
             match Connection::open_with_flags(analysis_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
@@ -547,16 +550,12 @@ impl PlayerMatchPlanner {
         })
     }
 
-    pub async fn build_book(&mut self, ctx: MatchContext, opts: PlanOptions) -> Result<VariantBook> {
+    pub async fn build_book(
+        &mut self,
+        ctx: MatchContext,
+        opts: PlanOptions,
+    ) -> Result<VariantBook> {
         opts.validate()?;
-
-        let target_name = self
-            .lookup_player_name(ctx.target_player_id)
-            .unwrap_or_else(|| format!("Opponent({})", ctx.target_player_id));
-        info!(
-            "PlayerMatchPlanner.build_book: profile_id={} target_player_id={} target_name={}",
-            self.profile_id, ctx.target_player_id, target_name
-        );
 
         self.ensure_model_trained(ctx.target_player_id)?;
 
@@ -567,11 +566,6 @@ impl PlayerMatchPlanner {
         } else {
             ply_index_from_fen(&ctx.start_fen).unwrap_or(0)
         };
-        info!(
-            "PlayerMatchPlanner.build_book: start_fen_ply_base={} (start_fen={})",
-            base_ply_from_start, ctx.start_fen
-        );
-
         let start_pos = chess_from_fen_or_start(&ctx.start_fen)?;
         let root_fen_full = normalize_fen(&start_pos)?;
         let root_key = state_key_from_fen(&root_fen_full);
@@ -611,31 +605,15 @@ impl PlayerMatchPlanner {
         let mut stack: Vec<u64> = Vec::new();
         stack.push(root_node_id);
 
-        #[derive(Default)]
-        struct BuildStats {
-            popped: usize,
-            expanded_our: usize,
-            expanded_opp: usize,
-            pruned_horizon: usize,
-            pruned_reach: usize,
-            node_cap_hits: usize,
-            max_ply_reached: usize,
-        }
-        let mut stats = BuildStats::default();
-
         while let Some(nid) = stack.pop() {
-            stats.popped += 1;
             if nodes.len() >= opts.max_nodes {
-                stats.node_cap_hits += 1;
                 break;
             }
 
             let nidx = *node_index.get(&nid).unwrap();
             let node = nodes[nidx].clone();
-            stats.max_ply_reached = stats.max_ply_reached.max(node.ply_from_root);
 
             if node.ply_from_root >= opts.horizon_plies {
-                stats.pruned_horizon += 1;
                 continue;
             }
 
@@ -654,7 +632,6 @@ impl PlayerMatchPlanner {
             };
 
             if side == ctx.our_color {
-                stats.expanded_our += 1;
                 let our_edges = self
                     .expand_our_turn(
                         ctx.target_player_id,
@@ -691,7 +668,6 @@ impl PlayerMatchPlanner {
                     edges.push(e);
                 }
             } else {
-                stats.expanded_opp += 1;
                 let opp_edges = self
                     .expand_opponent_turn(
                         ctx.target_player_id,
@@ -710,9 +686,9 @@ impl PlayerMatchPlanner {
                 let mut to_push: Vec<u64> = Vec::new();
                 for (i, e) in opp_edges.into_iter().enumerate() {
                     let reach = node.reach_prob * e.prob;
-                    let min_reach = min_reach_prob_at_depth(opts.min_branch_prob, node.ply_from_root + 1);
+                    let min_reach =
+                        min_reach_prob_at_depth(opts.min_branch_prob, node.ply_from_root + 1);
                     if i > 0 && reach < min_reach {
-                        stats.pruned_reach += 1;
                         continue;
                     }
 
@@ -745,20 +721,6 @@ impl PlayerMatchPlanner {
             }
         }
 
-        info!(
-            "PlayerMatchPlanner.build_book.done: nodes={} edges={} popped={} expanded_our={} expanded_opp={} pruned_horizon={} pruned_reach={} node_cap_hits={} max_ply_reached={}/{}",
-            nodes.len(),
-            edges.len(),
-            stats.popped,
-            stats.expanded_our,
-            stats.expanded_opp,
-            stats.pruned_horizon,
-            stats.pruned_reach,
-            stats.node_cap_hits,
-            stats.max_ply_reached,
-            opts.horizon_plies
-        );
-
         Ok(VariantBook {
             root_node_id,
             nodes,
@@ -768,42 +730,27 @@ impl PlayerMatchPlanner {
 
     fn ensure_model_trained(&mut self, target_player_id: i64) -> Result<()> {
         if self.models.contains_key(&target_player_id) {
-            debug!("ensure_model_trained: cache hit target_player_id={}", target_player_id);
             return Ok(());
         }
 
         let global_key: GlobalModelCacheKey = (self.profile_id.clone(), target_player_id);
         {
-            let cache = global_policy_model_cache().lock().unwrap_or_else(|e| e.into_inner());
+            let cache = global_policy_model_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(model) = cache.get(&global_key) {
-                info!(
-                    "ensure_model_trained: global cache hit profile_id={} target_player_id={}",
-                    self.profile_id, target_player_id
-                );
                 self.models.insert(target_player_id, Arc::clone(model));
                 return Ok(());
             }
         }
 
         let profile_id = self.profile_id.clone();
-        let name = self.lookup_player_name(target_player_id).unwrap_or_else(|| "?".to_string());
-        info!(
-            "ensure_model_trained: training target_player_id={} name={} profile_id={}",
-            target_player_id, name, profile_id
-        );
         let model = Arc::new(self.train_model_for_player_scoped(&profile_id, target_player_id)?);
-        info!(
-            "ensure_model_trained.done: target_player_id={} exact_states={} backoff_states={} exact_global_states={} backoff_global_states={} clock_ctx_keys={}",
-            target_player_id,
-            model.exact.len(),
-            model.backoff.len(),
-            model.exact_global.len(),
-            model.backoff_global.len(),
-            model.clock_by_ctx.len(),
-        );
 
         {
-            let mut cache = global_policy_model_cache().lock().unwrap_or_else(|e| e.into_inner());
+            let mut cache = global_policy_model_cache()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             cache.insert(global_key, Arc::clone(&model));
         }
 
@@ -825,31 +772,12 @@ impl PlayerMatchPlanner {
             .filter(|s| !s.is_empty())
     }
 
-    fn train_model_for_player_scoped(&mut self, profile_id: &str, target_player_id: i64) -> Result<PolicyModel> {
+    fn train_model_for_player_scoped(
+        &mut self,
+        profile_id: &str,
+        target_player_id: i64,
+    ) -> Result<PolicyModel> {
         let mut model = PolicyModel::default();
-
-        let target_name = self
-            .lookup_player_name(target_player_id)
-            .unwrap_or_else(|| format!("Opponent({})", target_player_id));
-        info!(
-            "train_model_for_player_scoped.start: profile_id={} target_player_id={} target_name={}",
-            profile_id, target_player_id, target_name
-        );
-
-        #[derive(Default)]
-        struct TrainStats {
-            games_total: u64,
-            games_with_moves_blob: u64,
-            games_decoded_blob_pgn: u64,
-            games_decoded_blob_soup: u64,
-            games_fallback_analysis_pgn: u64,
-            games_skipped_no_moves: u64,
-            games_skipped_unparsed_blob: u64,
-            plies_total: u64,
-            plies_for_target: u64,
-            clock_samples: u64,
-        }
-        let mut stats = TrainStats::default();
 
         let now = Utc::now().naive_utc();
 
@@ -879,11 +807,7 @@ impl PlayerMatchPlanner {
 
         for row_res in rows {
             let row = row_res?;
-            stats.games_total += 1;
             let has_moves_blob = row.moves_blob.as_deref().is_some_and(|b| !b.is_empty());
-            if has_moves_blob {
-                stats.games_with_moves_blob += 1;
-            }
 
             let target_color = if row.white_id == target_player_id {
                 PlayerColor::White
@@ -899,7 +823,10 @@ impl PlayerMatchPlanner {
                 row.white_elo.unwrap_or(0)
             };
 
-            let time_control_str = row.time_control.clone().unwrap_or_else(|| "unknown".to_string());
+            let time_control_str = row
+                .time_control
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
 
             let dt = parse_game_datetime_utc(row.date.as_deref(), row.utc_time.as_deref());
             let weekday = weekday_to_u8(dt.date().weekday());
@@ -908,12 +835,15 @@ impl PlayerMatchPlanner {
             // Exponential recency weighting (half-life in days).
             let game_w = recency_weight_days(dt, now, 90.0);
 
-            let start_fen = row.start_fen.clone().unwrap_or_else(|| "startpos".to_string());
+            let start_fen = row
+                .start_fen
+                .clone()
+                .unwrap_or_else(|| "startpos".to_string());
             let mut pos = chess_from_fen_or_start(&start_fen)?;
 
             // PRIMARY move source: Games.Moves BLOB from profile DB.
             // We attempt to extract UCI/SAN tokens from a mixed binary/text encoding.
-            let (mut uci_seq, mut uci_clocks, mut source) =
+            let (mut uci_seq, mut uci_clocks) =
                 decode_moves_blob_to_uci_sequence(row.moves_blob.as_deref(), &pos);
 
             // Optional fallback: analyzed PGN if BLOB extraction yields nothing.
@@ -925,30 +855,16 @@ impl PlayerMatchPlanner {
                         if let Ok(v) = pgn_tokens_to_uci_sequence(&pos, &tokens) {
                             uci_seq = v;
                             uci_clocks = vec![None; uci_seq.len()];
-                            source = MovesSource::AnalysisPgn;
                         }
                     }
                 }
             }
 
             if uci_seq.is_empty() {
-                if has_moves_blob {
-                    stats.games_skipped_unparsed_blob += 1;
-                } else {
-                    stats.games_skipped_no_moves += 1;
-                }
                 continue;
             }
 
-            match source {
-                MovesSource::BlobPgn => stats.games_decoded_blob_pgn += 1,
-                MovesSource::BlobSoup => stats.games_decoded_blob_soup += 1,
-                MovesSource::AnalysisPgn => stats.games_fallback_analysis_pgn += 1,
-                MovesSource::None => {}
-            }
-
             for (ply, uci_str) in uci_seq.into_iter().enumerate() {
-                stats.plies_total += 1;
                 let side_to_move = if pos.turn() == shakmaty::Color::White {
                     PlayerColor::White
                 } else {
@@ -963,7 +879,6 @@ impl PlayerMatchPlanner {
                 let uci_norm = mv.to_uci(CastlingMode::Standard).to_string();
 
                 if side_to_move == target_color {
-                    stats.plies_for_target += 1;
                     let ctx_key = ContextKey {
                         time_control_bucket: bucket_time_control(&time_control_str),
                         opponent_elo_bucket: bucket_elo(opp_elo),
@@ -979,19 +894,36 @@ impl PlayerMatchPlanner {
                             .entry(ctx_key)
                             .or_default()
                             .add(t_rem, game_w);
-                        stats.clock_samples += 1;
                     }
 
                     let exact_state_hash = pos_state_hash(&pos)?;
                     let backoff_state_hash = hash_u64(&abstract_state_signature(&pos, ply));
 
-                    let pk_exact = PolicyKey { state_hash: exact_state_hash, ctx: ctx_key };
-                    let pk_backoff = PolicyKey { state_hash: backoff_state_hash, ctx: ctx_key };
+                    let pk_exact = PolicyKey {
+                        state_hash: exact_state_hash,
+                        ctx: ctx_key,
+                    };
+                    let pk_backoff = PolicyKey {
+                        state_hash: backoff_state_hash,
+                        ctx: ctx_key,
+                    };
 
                     bump_counter(model.exact.entry(pk_exact).or_default(), &uci_norm, game_w);
-                    bump_counter(model.backoff.entry(pk_backoff).or_default(), &uci_norm, game_w);
-                    bump_counter(model.exact_global.entry(exact_state_hash).or_default(), &uci_norm, game_w);
-                    bump_counter(model.backoff_global.entry(backoff_state_hash).or_default(), &uci_norm, game_w);
+                    bump_counter(
+                        model.backoff.entry(pk_backoff).or_default(),
+                        &uci_norm,
+                        game_w,
+                    );
+                    bump_counter(
+                        model.exact_global.entry(exact_state_hash).or_default(),
+                        &uci_norm,
+                        game_w,
+                    );
+                    bump_counter(
+                        model.backoff_global.entry(backoff_state_hash).or_default(),
+                        &uci_norm,
+                        game_w,
+                    );
                 }
 
                 // Training is best-effort: skip any game that becomes inconsistent.
@@ -1000,43 +932,16 @@ impl PlayerMatchPlanner {
                     Err(_) => break,
                 };
             }
-
-            if stats.games_total % 2000 == 0 {
-                info!(
-                    "train_model_for_player_scoped.progress: games_total={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} skipped_unparsed_blob={} plies_for_target={} clock_samples={}",
-                    stats.games_total,
-                    stats.games_decoded_blob_pgn,
-                    stats.games_decoded_blob_soup,
-                    stats.games_fallback_analysis_pgn,
-                    stats.games_skipped_no_moves,
-                    stats.games_skipped_unparsed_blob,
-                    stats.plies_for_target,
-                    stats.clock_samples
-                );
-            }
         }
-
-        info!(
-            "train_model_for_player_scoped.done: games_total={} games_with_moves_blob={} decoded_blob_pgn={} decoded_blob_soup={} fallback_analysis_pgn={} skipped_no_moves={} skipped_unparsed_blob={} plies_total={} plies_for_target={} clock_samples={} clock_ctx_keys={} exact_states={} backoff_states={}",
-            stats.games_total,
-            stats.games_with_moves_blob,
-            stats.games_decoded_blob_pgn,
-            stats.games_decoded_blob_soup,
-            stats.games_fallback_analysis_pgn,
-            stats.games_skipped_no_moves,
-            stats.games_skipped_unparsed_blob,
-            stats.plies_total,
-            stats.plies_for_target,
-            stats.clock_samples,
-            model.clock_by_ctx.len(),
-            model.exact.len(),
-            model.backoff.len(),
-        );
 
         Ok(model)
     }
 
-    fn load_analyzed_pgn_best_effort(&self, profile_id: &str, game_id: i64) -> Result<Option<String>> {
+    fn load_analyzed_pgn_best_effort(
+        &self,
+        profile_id: &str,
+        game_id: i64,
+    ) -> Result<Option<String>> {
         let Some(db) = self.analysis_db.as_ref() else {
             return Ok(None);
         };
@@ -1086,7 +991,7 @@ impl PlayerMatchPlanner {
         time_control: TimeControlParams,
         elo: i32,
         opts: &PlanOptions,
-        parent_reach_prob: f64,
+        _parent_reach_prob: f64,
     ) -> Result<Vec<BookEdge>> {
         let fen_full = normalize_fen(pos)?;
         let from_id = hash_u64(&state_key_from_fen(&fen_full));
@@ -1105,36 +1010,8 @@ impl PlayerMatchPlanner {
             )
             .await?;
 
-        if policy.used_uniform && ply_from_start <= 12 {
-            warn!(
-                "expand_opponent_turn: UNIFORM policy (no data) target_player_id={} ply={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
-                target_player_id,
-                ply_from_start,
-                policy.exact_total,
-                policy.backoff_total,
-                policy.lambda,
-                policy.effective_n
-            );
-        } else if parent_reach_prob >= 0.999 && ply_from_start <= 12 {
-            info!(
-                "expand_opponent_turn: target_player_id={} ply={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
-                target_player_id,
-                ply_from_start,
-                policy.exact_total,
-                policy.backoff_total,
-                policy.lambda,
-                policy.effective_n
-            );
-            let top_dbg: Vec<String> = policy
-                .moves
-                .iter()
-                .take(5)
-                .map(|(uci, p, c)| format!("{uci} p={:.3} c={c}", p))
-                .collect();
-            info!("expand_opponent_turn.top: {}", top_dbg.join(" | "));
-        }
-
-        let mut top: Vec<(String, f64, u32)> = policy.moves.into_iter().take(opts.opponent_top_k).collect();
+        let mut top: Vec<(String, f64, u32)> =
+            policy.moves.into_iter().take(opts.opponent_top_k).collect();
 
         let mut edges = Vec::new();
         for (uci, raw_p, _count) in top.drain(..) {
@@ -1172,7 +1049,9 @@ impl PlayerMatchPlanner {
         let fen_full = normalize_fen(pos)?;
         let from_id = hash_u64(&state_key_from_fen(&fen_full));
 
-        let lines = self.cached_multipv(&fen_full, opts.candidate_limits, opts.our_multipv).await?;
+        let lines = self
+            .cached_multipv(&fen_full, opts.candidate_limits, opts.our_multipv)
+            .await?;
 
         let mut scored: Vec<(String, f64)> = Vec::new();
         for line in lines {
@@ -1186,30 +1065,18 @@ impl PlayerMatchPlanner {
             let mut reply_ctx = ctx_key;
             reply_ctx.ply_bucket = bucket_ply(ply_from_start + 1);
 
-            let opponent_policy = self.get_opponent_policy(
-                target_player_id,
-                &pos_after_our,
-                exact_hash_after_our,
-                reply_ctx,
-                ply_from_start + 1,
-                time_control,
-                elo,
-                opts,
-            )
-            .await?;
-
-            if opponent_policy.used_uniform && ply_from_start <= 11 {
-                warn!(
-                    "expand_our_turn: UNIFORM policy for opponent replies target_player_id={} ply={} our_uci={} exact_total_global={} backoff_total_global={} lambda={:.3} eff_n={:.1}",
+            let opponent_policy = self
+                .get_opponent_policy(
                     target_player_id,
+                    &pos_after_our,
+                    exact_hash_after_our,
+                    reply_ctx,
                     ply_from_start + 1,
-                    our_uci,
-                    opponent_policy.exact_total,
-                    opponent_policy.backoff_total,
-                    opponent_policy.lambda,
-                    opponent_policy.effective_n
-                );
-            }
+                    time_control,
+                    elo,
+                    opts,
+                )
+                .await?;
 
             // Expected value over opponent replies, including a conservative tail-mass approximation.
             // We do NOT renormalize within topK; instead we keep the remaining probability mass as "OTHER"
@@ -1218,10 +1085,17 @@ impl PlayerMatchPlanner {
             let mut ev2_white: f64 = 0.0;
             let mut mass: f64 = 0.0;
 
-            for (opp_uci, p, _count) in opponent_policy.moves.iter().take(opts.opponent_top_k).cloned() {
+            for (opp_uci, p, _count) in opponent_policy
+                .moves
+                .iter()
+                .take(opts.opponent_top_k)
+                .cloned()
+            {
                 let pos_after_reply = apply_uci_and_pos(&pos_after_our, &opp_uci)?;
                 let fen_after_reply = normalize_fen(&pos_after_reply)?;
-                let score_cp_white = self.cached_eval_cp(&fen_after_reply, opts.quick_eval_limits).await? as f64;
+                let score_cp_white = self
+                    .cached_eval_cp(&fen_after_reply, opts.quick_eval_limits)
+                    .await? as f64;
                 ev_white += p * score_cp_white;
                 ev2_white += p * score_cp_white * score_cp_white;
                 mass += p;
@@ -1231,7 +1105,9 @@ impl PlayerMatchPlanner {
             if tail_mass > 1e-9 {
                 // Conservative baseline: evaluation of the position after our move (opponent to move).
                 // This avoids optimistic renormalization when topK omits substantial probability mass.
-                let baseline_white = self.cached_eval_cp(&fen_after_our, opts.quick_eval_limits).await? as f64;
+                let baseline_white = self
+                    .cached_eval_cp(&fen_after_our, opts.quick_eval_limits)
+                    .await? as f64;
                 ev_white += tail_mass * baseline_white;
                 ev2_white += tail_mass * baseline_white * baseline_white;
             }
@@ -1281,7 +1157,12 @@ impl PlayerMatchPlanner {
         Ok(s)
     }
 
-    async fn cached_multipv(&mut self, fen: &str, limits: EngineLimits, multipv: usize) -> Result<Vec<EngineLine>> {
+    async fn cached_multipv(
+        &mut self,
+        fen: &str,
+        limits: EngineLimits,
+        multipv: usize,
+    ) -> Result<Vec<EngineLine>> {
         let fen_key = hash_u64(&state_key_from_fen(fen));
         let d = limits.depth.unwrap_or(0);
         let t = limits.time_ms.unwrap_or(0);
@@ -1303,12 +1184,11 @@ impl PlayerMatchPlanner {
         pi_counts: &HashMap<String, f64>,
         effective_n: f64,
         ply_from_start: usize,
-        ctx_key: ContextKey,
         time_control: TimeControlParams,
         t_rem_est_sec: f64,
         elo: i32,
         opts: &PlanOptions,
-    ) -> Result<(HashMap<String, f64>, BrBlunderDiagnostics)> {
+    ) -> Result<HashMap<String, f64>> {
         // Model constants (tunable). Kept internal to avoid changing any public API.
         const ETA: f64 = 1.0 / 250.0;
         const U_MAX: f64 = 8.0;
@@ -1351,16 +1231,21 @@ impl PlayerMatchPlanner {
         let clamp_f64 = |x: f64, lo: f64, hi: f64| x.max(lo).min(hi);
         let sigmoid = |x: f64| 1.0 / (1.0 + (-x).exp());
 
-        let sign = if pos.turn() == shakmaty::Color::White { 1.0 } else { -1.0 };
+        let sign = if pos.turn() == shakmaty::Color::White {
+            1.0
+        } else {
+            -1.0
+        };
 
         let fen_full = normalize_fen(pos)?;
 
         // Evaluation budget: start with MultiPV from the engine at the current position.
         let m_engine = opts.opponent_top_k.max(4).min(6);
-        let pv_lines = self.cached_multipv(&fen_full, opts.quick_eval_limits, m_engine).await?;
+        let pv_lines = self
+            .cached_multipv(&fen_full, opts.quick_eval_limits, m_engine)
+            .await?;
 
         let mut eval_u: HashMap<String, f64> = HashMap::new();
-        let mut eval_count_pv = 0usize;
         for line in pv_lines {
             if eval_u.contains_key(&line.bestmove_uci) {
                 continue;
@@ -1370,7 +1255,6 @@ impl PlayerMatchPlanner {
             }
             let u = clamp_f64(sign * (line.score_cp as f64) * ETA, -U_MAX, U_MAX);
             eval_u.insert(line.bestmove_uci, u);
-            eval_count_pv += 1;
         }
 
         // Additionally evaluate a few high-probability moves from pi_counts that are not in the PV set.
@@ -1471,36 +1355,13 @@ impl PlayerMatchPlanner {
         if trust_behavior {
             let mut p_final: HashMap<String, f64> = HashMap::new();
             for uci in legal_uci {
-                p_final.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+                p_final.insert(
+                    uci.clone(),
+                    pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0),
+                );
             }
             normalize_dist_in_place(&mut p_final, legal_uci);
-
-            let diag = BrBlunderDiagnostics {
-                ply_from_start,
-                time_control_bucket: ctx_key.time_control_bucket,
-                t_rem_est_sec: t_rem,
-                mu_est_sec: mu,
-                r,
-                effective_n: eff_n,
-                peak_pi,
-                uncertainty,
-                used_engine_adjustment: false,
-                engine_scale,
-                beta_base,
-                beta: 0.0,
-                pi_b_base: 0.0,
-                pi_b: 0.0,
-                gap,
-                delta: 0.0,
-                gamma: 0.0,
-                u_best,
-                u_second,
-                u_other,
-                eval_count_pv,
-                eval_count_extra,
-            };
-
-            return Ok((p_final, diag));
+            return Ok(p_final);
         }
 
         // Bounded rationality distribution: p_BR(m) ∝ pi_counts(m) * exp(beta * U(m)).
@@ -1532,7 +1393,10 @@ impl PlayerMatchPlanner {
             // Degenerate: fall back to pi_counts.
             p_br.clear();
             for uci in legal_uci {
-                p_br.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+                p_br.insert(
+                    uci.clone(),
+                    pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0),
+                );
             }
             normalize_dist_in_place(&mut p_br, legal_uci);
         } else {
@@ -1578,7 +1442,10 @@ impl PlayerMatchPlanner {
             // Empty blunder set: fall back to a diffuse distribution (pi_counts).
             p_b.clear();
             for uci in legal_uci {
-                p_b.insert(uci.clone(), pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0));
+                p_b.insert(
+                    uci.clone(),
+                    pi_counts.get(uci).copied().unwrap_or(0.0).max(0.0),
+                );
             }
             normalize_dist_in_place(&mut p_b, legal_uci);
         } else {
@@ -1599,32 +1466,7 @@ impl PlayerMatchPlanner {
         }
         normalize_dist_in_place(&mut p_final, legal_uci);
 
-        let diag = BrBlunderDiagnostics {
-            ply_from_start,
-            time_control_bucket: ctx_key.time_control_bucket,
-            t_rem_est_sec: t_rem,
-            mu_est_sec: mu,
-            r,
-            effective_n: eff_n,
-            peak_pi,
-            uncertainty,
-            used_engine_adjustment: true,
-            engine_scale,
-            beta_base,
-            beta,
-            pi_b_base,
-            pi_b,
-            gap,
-            delta,
-            gamma,
-            u_best,
-            u_second,
-            u_other,
-            eval_count_pv,
-            eval_count_extra,
-        };
-
-        Ok((p_final, diag))
+        Ok(p_final)
     }
 
     async fn get_opponent_policy(
@@ -1645,8 +1487,14 @@ impl PlayerMatchPlanner {
 
         let backoff_hash = hash_u64(&abstract_state_signature(pos, ply_from_start));
 
-        let pk_exact = PolicyKey { state_hash: exact_state_hash, ctx: ctx_key };
-        let pk_backoff = PolicyKey { state_hash: backoff_hash, ctx: ctx_key };
+        let pk_exact = PolicyKey {
+            state_hash: exact_state_hash,
+            ctx: ctx_key,
+        };
+        let pk_backoff = PolicyKey {
+            state_hash: backoff_hash,
+            ctx: ctx_key,
+        };
 
         let legal_uci = legal_moves_uci(pos);
 
@@ -1663,19 +1511,7 @@ impl PlayerMatchPlanner {
         //
         // This yields a true hierarchical posterior without ad-hoc convex blends.
 
-        let (
-            p_counts,
-            counts_by_uci,
-            exact_total_ctx,
-            backoff_total_ctx,
-            exact_total_global,
-            backoff_total_global,
-            used_uniform,
-            z_ctx,
-            z_global,
-            effective_n,
-            t_rem_est_sec,
-        ) = {
+        let (p_counts, counts_by_uci, used_uniform, effective_n, t_rem_est_sec) = {
             let model = self
                 .models
                 .get(&target_player_id)
@@ -1695,35 +1531,45 @@ impl PlayerMatchPlanner {
             let p_uniform = probs_from_counter(None, &legal_uci, 0.0);
 
             // Level 1: backoff_global posterior.
-            let p_backoff_global = dirichlet_posterior(&p_uniform, backoff_counter_global, &legal_uci, opts.smoothing_alpha);
+            let p_backoff_global = dirichlet_posterior(
+                &p_uniform,
+                backoff_counter_global,
+                &legal_uci,
+                opts.smoothing_alpha,
+            );
 
             // Level 2: exact_global posterior (prior is backoff_global).
-            let p_exact_global = dirichlet_posterior(&p_backoff_global, exact_counter_global, &legal_uci, opts.backoff_k);
+            let p_exact_global = dirichlet_posterior(
+                &p_backoff_global,
+                exact_counter_global,
+                &legal_uci,
+                opts.backoff_k,
+            );
 
             // Level 3: backoff_ctx posterior (prior is exact_global).
-            let p_backoff_ctx = dirichlet_posterior(&p_exact_global, backoff_counter_ctx, &legal_uci, opts.smoothing_alpha);
+            let p_backoff_ctx = dirichlet_posterior(
+                &p_exact_global,
+                backoff_counter_ctx,
+                &legal_uci,
+                opts.smoothing_alpha,
+            );
 
             // Level 4: exact_ctx posterior (prior is backoff_ctx).
-            let p_counts = dirichlet_posterior(&p_backoff_ctx, exact_counter_ctx, &legal_uci, opts.backoff_k);
+            let p_counts = dirichlet_posterior(
+                &p_backoff_ctx,
+                exact_counter_ctx,
+                &legal_uci,
+                opts.backoff_k,
+            );
 
-            let used_uniform =
-                exact_total_ctx <= 0.0 && backoff_total_ctx <= 0.0 && exact_total_global <= 0.0 && backoff_total_global <= 0.0;
+            let used_uniform = exact_total_ctx <= 0.0
+                && backoff_total_ctx <= 0.0
+                && exact_total_global <= 0.0
+                && backoff_total_global <= 0.0;
 
-            // For telemetry/debug visibility, keep a credibility-like scalar that indicates how much
-            // the exact-context evidence dominates its prior at the last step.
-            let z_ctx = if exact_total_ctx <= 0.0 {
-                0.0
-            } else {
-                exact_total_ctx / (exact_total_ctx + opts.backoff_k.max(1.0))
-            };
-
-            let z_global = if exact_total_global <= 0.0 {
-                0.0
-            } else {
-                exact_total_global / (exact_total_global + opts.backoff_k.max(1.0))
-            };
-
-            let effective_n = exact_total_ctx + backoff_total_ctx + 0.25 * (exact_total_global + backoff_total_global);
+            let effective_n = exact_total_ctx
+                + backoff_total_ctx
+                + 0.25 * (exact_total_global + backoff_total_global);
 
             // Estimate remaining time from training clocks for this context (if available). This is a best-effort
             // proxy when a live clock is not available at planning time.
@@ -1746,27 +1592,20 @@ impl PlayerMatchPlanner {
             (
                 p_counts,
                 counts_by_uci,
-                exact_total_ctx,
-                backoff_total_ctx,
-                exact_total_global,
-                backoff_total_global,
                 used_uniform,
-                z_ctx,
-                z_global,
                 effective_n,
                 t_rem_est_sec,
             )
         };
 
         // Apply bounded rationality + blunder mixture on top of the learned posterior.
-        let (p_adjusted, br_diag) = self
+        let p_adjusted = self
             .bounded_rationality_blunder_adjust(
                 pos,
                 &legal_uci,
                 &p_counts,
                 effective_n,
                 ply_from_start,
-                ctx_key,
                 time_control,
                 t_rem_est_sec,
                 elo,
@@ -1784,7 +1623,11 @@ impl PlayerMatchPlanner {
         if !(zsum.is_finite() && zsum > 0.0) {
             // Degenerate: fall back to uniform.
             mixed.clear();
-            let p = if legal_uci.is_empty() { 0.0 } else { 1.0 / legal_uci.len() as f64 };
+            let p = if legal_uci.is_empty() {
+                0.0
+            } else {
+                1.0 / legal_uci.len() as f64
+            };
             for uci in &legal_uci {
                 mixed.push((uci.clone(), p));
             }
@@ -1804,98 +1647,9 @@ impl PlayerMatchPlanner {
 
         let policy = OpponentPolicy {
             moves: with_counts,
-            // Keep these as GLOBAL totals (stable for logs/UI debug).
-            exact_total: exact_total_global.round().max(0.0) as u32,
-            backoff_total: backoff_total_global.round().max(0.0) as u32,
-            lambda: z_ctx,
             used_uniform,
             effective_n,
         };
-
-        if ply_from_start <= 12 {
-            debug!(
-                "get_opponent_policy: ply={} legal_moves={} exact_total(ctx/global)={:.1}/{:.1} backoff_total(ctx/global)={:.1}/{:.1} z_ctx={:.3} z_global={:.3} used_uniform={} eff_n={:.1} peak_pi={:.3} unc={:.3} br={{engine={} tc_bkt={} ply={} eff_n={:.1} r={:.3} eng_scale={:.3} beta_base={:.3} beta={:.3} pi_b_base={:.3} pi_b={:.3} gap={:.3} delta={:.3} gamma={:.3} u_best={:.2} u_2nd={:.2} u_other={:.2} t_rem={:.1}s mu={:.1}s eval_pv={} eval_extra={}}} ctx={:?}",
-                ply_from_start,
-                legal_uci.len(),
-                exact_total_ctx,
-                exact_total_global,
-                backoff_total_ctx,
-                backoff_total_global,
-                z_ctx,
-                z_global,
-                used_uniform,
-                effective_n,
-                br_diag.peak_pi,
-                br_diag.uncertainty,
-                br_diag.used_engine_adjustment,
-                br_diag.time_control_bucket,
-                br_diag.ply_from_start,
-                br_diag.effective_n,
-                br_diag.r,
-                br_diag.engine_scale,
-                br_diag.beta_base,
-                br_diag.beta,
-                br_diag.pi_b_base,
-                br_diag.pi_b,
-                br_diag.gap,
-                br_diag.delta,
-                br_diag.gamma,
-                br_diag.u_best,
-                br_diag.u_second,
-                br_diag.u_other,
-                br_diag.t_rem_est_sec,
-                br_diag.mu_est_sec,
-                br_diag.eval_count_pv,
-                br_diag.eval_count_extra,
-                ctx_key
-            );
-
-            let mut raw_sorted: Vec<(String, f64)> = legal_uci
-                .iter()
-                .map(|uci| (uci.clone(), p_counts.get(uci).copied().unwrap_or(0.0)))
-                .collect();
-            raw_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            let top_raw_dbg: Vec<String> = raw_sorted
-                .iter()
-                .take(5)
-                .map(|(uci, p)| {
-                    let c = counts_by_uci.get(uci).copied().unwrap_or(0);
-                    format!("{uci} p={:.3} c={c}", p.max(0.0))
-                })
-                .collect();
-            debug!("get_opponent_policy.top_raw: {}", top_raw_dbg.join(" | "));
-
-            let top_final_dbg: Vec<String> = policy
-                .moves
-                .iter()
-                .take(5)
-                .map(|(uci, p, c)| format!("{uci} p={:.3} c={c}", p.max(0.0)))
-                .collect();
-            debug!("get_opponent_policy.top_final: {}", top_final_dbg.join(" | "));
-
-            if br_diag.used_engine_adjustment {
-                if let Some((raw_top_uci, raw_top_p)) = raw_sorted.first() {
-                    if *raw_top_p >= 0.70
-                        && !policy
-                            .moves
-                            .iter()
-                            .take(opts.opponent_top_k)
-                            .any(|(u, _, _)| u == raw_top_uci)
-                    {
-                        warn!(
-                            "get_opponent_policy: dominant empirical move dropped from topK raw_top={} raw_p={:.3} topK={} eff_n={:.1} peak_pi={:.3} unc={:.3}",
-                            raw_top_uci,
-                            raw_top_p,
-                            opts.opponent_top_k,
-                            effective_n,
-                            br_diag.peak_pi,
-                            br_diag.uncertainty
-                        );
-                    }
-                }
-            }
-        }
 
         self.policy_cache.insert(cache_key, policy.clone());
         Ok(policy)
@@ -1905,38 +1659,8 @@ impl PlayerMatchPlanner {
 #[derive(Debug, Clone)]
 struct OpponentPolicy {
     moves: Vec<(String, f64, u32)>,
-    exact_total: u32,
-    backoff_total: u32,
-    lambda: f64,
     used_uniform: bool,
     effective_n: f64,
-}
-
-/// Internal diagnostics for the bounded-rationality + blunder adjustment. This is not exposed to the frontend.
-#[derive(Debug, Clone, Copy)]
-struct BrBlunderDiagnostics {
-    ply_from_start: usize,
-    time_control_bucket: u8,
-    t_rem_est_sec: f64,
-    mu_est_sec: f64,
-    r: f64,
-    effective_n: f64,
-    peak_pi: f64,
-    uncertainty: f64,
-    used_engine_adjustment: bool,
-    engine_scale: f64,
-    beta_base: f64,
-    beta: f64,
-    pi_b_base: f64,
-    pi_b: f64,
-    gap: f64,
-    delta: f64,
-    gamma: f64,
-    u_best: f64,
-    u_second: f64,
-    u_other: f64,
-    eval_count_pv: usize,
-    eval_count_extra: usize,
 }
 
 // -----------------------------
@@ -2002,7 +1726,12 @@ fn risk_aversion_from_policy(p: &OpponentPolicy) -> f64 {
 // Helpers: PGN output
 // -----------------------------
 
-fn variant_book_to_pgn(book: &VariantBook, ctx: &MatchContext, opponent_name: &str, max_plies: usize) -> Result<String> {
+fn variant_book_to_pgn(
+    book: &VariantBook,
+    ctx: &MatchContext,
+    opponent_name: &str,
+    max_plies: usize,
+) -> Result<String> {
     let start_pos = chess_from_fen_or_start(&ctx.start_fen)?;
     let our_name = "OurSide";
     let (white, black) = match ctx.our_color {
@@ -2015,7 +1744,8 @@ fn variant_book_to_pgn(book: &VariantBook, ctx: &MatchContext, opponent_name: &s
     let utc_time = format!("{:02}:{:02}:{:02}", dt.hour(), dt.minute(), dt.second());
 
     let start_fen_norm = normalize_fen(&start_pos)?;
-    let is_startpos = ctx.start_fen.trim().is_empty() || ctx.start_fen.trim().eq_ignore_ascii_case("startpos");
+    let is_startpos =
+        ctx.start_fen.trim().is_empty() || ctx.start_fen.trim().eq_ignore_ascii_case("startpos");
 
     let mut out = String::new();
     out.push_str("[Event \"OCS Planner Book\"]\n");
@@ -2027,7 +1757,10 @@ fn variant_book_to_pgn(book: &VariantBook, ctx: &MatchContext, opponent_name: &s
     out.push_str(&format!("[Black \"{}\"]\n", escape_pgn_tag_value(black)));
     if !is_startpos {
         out.push_str("[SetUp \"1\"]\n");
-        out.push_str(&format!("[FEN \"{}\"]\n", escape_pgn_tag_value(&start_fen_norm)));
+        out.push_str(&format!(
+            "[FEN \"{}\"]\n",
+            escape_pgn_tag_value(&start_fen_norm)
+        ));
     }
     out.push('\n');
 
@@ -2084,7 +1817,13 @@ fn write_pgn_from_node(
     let side_to_move = node_by_id
         .get(&node_id)
         .map(|n| n.side_to_move)
-        .unwrap_or_else(|| if pos.turn() == shakmaty::Color::White { PlayerColor::White } else { PlayerColor::Black });
+        .unwrap_or_else(|| {
+            if pos.turn() == shakmaty::Color::White {
+                PlayerColor::White
+            } else {
+                PlayerColor::Black
+            }
+        });
 
     let mut edges = edges_by_from.get(&node_id).cloned().unwrap_or_default();
     if edges.is_empty() {
@@ -2124,7 +1863,11 @@ fn write_pgn_from_node(
         }
         false => {
             edges.retain(|e| matches!(e.kind, EdgeKind::OpponentMove));
-            edges.sort_by(|a, b| b.prob.partial_cmp(&a.prob).unwrap_or(std::cmp::Ordering::Equal));
+            edges.sort_by(|a, b| {
+                b.prob
+                    .partial_cmp(&a.prob)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             let (main, vars) = edges.split_first().unwrap();
 
             let (token, next_pos) = edge_to_pgn_token(main, pos, ply, at_variation_start)?;
@@ -2132,7 +1875,16 @@ fn write_pgn_from_node(
             out.push_str(&format!(" {{{}}}", format_prob(main.prob)));
 
             for v in vars {
-                let var_str = write_variation(v, pos, our_color, node_by_id, edges_by_from, visited, ply, max_plies)?;
+                let var_str = write_variation(
+                    v,
+                    pos,
+                    our_color,
+                    node_by_id,
+                    edges_by_from,
+                    visited,
+                    ply,
+                    max_plies,
+                )?;
                 if !var_str.trim().is_empty() {
                     out.push_str(" (");
                     out.push_str(var_str.trim());
@@ -2195,7 +1947,12 @@ fn write_variation(
     Ok(out)
 }
 
-fn edge_to_pgn_token(edge: &BookEdge, pos: &Chess, ply: usize, at_variation_start: bool) -> Result<(String, Chess)> {
+fn edge_to_pgn_token(
+    edge: &BookEdge,
+    pos: &Chess,
+    ply: usize,
+    at_variation_start: bool,
+) -> Result<(String, Chess)> {
     let mv = uci_to_move(pos, &edge.uci)?;
     let mut next = pos.clone();
     let san = SanPlus::from_move_and_play_unchecked(&mut next, &mv).to_string();
@@ -2380,15 +2137,6 @@ fn abstract_state_signature(pos: &Chess, ply: usize) -> String {
 // -----------------------------
 // Moves decoding (profile DB)
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MovesSource {
-    None,
-    BlobPgn,
-    BlobSoup,
-    AnalysisPgn,
-}
-// -----------------------------
-
 /// Best-effort decoder for `Games.Moves` BLOB.
 ///
 /// Your hex sample shows 0xFC markers (rendered as "ü" by some viewers) and embedded ASCII like "[%clk ...]".
@@ -2402,25 +2150,20 @@ enum MovesSource {
 fn decode_moves_blob_to_uci_sequence(
     moves_blob: Option<&[u8]>,
     start_pos: &Chess,
-) -> (Vec<String>, Vec<Option<f64>>, MovesSource) {
+) -> (Vec<String>, Vec<Option<f64>>) {
     let Some(bytes) = moves_blob else {
-        return (Vec::new(), Vec::new(), MovesSource::None);
+        return (Vec::new(), Vec::new());
     };
     if bytes.is_empty() {
-        return (Vec::new(), Vec::new(), MovesSource::None);
+        return (Vec::new(), Vec::new());
     }
 
     if let Some(seq) = decode_moves_blob_as_pgn(bytes, start_pos) {
-        return (seq.clone(), vec![None; seq.len()], MovesSource::BlobPgn);
+        return (seq.clone(), vec![None; seq.len()]);
     }
 
     let soup = blob_to_ascii_soup(bytes);
-    let (seq, clocks) = extract_uci_from_ascii_soup(&soup, start_pos);
-    if seq.is_empty() {
-        (seq, clocks, MovesSource::None)
-    } else {
-        (seq, clocks, MovesSource::BlobSoup)
-    }
+    extract_uci_from_ascii_soup(&soup, start_pos)
 }
 
 fn decode_moves_blob_as_pgn(bytes: &[u8], start_pos: &Chess) -> Option<Vec<String>> {
@@ -2434,7 +2177,11 @@ fn decode_moves_blob_as_pgn(bytes: &[u8], start_pos: &Chess) -> Option<Vec<Strin
 
     let tokens = parse_pgn_san_tokens(&text).ok()?;
     let uci_seq = pgn_tokens_to_uci_sequence(start_pos, &tokens).ok()?;
-    if uci_seq.is_empty() { None } else { Some(uci_seq) }
+    if uci_seq.is_empty() {
+        None
+    } else {
+        Some(uci_seq)
+    }
 }
 
 /// Keep printable ASCII; treat everything else (including 0xFC) as whitespace separators.
@@ -2635,14 +2382,22 @@ fn pgn_tokens_to_uci_sequence(start_pos: &Chess, tokens: &[String]) -> Result<Ve
 // -----------------------------
 
 fn bump_counter(counter: &mut MoveCounter, uci: &str, weight: f64) {
-    let w = if weight.is_finite() && weight > 0.0 { weight } else { 1.0 };
+    let w = if weight.is_finite() && weight > 0.0 {
+        weight
+    } else {
+        1.0
+    };
     counter.total += w;
     *counter.counts.entry(uci.to_string()).or_insert(0.0) += w;
 }
 
 /// Converts a counter into a full-support distribution over `legal_moves`.
 /// Uses f64 weighted counts and Laplace-style additive smoothing (alpha).
-fn probs_from_counter(counter: Option<&MoveCounter>, legal_moves: &[String], alpha: f64) -> HashMap<String, f64> {
+fn probs_from_counter(
+    counter: Option<&MoveCounter>,
+    legal_moves: &[String],
+    alpha: f64,
+) -> HashMap<String, f64> {
     let mut out: HashMap<String, f64> = HashMap::new();
     if legal_moves.is_empty() {
         return out;
@@ -2711,7 +2466,11 @@ fn dirichlet_posterior(
     if prior_strength <= 0.0 {
         let mut z = 0.0;
         for uci in legal_moves {
-            let c = counter.and_then(|c| c.counts.get(uci)).copied().unwrap_or(0.0).max(0.0);
+            let c = counter
+                .and_then(|c| c.counts.get(uci))
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0);
             out.insert(uci.clone(), c);
             z += c;
         }
@@ -2739,7 +2498,11 @@ fn dirichlet_posterior(
     }
 
     for uci in legal_moves {
-        let c = counter.and_then(|c| c.counts.get(uci)).copied().unwrap_or(0.0).max(0.0);
+        let c = counter
+            .and_then(|c| c.counts.get(uci))
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0);
         let p0 = prior.get(uci).copied().unwrap_or(0.0).max(0.0);
         let p = (c + prior_strength * p0) / denom;
         out.insert(uci.clone(), p);
@@ -2795,7 +2558,11 @@ fn recency_weight_days(game_dt: NaiveDateTime, now: NaiveDateTime, half_life_day
         .max(0) as f64;
     // weight = 0.5^(age/half_life)
     let w = 0.5_f64.powf(age_days / half_life_days);
-    if w.is_finite() && w > 0.0 { w } else { 1.0 }
+    if w.is_finite() && w > 0.0 {
+        w
+    } else {
+        1.0
+    }
 }
 
 // -----------------------------
@@ -2811,7 +2578,10 @@ struct TimeControlParams {
 fn parse_time_control_params(tc: &str) -> TimeControlParams {
     let s = tc.trim();
     if s.is_empty() {
-        return TimeControlParams { base_sec: 0, inc_sec: 0 };
+        return TimeControlParams {
+            base_sec: 0,
+            inc_sec: 0,
+        };
     }
 
     let (base, inc) = match s.split_once('+') {
@@ -2937,7 +2707,9 @@ fn parse_pgn_san_tokens(pgn: &str) -> Result<Vec<String>> {
     }
 
     if out.is_empty() {
-        return Err(Error::PackageManager("No SAN tokens found in analyzed PGN".to_string()));
+        return Err(Error::PackageManager(
+            "No SAN tokens found in analyzed PGN".to_string(),
+        ));
     }
     Ok(out)
 }
@@ -3046,7 +2818,10 @@ fn parse_time_best_effort(s: &str) -> Option<NaiveTime> {
 fn utc_ms_to_naive(ms: i64) -> NaiveDateTime {
     let sec = ms / 1000;
     let nsec = ((ms % 1000).max(0) as u32) * 1_000_000;
-    let dt = Utc.timestamp_opt(sec, nsec).single().unwrap_or_else(|| Utc::now());
+    let dt = Utc
+        .timestamp_opt(sec, nsec)
+        .single()
+        .unwrap_or_else(|| Utc::now());
     dt.naive_utc()
 }
 
@@ -3059,7 +2834,9 @@ fn profile_db_path(app: &AppHandle, profile_id: &str) -> Result<PathBuf> {
         .path()
         .app_data_dir()
         .map_err(|e| Error::PackageManager(format!("Failed to resolve AppData dir: {}", e)))?;
-    Ok(app_data.join("db").join(format!("profile_{}.db3", profile_id)))
+    Ok(app_data
+        .join("db")
+        .join(format!("profile_{}.db3", profile_id)))
 }
 
 fn analysis_db_path(app: &AppHandle) -> Result<PathBuf> {

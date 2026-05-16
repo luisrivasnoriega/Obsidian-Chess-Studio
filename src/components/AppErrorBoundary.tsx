@@ -16,14 +16,7 @@ export default class AppErrorBoundary extends Component<{ children: ReactNode },
   }
 
   componentDidCatch(_error: Error, errorInfo: ErrorInfo) {
-    this.setState({ componentStack: errorInfo.componentStack ?? null }, () => {
-      const details = this.buildDetails();
-      // Expose for debugging even when the Vite overlay replaces the UI.
-      // biome-ignore lint/suspicious/noExplicitAny: attach debug data to window for easier copy/paste.
-      (window as any).__ocsLastErrorDetails = details;
-      // biome-ignore lint/suspicious/noConsole: this is for debugging a crash screen.
-      console.error(details);
-    });
+    this.setState({ componentStack: errorInfo.componentStack ?? null });
   }
 
   private buildDetails(): string {

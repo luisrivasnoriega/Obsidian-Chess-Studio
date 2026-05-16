@@ -1,4 +1,3 @@
-import { appDataDir } from "@tauri-apps/api/path";
 import { getDefaultStore } from "jotai";
 import { commands } from "@/bindings";
 import { enginesAtom } from "@/state/atoms";
@@ -11,27 +10,14 @@ import { unwrap } from "./unwrap";
  * that are included in the app assets but not yet in the engines storage.
  */
 export async function autoRegisterBundledEngines(): Promise<void> {
-  const log = await import("@tauri-apps/plugin-log").catch(() => null);
-  const info: (msg: string) => Promise<void> | void = log?.info ?? ((msg) => console.log(msg));
-  const warn: (msg: string) => Promise<void> | void = log?.warn ?? ((msg) => console.warn(msg));
-  const logError: (msg: string) => Promise<void> | void = log?.error ?? ((msg) => console.error(msg));
-
   try {
-    await info("Starting auto-registration of bundled engines");
-
     const store = getDefaultStore();
     const currentEngines = await store.get(enginesAtom);
-    const localEngines = currentEngines.filter((e): e is LocalEngine => e.type === "local");
-    info(`Current engines count: ${currentEngines.length}, local engines: ${localEngines.length}`);
 
     // Check for bundled Stockfish on Android
     const platform = await import("@tauri-apps/plugin-os").then((m) => m.platform());
-    info(`Platform detected: ${platform}`);
 
     if (platform === "android") {
-      const appDataDirPath = await appDataDir();
-      info(`App data dir: ${appDataDirPath}`);
-
       // We register Stockfish using a logical path and rely on the backend resolver:
       // - app data dir: engines/stockfish
       // - nativeLibraryDir: libstockfish.so (copied from build into jniLibs)
@@ -60,11 +46,9 @@ export async function autoRegisterBundledEngines(): Promise<void> {
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (msg.includes("Engine timeout")) {
-              warn("Bundled Stockfish config detection timed out, using defaults");
               config = { name: "Stockfish", options: [] };
             } else {
               // If the bundled engine isn't actually available on this device/build, don't register a broken entry.
-              warn(`Bundled Stockfish not available, skipping auto-registration: ${e}`);
               return;
             }
           }
@@ -113,7 +97,6 @@ export async function autoRegisterBundledEngines(): Promise<void> {
 
           // Add to engines storage
           await store.set(enginesAtom, [...currentEngines, bundledEngine]);
-          info(`Auto-registered bundled Stockfish engine at: ${bundledStockfishPath}`);
         } else {
           // Migrate old absolute path (e.g. /data/user/0/.../files/engines/stockfish) to logical path.
           const existing = currentEngines[stockfishIndex] as LocalEngine;
@@ -123,19 +106,11 @@ export async function autoRegisterBundledEngines(): Promise<void> {
             const updated = [...currentEngines];
             updated[stockfishIndex] = { ...existing, path: bundledStockfishPath, version: "18" };
             await store.set(enginesAtom, updated);
-            info(`Updated bundled Stockfish to version 18 at: ${bundledStockfishPath}`);
-          } else {
-            info("Stockfish already registered, skipping auto-registration");
           }
         }
-      } else {
-        warn("Bundled Stockfish not found");
       }
-    } else {
-      info(`Skipping bundled engine auto-registration (platform: ${platform})`);
     }
-  } catch (error) {
-    await logError(`Failed to auto-register bundled engines: ${error}`);
+  } catch {
     // Don't throw - this is a non-critical initialization step
   }
 }

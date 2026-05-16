@@ -469,10 +469,7 @@ impl PuzzleCache {
         Ok(())
     }
 
-    fn refill_temp_batch_ids(
-        db: &mut diesel::SqliteConnection,
-        ids: &[i32],
-    ) -> Result<(), Error> {
+    fn refill_temp_batch_ids(db: &mut diesel::SqliteConnection, ids: &[i32]) -> Result<(), Error> {
         use diesel::sql_query;
         use diesel::sql_types::Integer;
 
@@ -711,13 +708,24 @@ impl PuzzleCache {
                     side_to_move,
                 )?
             }
-            (Some(theme_list), _) if !theme_list.is_empty() => {
-                self.query_candidate_ids_by_themes(db, min_rating, max_rating, theme_list, side_to_move)?
+            (Some(theme_list), _) if !theme_list.is_empty() => self.query_candidate_ids_by_themes(
+                db,
+                min_rating,
+                max_rating,
+                theme_list,
+                side_to_move,
+            )?,
+            (_, Some(opening_list)) if !opening_list.is_empty() => self
+                .query_candidate_ids_by_openings(
+                    db,
+                    min_rating,
+                    max_rating,
+                    opening_list,
+                    side_to_move,
+                )?,
+            _ => {
+                self.query_candidate_ids_by_rating_only(db, min_rating, max_rating, side_to_move)?
             }
-            (_, Some(opening_list)) if !opening_list.is_empty() => {
-                self.query_candidate_ids_by_openings(db, min_rating, max_rating, opening_list, side_to_move)?
-            }
-            _ => self.query_candidate_ids_by_rating_only(db, min_rating, max_rating, side_to_move)?,
         };
 
         candidate_ids = Self::dedupe_ids_preserve_order(candidate_ids);
@@ -820,8 +828,9 @@ impl PuzzleCache {
                 break;
             }
 
-            let ids_batch =
-                self.candidate_ids[self.candidate_index..self.candidate_index + take_count].to_vec();
+            let ids_batch = self.candidate_ids
+                [self.candidate_index..self.candidate_index + take_count]
+                .to_vec();
             self.candidate_index += take_count;
 
             let puzzles = Self::fetch_puzzles_by_ids(db, &ids_batch)?;
@@ -923,10 +932,7 @@ impl PuzzleCache {
             if self.cache.is_empty() {
                 self.refill_ready_queue(&mut db, self.cache_size)?;
             } else if self.cache.len() < Self::LOW_WATERMARK {
-                self.refill_ready_queue(
-                    &mut db,
-                    Self::LOW_WATERMARK + Self::PREFETCH_BATCH_SIZE,
-                )?;
+                self.refill_ready_queue(&mut db, Self::LOW_WATERMARK + Self::PREFETCH_BATCH_SIZE)?;
             }
         }
 
@@ -1740,13 +1746,15 @@ pub fn get_puzzle_filters_metadata(file: String) -> Result<PuzzleFiltersMetadata
         Vec::new()
     };
 
-    let rating_range = get_puzzle_rating_range(file.clone()).ok().and_then(|(min, max)| {
-        if min == 0 && max == 0 {
-            None
-        } else {
-            Some((min, max))
-        }
-    });
+    let rating_range = get_puzzle_rating_range(file.clone())
+        .ok()
+        .and_then(|(min, max)| {
+            if min == 0 && max == 0 {
+                None
+            } else {
+                Some((min, max))
+            }
+        });
 
     Ok(PuzzleFiltersMetadata {
         rating_range,
@@ -2106,7 +2114,7 @@ fn validate_sqlite_database(file_path: &PathBuf) -> Result<(), Error> {
                         || header_str.trim_start().starts_with("<!doctype")
                         || header_str.trim_start().starts_with("<HTML")
                     {
-                        // Read more of the file to get better diagnostic info
+                        // Read more of the file to return a clearer format error.
                         file.seek(SeekFrom::Start(0))?;
                         let mut sample = vec![0u8; 512.min(metadata.len() as usize)];
                         file.read_exact(&mut sample[..])?;
@@ -2119,7 +2127,7 @@ fn validate_sqlite_database(file_path: &PathBuf) -> Result<(), Error> {
                         )));
                     }
 
-                    // Read first 32 bytes for better debugging
+                    // Read the first bytes to return a clearer format error.
                     file.seek(SeekFrom::Start(0))?;
                     let mut extended_header = vec![0u8; 32.min(metadata.len() as usize)];
                     if extended_header.len() > 0 {
@@ -2190,7 +2198,8 @@ fn sanitize_puzzle_filename(name: &str) -> String {
     let trimmed = name.trim();
     let mut out = String::with_capacity(trimmed.len());
     for ch in trimmed.chars() {
-        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control();
+        let is_invalid =
+            matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control();
         if is_invalid {
             out.push('_');
         } else {
@@ -2225,7 +2234,9 @@ pub async fn download_puzzle_database(
 
     let title_trim = title.trim().to_string();
     if title_trim.is_empty() {
-        return Err(Error::InvalidInput("Puzzle database title cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Puzzle database title cannot be empty".to_string(),
+        ));
     }
 
     let file_name = sanitize_puzzle_filename(&title_trim);
@@ -2233,11 +2244,20 @@ pub async fn download_puzzle_database(
     let is_csv = url.ends_with(".csv") || url.ends_with(".csv.zst");
     if is_csv {
         // Download to temp file first, then import to a DB.
-        let tmp_ext = if url.ends_with(".csv.zst") { "csv.zst" } else { "csv" };
+        let tmp_ext = if url.ends_with(".csv.zst") {
+            "csv.zst"
+        } else {
+            "csv"
+        };
         let tmp_path = app
             .path()
-            .resolve(format!("puzzles/{file_name}.download.{tmp_ext}"), BaseDirectory::AppData)
-            .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle temp path: {e}")))?;
+            .resolve(
+                format!("puzzles/{file_name}.download.{tmp_ext}"),
+                BaseDirectory::AppData,
+            )
+            .map_err(|e| {
+                Error::PackageManager(format!("Failed to resolve puzzle temp path: {e}"))
+            })?;
 
         let db_path = app
             .path()
@@ -2261,7 +2281,14 @@ pub async fn download_puzzle_database(
             return Err(e);
         }
 
-        let import_res = import_puzzle_file(tmp_path.clone(), db_path, title_trim, description, app.clone()).await;
+        let import_res = import_puzzle_file(
+            tmp_path.clone(),
+            db_path,
+            title_trim,
+            description,
+            app.clone(),
+        )
+        .await;
         let _ = std::fs::remove_file(&tmp_path);
         return import_res;
     }
@@ -2274,8 +2301,13 @@ pub async fn download_puzzle_database(
 
     let tmp_path = app
         .path()
-        .resolve(format!("puzzles/{file_name}.db3.partial"), BaseDirectory::AppData)
-        .map_err(|e| Error::PackageManager(format!("Failed to resolve puzzle temp DB path: {e}")))?;
+        .resolve(
+            format!("puzzles/{file_name}.db3.partial"),
+            BaseDirectory::AppData,
+        )
+        .map_err(|e| {
+            Error::PackageManager(format!("Failed to resolve puzzle temp DB path: {e}"))
+        })?;
 
     let download_id = format!("puzzle_db_{database_id}");
     let download_res = download_file(
@@ -3385,8 +3417,7 @@ mod tests {
     /// and a few seed rows for testing.
     fn create_test_puzzle_db() -> NamedTempFile {
         let file = NamedTempFile::new().unwrap();
-        let mut conn =
-            diesel::SqliteConnection::establish(file.path().to_str().unwrap()).unwrap();
+        let mut conn = diesel::SqliteConnection::establish(file.path().to_str().unwrap()).unwrap();
 
         // Create `puzzles` table and insert a few rows.
         // This matches the columns used by the production code via Diesel schema.
@@ -3634,61 +3665,63 @@ mod tests {
         assert!(err.is_err());
     }
 
-    
-#[test]
-fn test_get_theme_friendly_name_exact_match() {
-    // Exact matches should use the predefined dictionary.
-    assert_eq!(get_theme_friendly_name("matein2"), "Mate in 2");
-    assert_eq!(get_theme_friendly_name("anastasiamate"), "Anastasia's Mate");
-    assert_eq!(get_theme_friendly_name("x-rayattack"), "X-Ray Attack");
-}
+    #[test]
+    fn test_get_theme_friendly_name_exact_match() {
+        // Exact matches should use the predefined dictionary.
+        assert_eq!(get_theme_friendly_name("matein2"), "Mate in 2");
+        assert_eq!(get_theme_friendly_name("anastasiamate"), "Anastasia's Mate");
+        assert_eq!(get_theme_friendly_name("x-rayattack"), "X-Ray Attack");
+    }
 
-#[test]
-fn test_get_theme_friendly_name_camelcase_hyphen_numbers() {
-    // Should split camelCase and normalize special patterns.
-    assert_eq!(get_theme_friendly_name("queenrookendgame"), "Queen & Rook Endgame");
-    assert_eq!(get_theme_friendly_name("kingsideattack"), "Kingside Attack");
-    assert_eq!(get_theme_friendly_name("matein5"), "Mate in 5");
+    #[test]
+    fn test_get_theme_friendly_name_camelcase_hyphen_numbers() {
+        // Should split camelCase and normalize special patterns.
+        assert_eq!(
+            get_theme_friendly_name("queenrookendgame"),
+            "Queen & Rook Endgame"
+        );
+        assert_eq!(get_theme_friendly_name("kingsideattack"), "Kingside Attack");
+        assert_eq!(get_theme_friendly_name("matein5"), "Mate in 5");
 
-    // Hyphens and underscores should be treated as spaces.
-    assert_eq!(get_theme_friendly_name("backrankmate"), "Back Rank Mate");
-    assert_eq!(get_theme_friendly_name("one-move"), "One Move");
-    assert_eq!(get_theme_friendly_name("verylong"), "Very Long");
-}
+        // Hyphens and underscores should be treated as spaces.
+        assert_eq!(get_theme_friendly_name("backrankmate"), "Back Rank Mate");
+        assert_eq!(get_theme_friendly_name("one-move"), "One Move");
+        assert_eq!(get_theme_friendly_name("verylong"), "Very Long");
+    }
 
-#[test]
-fn test_get_opening_tag_friendly_name_exact_match_and_fallback() {
-    // Exact match dictionary.
-    let got1 = get_opening_tag_friendly_name("ruylopez");
-    assert_eq!(got1, "Ruy López");
+    #[test]
+    fn test_get_opening_tag_friendly_name_exact_match_and_fallback() {
+        // Exact match dictionary.
+        let got1 = get_opening_tag_friendly_name("ruylopez");
+        assert_eq!(got1, "Ruy López");
 
-    let got2 = get_opening_tag_friendly_name("queensgambit");
-    assert_eq!(got2, "Queen's Gambit");
+        let got2 = get_opening_tag_friendly_name("queensgambit");
+        assert_eq!(got2, "Queen's Gambit");
 
-    let got3 = get_opening_tag_friendly_name("semiSlav");
-    assert_eq!(got3, "Semi-Slav");
-}
+        let got3 = get_opening_tag_friendly_name("semiSlav");
+        assert_eq!(got3, "Semi-Slav");
+    }
 
+    #[test]
+    fn test_parse_pgn_header_valid_and_invalid() {
+        // Valid PGN header should be parsed as (key, value).
+        let (k, v) =
+            parse_pgn_header(r#"[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]"#)
+                .unwrap();
+        assert_eq!(k, "FEN");
+        assert!(v.contains("rnbqkbnr/pppppppp"));
 
-#[test]
-fn test_parse_pgn_header_valid_and_invalid() {
-    // Valid PGN header should be parsed as (key, value).
-    let (k, v) = parse_pgn_header(r#"[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]"#)
-        .unwrap();
-    assert_eq!(k, "FEN");
-    assert!(v.contains("rnbqkbnr/pppppppp"));
+        // Invalid formats should return None.
+        assert!(parse_pgn_header("FEN \"...\"").is_none());
+        assert!(parse_pgn_header("[BrokenHeader]").is_none());
+        assert!(parse_pgn_header("[Key]").is_none());
+    }
 
-    // Invalid formats should return None.
-    assert!(parse_pgn_header("FEN \"...\"").is_none());
-    assert!(parse_pgn_header("[BrokenHeader]").is_none());
-    assert!(parse_pgn_header("[Key]").is_none());
-}
-
-#[test]
-fn test_parse_puzzles_from_pgn_multiple_puzzles_and_last_one_kept() {
-    // Ensure we can parse multiple puzzles and the last one is not lost
-    // even if the file doesn't end with an empty line.
-    let pgn = r#"
+    #[test]
+    fn test_parse_puzzles_from_pgn_multiple_puzzles_and_last_one_kept() {
+        // Ensure we can parse multiple puzzles and the last one is not lost
+        // even if the file doesn't end with an empty line.
+        let pgn = r#"
 [FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]
 [Solution "e2e4"]
 [Rating "1500"]
@@ -3697,90 +3730,96 @@ fn test_parse_puzzles_from_pgn_multiple_puzzles_and_last_one_kept() {
 Moves "d2d4"
 "#;
 
-    let puzzles = parse_puzzles_from_pgn(pgn.as_bytes()).unwrap();
-    assert_eq!(puzzles.len(), 2);
+        let puzzles = parse_puzzles_from_pgn(pgn.as_bytes()).unwrap();
+        assert_eq!(puzzles.len(), 2);
 
-    assert_eq!(puzzles[0].fen, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    assert_eq!(puzzles[0].moves, "e2e4");
-    assert_eq!(puzzles[0].rating, 1500);
+        assert_eq!(
+            puzzles[0].fen,
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
+        assert_eq!(puzzles[0].moves, "e2e4");
+        assert_eq!(puzzles[0].rating, 1500);
 
-    assert_eq!(puzzles[1].fen, "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2");
-    // Note: "Moves" header value is parsed as the raw string after the key; your parser
-    // strips quotes only if the entire value is quoted. This will still be non-empty.
-    assert!(!puzzles[1].moves.is_empty());
-}
+        assert_eq!(
+            puzzles[1].fen,
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"
+        );
+        // Note: "Moves" header value is parsed as the raw string after the key; your parser
+        // strips quotes only if the entire value is quoted. This will still be non-empty.
+        assert!(!puzzles[1].moves.is_empty());
+    }
 
-#[test]
-fn test_parse_puzzles_from_pgn_ignores_incomplete_entries() {
-    // Missing moves -> puzzle should not be included.
-    let pgn = r#"
+    #[test]
+    fn test_parse_puzzles_from_pgn_ignores_incomplete_entries() {
+        // Missing moves -> puzzle should not be included.
+        let pgn = r#"
 [FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]
 [Rating "1500"]
 "#;
 
-    let puzzles = parse_puzzles_from_pgn(pgn.as_bytes()).unwrap();
-    assert!(puzzles.is_empty());
-}
+        let puzzles = parse_puzzles_from_pgn(pgn.as_bytes()).unwrap();
+        assert!(puzzles.is_empty());
+    }
 
-#[test]
-fn test_puzzle_cache_counter_and_reload_when_exhausted() {
-    // Verify PuzzleCache advances through the candidate deck without repeats until wrap.
-    let file = create_test_puzzle_db();
-    let file_path = file.path().to_string_lossy().to_string();
+    #[test]
+    fn test_puzzle_cache_counter_and_reload_when_exhausted() {
+        // Verify PuzzleCache advances through the candidate deck without repeats until wrap.
+        let file = create_test_puzzle_db();
+        let file_path = file.path().to_string_lossy().to_string();
 
-    let mut cache = PuzzleCache::new().with_cache_size(2);
+        let mut cache = PuzzleCache::new().with_cache_size(2);
 
-    // First load
-    cache
-        .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
-        .unwrap();
+        // First load
+        cache
+            .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
+            .unwrap();
 
-    let p1 = cache.get_next_puzzle().unwrap();
-    let p2 = cache.get_next_puzzle().unwrap();
-    assert!(cache.get_next_puzzle().is_none());
-    assert_ne!(p1.id, p2.id);
+        let p1 = cache.get_next_puzzle().unwrap();
+        let p2 = cache.get_next_puzzle().unwrap();
+        assert!(cache.get_next_puzzle().is_none());
+        assert_ne!(p1.id, p2.id);
 
-    // On next refill with same filters, deck cursor should continue (third unique),
-    // then wrap to the first entry.
-    cache
-        .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
-        .unwrap();
+        // On next refill with same filters, deck cursor should continue (third unique),
+        // then wrap to the first entry.
+        cache
+            .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
+            .unwrap();
 
-    let p3 = cache.get_next_puzzle().unwrap();
-    let p1_again = cache.get_next_puzzle().unwrap();
+        let p3 = cache.get_next_puzzle().unwrap();
+        let p1_again = cache.get_next_puzzle().unwrap();
 
-    assert_ne!(p3.id, p1.id);
-    assert_ne!(p3.id, p2.id);
-    assert_eq!(p1.id, p1_again.id);
-}
+        assert_ne!(p3.id, p1.id);
+        assert_ne!(p3.id, p2.id);
+        assert_eq!(p1.id, p1_again.id);
+    }
 
-#[test]
-fn test_puzzle_cache_reload_when_filters_change() {
-    // Changing themes/opening_tags should force a cache reload.
-    let file = create_test_puzzle_db();
-    let file_path = file.path().to_string_lossy().to_string();
+    #[test]
+    fn test_puzzle_cache_reload_when_filters_change() {
+        // Changing themes/opening_tags should force a cache reload.
+        let file = create_test_puzzle_db();
+        let file_path = file.path().to_string_lossy().to_string();
 
-    let mut cache = PuzzleCache::new().with_cache_size(20);
+        let mut cache = PuzzleCache::new().with_cache_size(20);
 
-    cache
-        .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
-        .unwrap();
+        cache
+            .get_puzzles_with_filters(&file_path, 1400, 1700, false, None, None, None)
+            .unwrap();
 
-    // Now reload with a theme filter that should narrow results.
-    cache
-        .get_puzzles_with_filters(
-            &file_path,
-            1400,
-            1700,
-            false,
-            Some(vec!["advantage".to_string()]),
-            None,
-            None,
-        )
-        .unwrap();
+        // Now reload with a theme filter that should narrow results.
+        cache
+            .get_puzzles_with_filters(
+                &file_path,
+                1400,
+                1700,
+                false,
+                Some(vec!["advantage".to_string()]),
+                None,
+                None,
+            )
+            .unwrap();
 
-    let p = cache.get_next_puzzle().unwrap();
-    assert_eq!(p.id, 1);
-    assert_eq!(p.rating, 1500);
+        let p = cache.get_next_puzzle().unwrap();
+        assert_eq!(p.id, 1);
+        assert_eq!(p.rating, 1500);
     }
 }

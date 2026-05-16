@@ -15,8 +15,6 @@ pub fn setup_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Buil
 /// Desktop-specific initialization that runs on all desktop platforms
 #[cfg(desktop)]
 pub fn init_desktop_platform(_app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Initializing desktop platform");
-
     #[cfg(target_os = "windows")]
     windows::init_windows_platform()?;
 
@@ -28,4 +26,3 @@ pub fn init_desktop_platform(_app: &tauri::App) -> Result<(), Box<dyn std::error
 
     Ok(())
 }
-

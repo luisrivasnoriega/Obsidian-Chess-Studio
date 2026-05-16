@@ -284,7 +284,6 @@ pub fn save_position_cache(
     let db_path_str = normalize_db_path(database_path);
     let fen_key = canonicalize_fen_for_cache(fen)?;
 
-
     conn.transaction::<_, Error, _>(|conn| {
         // Insert or get position cache entry
         let position_id: i32 = {
@@ -391,7 +390,6 @@ pub fn clear_cache_for_database(app: &AppHandle, database_path: &PathBuf) -> Res
         Ok(())
     })?;
 
-
     Ok(())
 }
 
@@ -417,16 +415,18 @@ pub fn clear_position_cache(
     if let Some(position_id) = cache_entry {
         conn.transaction::<_, Error, _>(|conn| {
             // Delete stats and games
-            diesel::delete(position_stats::table.filter(position_stats::position_id.eq(position_id)))
-                .execute(conn)?;
-            diesel::delete(position_games::table.filter(position_games::position_id.eq(position_id)))
-                .execute(conn)?;
-
-            // Delete cache entry
             diesel::delete(
-                position_cache::table.filter(position_cache::id.eq(position_id)),
+                position_stats::table.filter(position_stats::position_id.eq(position_id)),
             )
             .execute(conn)?;
+            diesel::delete(
+                position_games::table.filter(position_games::position_id.eq(position_id)),
+            )
+            .execute(conn)?;
+
+            // Delete cache entry
+            diesel::delete(position_cache::table.filter(position_cache::id.eq(position_id)))
+                .execute(conn)?;
 
             Ok(())
         })?;
@@ -443,10 +443,14 @@ pub fn clear_position_cache(
 
         if let Some(position_id) = legacy_entry {
             conn.transaction::<_, Error, _>(|conn| {
-                diesel::delete(position_stats::table.filter(position_stats::position_id.eq(position_id)))
-                    .execute(conn)?;
-                diesel::delete(position_games::table.filter(position_games::position_id.eq(position_id)))
-                    .execute(conn)?;
+                diesel::delete(
+                    position_stats::table.filter(position_stats::position_id.eq(position_id)),
+                )
+                .execute(conn)?;
+                diesel::delete(
+                    position_games::table.filter(position_games::position_id.eq(position_id)),
+                )
+                .execute(conn)?;
                 diesel::delete(position_cache::table.filter(position_cache::id.eq(position_id)))
                     .execute(conn)?;
                 Ok(())

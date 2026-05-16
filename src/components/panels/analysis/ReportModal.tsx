@@ -322,14 +322,6 @@ function ReportModal({
         resolvedAnalysis = humanResult.analysis;
         strategicPgn = humanResult.annotatedPgn;
         strategicSummary = JSON.stringify(humanResult.summary);
-        if (import.meta.env.DEV) {
-          console.debug("[human-report] backend result", {
-            tab,
-            annotatedPgnLength: strategicPgn.length,
-            narratives: humanResult.narratives?.length ?? 0,
-            analysisItems: resolvedAnalysis.length,
-          });
-        }
       } else {
         resolvedAnalysis = unwrap(
           await commands.analyzeGame(
@@ -393,12 +385,6 @@ function ReportModal({
               errors: bookErrors,
               unknowns: bookUnknowns,
             });
-            if (import.meta.env.DEV) {
-              console.debug("[human-report] parsed strategic PGN", {
-                tab,
-                strategicPgnLength: strategicPgn.length,
-              });
-            }
             parsed.report = store.getState().report;
             setTreeState(parsed);
           } catch {
@@ -410,21 +396,9 @@ function ReportModal({
                 errors: bookErrors,
                 unknowns: bookUnknowns,
               });
-              if (import.meta.env.DEV) {
-                console.debug("[human-report] fallback to original PGN", {
-                  tab,
-                  originalPgnLength: originalPgn.length,
-                });
-              }
               fallback.report = store.getState().report;
               setTreeState(fallback);
             } catch {
-              if (import.meta.env.DEV) {
-                console.debug("[human-report] parse fallback failed, using addAnalysis", {
-                  tab,
-                  analysisItems: resolvedAnalysis.length,
-                });
-              }
               addAnalysis(resolvedAnalysis, { openingFens: await getOpeningFens() });
 
               const current = store.getState();

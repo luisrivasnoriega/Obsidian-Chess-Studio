@@ -428,8 +428,7 @@ function ReportPanel() {
           if (typeof window !== "undefined") {
             sessionStorage.removeItem(strategicPgnStorageKey);
           }
-        } catch (error) {
-          console.error("ReportPanel: failed to persist analyzed PGN/stats", error);
+        } catch {
           hasSavedPgnRef.current = false; // Reset flag on error
         }
       }, 500); // Increased delay to 500ms to ensure tree is fully updated after addAnalysis completes

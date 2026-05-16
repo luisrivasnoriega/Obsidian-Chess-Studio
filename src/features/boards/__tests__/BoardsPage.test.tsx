@@ -83,10 +83,6 @@ vi.mock("@tauri-apps/plugin-log", () => ({
   debug: vi.fn(),
 }));
 
-vi.mock("@/utils/debugNav", () => ({
-  debugNavLog: vi.fn(),
-}));
-
 // Mock App.tsx to avoid loading the router
 vi.mock("@/App", () => ({
   loadDirectories: vi.fn().mockResolvedValue(undefined),

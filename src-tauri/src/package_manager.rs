@@ -1,4 +1,3 @@
-use log::info;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::process::Command;
@@ -32,8 +31,6 @@ pub async fn install_package(
     manager: String,
     package_name: String,
 ) -> Result<PackageManagerResult, Error> {
-    info!("Installing package {} using {}", package_name, manager);
-
     validate_package_name(&package_name)?;
 
     let result = match manager.as_str() {
@@ -79,10 +76,7 @@ pub async fn check_package_installed(manager: String, package_name: String) -> R
 
     match installed {
         Ok(result) => Ok(result),
-        Err(e) => {
-            info!("Error checking package installation: {}", e);
-            Ok(false)
-        }
+        Err(_) => Ok(false),
     }
 }
 
@@ -114,9 +108,16 @@ pub async fn find_executable_path(executable_name: String) -> Result<Option<Stri
             if e.kind() == std::io::ErrorKind::NotFound {
                 return Ok(None);
             }
-            return Err(Error::PackageManager(format!("Executable lookup failed: {}", e)));
+            return Err(Error::PackageManager(format!(
+                "Executable lookup failed: {}",
+                e
+            )));
         }
-        Err(_) => return Err(Error::PackageManager("Executable lookup timed out".to_string())),
+        Err(_) => {
+            return Err(Error::PackageManager(
+                "Executable lookup timed out".to_string(),
+            ))
+        }
     };
 
     if output.status.success() {
@@ -299,7 +300,15 @@ mod tests {
 
     #[test]
     fn validate_package_name_accepts_common_chars() {
-        for s in ["git", "stockfish", "python3.12", "libstdc++", "foo_bar", "foo-bar", "foo+bar"] {
+        for s in [
+            "git",
+            "stockfish",
+            "python3.12",
+            "libstdc++",
+            "foo_bar",
+            "foo-bar",
+            "foo+bar",
+        ] {
             validate_package_name(s).unwrap();
         }
     }
@@ -311,14 +320,23 @@ mod tests {
         let long = "a".repeat(129);
         assert!(validate_package_name(&long).is_err());
 
-        for s in ["../evil", "foo bar", "foo;rm", "foo|bar", "foo&bar", "foo@bar", "foo/bar"] {
+        for s in [
+            "../evil", "foo bar", "foo;rm", "foo|bar", "foo&bar", "foo@bar", "foo/bar",
+        ] {
             assert!(validate_package_name(s).is_err(), "should reject: {}", s);
         }
     }
 
     #[test]
     fn validate_executable_name_accepts_common_chars() {
-        for s in ["git", "stockfish", "python3.12", "foo_bar", "foo-bar", "node"] {
+        for s in [
+            "git",
+            "stockfish",
+            "python3.12",
+            "foo_bar",
+            "foo-bar",
+            "node",
+        ] {
             validate_executable_name(s).unwrap();
         }
     }
@@ -350,10 +368,9 @@ mod tests {
 
     #[test]
     fn check_package_manager_available_unknown_is_false() {
-        let ok = tauri::async_runtime::block_on(check_package_manager_available(
-            "unknown".to_string(),
-        ))
-        .unwrap();
+        let ok =
+            tauri::async_runtime::block_on(check_package_manager_available("unknown".to_string()))
+                .unwrap();
         assert!(!ok);
     }
 
@@ -372,8 +389,10 @@ mod tests {
 
     #[test]
     fn install_package_unknown_manager_errors() {
-        let res =
-            tauri::async_runtime::block_on(install_package("unknown".to_string(), "git".to_string()));
+        let res = tauri::async_runtime::block_on(install_package(
+            "unknown".to_string(),
+            "git".to_string(),
+        ));
         assert!(res.is_err());
         match res.unwrap_err() {
             Error::PackageManager(msg) => assert!(msg.contains("Unsupported package manager")),
@@ -396,8 +415,10 @@ mod tests {
 
     #[test]
     fn install_package_invalid_package_name_errors() {
-        let res =
-            tauri::async_runtime::block_on(install_package("apt".to_string(), "bad name".to_string()));
+        let res = tauri::async_runtime::block_on(install_package(
+            "apt".to_string(),
+            "bad name".to_string(),
+        ));
         assert!(res.is_err());
         match res.unwrap_err() {
             Error::PackageManager(msg) => assert!(msg.contains("Invalid package name")),

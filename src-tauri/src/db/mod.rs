@@ -1,8 +1,9 @@
-mod bulk_insert;
 mod analysis_stats;
+mod bulk_insert;
 mod core;
 pub(crate) mod encoding;
 mod models;
+mod online_sync;
 mod ops;
 pub mod pgn;
 mod player_stats;
@@ -11,10 +12,11 @@ mod position_cache;
 mod schema;
 mod search;
 mod sync_state;
-mod online_sync;
 mod weakness_model;
+pub use online_sync::{
+    get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress,
+};
 pub use sync_state::*;
-pub use online_sync::{get_account_import_stats, sync_account_games_to_profile_db, AccountSyncProgress};
 
 use crate::{
     db::{encoding::extract_main_line_moves, models::*, ops::*, schema::*},
@@ -49,23 +51,31 @@ use tauri::{path::BaseDirectory, Manager};
 use tauri::{Emitter, State};
 use zip::{write::SimpleFileOptions as ZipFileOptions, CompressionMethod, ZipWriter};
 
-use tauri_specta::Event as _;
-use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri_specta::Event as _;
 
 #[allow(unused_imports)]
 pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Outcome, Puzzle};
 #[allow(unused_imports)]
 pub use self::player_stats::{
-    aggregate_openings, calculate_elo_buckets, calculate_elo_domain, calculate_earliest_date,
-    calculate_rating_timeline, compute_player_sidebar_model, extract_game_stats, fill_missing_months, filter_games,
-    get_score_rate, merge_site_stats_data, merge_years, sort_openings,
-    DateRange, EloBucket, EloDomain, GameStats, MonthData, OpeningStats, PlatformFilter,
-    PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel, PlayerStatsFilters,
-    PlayerStyleLabel, PlatformInfo, RatingDataPoint, RatingTimeline, TimeControlFilter,
+    aggregate_openings, calculate_earliest_date, calculate_elo_buckets, calculate_elo_domain,
+    calculate_rating_timeline, compute_player_sidebar_model, extract_game_stats,
+    fill_missing_months, filter_games, get_score_rate, merge_site_stats_data, merge_years,
+    sort_openings, DateRange, EloBucket, EloDomain, GameStats, MonthData, OpeningStats,
+    PlatformFilter, PlatformInfo, PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel,
+    PlayerStatsFilters, PlayerStyleLabel, RatingDataPoint, RatingTimeline, TimeControlFilter,
 };
 pub use self::position_cache::{
     clear_position_cache, get_cached_position, is_position_cached, save_position_cache,
+};
+pub use self::schema::puzzles;
+pub(crate) use self::search::{
+    coverage_search_position_stats, load_coverage_search_dataset, CoverageSearchDataset,
+    CoverageSearchFilters,
+};
+pub use self::search::{
+    is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
 };
 #[allow(unused_imports)]
 pub use self::weakness_model::{
@@ -76,17 +86,11 @@ pub use self::weakness_model::{
     WeaknessEvidenceRow, WeaknessEvidenceUpsert, WeaknessGameFeaturesUpsert,
     WeaknessSignalSnapshotRow, WeaknessSignalSnapshotUpsert, WeaknessSnapshotBuildResult,
 };
-pub use self::schema::puzzles;
-pub use self::search::{
-    is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
-};
-pub(crate) use self::search::{
-    coverage_search_position_stats, load_coverage_search_dataset, CoverageSearchDataset,
-    CoverageSearchFilters,
-};
 
-pub(crate) const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
-pub(crate) const ADDITIONAL_INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_additional_indexes.sql");
+pub(crate) const INDEXES_SQL: &str =
+    include_str!("../../../database/queries/indexes/create_indexes.sql");
+pub(crate) const ADDITIONAL_INDEXES_SQL: &str =
+    include_str!("../../../database/queries/indexes/create_additional_indexes.sql");
 const DELETE_INDEXES_SQL: &str =
     include_str!("../../../database/queries/indexes/delete_indexes.sql");
 pub(crate) const DROP_INDEXES_FOR_BULK_SQL: &str =
@@ -97,10 +101,13 @@ const PRAGMA_JOURNAL_MODE_DELETE: &str =
     include_str!("../../../database/pragmas/journal_mode_delete.sql");
 const PRAGMA_JOURNAL_MODE_OFF: &str =
     include_str!("../../../database/pragmas/journal_mode_off.sql");
-pub(crate) const PRAGMA_FOREIGN_KEYS_ON: &str = include_str!("../../../database/pragmas/foreign_keys_on.sql");
+pub(crate) const PRAGMA_FOREIGN_KEYS_ON: &str =
+    include_str!("../../../database/pragmas/foreign_keys_on.sql");
 const PRAGMA_BUSY_TIMEOUT: &str = include_str!("../../../database/pragmas/busy_timeout.sql");
-pub(crate) const PRAGMA_PERFORMANCE: &str = include_str!("../../../database/pragmas/performance_pragmas.sql");
-pub(crate) const PRAGMA_BULK_INSERT: &str = include_str!("../../../database/pragmas/bulk_insert_pragmas.sql");
+pub(crate) const PRAGMA_PERFORMANCE: &str =
+    include_str!("../../../database/pragmas/performance_pragmas.sql");
+pub(crate) const PRAGMA_BULK_INSERT: &str =
+    include_str!("../../../database/pragmas/bulk_insert_pragmas.sql");
 
 // Games queries
 const GAMES_CHECK_INDEXES: &str = include_str!("../../../database/queries/games/check_indexes.sql");
@@ -109,7 +116,9 @@ const GAMES_DELETE_DUPLICATES: &str =
 const GAMES_CREATE_DEDUPE_UNIQUE_INDEX: &str =
     include_str!("../../../database/queries/games/create_dedupe_unique_index.sql");
 
-fn ensure_events_columns(conn: &mut SqliteConnection) -> std::result::Result<(), diesel::result::Error> {
+fn ensure_events_columns(
+    conn: &mut SqliteConnection,
+) -> std::result::Result<(), diesel::result::Error> {
     #[derive(QueryableByName)]
     struct ColumnInfo {
         #[diesel(sql_type = Text, column_name = "name")]
@@ -146,7 +155,9 @@ fn ensure_events_columns(conn: &mut SqliteConnection) -> std::result::Result<(),
     Ok(())
 }
 
-fn ensure_games_columns(conn: &mut SqliteConnection) -> std::result::Result<(), diesel::result::Error> {
+fn ensure_games_columns(
+    conn: &mut SqliteConnection,
+) -> std::result::Result<(), diesel::result::Error> {
     #[derive(QueryableByName)]
     struct ColumnInfo {
         #[diesel(sql_type = Text, column_name = "name")]
@@ -171,7 +182,10 @@ fn ensure_games_columns(conn: &mut SqliteConnection) -> std::result::Result<(), 
     Ok(())
 }
 
-fn sqlite_table_exists(conn: &mut SqliteConnection, table_name: &str) -> std::result::Result<bool, diesel::result::Error> {
+fn sqlite_table_exists(
+    conn: &mut SqliteConnection,
+    table_name: &str,
+) -> std::result::Result<bool, diesel::result::Error> {
     #[derive(QueryableByName)]
     struct ExistsRow {
         #[diesel(sql_type = Integer, column_name = "exists_flag")]
@@ -366,7 +380,10 @@ pub fn insert_to_db_with_event_override(
         create_event(db, "Unknown")?.id
     };
 
-    let site_id = if let Some(name) = preferred_site_name.map(str::trim).filter(|value| !value.is_empty()) {
+    let site_id = if let Some(name) = preferred_site_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         create_site(db, name)?.id
     } else if let Some(name) = &game.site_name {
         let trimmed = name.trim();
@@ -441,8 +458,8 @@ fn normalize_pgn_for_import(pgn: &str) -> String {
     let mut normalized = pgn.replace("\r\n", "\n").replace('\r', "\n");
 
     // Normalize non-standard result headers used by some apps.
-    let result_header_re = Regex::new(r#"(?m)^\[Result\s+"(?:\?|\s*)"\s*\]\s*$"#)
-        .expect("valid result-header regex");
+    let result_header_re =
+        Regex::new(r#"(?m)^\[Result\s+"(?:\?|\s*)"\s*\]\s*$"#).expect("valid result-header regex");
     normalized = result_header_re
         .replace_all(&normalized, r#"[Result "*"]"#)
         .into_owned();
@@ -470,8 +487,8 @@ fn normalize_pgn_for_import(pgn: &str) -> String {
     }
 
     // Ensure each game has a termination marker in movetext.
-    let termination_re = Regex::new(r#"(?:1-0|0-1|1/2-1/2|\*)\s*$"#)
-        .expect("valid pgn-termination regex");
+    let termination_re =
+        Regex::new(r#"(?:1-0|0-1|1/2-1/2|\*)\s*$"#).expect("valid pgn-termination regex");
 
     let normalized_chunks = chunks
         .into_iter()
@@ -584,15 +601,16 @@ fn ensure_players_rowid_table(db: &mut SqliteConnection) -> Result<()> {
         sql: String,
     }
 
-    let sql: Option<String> = sql_query(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1",
-    )
-    .load::<SqlRow>(db)?
-    .into_iter()
-    .next()
-    .map(|r| r.sql);
+    let sql: Option<String> =
+        sql_query("SELECT sql FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1")
+            .load::<SqlRow>(db)?
+            .into_iter()
+            .next()
+            .map(|r| r.sql);
 
-    let Some(sql) = sql else { return Ok(()); };
+    let Some(sql) = sql else {
+        return Ok(());
+    };
     if !sql.to_ascii_uppercase().contains("WITHOUT ROWID") {
         return Ok(());
     }
@@ -1013,9 +1031,10 @@ pub async fn save_profile_game_analysis_stats(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<()> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -1056,7 +1075,8 @@ pub async fn save_profile_game_analysis_stats(
     };
 
     let winner = analysis_stats::winner_from_result(row.result.as_deref());
-    let mut stats = analysis_stats::compute_game_analysis_stats(winner, &initial_fen, &moves, &analysis)?;
+    let mut stats =
+        analysis_stats::compute_game_analysis_stats(winner, &initial_fen, &moves, &analysis)?;
 
     // Store additional computed stats (forks, etc.) into the Extra JSON blob.
     #[derive(QueryableByName)]
@@ -1112,10 +1132,10 @@ pub async fn save_profile_game_analysis_stats(
                     features_json: computed.features_json,
                 };
                 if let Err(e) = weakness_model::upsert_weakness_game_features(db, &upsert_row) {
-                    eprintln!("weakness model upsert failed for game {game_id}: {e}");
+                    let _ = (game_id, e);
                 }
             } else {
-                eprintln!("weakness model feature extraction failed for game {game_id}");
+                let _ = game_id;
             }
         }
     }
@@ -1184,7 +1204,11 @@ fn parse_profile_game_date_to_timestamp_ms(date: Option<&str>) -> Option<i64> {
     }
 
     let nd = NaiveDate::from_ymd_opt(year, month, day)?;
-    Some(chrono::Utc.from_utc_datetime(&nd.and_hms_opt(0, 0, 0)?).timestamp_millis())
+    Some(
+        chrono::Utc
+            .from_utc_datetime(&nd.and_hms_opt(0, 0, 0)?)
+            .timestamp_millis(),
+    )
 }
 
 const WEAKNESS_MATE_AS_CP: i32 = 100_000;
@@ -1248,13 +1272,21 @@ fn weakness_profile_error_rates_from_analyzed_pgn(
     let mut inaccuracies = 0usize;
     for idx in 1..scores.len() {
         let ply = (idx as i32) + 1;
-        let is_profile_move = if profile_is_white { ply % 2 == 1 } else { ply % 2 == 0 };
+        let is_profile_move = if profile_is_white {
+            ply % 2 == 1
+        } else {
+            ply % 2 == 0
+        };
         if !is_profile_move {
             continue;
         }
 
         let delta_white_cp = scores[idx] - scores[idx - 1];
-        let delta_profile_cp = if profile_is_white { delta_white_cp } else { -delta_white_cp };
+        let delta_profile_cp = if profile_is_white {
+            delta_white_cp
+        } else {
+            -delta_white_cp
+        };
         considered += 1;
         if delta_profile_cp <= -WEAKNESS_BLUNDER_SWING_CP {
             blunders += 1;
@@ -1324,7 +1356,10 @@ fn weakness_profile_blunder_rook_activation_ply_from_analyzed_pgn(
                 }
             }
             pgn::GameTreeNode::Variation(variation) => {
-                if last_move_profile && last_move_blunder && weakness_variation_starts_with_rook_move(variation) {
+                if last_move_profile
+                    && last_move_blunder
+                    && weakness_variation_starts_with_rook_move(variation)
+                {
                     return last_move_ply;
                 }
             }
@@ -1455,13 +1490,14 @@ fn load_or_infer_profile_player_id_for_weakness(db: &mut SqliteConnection) -> Re
         _c: i64,
     }
 
-    let existing: Option<i32> = sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
-        .load::<InfoRow>(db)?
-        .into_iter()
-        .next()
-        .and_then(|r| r.value)
-        .and_then(|v| v.trim().parse::<i32>().ok())
-        .filter(|v| *v > 0);
+    let existing: Option<i32> =
+        sql_query("SELECT Value FROM Info WHERE Name = 'ProfilePlayerId' LIMIT 1")
+            .load::<InfoRow>(db)?
+            .into_iter()
+            .next()
+            .and_then(|r| r.value)
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .filter(|v| *v > 0);
 
     let existing_total_count = if let Some(existing_id) = existing {
         sql_query("SELECT COUNT(*) AS c FROM Games WHERE WhiteID = ?1 OR BlackID = ?1")
@@ -1671,11 +1707,7 @@ fn backfill_profile_weakness_features(
             .and_then(|f| f.into_position(CastlingMode::Chess960).ok());
         let decoded_moves = match extract_main_line_moves(&row.moves, start_pos) {
             Ok(m) => m,
-            Err(e) => {
-                eprintln!(
-                    "weakness model backfill decode failed for game {}: {}",
-                    row.game_id, e
-                );
+            Err(_) => {
                 continue;
             }
         };
@@ -1684,10 +1716,7 @@ fn backfill_profile_weakness_features(
             .map(|m| m.to_uci(CastlingMode::Standard).to_string())
             .collect();
 
-        let initial_fen = row
-            .fen
-            .clone()
-            .unwrap_or_else(|| STARTPOS_FEN.to_string());
+        let initial_fen = row.fen.clone().unwrap_or_else(|| STARTPOS_FEN.to_string());
         let computed = match weakness_model::compute_weakness_features_v1(
             &initial_fen,
             &moves_uci,
@@ -1697,11 +1726,7 @@ fn backfill_profile_weakness_features(
             row.ply_count,
         ) {
             Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "weakness model backfill extraction failed for game {}: {}",
-                    row.game_id, e
-                );
+            Err(_) => {
                 continue;
             }
         };
@@ -1744,9 +1769,10 @@ pub async fn get_profile_weakness_model(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<weakness_model::ProfileWeaknessModel> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -1885,7 +1911,11 @@ pub async fn get_profile_weakness_model(
                 if let Ok(start) = bucket.parse::<i32>() {
                     let end = start + 199;
                     let profile_is_white = row.white_id == profile_player_id;
-                    let opponent_elo = if profile_is_white { row.black_elo } else { row.white_elo };
+                    let opponent_elo = if profile_is_white {
+                        row.black_elo
+                    } else {
+                        row.white_elo
+                    };
                     let Some(opponent_elo) = opponent_elo else {
                         continue;
                     };
@@ -1921,10 +1951,17 @@ pub async fn get_profile_weakness_model(
     let model_rows: Vec<ModelRow> = filtered_rows.into_iter().map(|(row, _ts)| row).collect();
 
     let game_ids: Vec<String> = model_rows.iter().map(|r| r.game_id.to_string()).collect();
-    let mut stats_rows =
-        crate::analysis_storage::analysis_db_get_game_stats_bulk(app.clone(), game_ids.clone(), Some(profile_id.clone()))?;
+    let mut stats_rows = crate::analysis_storage::analysis_db_get_game_stats_bulk(
+        app.clone(),
+        game_ids.clone(),
+        Some(profile_id.clone()),
+    )?;
     if stats_rows.is_empty() && !profile_id.trim().is_empty() {
-        stats_rows = crate::analysis_storage::analysis_db_get_game_stats_bulk(app.clone(), game_ids.clone(), None)?;
+        stats_rows = crate::analysis_storage::analysis_db_get_game_stats_bulk(
+            app.clone(),
+            game_ids.clone(),
+            None,
+        )?;
     }
     let stats_map: std::collections::HashMap<String, (f64, f64, Option<i64>)> = stats_rows
         .into_iter()
@@ -1937,8 +1974,11 @@ pub async fn get_profile_weakness_model(
         Some(profile_id.clone()),
     )?;
     if analyzed_rows.is_empty() && !profile_id.trim().is_empty() {
-        analyzed_rows =
-            crate::analysis_storage::analysis_db_get_analyzed_games_bulk(app.clone(), game_ids.clone(), None)?;
+        analyzed_rows = crate::analysis_storage::analysis_db_get_analyzed_games_bulk(
+            app.clone(),
+            game_ids.clone(),
+            None,
+        )?;
     }
     let analyzed_map: std::collections::HashMap<String, String> = analyzed_rows
         .into_iter()
@@ -1959,9 +1999,8 @@ pub async fn get_profile_weakness_model(
             row.white_name.clone()
         };
         let outcome = profile_outcome_from_result(row.result.as_deref(), profile_is_white);
-        let mut features_json =
-            serde_json::from_str::<serde_json::Value>(&row.features_json)
-                .unwrap_or_else(|_| serde_json::json!({}));
+        let mut features_json = serde_json::from_str::<serde_json::Value>(&row.features_json)
+            .unwrap_or_else(|_| serde_json::json!({}));
         let first_rook_activation_ply = features_json
             .get("rookActivity")
             .and_then(|v| v.get("firstRookActivationPly"))
@@ -1971,7 +2010,10 @@ pub async fn get_profile_weakness_model(
             .unwrap_or(false);
         let blunder_rook_activation_ply = if should_probe_blunder_rook_activation {
             analyzed_pgn.and_then(|pgn| {
-                weakness_profile_blunder_rook_activation_ply_from_analyzed_pgn(pgn, profile_is_white)
+                weakness_profile_blunder_rook_activation_ply_from_analyzed_pgn(
+                    pgn,
+                    profile_is_white,
+                )
             })
         } else {
             None
@@ -1988,7 +2030,10 @@ pub async fn get_profile_weakness_model(
                     *rook_activity = serde_json::json!({});
                 }
                 if let Some(rook_obj) = rook_activity.as_object_mut() {
-                    rook_obj.insert("missedActivationBlunder".to_string(), serde_json::json!(true));
+                    rook_obj.insert(
+                        "missedActivationBlunder".to_string(),
+                        serde_json::json!(true),
+                    );
                     rook_obj.insert(
                         "missedActivationBlunderPly".to_string(),
                         serde_json::json!(ply),
@@ -2101,10 +2146,13 @@ pub async fn get_profile_weakness_model(
 
     let signal_limit = limit.unwrap_or(12).clamp(1, 24);
     let signal_rows = weakness_model::get_weakness_signals(db, &snapshot_key, signal_limit, 0)?;
-    let mut evidence_by_signal: std::collections::HashMap<String, Vec<weakness_model::WeaknessEvidenceRow>> =
-        std::collections::HashMap::new();
+    let mut evidence_by_signal: std::collections::HashMap<
+        String,
+        Vec<weakness_model::WeaknessEvidenceRow>,
+    > = std::collections::HashMap::new();
     for signal in &signal_rows {
-        let evidence = weakness_model::get_weakness_evidence(db, &snapshot_key, &signal.signal_key, 4, 0)?;
+        let evidence =
+            weakness_model::get_weakness_evidence(db, &snapshot_key, &signal.signal_key, 4, 0)?;
         evidence_by_signal.insert(signal.signal_key.clone(), evidence);
     }
 
@@ -2132,9 +2180,10 @@ pub async fn get_profile_phase_outcomes(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::PhaseOutcomeBucket>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2154,9 +2203,10 @@ pub async fn get_profile_phase_accuracy(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::PhaseAccuracyBucket>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2176,9 +2226,10 @@ pub async fn get_profile_outcome_accuracy(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<analysis_stats::OutcomeAccuracyStats> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2198,9 +2249,10 @@ pub async fn get_profile_fork_stats(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<analysis_stats::ForkStats> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2221,9 +2273,10 @@ pub async fn generate_profile_missed_fork_puzzles(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<analysis_stats::ForkPuzzleGeneration> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2252,9 +2305,10 @@ pub async fn get_profile_missed_fork_games(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::MissedForkGameRow>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2282,9 +2336,10 @@ pub async fn get_profile_outcome_reason_breakdown(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<analysis_stats::OutcomeReasonBreakdown> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2304,9 +2359,10 @@ pub async fn get_profile_intensity_breakdown(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<analysis_stats::IntensityBreakdown> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2326,9 +2382,10 @@ pub async fn get_profile_intensity_outcomes(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::IntensityOutcomeBucket>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2348,9 +2405,10 @@ pub async fn get_profile_intensity_accuracy(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::IntensityAccuracyBucket>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2376,9 +2434,10 @@ pub async fn get_profile_phase_games(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::PhaseGameRow>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2401,9 +2460,10 @@ pub async fn get_profile_intensity_games(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<analysis_stats::IntensityGameRow>> {
-    let db_path = app
-        .path()
-        .resolve(format!("db/profile_{profile_id}.db3"), BaseDirectory::AppData)?;
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
 
     let db = &mut get_db_or_create(
         &state,
@@ -2413,7 +2473,13 @@ pub async fn get_profile_intensity_games(
     ensure_db_initialized(db)?;
 
     analysis_stats::get_profile_intensity_games(
-        app, db, &profile_id, &filters, &intensity, limit, offset,
+        app,
+        db,
+        &profile_id,
+        &filters,
+        &intensity,
+        limit,
+        offset,
     )
 }
 
@@ -3060,10 +3126,12 @@ pub async fn get_games(
         };
 
         if let Some(where_sql) = clause {
-            sql_query =
-                sql_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(where_sql.as_str()));
-            count_query =
-                count_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(where_sql.as_str()));
+            sql_query = sql_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                where_sql.as_str(),
+            ));
+            count_query = count_query.filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                where_sql.as_str(),
+            ));
         }
     }
 
@@ -3487,7 +3555,9 @@ pub async fn upsert_managed_event(
 
     let name = payload.name.trim().to_string();
     if name.is_empty() {
-        return Err(Error::InvalidInput("Event name cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Event name cannot be empty".to_string(),
+        ));
     }
 
     let event_type = payload.event_type.as_str();
@@ -3660,7 +3730,8 @@ pub async fn add_event_games_from_pgn(
     let mut first_parse_error: Option<String> = None;
 
     db.transaction::<_, Error, _>(|db| {
-        for parsed in BufferedReader::new_cursor(normalized_pgn.as_bytes()).into_iter(&mut importer) {
+        for parsed in BufferedReader::new_cursor(normalized_pgn.as_bytes()).into_iter(&mut importer)
+        {
             match parsed {
                 Ok(Some(game)) => {
                     parsed_total += 1;
@@ -3755,7 +3826,11 @@ pub async fn add_profile_games_from_pgn(
         BaseDirectory::AppData,
     )?;
 
-    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
     ensure_db_initialized(db)?;
 
     // Normalize a player name so we can match variants like "Last, First" vs "Last First".
@@ -3780,7 +3855,8 @@ pub async fn add_profile_games_from_pgn(
     let mut importer = Importer::new(None);
     let mut inserted_total: i32 = 0;
     let mut name_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let mut normalized_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut normalized_counts: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
 
     db.transaction::<_, Error, _>(|db| {
         for game in BufferedReader::new_cursor(trimmed.as_bytes())
@@ -3821,7 +3897,9 @@ pub async fn add_profile_games_from_pgn(
     for (norm, count) in &normalized_counts {
         let score = if !preferred_norm.is_empty() && norm == &preferred_norm {
             3u8
-        } else if !preferred_norm.is_empty() && (norm.contains(&preferred_norm) || preferred_norm.contains(norm)) {
+        } else if !preferred_norm.is_empty()
+            && (norm.contains(&preferred_norm) || preferred_norm.contains(norm))
+        {
             2u8
         } else {
             1u8
@@ -3858,7 +3936,11 @@ pub async fn add_profile_games_from_pgn(
         .or_else(|| {
             // Last resort: use the provided source name (may not match a real player row).
             let s = source_player_name.trim();
-            if s.is_empty() { None } else { Some(s.to_string()) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.to_string())
+            }
         });
 
     let existing_profile_player_id: Option<String> = info::table
@@ -3868,7 +3950,8 @@ pub async fn add_profile_games_from_pgn(
         .optional()?
         .flatten();
 
-    let should_override_profile_player = existing_profile_player_id.is_none() || !source_player_name.trim().is_empty();
+    let should_override_profile_player =
+        existing_profile_player_id.is_none() || !source_player_name.trim().is_empty();
     if should_override_profile_player {
         if let Some(main_player_name) = main_player_name {
             let pid = create_player(db, &main_player_name)?.id;
@@ -3942,8 +4025,16 @@ pub async fn create_event_game(
     let white_material = material.white as i32;
     let black_material = material.black as i32;
 
-    let date = payload.date.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
-    let round = payload.round.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let date = payload
+        .date
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    let round = payload
+        .round
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     let result_str = payload.result.to_string();
 
@@ -4267,10 +4358,15 @@ pub async fn get_profile_accounts_game_info(
         return Ok(PlayerGameInfo::default());
     }
 
-    let profile_db = app
-        .path()
-        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
-    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
 
     #[derive(QueryableByName)]
     struct PlayerIdRow {
@@ -4337,10 +4433,15 @@ pub async fn get_profile_sidebar_stats(
         return Ok(ProfileSidebarStats::default());
     }
 
-    let profile_db = app
-        .path()
-        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
-    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
     ensure_db_initialized(db)?;
 
     // Keep compatibility with older profiles where analysis tables may still be missing.
@@ -4440,10 +4541,15 @@ pub async fn get_profile_game_stats(
         return Ok(extract_game_stats(&[]));
     }
 
-    let profile_db = app
-        .path()
-        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
-    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
     ensure_db_initialized(db)?;
 
     let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
@@ -4468,10 +4574,15 @@ pub async fn get_profile_rating_timeline(
         return Ok(empty_rating_timeline());
     }
 
-    let profile_db = app
-        .path()
-        .resolve(format!("db/profile_{}.db3", profile_id.trim()), BaseDirectory::AppData)?;
-    let db = &mut get_db_or_create(&state, profile_db.to_str().unwrap(), ConnectionOptions::default())?;
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
     ensure_db_initialized(db)?;
 
     let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
@@ -4491,37 +4602,25 @@ pub async fn optimize_database(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
-    use diesel::connection::SimpleConnection;
     use crate::db::online_sync::update_lichess_tournament_events_standalone;
-    
-    let db = &mut get_db_or_create(
-        &state,
-        file.to_str().unwrap(),
-        ConnectionOptions::default(),
-    )?;
-    
+    use diesel::connection::SimpleConnection;
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+
     // Step 1: Create additional indexes
-    if let Err(e) = db.batch_execute(crate::db::ADDITIONAL_INDEXES_SQL) {
-        // Log but don't fail - indexes are best-effort
-        eprintln!("Database optimization warning (indexes): {}", e);
-    }
-    
+    let _ = db.batch_execute(crate::db::ADDITIONAL_INDEXES_SQL);
+
     // Step 2: Update query planner statistics
-    if let Err(e) = db.batch_execute("ANALYZE Games; ANALYZE Players; ANALYZE Events; ANALYZE Sites;") {
-        eprintln!("ANALYZE warning: {}", e);
-    }
-    
+    if let Err(_e) =
+        db.batch_execute("ANALYZE Games; ANALYZE Players; ANALYZE Events; ANALYZE Sites;")
+    {}
+
     // Step 3: Apply performance pragmas
-    if let Err(e) = db.batch_execute(crate::db::PRAGMA_PERFORMANCE) {
-        eprintln!("Performance pragmas warning: {}", e);
-    }
-    
+    let _ = db.batch_execute(crate::db::PRAGMA_PERFORMANCE);
+
     // Step 4: Update Lichess tournament events if any exist
-    if let Err(e) = update_lichess_tournament_events_standalone(db, &app, false).await {
-        eprintln!("Error updating Lichess tournament events: {}", e);
-        // Don't fail the entire optimization if this fails
-    }
-    
+    let _ = update_lichess_tournament_events_standalone(db, &app, false).await;
+
     Ok(())
 }
 
@@ -4613,7 +4712,10 @@ pub async fn delete_database(
     // STEP 3: Clear in-memory cache (do this after closing connections)
     let mut path_aliases: Vec<String> = vec![path_str.clone()];
     if let Some(canonical) = canonical_path_str.as_ref() {
-        if !path_aliases.iter().any(|existing| same_path(existing, canonical)) {
+        if !path_aliases
+            .iter()
+            .any(|existing| same_path(existing, canonical))
+        {
             path_aliases.push(canonical.clone());
         }
     }
@@ -4622,7 +4724,9 @@ pub async fn delete_database(
         .iter()
         .filter(|entry| {
             let key_path = entry.key().1.to_string_lossy();
-            path_aliases.iter().any(|candidate| same_path(candidate, key_path.as_ref()))
+            path_aliases
+                .iter()
+                .any(|candidate| same_path(candidate, key_path.as_ref()))
                 || (target_is_profile_db
                     && PathBuf::from(key_path.as_ref())
                         .file_name()
@@ -4737,9 +4841,9 @@ pub async fn replace_profile_db_file(
     let target_parent = target
         .parent()
         .ok_or_else(|| Error::PackageManager("Invalid profile database directory".to_string()))?;
-    let replacement_parent = replacement
-        .parent()
-        .ok_or_else(|| Error::PackageManager("Invalid replacement database directory".to_string()))?;
+    let replacement_parent = replacement.parent().ok_or_else(|| {
+        Error::PackageManager("Invalid replacement database directory".to_string())
+    })?;
     if target_parent != replacement_parent {
         return Err(Error::PackageManager(
             "Replacement profile database must be in the profile database directory".to_string(),
@@ -4808,7 +4912,10 @@ pub async fn replace_profile_db_file(
 
     let mut path_aliases: Vec<String> = vec![target_str.clone()];
     if let Some(canonical) = canonical_target_str.as_ref() {
-        if !path_aliases.iter().any(|existing| same_path(existing, canonical)) {
+        if !path_aliases
+            .iter()
+            .any(|existing| same_path(existing, canonical))
+        {
             path_aliases.push(canonical.clone());
         }
     }
@@ -4817,7 +4924,9 @@ pub async fn replace_profile_db_file(
         .iter()
         .filter(|entry| {
             let key_path = entry.key().1.to_string_lossy();
-            path_aliases.iter().any(|candidate| same_path(candidate, key_path.as_ref()))
+            path_aliases
+                .iter()
+                .any(|candidate| same_path(candidate, key_path.as_ref()))
                 || PathBuf::from(key_path.as_ref())
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -5076,7 +5185,12 @@ fn sanitize_zip_component(s: &str) -> String {
     }
 }
 
-fn zip_filename_for_game(white: Option<&str>, black: Option<&str>, date: Option<&str>, result: Option<&str>) -> String {
+fn zip_filename_for_game(
+    white: Option<&str>,
+    black: Option<&str>,
+    date: Option<&str>,
+    result: Option<&str>,
+) -> String {
     let white = sanitize_zip_component(white.unwrap_or("WhiteUser"));
     let black = sanitize_zip_component(black.unwrap_or("BlackUser"));
     let date = sanitize_zip_component(date.unwrap_or("UnknownDate"));
@@ -5084,9 +5198,11 @@ fn zip_filename_for_game(white: Option<&str>, black: Option<&str>, date: Option<
     format!("{white}_{black}_{date}_{result}.pgn")
 }
 
-fn export_pgn_games_to_zip<W: Write + Seek>(zip: &mut ZipWriter<W>, games: Vec<PgnGame>) -> Result<()> {
-    let options = ZipFileOptions::default()
-        .compression_method(CompressionMethod::Deflated);
+fn export_pgn_games_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    games: Vec<PgnGame>,
+) -> Result<()> {
+    let options = ZipFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let mut used: HashMap<String, u32> = HashMap::new();
 
@@ -5419,7 +5535,6 @@ pub fn clear_games(state: tauri::State<'_, AppState>) -> Result<()> {
     Ok(())
 }
 
-
 /// Pre-cache openings from the embedded ECO opening book.
 /// This function reads all ECO opening positions (derived from eco.json),
 /// searches for each position in the database, and caches the results.
@@ -5443,7 +5558,6 @@ pub async fn precache_openings(
 
     // Get a reference to AppState (Tauri manages it internally, likely with Arc)
     let state_arc = state.inner();
-
 
     // Limit concurrency to avoid overwhelming the database
     let semaphore = Arc::new(Semaphore::new(4)); // Process 4 openings at a time
@@ -5671,7 +5785,6 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
     // Download URL for pre-calculated position cache
     let download_url = "https://pub-ea015655e3e044baaea19e7e0bf574f9.r2.dev/position_cache.db3";
 
-
     // Download the file (will overwrite if it exists)
     // Use "db_position_cache" as ID to match the format expected by ProgressButton
     download_file(
@@ -5700,7 +5813,7 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
             format!("Failed to create marker file: {}", e),
         ))
     })?;
-    
+
     // Write installation timestamp
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -5711,13 +5824,15 @@ pub async fn download_position_cache(app: tauri::AppHandle) -> Result<()> {
             ))
         })?
         .as_secs();
-    
-    marker_file.write_all(timestamp.to_string().as_bytes()).map_err(|e| {
-        Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to write marker file: {}", e),
-        ))
-    })?;
+
+    marker_file
+        .write_all(timestamp.to_string().as_bytes())
+        .map_err(|e| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to write marker file: {}", e),
+            ))
+        })?;
 
     Ok(())
 }
@@ -5728,8 +5843,8 @@ fn sanitize_db_filename(name: &str) -> String {
     let trimmed = name.trim();
     let mut out = String::with_capacity(trimmed.len());
     for ch in trimmed.chars() {
-        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-            || ch.is_control();
+        let is_invalid =
+            matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control();
         if is_invalid {
             out.push('_');
         } else {
@@ -5762,7 +5877,9 @@ pub async fn download_game_database(
 
     let title_trim = title.trim().to_string();
     if title_trim.is_empty() {
-        return Err(Error::InvalidInput("Database title cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Database title cannot be empty".to_string(),
+        ));
     }
 
     // Keep the legacy special-case behavior for Position Cache.
@@ -5780,7 +5897,10 @@ pub async fn download_game_database(
     // if the download is interrupted.
     let tmp_path = app
         .path()
-        .resolve(format!("db/{file_name}.db3.partial"), BaseDirectory::AppData)
+        .resolve(
+            format!("db/{file_name}.db3.partial"),
+            BaseDirectory::AppData,
+        )
         .map_err(|e| Error::PackageManager(format!("Failed to resolve temp DB path: {e}")))?;
 
     // Use the same ID format as the existing UI expects.
@@ -5807,7 +5927,11 @@ pub async fn download_game_database(
     std::fs::rename(&tmp_path, &db_path)?;
 
     // Mark DB source so the frontend can display/filter it.
-    let db = &mut get_db_or_create(&state, db_path.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(
+        &state,
+        db_path.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
     upsert_info_value(db, "Source", "local")?;
 
     Ok(())
@@ -5847,7 +5971,9 @@ pub async fn calculate_player_elo_buckets(site_stats_data: Vec<SiteStatsData>) -
 /// Calculate the sidebar model for PlayerSidebarCard (style + ELO summary).
 #[tauri::command]
 #[specta::specta]
-pub async fn calculate_player_sidebar_model(site_stats_data: Vec<SiteStatsData>) -> PlayerSidebarModel {
+pub async fn calculate_player_sidebar_model(
+    site_stats_data: Vec<SiteStatsData>,
+) -> PlayerSidebarModel {
     tauri::async_runtime::spawn_blocking(move || compute_player_sidebar_model(&site_stats_data))
         .await
         .unwrap_or_default()
@@ -5951,7 +6077,9 @@ pub async fn calculate_player_rating_timeline(
         })
     })
     .await
-    .map_err(|e| Error::PackageManager(format!("calculate_player_rating_timeline join error: {e}")))?
+    .map_err(|e| {
+        Error::PackageManager(format!("calculate_player_rating_timeline join error: {e}"))
+    })?
 }
 
 /// Calculate ELO domain for rating chart
@@ -5966,7 +6094,9 @@ pub async fn calculate_player_elo_domain(rating_timeline: RatingTimeline) -> Opt
 /// Merge site stats data from multiple sources
 #[tauri::command]
 #[specta::specta]
-pub async fn merge_player_site_stats(site_stats_data_list: Vec<SiteStatsData>) -> Vec<SiteStatsData> {
+pub async fn merge_player_site_stats(
+    site_stats_data_list: Vec<SiteStatsData>,
+) -> Vec<SiteStatsData> {
     tauri::async_runtime::spawn_blocking(move || merge_site_stats_data(&site_stats_data_list))
         .await
         .unwrap_or_default()
@@ -6029,7 +6159,9 @@ fn slug_to_title(slug: &str) -> String {
         .map(|w| {
             let mut chars = w.chars();
             match chars.next() {
-                Some(first) => first.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase(),
+                Some(first) => {
+                    first.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase()
+                }
                 None => String::new(),
             }
         })
@@ -6043,8 +6175,8 @@ fn slug_to_title(slug: &str) -> String {
 }
 
 fn parse_lichess_broadcast_url(url: &str) -> Result<(String, String)> {
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| Error::PackageManager(format!("Invalid URL: {e}")))?;
+    let parsed =
+        reqwest::Url::parse(url).map_err(|e| Error::PackageManager(format!("Invalid URL: {e}")))?;
 
     if parsed.scheme() != "https" {
         return Err(Error::PackageManager(
@@ -6095,8 +6227,7 @@ fn extract_broadcast_ids_from_group_html(html: &str) -> Vec<String> {
     // <a href="/broadcast/<slug>/<broadcastId>" class="relay-card ...">
     //
     // We extract the final path segment as the broadcastId.
-    let re =
-        Regex::new(r#"href="/broadcast/[^"]+/([A-Za-z0-9]{8})""#).expect("valid regex");
+    let re = Regex::new(r#"href="/broadcast/[^"]+/([A-Za-z0-9]{8})""#).expect("valid regex");
 
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -6236,9 +6367,7 @@ pub async fn import_online_tournament(
     };
 
     if pgn_bytes.is_empty() {
-        return Err(Error::PackageManager(
-            "Downloaded PGN is empty".to_string(),
-        ));
+        return Err(Error::PackageManager("Downloaded PGN is empty".to_string()));
     }
 
     let inferred_title = slug_to_title(&slug);
@@ -6286,8 +6415,10 @@ pub async fn import_online_tournament(
             Ok(c) => c,
             Err(_) => return false,
         };
-        match sql_query("SELECT name FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1")
-            .load::<TableInfo>(&mut conn)
+        match sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Players' LIMIT 1",
+        )
+        .load::<TableInfo>(&mut conn)
         {
             Ok(rows) => !rows.is_empty(),
             Err(_) => false,
@@ -6313,8 +6444,8 @@ pub async fn import_online_tournament(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let temp_pgn_path = std::env::temp_dir()
-        .join(format!("ocs_lichess_broadcast_{broadcast_id}_{ts}.pgn"));
+    let temp_pgn_path =
+        std::env::temp_dir().join(format!("ocs_lichess_broadcast_{broadcast_id}_{ts}.pgn"));
 
     std::fs::write(&temp_pgn_path, &pgn_bytes)?;
 
@@ -6409,7 +6540,7 @@ pub async fn import_online_tournament(
         }
         // Non-fatal: import already succeeded and data is on disk.
         // Source metadata can be set later via set_db_source.
-        eprintln!("Warning: could not set Source=online for {}: {}", filename, e);
+        let _ = filename;
     }
 
     Ok(())
@@ -6417,7 +6548,11 @@ pub async fn import_online_tournament(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_db_source(file: PathBuf, source: String, _state: tauri::State<'_, AppState>) -> Result<()> {
+pub async fn set_db_source(
+    file: PathBuf,
+    source: String,
+    _state: tauri::State<'_, AppState>,
+) -> Result<()> {
     let Some(source_norm) = normalize_db_source(&source) else {
         return Err(Error::PackageManager("Invalid database source".to_string()));
     };
@@ -6465,7 +6600,10 @@ pub async fn set_db_source(file: PathBuf, source: String, _state: tauri::State<'
 
 #[tauri::command]
 #[specta::specta]
-pub async fn get_db_source(file: PathBuf, _state: tauri::State<'_, AppState>) -> Result<Option<String>> {
+pub async fn get_db_source(
+    file: PathBuf,
+    _state: tauri::State<'_, AppState>,
+) -> Result<Option<String>> {
     fn is_malformed_sqlite_message(msg: &str) -> bool {
         let m = msg.to_lowercase();
         m.contains("database disk image is malformed") || m.contains("file is not a database")
@@ -6520,7 +6658,9 @@ pub async fn merge_profile_event_from_db_player(
     event_name: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<i32> {
-    use crate::db::schema::{events as events_tbl, games as games_tbl, players as players_tbl, sites as sites_tbl};
+    use crate::db::schema::{
+        events as events_tbl, games as games_tbl, players as players_tbl, sites as sites_tbl,
+    };
 
     if player_id <= 0 {
         return Err(Error::InvalidInput("Invalid player id".to_string()));
@@ -6528,7 +6668,9 @@ pub async fn merge_profile_event_from_db_player(
 
     let name = event_name.trim().to_string();
     if name.is_empty() {
-        return Err(Error::InvalidInput("Event name cannot be empty".to_string()));
+        return Err(Error::InvalidInput(
+            "Event name cannot be empty".to_string(),
+        ));
     }
 
     // Open profile DB and ensure schema.
@@ -6582,7 +6724,11 @@ pub async fn merge_profile_event_from_db_player(
         .inner_join(black_players.on(games_tbl::black_id.eq(black_players.field(players_tbl::id))))
         .inner_join(events_tbl::table.on(games_tbl::event_id.eq(events_tbl::id)))
         .inner_join(sites_tbl::table.on(games_tbl::site_id.eq(sites_tbl::id)))
-        .filter(games_tbl::white_id.eq(player_id).or(games_tbl::black_id.eq(player_id)))
+        .filter(
+            games_tbl::white_id
+                .eq(player_id)
+                .or(games_tbl::black_id.eq(player_id)),
+        )
         .load::<(Game, Player, Player, Event, Site)>(source_db)?;
 
     let mut inserted_total: i32 = 0;
@@ -6613,7 +6759,9 @@ pub async fn merge_profile_event_from_db_player(
                         game.fen
                             .as_deref()
                             .and_then(|fen| Fen::from_ascii(fen.as_bytes()).ok())
-                            .and_then(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok()),
+                            .and_then(|fen| {
+                                Chess::from_setup(fen.into(), CastlingMode::Chess960).ok()
+                            }),
                     )?
                     .to_string(),
                 };
@@ -6644,11 +6792,10 @@ pub async fn merge_profile_event_from_db_player(
         #[diesel(sql_type = diesel::sql_types::Integer, column_name = "ID")]
         id: i32,
     }
-    let rows: Vec<PlayerIdRow> = diesel::sql_query(
-        "SELECT ID FROM Players WHERE lower(Name) = lower(?1) LIMIT 1",
-    )
-    .bind::<diesel::sql_types::Text, _>(source_player_name.clone())
-    .load(profile_db)?;
+    let rows: Vec<PlayerIdRow> =
+        diesel::sql_query("SELECT ID FROM Players WHERE lower(Name) = lower(?1) LIMIT 1")
+            .bind::<diesel::sql_types::Text, _>(source_player_name.clone())
+            .load(profile_db)?;
 
     // Keep the profile's active player stable once set.
     let existing_profile_player_id: Option<String> = info::table

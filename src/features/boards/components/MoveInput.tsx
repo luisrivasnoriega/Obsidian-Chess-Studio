@@ -4,11 +4,14 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { parseKeyboardMove } from "@/utils/chess";
-import type { TreeNode } from "@/utils/treeReducer";
 
-export default function MoveInput({ currentNode }: { currentNode: TreeNode }) {
+export default function MoveInput({ currentFen }: { currentFen: string }) {
   const { t } = useTranslation();
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("MoveInput must be used within a TreeStateProvider");
+  }
+
   const makeMove = useStore(store, (s) => s.makeMove);
   const [move, setMove] = useState("");
   const [error, setError] = useState("");
@@ -27,7 +30,7 @@ export default function MoveInput({ currentNode }: { currentNode: TreeNode }) {
         if (e.key === "Enter") {
           const m = move.trim();
           if (m.length > 0) {
-            const parsed = parseKeyboardMove(m, currentNode.fen);
+            const parsed = parseKeyboardMove(m, currentFen);
             if (parsed) {
               makeMove({ payload: parsed });
               setMove("");

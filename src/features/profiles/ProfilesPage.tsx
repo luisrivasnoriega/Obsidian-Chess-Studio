@@ -809,11 +809,6 @@ export default function ProfilesPage() {
             typeof result.error === "string" && result.error.trim()
               ? result.error
               : t("common.errorUnknown", { defaultValue: "Something went wrong." });
-          console.error("[profiles] deleteProfile failed", {
-            profileId: profile.id,
-            dbPath,
-            error: result.error,
-          });
           notifications.show({
             title: t("common.error"),
             message: errorMessage,
@@ -830,11 +825,6 @@ export default function ProfilesPage() {
         }
         const errorMessage =
           formatSyncError(error) || t("common.errorUnknown", { defaultValue: "Something went wrong." });
-        console.error("[profiles] deleteProfile threw", {
-          profileId: profile.id,
-          dbPath,
-          error,
-        });
         notifications.show({
           title: t("common.error"),
           message: errorMessage,

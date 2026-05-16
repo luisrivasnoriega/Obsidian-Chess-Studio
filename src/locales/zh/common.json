@@ -292,7 +292,6 @@
       "help": "帮助",
       "documentation": "文档",
       "clearSavedData": "清除数据",
-      "openLogs": "打开日志",
       "checkUpdate": "检查更新",
       "about": "关于",
       "markAsStart": "标记为起始点",
@@ -567,10 +566,6 @@
       "error": "错误",
       "errorOpeningGame": "打开对局失败",
       "analyzed": "已分析",
-      "debug": "调试",
-      "debugPgns": "调试 PGN",
-      "debugPgnsDescription": "传递给分析函数的 PGN：",
-      "noDebugPgns": "无可用调试 PGN",
       "showing": "显示",
       "count": "数量",
       "maxGames": "最大对局数",
@@ -1303,8 +1298,6 @@
       "errors": "错误",
       "precacheCompleted": "预缓存已成功完成！"
     },
-    "telemetry": "遥测",
-    "telemetryDesc": "通过共享匿名使用数据来帮助改进 Obsidian Chess Studio",
     "moveNotation": "棋谱记法",
     "moveNotationDesc": "选择在记谱中显示棋子的方式",
     "symbols": "符号 (♔♕♖♗♘)",
@@ -1323,8 +1316,6 @@
     "system": "系统",
     "about": "关于",
     "aboutDesc": "了解更多关于 Obsidian Chess Studio",
-    "telemetryLoading": "正在加载遥测设置...",
-    "telemetryDetails": "遥测数据是匿名的，帮助我们了解 Obsidian Chess Studio 的使用方式以改进体验。我们从不收集个人信息或对局内容。数据使用 Supabase 安全存储。",
     "pickValue": "选择值",
     "pressAnyKey": "按任意键"
   },
@@ -1343,7 +1334,6 @@
   "error": {
     "title": "发生错误",
     "unexpectedError": "意外错误:",
-    "copyStackTrace": "复制堆栈跟踪",
     "reportPrompt": "请在以下位置报告",
     "reportOr": "或在"
   },

@@ -1,6 +1,5 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import { IS_DEV } from "./config";
 
 import ar from "./locales/ar";
 import be from "./locales/be";
@@ -82,7 +81,7 @@ i18n.use(initReactI18next).init({
   ns: ["language", "translation"],
   defaultNS: "translation",
   fallbackNS: "translation",
-  debug: IS_DEV,
+  debug: false,
   load: "currentOnly",
   // React already escapes output. Keep interpolation values as-is to avoid HTML entities like &#39;.
   interpolation: { escapeValue: false },

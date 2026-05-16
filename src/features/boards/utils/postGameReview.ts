@@ -13,7 +13,6 @@ import { getDocumentDir } from "@/utils/documentDir";
 import type { LocalEngine } from "@/utils/engines";
 import { createFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
-import { finishPerfBaselineSpan, startPerfBaselineSpan } from "@/utils/perfBaseline";
 import type { GameHeaders, TreeNode, TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 
@@ -486,15 +485,6 @@ export async function detectProfileBookReview(input: {
   }
 
   const variantsDir = await getVariantsDirectory(input.profileId);
-  if (import.meta.env.DEV) {
-    console.debug("[variants-book] detectProfileBookErrors request", {
-      profileId: input.profileId,
-      variantsDir,
-      humanColor: input.humanColor,
-      moves: input.moves.length,
-      initialFen: input.initialFen,
-    });
-  }
   const variantReview = await invoke<PostGameReviewVariantsBackendResult>("post_game_review_variants", {
     input: {
       documentDir: variantsDir,
@@ -518,16 +508,6 @@ export async function detectProfileBookReview(input: {
   const mappedMatches = (variantReview.bookMatchPlies ?? [])
     .map((ply) => normalizePly(ply))
     .filter((ply): ply is number => ply !== null && ply >= 0);
-  if (import.meta.env.DEV) {
-    console.debug("[variants-book] detectProfileBookErrors result", {
-      profileId: input.profileId,
-      variantsDir,
-      errors: mappedErrors.length,
-      unknowns: mappedUnknowns.length,
-      matches: mappedMatches.length,
-      first: mappedErrors[0] ?? null,
-    });
-  }
   return { matchedPlies: mappedMatches, errors: mappedErrors, unknowns: mappedUnknowns };
 }
 
@@ -962,19 +942,6 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
   const is960 = input.headers.variant === "Chess960";
   const moves = getMainLine(input.root, is960);
   const engineMsPerMove = Math.max(input.minEngineMsPerMove ?? MIN_ENGINE_MS_PER_MOVE, MIN_ENGINE_MS_PER_MOVE);
-  const reviewSpan = startPerfBaselineSpan({
-    scope: "boards.post_game_review",
-    label: "run",
-    metadata: {
-      mode: input.mode,
-      humanColor: input.humanColor ?? "none",
-      engine: selectedEngine?.name ?? "none",
-      moves: moves.length,
-      minEngineMsPerMove: input.minEngineMsPerMove ?? null,
-    },
-  });
-  let reviewStatus = "running";
-  let generatedPuzzles = 0;
   const documentDir = await getDocumentDir();
   const variantsDir = await getVariantsDirectory(input.profileId);
   let variantDeviation: VariantDeviationDecision = {
@@ -990,180 +957,43 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
   let variantsBookName: string | null = null;
   let addedVariantLine: string | null = null;
 
-  try {
-    if (moves.length > 0) {
-      try {
-        const variantReview = await invoke<PostGameReviewVariantsBackendResult>("post_game_review_variants", {
-          input: {
-            documentDir: variantsDir,
-            initialFen,
-            moves,
-            humanColor: input.humanColor,
-          },
-        });
-
-        variantDeviation = {
-          detected: variantReview.detected,
-          ply: normalizePly(variantReview.variantDeviationPly),
-          targetBookPath: null,
-          bookPath: variantReview.variantsBookPath,
-          shouldOpenVariants: variantReview.openVariantsAfterReview,
-          kind: variantReview.kind,
-        };
-        newLineAdded = variantReview.newLineAdded;
-        variantsBookPath = variantReview.variantsBookPath;
-        variantsBookName = variantReview.variantsBookName;
-        addedVariantLine = variantReview.addedVariantLine;
-      } catch {
-        // Keep review flow resilient if backend variants command fails.
-      }
-    }
-
-    if (!selectedEngine) {
-      reviewStatus = "skipped_no_engine";
-      return {
-        status: "skipped",
-        reason: "no_engine",
-        engineName: null,
-        engineMsPerMove,
-        dubiousCount: 0,
-        mistakeCount: 0,
-        blunderCount: 0,
-        variantDeviationDetected: variantDeviation.detected,
-        variantDeviationPly: variantDeviation.ply,
-        newLineAdded,
-        variantsBookPath,
-        variantsBookName,
-        addedVariantLine,
-        openVariantsAfterReview: variantDeviation.shouldOpenVariants,
-        puzzlesGenerated: 0,
-        puzzleFilePath: null,
-      };
-    }
-
-    if (moves.length === 0) {
-      reviewStatus = "skipped_no_moves";
-      return {
-        status: "skipped",
-        reason: "no_moves",
-        engineName: selectedEngine.name,
-        engineMsPerMove,
-        dubiousCount: 0,
-        mistakeCount: 0,
-        blunderCount: 0,
-        variantDeviationDetected: variantDeviation.detected,
-        variantDeviationPly: variantDeviation.ply,
-        newLineAdded,
-        variantsBookPath,
-        variantsBookName,
-        addedVariantLine,
-        openVariantsAfterReview: variantDeviation.shouldOpenVariants,
-        puzzlesGenerated: 0,
-        puzzleFilePath: null,
-      };
-    }
-
-    const analysisId = `post_game_review_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const engineSettings = (selectedEngine.settings ?? []).map((setting) => ({
-      ...setting,
-      value: setting.value?.toString() ?? "",
-    }));
-
-    if (is960 && !engineSettings.some((option) => option.name === "UCI_Chess960")) {
-      engineSettings.push({ name: "UCI_Chess960", value: "true" });
-    }
-
-    let analysis: MoveAnalysis[];
+  if (moves.length > 0) {
     try {
-      const analyzed = await commands.analyzeGame(
-        analysisId,
-        selectedEngine.path,
-        { t: "Time", c: engineMsPerMove },
-        {
-          annotateNovelties: false,
-          fen: initialFen,
-          referenceDb: null,
-          reversed: false,
+      const variantReview = await invoke<PostGameReviewVariantsBackendResult>("post_game_review_variants", {
+        input: {
+          documentDir: variantsDir,
+          initialFen,
           moves,
+          humanColor: input.humanColor,
         },
-        engineSettings,
-      );
-      analysis = unwrap(analyzed);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reviewStatus = "analysis_failed";
-      return {
-        status: "error",
-        reason: "analysis_failed",
-        error: message,
-        engineName: selectedEngine.name,
-        engineMsPerMove,
-        dubiousCount: 0,
-        mistakeCount: 0,
-        blunderCount: 0,
-        variantDeviationDetected: variantDeviation.detected,
-        variantDeviationPly: variantDeviation.ply,
-        newLineAdded,
-        variantsBookPath,
-        variantsBookName,
-        addedVariantLine,
-        openVariantsAfterReview: variantDeviation.shouldOpenVariants,
-        puzzlesGenerated: 0,
-        puzzleFilePath: null,
+      });
+
+      variantDeviation = {
+        detected: variantReview.detected,
+        ply: normalizePly(variantReview.variantDeviationPly),
+        targetBookPath: null,
+        bookPath: variantReview.variantsBookPath,
+        shouldOpenVariants: variantReview.openVariantsAfterReview,
+        kind: variantReview.kind,
       };
+      newLineAdded = variantReview.newLineAdded;
+      variantsBookPath = variantReview.variantsBookPath;
+      variantsBookName = variantReview.variantsBookName;
+      addedVariantLine = variantReview.addedVariantLine;
+    } catch {
+      // Keep review flow resilient if backend variants command fails.
     }
+  }
 
-    const analyzedTree = cloneTreeState(input.headers, input.root);
-    addAnalysis(analyzedTree, analysis);
-
-    const issues = buildReviewIssues({
-      root: analyzedTree.root,
-      analysis,
-      humanColor: input.humanColor,
-      variantDeviationPly: variantDeviation.ply,
-    });
-
-    const dubiousCount = issues.filter((issue) => issue.quality === "dubious").length;
-    const mistakeCount = issues.filter((issue) => issue.quality === "mistake").length;
-    const blunderCount = issues.filter((issue) => issue.quality === "blunder").length;
-
-    let puzzleFilePath: string | null = null;
-    if (issues.length > 0) {
-      const puzzlePgn = buildPuzzlePgn(issues);
-      if (puzzlePgn.trim().length > 0) {
-        const dateTag = formatDateToPGN(new Date());
-        const stamp = String(Date.now()).slice(-6);
-        const modeTag = input.mode === "lichess" ? "lichess" : "local";
-        const fileName = sanitizeFileName(`post-game-puzzles-${modeTag}-${dateTag}-${stamp}`);
-
-        const created = await createFile({
-          filename: fileName,
-          filetype: "puzzle",
-          tags: [
-            "post-game-review",
-            input.mode === "lichess" ? "source:lichess" : "source:local",
-            input.profileId ? `profile:${input.profileId}` : "profile:none",
-            variantDeviation.detected ? "variant-deviation" : "",
-          ].filter(Boolean),
-          pgn: puzzlePgn,
-          dir: documentDir,
-        });
-
-        if (created.isOk) {
-          puzzleFilePath = created.value.path;
-        }
-      }
-    }
-
-    generatedPuzzles = issues.length;
-    reviewStatus = "ok";
+  if (!selectedEngine) {
     return {
-      status: "ok",
-      engineName: selectedEngine.name,
+      status: "skipped",
+      reason: "no_engine",
+      engineName: null,
       engineMsPerMove,
-      dubiousCount,
-      mistakeCount,
-      blunderCount,
+      dubiousCount: 0,
+      mistakeCount: 0,
+      blunderCount: 0,
       variantDeviationDetected: variantDeviation.detected,
       variantDeviationPly: variantDeviation.ply,
       newLineAdded,
@@ -1171,19 +1001,138 @@ export async function runPostGameAutoReview(input: PostGameReviewInput): Promise
       variantsBookName,
       addedVariantLine,
       openVariantsAfterReview: variantDeviation.shouldOpenVariants,
-      puzzlesGenerated: issues.length,
-      puzzleFilePath,
+      puzzlesGenerated: 0,
+      puzzleFilePath: null,
     };
-  } finally {
-    await finishPerfBaselineSpan(reviewSpan, {
-      status: reviewStatus,
-      mode: input.mode,
-      humanColor: input.humanColor ?? "none",
-      moves: moves.length,
-      engine: selectedEngine?.name ?? "none",
-      puzzlesGenerated: generatedPuzzles,
-      variantDeviationDetected: variantDeviation.detected,
-      variantDeviationPly: variantDeviation.ply ?? null,
-    });
   }
+
+  if (moves.length === 0) {
+    return {
+      status: "skipped",
+      reason: "no_moves",
+      engineName: selectedEngine.name,
+      engineMsPerMove,
+      dubiousCount: 0,
+      mistakeCount: 0,
+      blunderCount: 0,
+      variantDeviationDetected: variantDeviation.detected,
+      variantDeviationPly: variantDeviation.ply,
+      newLineAdded,
+      variantsBookPath,
+      variantsBookName,
+      addedVariantLine,
+      openVariantsAfterReview: variantDeviation.shouldOpenVariants,
+      puzzlesGenerated: 0,
+      puzzleFilePath: null,
+    };
+  }
+
+  const analysisId = `post_game_review_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const engineSettings = (selectedEngine.settings ?? []).map((setting) => ({
+    ...setting,
+    value: setting.value?.toString() ?? "",
+  }));
+
+  if (is960 && !engineSettings.some((option) => option.name === "UCI_Chess960")) {
+    engineSettings.push({ name: "UCI_Chess960", value: "true" });
+  }
+
+  let analysis: MoveAnalysis[];
+  try {
+    const analyzed = await commands.analyzeGame(
+      analysisId,
+      selectedEngine.path,
+      { t: "Time", c: engineMsPerMove },
+      {
+        annotateNovelties: false,
+        fen: initialFen,
+        referenceDb: null,
+        reversed: false,
+        moves,
+      },
+      engineSettings,
+    );
+    analysis = unwrap(analyzed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "error",
+      reason: "analysis_failed",
+      error: message,
+      engineName: selectedEngine.name,
+      engineMsPerMove,
+      dubiousCount: 0,
+      mistakeCount: 0,
+      blunderCount: 0,
+      variantDeviationDetected: variantDeviation.detected,
+      variantDeviationPly: variantDeviation.ply,
+      newLineAdded,
+      variantsBookPath,
+      variantsBookName,
+      addedVariantLine,
+      openVariantsAfterReview: variantDeviation.shouldOpenVariants,
+      puzzlesGenerated: 0,
+      puzzleFilePath: null,
+    };
+  }
+
+  const analyzedTree = cloneTreeState(input.headers, input.root);
+  addAnalysis(analyzedTree, analysis);
+
+  const issues = buildReviewIssues({
+    root: analyzedTree.root,
+    analysis,
+    humanColor: input.humanColor,
+    variantDeviationPly: variantDeviation.ply,
+  });
+
+  const dubiousCount = issues.filter((issue) => issue.quality === "dubious").length;
+  const mistakeCount = issues.filter((issue) => issue.quality === "mistake").length;
+  const blunderCount = issues.filter((issue) => issue.quality === "blunder").length;
+
+  let puzzleFilePath: string | null = null;
+  if (issues.length > 0) {
+    const puzzlePgn = buildPuzzlePgn(issues);
+    if (puzzlePgn.trim().length > 0) {
+      const dateTag = formatDateToPGN(new Date());
+      const stamp = String(Date.now()).slice(-6);
+      const modeTag = input.mode === "lichess" ? "lichess" : "local";
+      const fileName = sanitizeFileName(`post-game-puzzles-${modeTag}-${dateTag}-${stamp}`);
+
+      const created = await createFile({
+        filename: fileName,
+        filetype: "puzzle",
+        tags: [
+          "post-game-review",
+          input.mode === "lichess" ? "source:lichess" : "source:local",
+          input.profileId ? `profile:${input.profileId}` : "profile:none",
+          variantDeviation.detected ? "variant-deviation" : "",
+        ].filter(Boolean),
+        pgn: puzzlePgn,
+        dir: documentDir,
+      });
+
+      if (created.isOk) {
+        puzzleFilePath = created.value.path;
+      }
+    }
+  }
+
+  return {
+    status: "ok",
+    engineName: selectedEngine.name,
+    engineMsPerMove,
+    dubiousCount,
+    mistakeCount,
+    blunderCount,
+    variantDeviationDetected: variantDeviation.detected,
+    variantDeviationPly: variantDeviation.ply,
+    newLineAdded,
+    variantsBookPath,
+    variantsBookName,
+    addedVariantLine,
+    openVariantsAfterReview: variantDeviation.shouldOpenVariants,
+    puzzlesGenerated: issues.length,
+    puzzleFilePath,
+  };
 }

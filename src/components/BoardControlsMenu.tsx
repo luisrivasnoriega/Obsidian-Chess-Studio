@@ -19,6 +19,7 @@ import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { keyMapAtom } from "@/state/keybindings";
+import { formatHotkeyDisplay } from "@/utils/formatHotkey";
 
 interface BoardControlsMenuProps {
   viewPawnStructure?: boolean;
@@ -88,6 +89,9 @@ function BoardControlsMenu({
   const iconSize = isCompact ? "1.05rem" : "1.3rem";
   // Academia Maya accent (matches the tab highlight line)
   const accentColor = "#f9a825";
+  const saveShortcut = formatHotkeyDisplay(keyMap.SAVE_FILE.keys);
+  const copyPgnShortcut = formatHotkeyDisplay(keyMap.COPY_PGN.keys);
+  const swapOrientationShortcut = formatHotkeyDisplay(keyMap.SWAP_ORIENTATION.keys);
 
   // Define all menu items with their configurations
   const allMenuItems: MenuItemConfig[] = [
@@ -150,8 +154,8 @@ function BoardControlsMenu({
       condition: !!saveFile,
       icon: <IconDeviceFloppy size={iconSize} />,
       onClick: () => saveFile?.(),
-      label: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
-      tooltipLabel: t("features.board.actions.savePGN", { key: keyMap.SAVE_FILE.keys }),
+      label: t("features.board.actions.savePGN", { key: saveShortcut }),
+      tooltipLabel: t("features.board.actions.savePGN", { key: saveShortcut }),
       variant: (dirty && !autoSave ? "outline" : "default") as "default" | "outline",
     },
     {
@@ -159,8 +163,8 @@ function BoardControlsMenu({
       condition: !!copyPgn,
       icon: <IconShare size={iconSize} />,
       onClick: () => copyPgn?.(),
-      label: t("features.board.actions.sharePGN", { key: keyMap.COPY_PGN.keys }),
-      tooltipLabel: t("features.board.actions.sharePGN", { key: keyMap.COPY_PGN.keys }),
+      label: t("features.board.actions.sharePGN", { key: copyPgnShortcut }),
+      tooltipLabel: t("features.board.actions.sharePGN", { key: copyPgnShortcut }),
     },
     {
       id: "reload",
@@ -175,8 +179,8 @@ function BoardControlsMenu({
       condition: !!toggleOrientation,
       icon: <IconSwitchVertical size={iconSize} />,
       onClick: () => toggleOrientation?.(),
-      label: t("features.board.actions.flipBoard", { key: keyMap.SWAP_ORIENTATION.keys }),
-      tooltipLabel: t("features.board.actions.flipBoard", { key: keyMap.SWAP_ORIENTATION.keys }),
+      label: t("features.board.actions.flipBoard", { key: swapOrientationShortcut }),
+      tooltipLabel: t("features.board.actions.flipBoard", { key: swapOrientationShortcut }),
     },
   ];
 

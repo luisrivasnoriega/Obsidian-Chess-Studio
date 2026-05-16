@@ -292,7 +292,6 @@
       "help": "Aide",
       "documentation": "Documentation",
       "clearSavedData": "Supprimer les données sauvegardées",
-      "openLogs": "Ouvrir les logs",
       "checkUpdate": "Vérifier les mises à jour",
       "about": "À propos",
       "markAsStart": "Marquer comme début",
@@ -566,10 +565,6 @@
       "error": "Erreur",
       "errorOpeningGame": "Échec de l'ouverture de la partie",
       "analyzed": "Analysé",
-      "debug": "Débogage",
-      "debugPgns": "PGN de débogage",
-      "debugPgnsDescription": "PGN transmis à la fonction d'analyse :",
-      "noDebugPgns": "Aucun PGN de débogage disponible",
       "showing": "Affichage",
       "count": "Nombre",
       "maxGames": "Nombre max de parties",
@@ -1302,8 +1297,6 @@
       "errors": "Erreurs",
       "precacheCompleted": "Pré-cache terminé avec succès !"
     },
-    "telemetry": "Télémétrie",
-    "telemetryDesc": "Contribuez à améliorer Obsidian Chess Studio en partageant des données d'utilisation anonymes",
     "moveNotation": "Notation des coups",
     "moveNotationDesc": "Choisissez comment afficher les pièces dans la notation",
     "symbols": "Symboles (♔♕♖♗♘)",
@@ -1322,8 +1315,6 @@
     "system": "Système",
     "about": "À propos",
     "aboutDesc": "En savoir plus sur Obsidian Chess Studio",
-    "telemetryLoading": "Chargement des paramètres de télémétrie...",
-    "telemetryDetails": "Les données de télémétrie sont anonymes et nous aident à comprendre comment Obsidian Chess Studio est utilisé afin d'améliorer l'expérience. Nous ne collectons jamais d'informations personnelles ni le contenu des parties. Les données sont stockées de manière sécurisée via Supabase.",
     "pickValue": "Choisir une valeur",
     "pressAnyKey": "Appuyez sur une touche"
   },
@@ -1342,7 +1333,6 @@
   "error": {
     "title": "Une erreur s'est produite",
     "unexpectedError": "Erreur inattendue :",
-    "copyStackTrace": "Copier la trace de la pile",
     "reportPrompt": "Veuillez signaler cela sur",
     "reportOr": "ou sur le"
   },

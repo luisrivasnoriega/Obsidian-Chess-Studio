@@ -405,13 +405,14 @@ pub fn extract_game_stats(games: &[StatsData]) -> GameStats {
 // ============================================================================
 
 /// Aggregate openings statistics
-pub fn aggregate_openings(data: &[StatsData], color: bool /* true white, false black */) -> Vec<OpeningStats> {
+pub fn aggregate_openings(
+    data: &[StatsData],
+    color: bool, /* true white, false black */
+) -> Vec<OpeningStats> {
     let mut opening_map: HashMap<String, (usize, usize, usize)> = HashMap::new();
 
     for game in data.iter().filter(|d| d.is_player_white == color) {
-        let entry = opening_map
-            .entry(game.opening.clone())
-            .or_insert((0, 0, 0));
+        let entry = opening_map.entry(game.opening.clone()).or_insert((0, 0, 0));
         match game.result {
             GameOutcome::Won => entry.0 += 1,
             GameOutcome::Drawn => entry.1 += 1,
@@ -546,12 +547,7 @@ fn parse_date_to_timestamp(date: &str) -> Option<i64> {
     }
 
     let parsed = NaiveDate::from_ymd_opt(year, month, day)?;
-    Some(
-        parsed
-            .and_hms_opt(0, 0, 0)?
-            .and_utc()
-            .timestamp_millis(),
-    )
+    Some(parsed.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis())
 }
 
 fn parse_date_time_to_timestamp(date: &str, time: Option<&str>) -> Option<i64> {
@@ -741,8 +737,14 @@ fn get_time_control(site: &str, time_control: &str) -> TimeControlFilter {
 
     // Try to parse as numeric time control (e.g., "180+0", "300+3")
     let mut parts = tc.split('+');
-    let initial: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
-    let increment: f64 = parts.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.0);
+    let initial: f64 = parts
+        .next()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let increment: f64 = parts
+        .next()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .unwrap_or(0.0);
     if initial <= 0.0 && increment <= 0.0 {
         return TimeControlFilter::Any;
     }
@@ -783,7 +785,10 @@ fn format_elo(value: i32) -> String {
 }
 
 /// Filter games based on criteria
-pub fn filter_games(site_stats_data: &[SiteStatsData], filters: &PlayerStatsFilters) -> Vec<(StatsData, String)> {
+pub fn filter_games(
+    site_stats_data: &[SiteStatsData],
+    filters: &PlayerStatsFilters,
+) -> Vec<(StatsData, String)> {
     // Flatten all games with their site (owned return type)
     // Minor: avoid allocating Vecs inside flat_map.
     let mut games: Vec<(StatsData, String)> = Vec::new();
@@ -797,13 +802,17 @@ pub fn filter_games(site_stats_data: &[SiteStatsData], filters: &PlayerStatsFilt
     // Filter by platform
     match filters.platform {
         PlatformFilter::Lichess => games.retain(|(_, site)| normalize_platform(site) == "lichess"),
-        PlatformFilter::ChessCom => games.retain(|(_, site)| normalize_platform(site) == "chesscom"),
+        PlatformFilter::ChessCom => {
+            games.retain(|(_, site)| normalize_platform(site) == "chesscom")
+        }
         PlatformFilter::All => {}
     }
 
     // Filter by time control
     if !matches!(filters.time_control, TimeControlFilter::Any) {
-        games.retain(|(game, site)| get_time_control(site, &game.time_control) == filters.time_control);
+        games.retain(|(game, site)| {
+            get_time_control(site, &game.time_control) == filters.time_control
+        });
     }
 
     // Filter by opponent ELO bucket
@@ -891,7 +900,11 @@ pub fn compute_player_sidebar_model(site_stats_data: &[SiteStatsData]) -> Player
             continue;
         }
         let account = site.player.trim().to_string();
-        let account = if account.is_empty() { "(account)".to_string() } else { account };
+        let account = if account.is_empty() {
+            "(account)".to_string()
+        } else {
+            account
+        };
 
         for game in &site.data {
             let tc = get_time_control(&site.site, &game.time_control);
@@ -1072,10 +1085,42 @@ mod tests {
                 "Lichess",
                 "Luis",
                 vec![
-                    game("2024-01-01", GameOutcome::Won, true, "A", "blitz", 1500, Some(1199)),
-                    game("2024-01-02", GameOutcome::Won, true, "A", "blitz", 1500, Some(1200)),
-                    game("2024-01-03", GameOutcome::Won, true, "A", "blitz", 1500, Some(1399)),
-                    game("2024-01-04", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400)),
+                    game(
+                        "2024-01-01",
+                        GameOutcome::Won,
+                        true,
+                        "A",
+                        "blitz",
+                        1500,
+                        Some(1199),
+                    ),
+                    game(
+                        "2024-01-02",
+                        GameOutcome::Won,
+                        true,
+                        "A",
+                        "blitz",
+                        1500,
+                        Some(1200),
+                    ),
+                    game(
+                        "2024-01-03",
+                        GameOutcome::Won,
+                        true,
+                        "A",
+                        "blitz",
+                        1500,
+                        Some(1399),
+                    ),
+                    game(
+                        "2024-01-04",
+                        GameOutcome::Won,
+                        true,
+                        "A",
+                        "blitz",
+                        1500,
+                        Some(1400),
+                    ),
                 ],
             ),
             site(
@@ -1219,10 +1264,42 @@ mod tests {
     #[test]
     fn test_extract_game_stats_counts_and_unknown_dates() {
         let games = vec![
-            game("2024-01-01", GameOutcome::Won, true, "Ruy", "blitz", 1500, Some(1500)),
-            game("2024-01-12", GameOutcome::Drawn, true, "Ruy", "blitz", 1500, Some(1500)),
-            game("2024-02-01", GameOutcome::Lost, true, "Ruy", "blitz", 1500, Some(1500)),
-            game("unknown-date", GameOutcome::Lost, true, "Ruy", "blitz", 1500, Some(1500)),
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1500),
+            ),
+            game(
+                "2024-01-12",
+                GameOutcome::Drawn,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1500),
+            ),
+            game(
+                "2024-02-01",
+                GameOutcome::Lost,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1500),
+            ),
+            game(
+                "unknown-date",
+                GameOutcome::Lost,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1500),
+            ),
         ];
 
         let stats = extract_game_stats(&games);
@@ -1232,7 +1309,11 @@ mod tests {
         assert_eq!(stats.lost, 2);
         assert_eq!(stats.unknown_count, 1);
 
-        let mut keys: Vec<String> = stats.data_per_month.iter().map(|m| m.name.clone()).collect();
+        let mut keys: Vec<String> = stats
+            .data_per_month
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
         keys.sort();
         assert_eq!(keys, vec!["2024-01".to_string(), "2024-02".to_string()]);
     }
@@ -1244,14 +1325,47 @@ mod tests {
     #[test]
     fn test_aggregate_openings_by_color() {
         let data = vec![
-            game("2024-01-01", GameOutcome::Won, true, "Ruy", "blitz", 1500, Some(1400)),
-            game("2024-01-02", GameOutcome::Lost, true, "Ruy", "blitz", 1500, Some(1400)),
-            game("2024-01-03", GameOutcome::Drawn, true, "Italian", "blitz", 1500, Some(1400)),
-            game("2024-01-04", GameOutcome::Won, false, "Sicilian", "blitz", 1500, Some(1400)),
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-02",
+                GameOutcome::Lost,
+                true,
+                "Ruy",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-03",
+                GameOutcome::Drawn,
+                true,
+                "Italian",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-04",
+                GameOutcome::Won,
+                false,
+                "Sicilian",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
         ];
 
         let white = aggregate_openings(&data, true);
-        let mut map: HashMap<String, OpeningStats> = white.into_iter().map(|o| (o.name.clone(), o)).collect();
+        let mut map: HashMap<String, OpeningStats> =
+            white.into_iter().map(|o| (o.name.clone(), o)).collect();
 
         let ruy = map.remove("Ruy").unwrap();
         assert_eq!(ruy.games, 2);
@@ -1292,9 +1406,27 @@ mod tests {
     #[test]
     fn test_sort_openings_default_by_games_desc() {
         let mut v = vec![
-            OpeningStats { name: "A".into(), games: 2, won: 2, draw: 0, lost: 0 },
-            OpeningStats { name: "B".into(), games: 5, won: 0, draw: 5, lost: 0 },
-            OpeningStats { name: "C".into(), games: 1, won: 1, draw: 0, lost: 0 },
+            OpeningStats {
+                name: "A".into(),
+                games: 2,
+                won: 2,
+                draw: 0,
+                lost: 0,
+            },
+            OpeningStats {
+                name: "B".into(),
+                games: 5,
+                won: 0,
+                draw: 5,
+                lost: 0,
+            },
+            OpeningStats {
+                name: "C".into(),
+                games: 1,
+                won: 1,
+                draw: 0,
+                lost: 0,
+            },
         ];
         sort_openings(&mut v, "anything");
         assert_eq!(v[0].name, "B");
@@ -1305,9 +1437,27 @@ mod tests {
     #[test]
     fn test_sort_openings_by_score_desc() {
         let mut v = vec![
-            OpeningStats { name: "A".into(), games: 2, won: 0, draw: 2, lost: 0 }, // 0.5
-            OpeningStats { name: "B".into(), games: 3, won: 3, draw: 0, lost: 0 }, // 1.0
-            OpeningStats { name: "C".into(), games: 4, won: 0, draw: 0, lost: 4 }, // 0.0
+            OpeningStats {
+                name: "A".into(),
+                games: 2,
+                won: 0,
+                draw: 2,
+                lost: 0,
+            }, // 0.5
+            OpeningStats {
+                name: "B".into(),
+                games: 3,
+                won: 3,
+                draw: 0,
+                lost: 0,
+            }, // 1.0
+            OpeningStats {
+                name: "C".into(),
+                games: 4,
+                won: 0,
+                draw: 0,
+                lost: 4,
+            }, // 0.0
         ];
         sort_openings(&mut v, "score_desc");
         assert_eq!(v[0].name, "B");
@@ -1321,9 +1471,33 @@ mod tests {
     #[test]
     fn test_calculate_rating_timeline_keeps_max_rating_per_day() {
         let games = vec![
-            game("2024-01-01", GameOutcome::Won, true, "X", "blitz", 1500, Some(1400)),
-            game("2024-01-01", GameOutcome::Won, true, "X", "blitz", 1550, Some(1400)),
-            game("2024-01-02", GameOutcome::Won, true, "X", "blitz", 1520, Some(1400)),
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "X",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "X",
+                "blitz",
+                1550,
+                Some(1400),
+            ),
+            game(
+                "2024-01-02",
+                GameOutcome::Won,
+                true,
+                "X",
+                "blitz",
+                1520,
+                Some(1400),
+            ),
         ];
 
         let tl = calculate_rating_timeline(&games, "lichess.org");
@@ -1339,8 +1513,16 @@ mod tests {
     fn test_calculate_elo_domain_rounds_to_50() {
         let series = RatingTimeline {
             data: vec![
-                RatingDataPoint { date: 1, chesscom: Some(1201), lichess: None },
-                RatingDataPoint { date: 2, chesscom: Some(1279), lichess: Some(1302) },
+                RatingDataPoint {
+                    date: 1,
+                    chesscom: Some(1201),
+                    lichess: None,
+                },
+                RatingDataPoint {
+                    date: 2,
+                    chesscom: Some(1279),
+                    lichess: Some(1302),
+                },
             ],
             dates: vec![1, 2],
             platforms: vec![],
@@ -1357,8 +1539,24 @@ mod tests {
 
     #[test]
     fn test_filter_games_platform() {
-        let lichess_games = vec![game("2024-01-01", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400))];
-        let chesscom_games = vec![game("2024-01-02", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400))];
+        let lichess_games = vec![game(
+            "2024-01-01",
+            GameOutcome::Won,
+            true,
+            "A",
+            "blitz",
+            1500,
+            Some(1400),
+        )];
+        let chesscom_games = vec![game(
+            "2024-01-02",
+            GameOutcome::Won,
+            true,
+            "A",
+            "blitz",
+            1500,
+            Some(1400),
+        )];
 
         let site_stats = vec![
             site("Lichess.org", "Luis", lichess_games),
@@ -1383,9 +1581,33 @@ mod tests {
             "Lichess",
             "Luis",
             vec![
-                game("2024-01-01", GameOutcome::Won, true, "A", "bullet", 1500, Some(1400)),
-                game("2024-01-02", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400)),
-                game("2024-01-03", GameOutcome::Won, true, "A", "rapid", 1500, Some(1400)),
+                game(
+                    "2024-01-01",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "bullet",
+                    1500,
+                    Some(1400),
+                ),
+                game(
+                    "2024-01-02",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1400),
+                ),
+                game(
+                    "2024-01-03",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "rapid",
+                    1500,
+                    Some(1400),
+                ),
             ],
         )];
 
@@ -1407,10 +1629,42 @@ mod tests {
             "Lichess",
             "Luis",
             vec![
-                game("2024-01-01", GameOutcome::Won, true, "A", "blitz", 1500, Some(1199)),
-                game("2024-01-02", GameOutcome::Won, true, "A", "blitz", 1500, Some(1200)),
-                game("2024-01-03", GameOutcome::Won, true, "A", "blitz", 1500, Some(1399)),
-                game("2024-01-04", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400)),
+                game(
+                    "2024-01-01",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1199),
+                ),
+                game(
+                    "2024-01-02",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1200),
+                ),
+                game(
+                    "2024-01-03",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1399),
+                ),
+                game(
+                    "2024-01-04",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1400),
+                ),
             ],
         )];
 
@@ -1435,8 +1689,24 @@ mod tests {
             "Lichess",
             "Luis",
             vec![
-                game("2024-01-01", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400)),
-                game("2024-01-20", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400)),
+                game(
+                    "2024-01-01",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1400),
+                ),
+                game(
+                    "2024-01-20",
+                    GameOutcome::Won,
+                    true,
+                    "A",
+                    "blitz",
+                    1500,
+                    Some(1400),
+                ),
             ],
         )];
 
@@ -1461,17 +1731,41 @@ mod tests {
         let a1 = site(
             "Lichess",
             "Luis",
-            vec![game("2024-01-01", GameOutcome::Won, true, "A", "blitz", 1500, Some(1400))],
+            vec![game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "A",
+                "blitz",
+                1500,
+                Some(1400),
+            )],
         );
         let a2 = site(
             "Lichess",
             "Luis",
-            vec![game("2024-01-02", GameOutcome::Lost, true, "A", "blitz", 1500, Some(1400))],
+            vec![game(
+                "2024-01-02",
+                GameOutcome::Lost,
+                true,
+                "A",
+                "blitz",
+                1500,
+                Some(1400),
+            )],
         );
         let b = site(
             "Chess.com",
             "Luis",
-            vec![game("2024-01-03", GameOutcome::Drawn, true, "A", "blitz", 1500, Some(1400))],
+            vec![game(
+                "2024-01-03",
+                GameOutcome::Drawn,
+                true,
+                "A",
+                "blitz",
+                1500,
+                Some(1400),
+            )],
         );
 
         let merged = merge_site_stats_data(&[a1, a2, b]);

@@ -5,7 +5,6 @@ import { notifications } from "@mantine/notifications";
 import { Spotlight, spotlight } from "@mantine/spotlight";
 import { createRootRouteWithContext, Outlet, useNavigate } from "@tanstack/react-router";
 import { Menu } from "@tauri-apps/api/menu";
-import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { ask, message, open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -35,7 +34,6 @@ import { downloadApkToTemp, openApkInstaller } from "@/services/apk-updater";
 import { checkForUpdates as checkForUpdatesService } from "@/services/version-checker";
 import { keyMapAtom } from "@/state/keybindings";
 import type { Dirs } from "@/types/dirs";
-import { debugNavLog, debugNavLogPaths } from "@/utils/debugNav";
 import { openFile } from "@/utils/files";
 import { formatHotkeyDisplay } from "@/utils/formatHotkey";
 import { createTab, tabSchema } from "@/utils/tabs";
@@ -58,12 +56,6 @@ const CLIPBOARD_OPERATIONS = {
   COPY: "copy",
   PASTE: "paste",
   SELECT_ALL: "selectAll",
-} as const;
-
-const APP_CONSTANTS = {
-  NAVBAR_WIDTH: "3rem",
-  HEADER_HEIGHT: "35px",
-  LOG_FILENAME: "obsidian-chess-studio.log",
 } as const;
 
 const isInputElement = (element: Element): element is HTMLInputElement | HTMLTextAreaElement => {
@@ -192,30 +184,6 @@ function MainRootLayout() {
       } catch {}
     }
   }, [navigate, setActiveTab, setTabs]);
-
-  useEffect(() => {
-    void debugNavLogPaths();
-
-    const onError = (event: ErrorEvent) => {
-      debugNavLog("window.error", {
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-      });
-    };
-
-    const onRejection = (event: PromiseRejectionEvent) => {
-      debugNavLog("unhandledrejection", event.reason);
-    };
-
-    window.addEventListener("error", onError);
-    window.addEventListener("unhandledrejection", onRejection);
-    return () => {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onRejection);
-    };
-  }, []);
 
   const openNewFile = useCallback(async () => {
     try {
@@ -481,6 +449,7 @@ function MainRootLayout() {
             }
           },
         ],
+        [keyMap.GO_TO_EVENTS.keys, () => navigate({ to: "/events" })],
         // Navigation - Primary Actions
         [
           keyMap.PLAY_BOARD.keys,
@@ -522,6 +491,8 @@ function MainRootLayout() {
         [keyMap.GO_TO_DATABASES.keys, () => navigate({ to: "/databases" })],
         [keyMap.GO_TO_ENGINES.keys, () => navigate({ to: "/engines" })],
         [keyMap.GO_TO_FILES.keys, () => navigate({ to: "/files" })],
+        [keyMap.GO_TO_VARIANTS.keys, () => navigate({ to: "/variants" })],
+        [keyMap.GO_TO_CHESSBASE.keys, () => navigate({ to: "/chessbase" })],
         // Navigation - Tertiary Section
         [keyMap.GO_TO_TOURNAMENTS.keys, () => navigate({ to: "/tournaments" })],
         [
@@ -570,27 +541,6 @@ function MainRootLayout() {
     }
   }, [t]);
 
-  const handleOpenLogs = useCallback(async () => {
-    try {
-      const appData = await appDataDir();
-      const logDir = await resolve(appData, "logs");
-      const logPath = await resolve(logDir, APP_CONSTANTS.LOG_FILENAME);
-
-      notifications.show({
-        title: t("notifications.openingLogs"),
-        message: t("notifications.logFilePath", { path: logPath }),
-      });
-
-      await openPath(logPath);
-    } catch {
-      notifications.show({
-        title: t("common.error"),
-        message: t("notifications.failedToOpenLogFile"),
-        color: "red",
-      });
-    }
-  }, [t]);
-
   const handleAbout = useCallback(() => {
     modals.openContextModal({
       modal: "aboutModal",
@@ -598,6 +548,85 @@ function MainRootLayout() {
       innerProps: {},
     });
   }, [t]);
+
+  const handleReportIssue = useCallback(async () => {
+    await openPath("https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/issues/new/choose");
+  }, []);
+
+  const openRouteTab = useCallback(
+    async (route: string, name: string) => {
+      const existing = tabs.find((tab) => tab.route === route);
+      if (existing) {
+        setActiveTab(existing.value);
+        try {
+          navigate({ to: route as never });
+        } catch {}
+        return;
+      }
+
+      await createTab({
+        tab: { name, type: "route", route },
+        setTabs,
+        setActiveTab,
+      });
+
+      requestAnimationFrame(() => {
+        try {
+          navigate({ to: route as never });
+        } catch {}
+      });
+    },
+    [navigate, setActiveTab, setTabs, tabs],
+  );
+
+  const openProfilesPage = useCallback(async () => {
+    const existingProfileTab = tabs.find((tab) => tab.type === "profiles");
+    if (existingProfileTab) {
+      setActiveTab(existingProfileTab.value);
+      navigate({ to: "/profiles" });
+      return;
+    }
+
+    await createTab({
+      tab: { name: t("profiles.title", { defaultValue: "Profiles" }), type: "profiles" },
+      setTabs,
+      setActiveTab,
+    });
+
+    requestAnimationFrame(() => {
+      navigate({ to: "/profiles" });
+    });
+  }, [navigate, setActiveTab, setTabs, t, tabs]);
+
+  const openPlayBoard = useCallback(() => {
+    navigate({ to: "/play" });
+    createTab({
+      tab: { name: t("features.tabs.playBoard.title"), type: "play" },
+      setTabs,
+      setActiveTab,
+    });
+  }, [navigate, setActiveTab, setTabs, t]);
+
+  const openAnalysisBoard = useCallback(() => {
+    navigate({ to: "/analysis" });
+    createTab({
+      tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
+      setTabs,
+      setActiveTab,
+      initialAnalysisTab: "analysis",
+      initialAnalysisSubTab: "report",
+      initialNotationView: "report" as const,
+    });
+  }, [navigate, setActiveTab, setTabs, t]);
+
+  const openPuzzlesBoard = useCallback(() => {
+    navigate({ to: "/puzzles" });
+    createTab({
+      tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
+      setTabs,
+      setActiveTab,
+    });
+  }, [navigate, setActiveTab, setTabs, t]);
 
   const handleCloseTab = useCallback(() => {
     void closeTab(activeTab);
@@ -629,6 +658,33 @@ function MainRootLayout() {
     } catch {}
   }, []);
 
+  const menuHotkeyBindings = useMemo(
+    () =>
+      [
+        [keyMap.ABOUT.keys, handleAbout],
+        [keyMap.CHECK_FOR_UPDATES.keys, checkForUpdates],
+        [keyMap.REPORT_ISSUE.keys, handleReportIssue],
+        [keyMap.CLEAR_SAVED_DATA.keys, handleClearData],
+        [keyMap.CLOSE_BOARD_TAB.keys, handleCloseTab],
+        [keyMap.CLOSE_ALL_TABS.keys, handleCloseAllTabs],
+        [keyMap.MINIMIZE_WINDOW.keys, handleMinimizeWindow],
+        [keyMap.TOGGLE_MAXIMIZE_WINDOW.keys, handleToggleMaximize],
+      ] as HotkeyItem[],
+    [
+      keyMap,
+      handleAbout,
+      checkForUpdates,
+      handleReportIssue,
+      handleClearData,
+      handleCloseTab,
+      handleCloseAllTabs,
+      handleMinimizeWindow,
+      handleToggleMaximize,
+    ],
+  );
+
+  useHotkeys(menuHotkeyBindings);
+
   const menuActions: MenuGroup[] = useMemo(
     () => [
       {
@@ -637,19 +693,22 @@ function MainRootLayout() {
           {
             label: t("features.menu.about"),
             id: "about",
+            shortcut: formatHotkeyDisplay(keyMap.ABOUT.keys),
             action: handleAbout,
           },
           { label: "divider" },
           {
             label: t("features.menu.checkUpdate"),
             id: "check_for_updates",
+            shortcut: formatHotkeyDisplay(keyMap.CHECK_FOR_UPDATES.keys),
             action: checkForUpdates,
           },
           { label: "divider" },
           {
             label: t("features.menu.settings"),
             id: "settings",
-            action: () => navigate({ to: "/settings" }),
+            shortcut: formatHotkeyDisplay(keyMap.OPEN_SETTINGS.keys),
+            action: () => void openRouteTab("/settings", t("features.sidebar.settings")),
           },
           { label: "divider" },
           {
@@ -664,112 +723,22 @@ function MainRootLayout() {
         label: t("features.menu.file"),
         options: [
           {
-            label: t("features.menu.newTab"),
-            id: "new_tab",
-            shortcut: formatHotkeyDisplay(keyMap.NEW_BOARD_TAB.keys),
-            action: createNewTab,
-          },
-          {
             label: t("features.menu.newPlayBoard"),
             id: "new_play_board",
             shortcut: formatHotkeyDisplay(keyMap.PLAY_BOARD.keys),
-            action: () => {
-              navigate({ to: "/play" });
-              createTab({
-                tab: { name: "Play", type: "play" },
-                setTabs,
-                setActiveTab,
-              });
-            },
+            action: openPlayBoard,
           },
           {
             label: t("features.menu.newAnalysisBoard"),
             id: "new_analysis_board",
             shortcut: formatHotkeyDisplay(keyMap.ANALYZE_BOARD.keys),
-            action: () => {
-              navigate({ to: "/analysis" });
-              createTab({
-                tab: { name: t("features.tabs.analysisBoard.title"), type: "analysis" },
-                setTabs,
-                setActiveTab,
-                initialAnalysisTab: "analysis",
-                initialAnalysisSubTab: "report",
-                initialNotationView: "report" as const,
-              });
-            },
+            action: openAnalysisBoard,
           },
           {
             label: t("features.tabs.puzzle.title"),
             id: "new_puzzles_board",
             shortcut: formatHotkeyDisplay(keyMap.TRAIN_BOARD.keys),
-            action: () => {
-              navigate({ to: "/puzzles" });
-              createTab({
-                tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
-                setTabs,
-                setActiveTab,
-              });
-            },
-          },
-          { label: "divider" },
-          {
-            label: t("features.menu.openFile"),
-            id: "open_file",
-            shortcut: formatHotkeyDisplay(keyMap.OPEN_FILE.keys),
-            action: openNewFile,
-          },
-          {
-            label: t("features.menu.importPgn"),
-            id: "import_pgn",
-            shortcut: formatHotkeyDisplay(keyMap.IMPORT_BOARD.keys),
-            action: () => {
-              navigate({ to: "/analysis" });
-              modals.openContextModal({
-                modal: "importModal",
-                innerProps: {},
-              });
-            },
-          },
-        ],
-      },
-      {
-        label: t("features.menu.edit"),
-        options: [
-          {
-            label: t("features.menu.undo"),
-            id: "undo",
-            action: () => {
-              document.execCommand("undo");
-            },
-          },
-          {
-            label: t("features.menu.redo"),
-            id: "redo",
-            action: () => {
-              document.execCommand("redo");
-            },
-          },
-          { label: "divider" },
-          {
-            label: t("features.menu.cut"),
-            id: "cut",
-            action: handleCut,
-          },
-          {
-            label: t("features.menu.copy"),
-            id: "copy",
-            action: handleCopy,
-          },
-          {
-            label: t("features.menu.paste"),
-            id: "paste",
-            action: handlePaste,
-          },
-          { label: "divider" },
-          {
-            label: t("features.menu.selectAll"),
-            id: "select_all",
-            action: handleSelectAll,
+            action: openPuzzlesBoard,
           },
         ],
       },
@@ -789,11 +758,6 @@ function MainRootLayout() {
             shortcut: formatHotkeyDisplay(keyMap.APP_RELOAD.keys),
             action: () => location.reload(),
           },
-          {
-            label: t("features.menu.forceReload"),
-            id: "force_reload",
-            action: () => location.reload(),
-          },
         ],
       },
       {
@@ -802,39 +766,89 @@ function MainRootLayout() {
           {
             label: t("features.menu.goToDashboard"),
             id: "go_dashboard",
-            action: () => navigate({ to: "/" }),
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_DASHBOARD.keys),
+            action: () => void openRouteTab("/", t("features.sidebar.dashboard")),
           },
           {
-            label: t("features.menu.goToBoards"),
-            id: "go_boards",
-            action: () => navigate({ to: "/analysis" }),
+            label: t("features.sidebar.profiles"),
+            id: "go_profiles",
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_PROFILES.keys),
+            action: () => void openProfilesPage(),
           },
+          {
+            label: t("features.sidebar.events"),
+            id: "go_events",
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_EVENTS.keys),
+            action: () => void openRouteTab("/events", t("features.sidebar.events")),
+          },
+          { label: "divider" },
+          {
+            label: t("features.menu.newPlayBoard"),
+            id: "go_play_board",
+            shortcut: formatHotkeyDisplay(keyMap.PLAY_BOARD.keys),
+            action: openPlayBoard,
+          },
+          {
+            label: t("features.menu.newAnalysisBoard"),
+            id: "go_analysis_board",
+            shortcut: formatHotkeyDisplay(keyMap.ANALYZE_BOARD.keys),
+            action: openAnalysisBoard,
+          },
+          {
+            label: t("features.tabs.puzzle.title"),
+            id: "go_puzzles",
+            shortcut: formatHotkeyDisplay(keyMap.TRAIN_BOARD.keys),
+            action: openPuzzlesBoard,
+          },
+          { label: "divider" },
           {
             label: t("features.menu.goToFiles"),
             id: "go_files",
-            action: () => navigate({ to: "/files" }),
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_FILES.keys),
+            action: () => void openRouteTab("/files", t("features.sidebar.files")),
           },
           {
             label: t("features.menu.goToDatabases"),
             id: "go_databases",
-            action: () => navigate({ to: "/databases" }),
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_DATABASES.keys),
+            action: () => void openRouteTab("/databases", t("features.sidebar.databases")),
           },
           {
             label: t("features.menu.goToEngines"),
             id: "go_engines",
-            action: () => navigate({ to: "/engines" }),
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_ENGINES.keys),
+            action: () => void openRouteTab("/engines", t("features.sidebar.engines")),
+          },
+          {
+            label: t("features.sidebar.variants"),
+            id: "go_variants",
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_VARIANTS.keys),
+            action: () => void openRouteTab("/variants", t("features.sidebar.variants")),
+          },
+          {
+            label: t("features.sidebar.chessbase"),
+            id: "go_chessbase",
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_CHESSBASE.keys),
+            action: () => void openRouteTab("/chessbase", t("features.sidebar.chessbase")),
+          },
+          {
+            label: t("features.sidebar.tournaments"),
+            id: "go_tournaments",
+            shortcut: formatHotkeyDisplay(keyMap.GO_TO_TOURNAMENTS.keys),
+            action: () => void openRouteTab("/tournaments", t("features.sidebar.tournaments")),
           },
           { label: "divider" },
           {
             label: t("features.menu.goToSettings"),
             id: "go_settings",
-            action: () => navigate({ to: "/settings" }),
+            shortcut: formatHotkeyDisplay(keyMap.OPEN_SETTINGS.keys),
+            action: () => void openRouteTab("/settings", t("features.sidebar.settings")),
           },
           {
             label: t("features.menu.goToKeyboardShortcuts"),
             id: "go_keyboard_shortcuts",
             shortcut: formatHotkeyDisplay(keyMap.SHOW_KEYBINDINGS.keys),
-            action: () => navigate({ to: "/settings/keyboard-shortcuts" }),
+            action: () => void openRouteTab("/settings/keyboard-shortcuts", t("features.sidebar.keyboardShortcuts")),
           },
         ],
       },
@@ -844,22 +858,26 @@ function MainRootLayout() {
           {
             label: t("features.menu.minimize"),
             id: "minimize",
+            shortcut: formatHotkeyDisplay(keyMap.MINIMIZE_WINDOW.keys),
             action: handleMinimizeWindow,
           },
           {
             label: t("features.menu.zoom"),
             id: "zoom",
+            shortcut: formatHotkeyDisplay(keyMap.TOGGLE_MAXIMIZE_WINDOW.keys),
             action: handleToggleMaximize,
           },
           { label: "divider" },
           {
             label: t("features.menu.closeTab"),
             id: "close_tab",
+            shortcut: formatHotkeyDisplay(keyMap.CLOSE_BOARD_TAB.keys),
             action: handleCloseTab,
           },
           {
             label: t("features.menu.closeAllTabs"),
             id: "close_all_tabs",
+            shortcut: formatHotkeyDisplay(keyMap.CLOSE_ALL_TABS.keys),
             action: handleCloseAllTabs,
           },
         ],
@@ -870,20 +888,15 @@ function MainRootLayout() {
           {
             label: t("features.menu.reportIssue"),
             id: "report_issue",
-            action: async () => {
-              await openPath("https://github.com/luisrivasnoriega/Obsidian-Chess-Studio/issues/new/choose");
-            },
+            shortcut: formatHotkeyDisplay(keyMap.REPORT_ISSUE.keys),
+            action: handleReportIssue,
           },
           { label: "divider" },
           {
             label: t("features.menu.clearSavedData"),
             id: "clear_saved_data",
+            shortcut: formatHotkeyDisplay(keyMap.CLEAR_SAVED_DATA.keys),
             action: handleClearData,
-          },
-          {
-            label: t("features.menu.openLogs"),
-            id: "logs",
-            action: handleOpenLogs,
           },
         ],
       },
@@ -891,19 +904,15 @@ function MainRootLayout() {
     [
       t,
       keyMap,
-      createNewTab,
-      openNewFile,
+      openRouteTab,
+      openProfilesPage,
+      openPlayBoard,
+      openAnalysisBoard,
+      openPuzzlesBoard,
       handleClearData,
-      handleOpenLogs,
       checkForUpdates,
       handleAbout,
-      navigate,
-      setTabs,
-      setActiveTab,
-      handleCut,
-      handleCopy,
-      handlePaste,
-      handleSelectAll,
+      handleReportIssue,
       handleCloseTab,
       handleCloseAllTabs,
       handleMinimizeWindow,

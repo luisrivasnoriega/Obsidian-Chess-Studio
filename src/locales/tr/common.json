@@ -295,7 +295,6 @@
       "help": "Yardım",
       "documentation": "Dokümantasyon",
       "clearSavedData": "Kaydedilmiş veriyi sil",
-      "openLogs": "Kayıtları Aç",
       "checkUpdate": "Güncellemeleri kontrol et",
       "about": "Hakkında",
       "markAsStart": "Başlangıç olarak işaretle",
@@ -585,10 +584,6 @@
       "error": "Hata",
       "errorOpeningGame": "Oyun açılamadı",
       "analyzed": "Analiz edildi",
-      "debug": "Hata ayıklama",
-      "debugPgns": "Hata Ayıklama PGN'leri",
-      "debugPgnsDescription": "Analiz fonksiyonuna verilen PGN'ler:",
-      "noDebugPgns": "Hata ayıklama PGN'i yok",
       "showing": "Gösteriliyor",
       "count": "Sayı",
       "maxGames": "Maks oyun",
@@ -866,8 +861,6 @@
       "precacheCompleted": "Ön önbelleğe alma başarıyla tamamlandı!"
     },
 
-    "telemetry": "Telemetri",
-    "telemetryDesc": "Anonim kullanım verilerini paylaşarak OCS'in geliştirilmesine yardımcı olun",
     "moveNotation": "Hamle gösterimi",
     "moveNotationDesc": "Taşların gösterim biçimini seçin",
     "symbols": "Semboller (♔♕♖♗♘)",
@@ -886,8 +879,6 @@
     "system": "Sistem",
     "about": "Hakkında",
     "aboutDesc": "Obsidian Chess Studio hakkında daha fazla bilgi edinin",
-    "telemetryLoading": "Telemetri ayarları yükleniyor...",
-    "telemetryDetails": "Telemetri verileri anonimdir ve Obsidian Chess Studio'nun kullanımını anlamamıza yardımcı olarak deneyimi iyileştirir. Kişisel bilgi veya oyun içeriği asla toplanmaz. Veriler Supabase kullanılarak güvenli şekilde saklanır.",
     "pickValue": "Değer seç",
     "pressAnyKey": "Herhangi bir tuşa basın"
   },
@@ -908,7 +899,6 @@
   "error": {
     "title": "Bir hata oluştu",
     "unexpectedError": "Beklenmeyen hata:",
-    "copyStackTrace": "Yığın izini kopyala",
     "reportPrompt": "Lütfen bunu şurada bildirin",
     "reportOr": "veya"
   },

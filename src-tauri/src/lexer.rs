@@ -160,10 +160,14 @@ mod tests {
         let tokens = tauri::async_runtime::block_on(lex_pgn(pgn.to_string())).unwrap();
 
         // comment captured
-        assert!(tokens.iter().any(|t| matches!(t, Token::Comment(c) if c == "hello world")));
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(t, Token::Comment(c) if c == "hello world")));
 
         // NAG captured (format is usually "$1")
-        assert!(tokens.iter().any(|t| matches!(t, Token::Nag(n) if !n.is_empty())));
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(t, Token::Nag(n) if !n.is_empty())));
 
         // moves present
         let sans = all_sans(&tokens);
@@ -189,8 +193,14 @@ mod tests {
         assert!(contains_token(&tokens, &Token::ParenClose));
 
         // order sanity: open before close
-        let open_idx = tokens.iter().position(|t| matches!(t, Token::ParenOpen)).unwrap();
-        let close_idx = tokens.iter().position(|t| matches!(t, Token::ParenClose)).unwrap();
+        let open_idx = tokens
+            .iter()
+            .position(|t| matches!(t, Token::ParenOpen))
+            .unwrap();
+        let close_idx = tokens
+            .iter()
+            .position(|t| matches!(t, Token::ParenClose))
+            .unwrap();
         assert!(open_idx < close_idx);
 
         // SAN order typically: e4, c5, e5

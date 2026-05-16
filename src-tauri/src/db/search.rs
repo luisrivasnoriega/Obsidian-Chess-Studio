@@ -14,9 +14,9 @@
 //! is absent or unreliable.
 
 use dashmap::{mapref::entry::Entry, DashMap};
+use diesel::dsl::max;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use diesel::dsl::max;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::ByColor;
@@ -32,7 +32,6 @@ use std::{
         Arc, Mutex,
     },
 };
-use std::time::Instant;
 use tauri::Emitter;
 
 use crate::{
@@ -67,12 +66,7 @@ const ENABLE_AUX_INDEXES: bool = true;
 const ENABLE_CHECKPOINT_TABLE_SCHEMA: bool = true;
 
 /// Checkpoint stride (every N plies).
-#[allow(dead_code)]
 const CHECKPOINT_STRIDE: usize = 8;
-
-fn should_log_search_timing(tab_id: &str) -> bool {
-    !tab_id.starts_with("variants-coverage")
-}
 
 /// ============================================================================
 /// ONLINE database detection
@@ -351,14 +345,14 @@ impl PositionQuery {
                 "Invalid FEN: expected exactly 6 fields (piece, turn, castling, ep, halfmove, fullmove)",
             )));
         }
-    
+
         let _piece_placement = parts[0];
         let turn = parts[1];
         let castling = parts[2];
         let ep = parts[3];
         let halfmove = parts[4];
         let fullmove = parts[5];
-    
+
         // Side to move: must be "w" or "b"
         if turn != "w" && turn != "b" {
             return Err(Error::IoError(std::io::Error::new(
@@ -366,7 +360,7 @@ impl PositionQuery {
                 "Invalid FEN: side to move must be 'w' or 'b'",
             )));
         }
-    
+
         // Castling rights:
         // - Standard: KQkq
         // - Chess960: can include rook file letters A-H / a-h (depending on encoding)
@@ -385,7 +379,7 @@ impl PositionQuery {
                     "Invalid FEN: castling field cannot mix '-' with other symbols",
                 )));
             }
-    
+
             // Allow KQkq and A-H / a-h for Chess960
             for ch in castling.chars() {
                 let ok = matches!(ch, 'K' | 'Q' | 'k' | 'q')
@@ -399,7 +393,7 @@ impl PositionQuery {
                 }
             }
         }
-    
+
         // En-passant: "-" or file+rank, rank must be 3 or 6
         if ep != "-" {
             let ep_bytes = ep.as_bytes();
@@ -413,7 +407,7 @@ impl PositionQuery {
                 )));
             }
         }
-    
+
         // Halfmove clock: u32
         if halfmove.parse::<u32>().is_err() {
             return Err(Error::IoError(std::io::Error::new(
@@ -421,7 +415,7 @@ impl PositionQuery {
                 "Invalid FEN: halfmove clock must be a non-negative integer",
             )));
         }
-    
+
         // Fullmove number: u32 >= 1
         match fullmove.parse::<u32>() {
             Ok(n) if n >= 1 => {}
@@ -432,16 +426,16 @@ impl PositionQuery {
                 )));
             }
         }
-    
+
         // -------------------------------------------------------------------------
         // Now let shakmaty do the real chess validation (board correctness, etc.)
         // -------------------------------------------------------------------------
         let position: Chess =
             Fen::from_ascii(fen.as_bytes())?.into_position(shakmaty::CastlingMode::Chess960)?;
-    
+
         let pawn_home = get_pawn_home(position.board());
         let material = get_material_count(position.board());
-    
+
         Ok(PositionQuery::Exact(ExactData {
             pawn_home,
             material,
@@ -516,7 +510,9 @@ fn time_control_matches_category(time_control: Option<&str>, category: Option<&s
     let total_seconds = if let Some((initial, increment)) = tc.split_once('+') {
         let initial = initial.trim().parse::<i32>().ok();
         let increment = increment.trim().parse::<i32>().ok();
-        initial.zip(increment).map(|(initial, increment)| initial + increment * 40)
+        initial
+            .zip(increment)
+            .map(|(initial, increment)| initial + increment * 40)
     } else {
         tc.parse::<i32>().ok()
     };
@@ -1453,14 +1449,13 @@ pub(crate) fn search_position_local_internal(
 /// game's initial position instead of relying on these columns.
 fn local_reachability_metadata_missing(db: &mut SqliteConnection) -> bool {
     // If the games table is empty, metadata is irrelevant.
-    let res: Result<(Option<i32>, Option<i32>, Option<i32>), diesel::result::Error> =
-        games::table
-            .select((
-                max(games::pawn_home),
-                max(games::white_material),
-                max(games::black_material),
-            ))
-            .first(db);
+    let res: Result<(Option<i32>, Option<i32>, Option<i32>), diesel::result::Error> = games::table
+        .select((
+            max(games::pawn_home),
+            max(games::white_material),
+            max(games::black_material),
+        ))
+        .first(db);
 
     match res {
         Ok((pawn_home_max, white_mat_max, black_mat_max)) => {
@@ -1550,16 +1545,7 @@ pub(crate) fn search_position_online_internal(
 
     if use_parallel {
         games.par_iter().for_each(
-            |(
-                id,
-                white_id,
-                black_id,
-                date,
-                result,
-                game,
-                fen,
-                time_control,
-            )| {
+            |(id, white_id, black_id, date, result, game, fen, time_control)| {
                 if state.new_request.available_permits() == 0 {
                     return;
                 }
@@ -1624,34 +1610,34 @@ pub(crate) fn search_position_online_internal(
                             }
                         }
 
-                    let entry = openings.entry(m);
-                    match entry {
-                        Entry::Occupied(mut e) => {
-                            let opening = e.get_mut();
-                            match result.as_deref() {
-                                Some("1-0") => opening.white += 1,
-                                Some("0-1") => opening.black += 1,
-                                Some("1/2-1/2") => opening.draw += 1,
-                                _ => (),
+                        let entry = openings.entry(m);
+                        match entry {
+                            Entry::Occupied(mut e) => {
+                                let opening = e.get_mut();
+                                match result.as_deref() {
+                                    Some("1-0") => opening.white += 1,
+                                    Some("0-1") => opening.black += 1,
+                                    Some("1/2-1/2") => opening.draw += 1,
+                                    _ => (),
+                                }
+                            }
+                            Entry::Vacant(e) => {
+                                let move_str = e.key().clone();
+                                let (white, black, draw) = match result.as_deref() {
+                                    Some("1-0") => (1, 0, 0),
+                                    Some("0-1") => (0, 1, 0),
+                                    Some("1/2-1/2") => (0, 0, 1),
+                                    _ => (0, 0, 0),
+                                };
+                                e.insert(PositionStats {
+                                    move_: move_str,
+                                    white,
+                                    black,
+                                    draw,
+                                });
                             }
                         }
-                        Entry::Vacant(e) => {
-                            let move_str = e.key().clone();
-                            let (white, black, draw) = match result.as_deref() {
-                                Some("1-0") => (1, 0, 0),
-                                Some("0-1") => (0, 1, 0),
-                                Some("1/2-1/2") => (0, 0, 1),
-                                _ => (0, 0, 0),
-                            };
-                            e.insert(PositionStats {
-                                move_: move_str,
-                                white,
-                                black,
-                                draw,
-                            });
-                        }
                     }
-                }
                     Ok(None) => {
                         // Position not found in this game, continue
                     }
@@ -1662,17 +1648,7 @@ pub(crate) fn search_position_online_internal(
             },
         );
     } else {
-        for (
-            id,
-            white_id,
-            black_id,
-            date,
-            result,
-            game,
-            fen,
-            time_control,
-        ) in games.iter()
-        {
+        for (id, white_id, black_id, date, result, game, fen, time_control) in games.iter() {
             if state.new_request.available_permits() == 0 {
                 break;
             }
@@ -1815,7 +1791,7 @@ pub(crate) fn search_position_online_internal(
 
     let openings_vec: Vec<PositionStats> = openings.into_iter().map(|(_, v)| v).collect();
     let ids: Vec<i32> = sample_games.into_inner().unwrap();
-    
+
     (openings_vec, ids)
 }
 
@@ -1827,7 +1803,8 @@ pub(crate) fn load_coverage_search_dataset(
         .to_str()
         .ok_or_else(|| Error::FenError("Invalid database path".to_string()))?;
     let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
-    let use_end_reachability = !is_online_database(&file) && !local_reachability_metadata_missing(db);
+    let use_end_reachability =
+        !is_online_database(&file) && !local_reachability_metadata_missing(db);
 
     let games = if use_end_reachability {
         games::table
@@ -1938,7 +1915,10 @@ fn coverage_wanted_result(value: Option<&str>) -> Option<&str> {
     }
 }
 
-fn coverage_game_matches_filters(game: &CoverageSearchGame, filters: &CoverageSearchFilters<'_>) -> bool {
+fn coverage_game_matches_filters(
+    game: &CoverageSearchGame,
+    filters: &CoverageSearchFilters<'_>,
+) -> bool {
     if let Some(white) = filters.player1 {
         if game.white_id != white {
             return false;
@@ -1990,13 +1970,19 @@ fn coverage_game_can_reach(
     position_query.can_reach(&end_material, pawn_home as u16)
 }
 
-fn add_coverage_stat(openings: &mut HashMap<String, PositionStats>, san: String, result: Option<&str>) {
-    let entry = openings.entry(san.clone()).or_insert_with(|| PositionStats {
-        move_: san,
-        white: 0,
-        draw: 0,
-        black: 0,
-    });
+fn add_coverage_stat(
+    openings: &mut HashMap<String, PositionStats>,
+    san: String,
+    result: Option<&str>,
+) {
+    let entry = openings
+        .entry(san.clone())
+        .or_insert_with(|| PositionStats {
+            move_: san,
+            white: 0,
+            draw: 0,
+            black: 0,
+        });
     match result {
         Some("1-0") => entry.white += 1,
         Some("0-1") => entry.black += 1,
@@ -2022,7 +2008,8 @@ pub(crate) fn coverage_search_position_stats(
             {
                 return;
             }
-            let Ok(Some(san)) = get_move_after_match(&game.moves, &game.fen, &position_query) else {
+            let Ok(Some(san)) = get_move_after_match(&game.moves, &game.fen, &position_query)
+            else {
                 return;
             };
             let entry = openings.entry(san);
@@ -2084,17 +2071,9 @@ pub async fn search_position(
     tab_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(Vec<PositionStats>, Vec<NormalizedGame>), Error> {
-    let t_total = Instant::now();
-    let file_str = file.to_str().ok_or_else(|| {
-        Error::FenError("Invalid database path".to_string())
-    })?;
-    
-    let db_label = file
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(file_str);
-
-    let is_local_db = !is_online_database(&file);
+    let file_str = file
+        .to_str()
+        .ok_or_else(|| Error::FenError("Invalid database path".to_string()))?;
 
     // Get FEN from position query (trim trailing whitespace for stable caching and comparisons)
     let db = &mut get_db_or_create(&state, file_str, ConnectionOptions::default())?;
@@ -2122,7 +2101,6 @@ pub async fn search_position(
 
     // Check if position is cached in database (only if no filters are active)
     if !has_filters && is_position_cached(&app, &fen, &file)? {
-        let t_cache_hit = Instant::now();
         // Load cached data
         if let Some((cached_stats, cached_game_ids)) = get_cached_position(&app, &fen, &file)? {
             // If we cached an empty result (common when DB schema/metadata was incomplete),
@@ -2137,127 +2115,104 @@ pub async fn search_position(
                     .min(1000)
                     .try_into()
                     .unwrap_or(10);
-                
 
-            let ids_to_load: Vec<i32> = cached_game_ids
-                .into_iter()
-                .take(game_details_limit)
-                .collect();
+                let ids_to_load: Vec<i32> = cached_game_ids
+                    .into_iter()
+                    .take(game_details_limit)
+                    .collect();
 
-            let t_load_games = Instant::now();
-            // Load full game data from original database
-            let (white_players, black_players) = diesel::alias!(players as white, players as black);
-            let mut query_builder = games::table
-                .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
-                .inner_join(black_players.on(games::black_id.eq(black_players.field(players::id))))
-                .inner_join(events::table.on(games::event_id.eq(events::id)))
-                .inner_join(sites::table.on(games::site_id.eq(sites::id)))
-                .filter(games::id.eq_any(&ids_to_load))
-                .into_boxed();
+                // Load full game data from original database
+                let (white_players, black_players) =
+                    diesel::alias!(players as white, players as black);
+                let mut query_builder = games::table
+                    .inner_join(
+                        white_players.on(games::white_id.eq(white_players.field(players::id))),
+                    )
+                    .inner_join(
+                        black_players.on(games::black_id.eq(black_players.field(players::id))),
+                    )
+                    .inner_join(events::table.on(games::event_id.eq(events::id)))
+                    .inner_join(sites::table.on(games::site_id.eq(sites::id)))
+                    .filter(games::id.eq_any(&ids_to_load))
+                    .into_boxed();
 
-            // Apply sorting if specified
-            if let Some(options) = &query.options {
-                query_builder = match options.sort {
-                    GameSort::Id => match options.direction {
-                        SortDirection::Asc => query_builder.order(games::id.asc()),
-                        SortDirection::Desc => query_builder.order(games::id.desc()),
-                    },
-                    GameSort::Date => match options.direction {
-                        SortDirection::Asc => {
-                            query_builder.order((games::date.asc(), games::time.asc()))
-                        }
-                        SortDirection::Desc => {
-                            query_builder.order((games::date.desc(), games::time.desc()))
-                        }
-                    },
-                    GameSort::WhiteElo => match options.direction {
-                        SortDirection::Asc => query_builder.order(games::white_elo.asc()),
-                        SortDirection::Desc => query_builder.order(games::white_elo.desc()),
-                    },
-                    GameSort::BlackElo => match options.direction {
-                        SortDirection::Asc => query_builder.order(games::black_elo.asc()),
-                        SortDirection::Desc => query_builder.order(games::black_elo.desc()),
-                    },
-                    GameSort::PlyCount => match options.direction {
-                        SortDirection::Asc => query_builder.order(games::ply_count.asc()),
-                        SortDirection::Desc => query_builder.order(games::ply_count.desc()),
-                    },
-                    GameSort::AverageElo => query_builder,
-                };
-            }
-
-            let games_result: Vec<(Game, Player, Player, Event, Site)> = if !ids_to_load.is_empty()
-            {
-                query_builder.load(db)?
-            } else {
-                Vec::new()
-            };
-
-            let load_games_ms = t_load_games.elapsed().as_millis();
-
-            let t_normalize = Instant::now();
-            let mut normalized_games = normalize_games(games_result)?;
-            let normalize_ms = t_normalize.elapsed().as_millis();
-
-            // Sort by average ELO if needed
-            let t_sort = Instant::now();
-            if let Some(options) = &query.options {
-                if matches!(options.sort, GameSort::AverageElo) {
-                    let sort_direction = options.direction.clone();
-                    normalized_games.sort_by(|a, b| {
-                        let a_avg = match (a.white_elo, a.black_elo) {
-                            (Some(w), Some(bl)) => Some((w + bl + 1) / 2),
-                            (Some(e), None) | (None, Some(e)) => Some(e),
-                            (None, None) => None,
-                        };
-                        let b_avg = match (b.white_elo, b.black_elo) {
-                            (Some(w), Some(bl)) => Some((w + bl + 1) / 2),
-                            (Some(e), None) | (None, Some(e)) => Some(e),
-                            (None, None) => None,
-                        };
-
-                        let a_val = a_avg.unwrap_or(0);
-                        let b_val = b_avg.unwrap_or(0);
-
-                        match sort_direction {
-                            SortDirection::Asc => a_val.cmp(&b_val),
-                            SortDirection::Desc => b_val.cmp(&a_val),
-                        }
-                    });
+                // Apply sorting if specified
+                if let Some(options) = &query.options {
+                    query_builder = match options.sort {
+                        GameSort::Id => match options.direction {
+                            SortDirection::Asc => query_builder.order(games::id.asc()),
+                            SortDirection::Desc => query_builder.order(games::id.desc()),
+                        },
+                        GameSort::Date => match options.direction {
+                            SortDirection::Asc => {
+                                query_builder.order((games::date.asc(), games::time.asc()))
+                            }
+                            SortDirection::Desc => {
+                                query_builder.order((games::date.desc(), games::time.desc()))
+                            }
+                        },
+                        GameSort::WhiteElo => match options.direction {
+                            SortDirection::Asc => query_builder.order(games::white_elo.asc()),
+                            SortDirection::Desc => query_builder.order(games::white_elo.desc()),
+                        },
+                        GameSort::BlackElo => match options.direction {
+                            SortDirection::Asc => query_builder.order(games::black_elo.asc()),
+                            SortDirection::Desc => query_builder.order(games::black_elo.desc()),
+                        },
+                        GameSort::PlyCount => match options.direction {
+                            SortDirection::Asc => query_builder.order(games::ply_count.asc()),
+                            SortDirection::Desc => query_builder.order(games::ply_count.desc()),
+                        },
+                        GameSort::AverageElo => query_builder,
+                    };
                 }
-            }
-            let sort_ms = t_sort.elapsed().as_millis();
 
-            let _ = app.emit(
-                "search_progress",
-                ProgressPayload {
-                    progress: 100.0,
-                    id: tab_id.clone(),
-                    finished: true,
-                },
-            );
+                let games_result: Vec<(Game, Player, Player, Event, Site)> =
+                    if !ids_to_load.is_empty() {
+                        query_builder.load(db)?
+                    } else {
+                        Vec::new()
+                    };
 
-            if should_log_search_timing(&tab_id) {
-                log::debug!(
-                    target: "db.search.timing",
-                    "search_position cache_hit=1 tab_id={} db={} local={} filters={} limit={} cached_openings={} cached_ids={} loaded_games={} cache_read_ms={} load_games_ms={} normalize_ms={} sort_ms={} total_ms={}",
-                    tab_id,
-                    db_label,
-                    is_local_db,
-                    has_filters,
-                    game_details_limit,
-                    cached_stats.len(),
-                    ids_to_load.len(),
-                    normalized_games.len(),
-                    t_cache_hit.elapsed().as_millis(),
-                    load_games_ms,
-                    normalize_ms,
-                    sort_ms,
-                    t_total.elapsed().as_millis(),
+                let mut normalized_games = normalize_games(games_result)?;
+
+                // Sort by average ELO if needed
+                if let Some(options) = &query.options {
+                    if matches!(options.sort, GameSort::AverageElo) {
+                        let sort_direction = options.direction.clone();
+                        normalized_games.sort_by(|a, b| {
+                            let a_avg = match (a.white_elo, a.black_elo) {
+                                (Some(w), Some(bl)) => Some((w + bl + 1) / 2),
+                                (Some(e), None) | (None, Some(e)) => Some(e),
+                                (None, None) => None,
+                            };
+                            let b_avg = match (b.white_elo, b.black_elo) {
+                                (Some(w), Some(bl)) => Some((w + bl + 1) / 2),
+                                (Some(e), None) | (None, Some(e)) => Some(e),
+                                (None, None) => None,
+                            };
+
+                            let a_val = a_avg.unwrap_or(0);
+                            let b_val = b_avg.unwrap_or(0);
+
+                            match sort_direction {
+                                SortDirection::Asc => a_val.cmp(&b_val),
+                                SortDirection::Desc => b_val.cmp(&a_val),
+                            }
+                        });
+                    }
+                }
+
+                let _ = app.emit(
+                    "search_progress",
+                    ProgressPayload {
+                        progress: 100.0,
+                        id: tab_id.clone(),
+                        finished: true,
+                    },
                 );
-            }
 
-            return Ok((cached_stats, normalized_games));
+                return Ok((cached_stats, normalized_games));
             }
         }
     }
@@ -2276,30 +2231,10 @@ pub async fn search_position(
     // Optional schema/index safety for large/foreign DBs
     // (kept behind flags and very cheap if already present)
     if ENABLE_AUX_INDEXES {
-        let t_indexes = Instant::now();
         ensure_aux_indexes(db);
-        if should_log_search_timing(&tab_id) {
-            log::debug!(
-                target: "db.search.timing",
-                "search_position ensure_aux_indexes_ms={} tab_id={} db={}",
-                t_indexes.elapsed().as_millis(),
-                tab_id,
-                db_label
-            );
-        }
     }
     if ENABLE_CHECKPOINT_TABLE_SCHEMA {
-        let t_checkpoints = Instant::now();
         ensure_checkpoint_table(db);
-        if should_log_search_timing(&tab_id) {
-            log::debug!(
-                target: "db.search.timing",
-                "search_position ensure_checkpoint_schema_ms={} tab_id={} db={}",
-                t_checkpoints.elapsed().as_millis(),
-                tab_id,
-                db_label
-            );
-        }
     }
 
     // Phase 1: scan and collect openings + sample IDs
@@ -2317,8 +2252,7 @@ pub async fn search_position(
     let total_count: i64 = games::table.count().get_result(db).unwrap_or(0);
     let total_games = total_count.max(0) as usize;
 
-    let t_scan = Instant::now();
-    let (strategy, openings, ids): (&'static str, Vec<PositionStats>, Vec<i32>) = if online {
+    let (openings, ids): (Vec<PositionStats>, Vec<i32>) = if online {
         let (o, i) = search_position_online_internal(
             db,
             &position_query,
@@ -2328,7 +2262,7 @@ pub async fn search_position(
             state.inner(),
             total_games,
         );
-        ("online_db", o, i)
+        (o, i)
     } else if local_reachability_metadata_missing(db) {
         let (o, i) = search_position_online_internal(
             db,
@@ -2339,10 +2273,16 @@ pub async fn search_position(
             state.inner(),
             total_games,
         );
-        ("local_metadata_missing->online_scan", o, i)
+        (o, i)
     } else {
-        let (openings_local, ids_local) =
-            search_position_local_internal(db, &position_query, &query, &app, &tab_id, state.inner())?;
+        let (openings_local, ids_local) = search_position_local_internal(
+            db,
+            &position_query,
+            &query,
+            &app,
+            &tab_id,
+            state.inner(),
+        )?;
 
         // If the LOCAL strategy yields no matches, fall back to ONLINE strategy to avoid false negatives.
         if ids_local.is_empty() {
@@ -2355,24 +2295,14 @@ pub async fn search_position(
                 state.inner(),
                 total_games,
             );
-            ("local_scan->fallback_online_scan", o, i)
+            (o, i)
         } else {
-            ("local_scan", openings_local, ids_local)
+            (openings_local, ids_local)
         }
     };
-    let scan_ms = t_scan.elapsed().as_millis();
 
     if state.new_request.available_permits() == 0 {
         drop(permit);
-        if should_log_search_timing(&tab_id) {
-            log::debug!(
-                target: "db.search.timing",
-                "search_position aborted=1 tab_id={} db={} total_ms={}",
-                tab_id,
-                db_label,
-                t_total.elapsed().as_millis(),
-            );
-        }
         return Err(Error::SearchStopped);
     }
 
@@ -2388,7 +2318,6 @@ pub async fn search_position(
     let all_game_ids = ids.clone();
     let ids_to_load: Vec<i32> = ids.into_iter().take(game_details_limit).collect();
 
-    let t_load_games = Instant::now();
     let (white_players, black_players) = diesel::alias!(players as white, players as black);
     let mut query_builder = games::table
         .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
@@ -2432,14 +2361,10 @@ pub async fn search_position(
     } else {
         Vec::new()
     };
-    let load_games_ms = t_load_games.elapsed().as_millis();
 
-    let t_normalize = Instant::now();
     let mut normalized_games = normalize_games(games_result)?;
-    let normalize_ms = t_normalize.elapsed().as_millis();
 
     // Sort by average ELO if needed (after loading)
-    let t_sort = Instant::now();
     if let Some(options) = &query.options {
         if matches!(options.sort, GameSort::AverageElo) {
             let sort_direction = options.direction.clone();
@@ -2465,18 +2390,15 @@ pub async fn search_position(
             });
         }
     }
-    let sort_ms = t_sort.elapsed().as_millis();
 
     // Save results to persistent cache (save all game IDs, not just the loaded ones)
     // This allows us to load different subsets later based on game_details_limit
     // IMPORTANT: Only save to cache if NO filters are active, because cache doesn't account for filters
     // If we save filtered results to cache, they will overwrite the unfiltered cache
     // and cause incorrect results when filters are removed
-    let t_save_cache = Instant::now();
     if !has_filters {
         let _ = save_position_cache(&app, &fen, &file, &openings, &all_game_ids);
     }
-    let save_cache_ms = t_save_cache.elapsed().as_millis();
 
     let _ = app.emit(
         "search_progress",
@@ -2486,29 +2408,6 @@ pub async fn search_position(
             finished: true,
         },
     );
-
-    if should_log_search_timing(&tab_id) {
-        log::debug!(
-            target: "db.search.timing",
-            "search_position cache_hit=0 tab_id={} db={} local={} filters={} strategy={} total_games={} openings={} matched_ids={} limit={} loaded_games={} scan_ms={} load_games_ms={} normalize_ms={} sort_ms={} save_cache_ms={} total_ms={}",
-            tab_id,
-            db_label,
-            is_local_db,
-            has_filters,
-            strategy,
-            total_games,
-            openings.len(),
-            all_game_ids.len(),
-            game_details_limit,
-            normalized_games.len(),
-            scan_ms,
-            load_games_ms,
-            normalize_ms,
-            sort_ms,
-            save_cache_ms,
-            t_total.elapsed().as_millis(),
-        );
-    }
 
     drop(permit);
     Ok((openings, normalized_games))
@@ -2861,10 +2760,7 @@ mod tests {
         // Create position with less material than query requires
         let _chess = Chess::default();
         // Remove a piece to make it unreachable
-        let material = ByColor {
-            white: 0,
-            black: 0,
-        };
+        let material = ByColor { white: 0, black: 0 };
         assert!(!query.is_reachable_by(&material, 0));
     }
 
@@ -2994,7 +2890,6 @@ mod tests {
         let result = get_move_after_match(&game[..], &None, &query).unwrap();
         assert_eq!(result, None);
     }
-
 
     // ============================================================================
     // Tests for convert_position_query
@@ -3138,10 +3033,7 @@ mod tests {
 
     #[test]
     fn test_is_material_reachable_less() {
-        let end = ByColor {
-            white: 8,
-            black: 8,
-        };
+        let end = ByColor { white: 8, black: 8 };
         let pos = ByColor {
             white: 16,
             black: 16,
@@ -3155,10 +3047,7 @@ mod tests {
             white: 16,
             black: 16,
         };
-        let pos = ByColor {
-            white: 8,
-            black: 8,
-        };
+        let pos = ByColor { white: 8, black: 8 };
         assert!(!is_material_reachable(&end, &pos));
     }
 
@@ -3220,7 +3109,7 @@ mod tests {
     // ============================================================================
     // Integration tests with database
     // ============================================================================
-    
+
     #[test]
     fn test_position_query_partial_target_material() {
         let query = PositionQuery::partial_from_fen("8/8/8/8/8/8/8/8").unwrap();
@@ -3237,15 +3126,15 @@ mod tests {
     fn test_exact_from_fen_malformed_fen() {
         let fens = vec![
             "invalid",
-            "rnbqkbnr/pppppppp",                 // too few ranks + missing fields
-            "8/8/8/8/8/8/8/8",                   // board-only (previously accepted by lenient parsers)
-            "",                                  // empty
+            "rnbqkbnr/pppppppp", // too few ranks + missing fields
+            "8/8/8/8/8/8/8/8",   // board-only (previously accepted by lenient parsers)
+            "",                  // empty
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", // board-only startpos
             // 6-field but invalid:
-            "8/8/8/8/8/8/8/8 x - - 0 1",         // invalid side to move
-            "8/8/8/8/8/8/8/8 w - e4 0 1",         // invalid ep rank
-            "8/8/8/8/8/8/8/8 w - - - 1",          // invalid halfmove
-            "8/8/8/8/8/8/8/8 w - - 0 0",          // invalid fullmove (must be >= 1)
+            "8/8/8/8/8/8/8/8 x - - 0 1",  // invalid side to move
+            "8/8/8/8/8/8/8/8 w - e4 0 1", // invalid ep rank
+            "8/8/8/8/8/8/8/8 w - - - 1",  // invalid halfmove
+            "8/8/8/8/8/8/8/8 w - - 0 0",  // invalid fullmove (must be >= 1)
         ];
 
         for fen in fens {
@@ -3419,13 +3308,13 @@ mod tests {
         // it in Tauri 2 is complex. The core logic is tested via unit tests above.
         // For integration testing of the full command, use manual testing or
         // a test framework that supports Tauri app mocking.
-        
+
         // Verify the position query was created correctly
         match position_query {
             PositionQuery::Exact(_) => {}
             _ => panic!("Expected Exact variant"),
         }
-        
+
         // Verify query structure
         assert!(query.position.is_some());
     }
@@ -3433,15 +3322,15 @@ mod tests {
     #[test]
     fn test_search_position_internal_partial_match() {
         // Test partial position query creation
-        let position_query = PositionQuery::partial_from_fen("8/pppppppp/8/8/8/8/PPPPPPPP/8")
-            .unwrap();
+        let position_query =
+            PositionQuery::partial_from_fen("8/pppppppp/8/8/8/8/PPPPPPPP/8").unwrap();
 
         // Verify it's a Partial variant
         match position_query {
             PositionQuery::Partial(_) => {}
             _ => panic!("Expected Partial variant"),
         }
-        
+
         // Test that it matches a position with those pawns
         let chess = Chess::default();
         assert!(position_query.matches(&chess));

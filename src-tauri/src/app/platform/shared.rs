@@ -45,7 +45,6 @@ const REQUIRED_FILES: &[(BaseDirectory, &str, &str)] = &[
 /// * `Ok(())` if all directories were created or already exist
 /// * `Err(PlatformError)` if there was an error creating a directory
 pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError> {
-    log::info!("Checking for required directories");
     for &(dir, path) in REQUIRED_DIRS {
         let resolved_path =
             app.path()
@@ -56,13 +55,10 @@ pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError>
                 })?;
 
         if !resolved_path.exists() {
-            log::info!("Creating directory {}", resolved_path.display());
             create_dir_all(&resolved_path).map_err(|e| PlatformError::DirectoryCreationFailed {
                 path: resolved_path.display().to_string(),
                 source: e,
             })?;
-        } else {
-            log::info!("Directory already exists: {}", resolved_path.display());
         }
     }
     Ok(())
@@ -77,7 +73,6 @@ pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError>
 /// * `Ok(())` if all files were created or already exist
 /// * `Err(PlatformError)` if there was an error creating a file
 pub fn ensure_required_files(app: &AppHandle) -> Result<(), PlatformError> {
-    log::info!("Checking for required files");
     for &(dir, path, contents) in REQUIRED_FILES {
         let resolved_path =
             app.path()
@@ -88,15 +83,12 @@ pub fn ensure_required_files(app: &AppHandle) -> Result<(), PlatformError> {
                 })?;
 
         if !resolved_path.exists() {
-            log::info!("Creating file {}", resolved_path.display());
             std::fs::write(&resolved_path, contents).map_err(|e| {
                 PlatformError::FileCreationFailed {
                     path: resolved_path.display().to_string(),
                     source: e,
                 }
             })?;
-        } else {
-            log::info!("File already exists: {}", resolved_path.display());
         }
     }
     Ok(())
