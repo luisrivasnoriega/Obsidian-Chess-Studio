@@ -114,6 +114,7 @@ pub struct VariantCoverageMoveDto {
     pub next_fen: Option<String>,
     pub active_win_rate: Option<f64>,
     pub active_loss_rate: Option<f64>,
+    pub active_draw_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -150,12 +151,15 @@ pub struct VariantCoverageGraphNodeDto {
     pub hidden_children_count: Option<i64>,
     pub active_win_rate: Option<f64>,
     pub active_loss_rate: Option<f64>,
+    pub active_draw_rate: Option<f64>,
     pub profile_win_rate: Option<f64>,
     pub profile_loss_rate: Option<f64>,
     pub complete_line: Option<bool>,
     pub engine_advantage: Option<String>,
     pub engine_ms: Option<i64>,
     pub engine_name: Option<String>,
+    pub critical_line: Option<bool>,
+    pub critical_line_reasons: Option<Vec<VariantCoverageCriticalLineReasonDto>>,
     pub children: Vec<VariantCoverageGraphNodeDto>,
 }
 
@@ -206,6 +210,7 @@ pub struct VariantCoverageCriticalLineNodeDto {
     pub path: Vec<String>,
     pub source_win_rate: Option<f64>,
     pub source_loss_rate: Option<f64>,
+    pub source_draw_rate: Option<f64>,
     pub profile_win_rate: Option<f64>,
     pub profile_loss_rate: Option<f64>,
     pub engine_advantage: Option<String>,
@@ -422,6 +427,15 @@ fn build_tier_override_key(fen: &str, san: &str) -> String {
 }
 
 fn parse_engine_advantage_color(value: Option<&str>) -> Option<VariantCoverageColorDto> {
+    let score = parse_engine_advantage_score(value)?;
+    if score > 0.0 {
+        Some(VariantCoverageColorDto::White)
+    } else {
+        Some(VariantCoverageColorDto::Black)
+    }
+}
+
+fn parse_engine_advantage_score(value: Option<&str>) -> Option<f64> {
     let text = value?.trim();
     if text.is_empty() {
         return None;
@@ -448,11 +462,7 @@ fn parse_engine_advantage_color(value: Option<&str>) -> Option<VariantCoverageCo
     if !score.is_finite() || score.abs() < 0.01 {
         return None;
     }
-    if score > 0.0 {
-        Some(VariantCoverageColorDto::White)
-    } else {
-        Some(VariantCoverageColorDto::Black)
-    }
+    Some(score)
 }
 
 fn fen_side_to_move_color(fen: Option<&str>) -> Option<VariantCoverageColorDto> {
@@ -485,6 +495,82 @@ fn critical_line_dismissal_key(fen: Option<&str>, fallback_id: &str) -> String {
         .unwrap_or_else(|| fallback_id.to_string())
 }
 
+fn critical_line_reasons_for_node(
+    node: &VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+    parent_active_moves_used: i64,
+) -> Vec<VariantCoverageCriticalLineReasonDto> {
+    let active_moves_used = node.active_moves_used.unwrap_or(parent_active_moves_used);
+    if node.unmapped_response == Some(true)
+        || node.low_sample == Some(true)
+        || active_moves_used <= parent_active_moves_used
+    {
+        return Vec::new();
+    }
+
+    let mut reasons = Vec::new();
+    if let (Some(win_rate), Some(loss_rate)) = (node.active_win_rate, node.active_loss_rate) {
+        let source_risk = match active_color {
+            VariantCoverageColorDto::White => {
+                loss_rate.is_finite() && win_rate.is_finite() && loss_rate > win_rate
+            }
+            VariantCoverageColorDto::Black => {
+                let draw_rate = node.active_draw_rate.unwrap_or(0.0);
+                loss_rate.is_finite()
+                    && draw_rate.is_finite()
+                    && win_rate.is_finite()
+                    && loss_rate > win_rate + draw_rate
+            }
+        };
+        if source_risk {
+            reasons.push(VariantCoverageCriticalLineReasonDto::Source);
+        }
+    }
+
+    match active_color {
+        VariantCoverageColorDto::White => {
+            if parse_engine_advantage_color(node.engine_advantage.as_deref())
+                == Some(VariantCoverageColorDto::Black)
+            {
+                reasons.push(VariantCoverageCriticalLineReasonDto::Engine);
+            }
+        }
+        VariantCoverageColorDto::Black => {
+            if parse_engine_advantage_score(node.engine_advantage.as_deref())
+                .is_some_and(|score| score >= 0.8)
+            {
+                reasons.push(VariantCoverageCriticalLineReasonDto::Engine);
+            }
+        }
+    }
+
+    reasons
+}
+
+fn apply_critical_line_flags_to_node(
+    mut node: VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+    parent_active_moves_used: i64,
+) -> VariantCoverageGraphNodeDto {
+    let active_moves_used = node.active_moves_used.unwrap_or(parent_active_moves_used);
+    let reasons = critical_line_reasons_for_node(&node, active_color, parent_active_moves_used);
+    node.critical_line = Some(!reasons.is_empty());
+    node.critical_line_reasons = Some(reasons);
+    node.children = node
+        .children
+        .into_iter()
+        .map(|child| apply_critical_line_flags_to_node(child, active_color, active_moves_used))
+        .collect();
+    node
+}
+
+pub fn apply_critical_line_flags(
+    root: VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+) -> VariantCoverageGraphNodeDto {
+    apply_critical_line_flags_to_node(root, active_color, 0)
+}
+
 fn collect_critical_line_nodes(
     node: &VariantCoverageGraphNodeDto,
     active_color: VariantCoverageColorDto,
@@ -496,38 +582,17 @@ fn collect_critical_line_nodes(
 ) {
     path.push(label_path_segment(&node.label));
 
-    let mut reasons = Vec::new();
     let active_moves_used = node.active_moves_used.unwrap_or(parent_active_moves_used);
-    let side_to_move = fen_side_to_move_color(node.fen.as_deref());
-    let node_ends_after_active_move = side_to_move == Some(opposite_coverage_color(active_color));
-    let has_active_move_context = active_moves_used > 0 || node_ends_after_active_move;
-    let is_active_player_node = has_active_move_context
-        && node.unmapped_response != Some(true)
-        && (node.tier == VariantCoverageTierDto::Root
-            || active_moves_used > parent_active_moves_used
-            || node_ends_after_active_move);
-
-    let has_sufficient_sample = node.low_sample != Some(true);
+    let reasons = node.critical_line_reasons.clone().unwrap_or_else(|| {
+        critical_line_reasons_for_node(node, active_color, parent_active_moves_used)
+    });
     let is_complete_line_node = node.complete_line == Some(true) || node.children.is_empty();
-    if is_active_player_node
-        && has_sufficient_sample
-        && (!complete_lines_only || is_complete_line_node)
-    {
-        if let (Some(win_rate), Some(loss_rate)) = (node.active_win_rate, node.active_loss_rate) {
-            if win_rate.is_finite() && loss_rate.is_finite() && loss_rate > win_rate {
-                reasons.push(VariantCoverageCriticalLineReasonDto::Source);
-            }
-        }
-
-        if let Some(engine_color) = parse_engine_advantage_color(node.engine_advantage.as_deref()) {
-            if engine_color != active_color {
-                reasons.push(VariantCoverageCriticalLineReasonDto::Engine);
-            }
-        }
-    }
 
     let dismissal_key = critical_line_dismissal_key(node.fen.as_deref(), &node.id);
-    if !reasons.is_empty() && !dismissed_keys.contains(&dismissal_key) {
+    if !reasons.is_empty()
+        && (!complete_lines_only || is_complete_line_node)
+        && !dismissed_keys.contains(&dismissal_key)
+    {
         out.push(VariantCoverageCriticalLineNodeDto {
             id: node.id.clone(),
             label: node.label.clone(),
@@ -536,6 +601,7 @@ fn collect_critical_line_nodes(
             path: path.clone(),
             source_win_rate: node.active_win_rate,
             source_loss_rate: node.active_loss_rate,
+            source_draw_rate: node.active_draw_rate,
             profile_win_rate: node.profile_win_rate,
             profile_loss_rate: node.profile_loss_rate,
             engine_advantage: node.engine_advantage.clone(),
@@ -857,12 +923,15 @@ fn coverage_node(
         hidden_children_count: None,
         active_win_rate: None,
         active_loss_rate: None,
+        active_draw_rate: None,
         profile_win_rate: None,
         profile_loss_rate: None,
         complete_line: None,
         engine_advantage: None,
         engine_ms: None,
         engine_name: None,
+        critical_line: None,
+        critical_line_reasons: None,
         children: Vec::new(),
     }
 }
@@ -1519,7 +1588,9 @@ impl<'a> CoverageGraphBuilder<'a> {
         if let Some(entry) = self.positions.get(&fen_key) {
             let needs_hydration = entry.moves.iter().any(|row| {
                 row.low_sample == false
-                    && (row.active_win_rate.is_none() || row.active_loss_rate.is_none())
+                    && (row.active_win_rate.is_none()
+                        || row.active_loss_rate.is_none()
+                        || row.active_draw_rate.is_none())
             });
             if !needs_hydration {
                 return Ok(entry.clone());
@@ -1763,6 +1834,9 @@ impl<'a> CoverageGraphBuilder<'a> {
                 child.active_loss_rate = source_move
                     .as_ref()
                     .and_then(|entry| entry.active_loss_rate);
+                child.active_draw_rate = source_move
+                    .as_ref()
+                    .and_then(|entry| entry.active_draw_rate);
                 child.profile_win_rate = profile_move
                     .as_ref()
                     .and_then(|entry| entry.active_win_rate);
@@ -1868,6 +1942,9 @@ impl<'a> CoverageGraphBuilder<'a> {
                     child.active_loss_rate = response_move
                         .as_ref()
                         .and_then(|move_entry| move_entry.active_loss_rate);
+                    child.active_draw_rate = response_move
+                        .as_ref()
+                        .and_then(|move_entry| move_entry.active_draw_rate);
                     child.profile_win_rate = profile_move
                         .as_ref()
                         .and_then(|move_entry| move_entry.active_win_rate);
@@ -1966,6 +2043,7 @@ impl<'a> CoverageGraphBuilder<'a> {
                 child.active_moves_used = Some(active_moves_used);
                 child.active_win_rate = move_entry.active_win_rate;
                 child.active_loss_rate = move_entry.active_loss_rate;
+                child.active_draw_rate = move_entry.active_draw_rate;
                 child.profile_win_rate = profile_move
                     .as_ref()
                     .and_then(|profile_move| profile_move.active_win_rate);
@@ -2550,9 +2628,11 @@ fn classify_position_moves(
                 next_fen,
                 active_win_rate: None,
                 active_loss_rate: None,
+                active_draw_rate: None,
             };
             move_entry.active_win_rate = active_side_win_rate(&move_entry, repertoire_color);
             move_entry.active_loss_rate = active_side_loss_rate(&move_entry, repertoire_color);
+            move_entry.active_draw_rate = active_side_draw_rate(&move_entry);
             move_entry
         })
         .collect();
@@ -2732,6 +2812,18 @@ fn active_side_loss_rate(
     Some(((losses as f64 / total as f64) * 1000.0).round() / 10.0)
 }
 
+fn active_side_draw_rate(move_entry: &VariantCoverageMoveDto) -> Option<f64> {
+    let total = move_entry.games.max(0);
+    if total <= 0 {
+        return None;
+    }
+    let resolved_total = move_entry.white.max(0) + move_entry.black.max(0) + move_entry.draw.max(0);
+    if resolved_total <= 0 {
+        return None;
+    }
+    Some(((move_entry.draw.max(0) as f64 / total as f64) * 1000.0).round() / 10.0)
+}
+
 fn active_side_position_win_rate(
     position: &VariantCoveragePositionDto,
     repertoire_color: VariantCoverageColorDto,
@@ -2778,6 +2870,22 @@ fn active_side_position_loss_rate(
     Some(((losses as f64 / total as f64) * 1000.0).round() / 10.0)
 }
 
+fn active_side_position_draw_rate(position: &VariantCoveragePositionDto) -> Option<f64> {
+    let mut white = position.white.max(0);
+    let mut black = position.black.max(0);
+    let mut draw = position.draw.max(0);
+    if white + black + draw <= 0 {
+        white = position.moves.iter().map(|row| row.white.max(0)).sum();
+        black = position.moves.iter().map(|row| row.black.max(0)).sum();
+        draw = position.moves.iter().map(|row| row.draw.max(0)).sum();
+    }
+    let total = white + black + draw;
+    if total <= 0 {
+        return None;
+    }
+    Some(((draw as f64 / total as f64) * 1000.0).round() / 10.0)
+}
+
 fn opposite_coverage_color(color: VariantCoverageColorDto) -> VariantCoverageColorDto {
     match color {
         VariantCoverageColorDto::White => VariantCoverageColorDto::Black,
@@ -2809,6 +2917,7 @@ fn apply_position_flags_to_node(
         node.low_sample = Some(entry.total_games < COVERAGE_LOW_SAMPLE_MIN_GAMES);
         node.active_win_rate = active_side_position_win_rate(entry, move_color);
         node.active_loss_rate = active_side_position_loss_rate(entry, move_color);
+        node.active_draw_rate = active_side_position_draw_rate(entry);
         return node;
     }
 
@@ -2836,6 +2945,9 @@ fn apply_position_flags_to_node(
         node.active_loss_rate = move_entry
             .active_loss_rate
             .or_else(|| active_side_loss_rate(move_entry, repertoire_color));
+        node.active_draw_rate = move_entry
+            .active_draw_rate
+            .or_else(|| active_side_draw_rate(move_entry));
     }
     node
 }
@@ -3004,6 +3116,7 @@ fn apply_node_visibility_rules_node(
             node.active_moves_used = forced_reply.active_moves_used.or(node.active_moves_used);
             node.active_win_rate = forced_reply.active_win_rate;
             node.active_loss_rate = forced_reply.active_loss_rate;
+            node.active_draw_rate = forced_reply.active_draw_rate;
             node.profile_win_rate = forced_reply.profile_win_rate;
             node.profile_loss_rate = forced_reply.profile_loss_rate;
             node.engine_advantage = forced_reply.engine_advantage;
@@ -3026,6 +3139,7 @@ fn apply_node_visibility_rules_node(
         node.active_moves_used = forced_reply.active_moves_used.or(node.active_moves_used);
         node.active_win_rate = forced_reply.active_win_rate;
         node.active_loss_rate = forced_reply.active_loss_rate;
+        node.active_draw_rate = forced_reply.active_draw_rate;
         node.profile_win_rate = forced_reply.profile_win_rate;
         node.profile_loss_rate = forced_reply.profile_loss_rate;
         node.engine_advantage = forced_reply.engine_advantage;
@@ -3168,6 +3282,7 @@ pub async fn variant_coverage_build_graph(
             } else {
                 trim_graph_node_by_depth(graph_with_profile_flags, requested_depth)
             };
+            let graph_root = apply_critical_line_flags(graph_root, cache.repertoire_color);
 
             return Ok(VariantCoverageGraphBuildResultDto {
                 graph_root,
@@ -3483,8 +3598,10 @@ pub async fn variant_coverage_build_graph(
         &builder.profile_positions,
         repertoire_color,
     );
+    let graph_with_critical_flags =
+        apply_critical_line_flags(graph_with_profile_flags, repertoire_color);
     let max_moves = if request.mapped_only {
-        max_coverage_active_moves(&graph_with_profile_flags)
+        max_coverage_active_moves(&graph_with_critical_flags)
     } else {
         requested_depth
     };
@@ -3504,7 +3621,7 @@ pub async fn variant_coverage_build_graph(
         tier_overrides: Some(tier_overrides),
         label_overrides: Some(label_overrides),
         critical_line_dismissed_fen_keys: critical_line_dismissed_fen_keys.clone(),
-        graph_root: graph_with_profile_flags.clone(),
+        graph_root: graph_with_critical_flags.clone(),
         repertoire_color,
         generated_at: now_iso_string(),
     };
@@ -3517,7 +3634,7 @@ pub async fn variant_coverage_build_graph(
 
     let priority_metadata_updated = if request.persist_results && !request.mapped_only {
         sync_variant_priority_metadata(
-            &graph_with_profile_flags,
+            &graph_with_critical_flags,
             &subtree_keys,
             &target_key,
             &variant_by_key,
@@ -3528,7 +3645,7 @@ pub async fn variant_coverage_build_graph(
     };
 
     Ok(VariantCoverageGraphBuildResultDto {
-        graph_root: graph_with_profile_flags,
+        graph_root: graph_with_critical_flags,
         positions: positions_record,
         repertoire_color,
         source_signature,
@@ -3657,7 +3774,12 @@ pub fn variant_coverage_graph_cache_path(
 pub fn variant_coverage_read_graph_cache(
     file_path: String,
 ) -> Result<Option<VariantCoverageGraphCacheDto>> {
-    read_graph_cache_from_path(&file_path)
+    read_graph_cache_from_path(&file_path).map(|cache| {
+        cache.map(|mut cache| {
+            cache.graph_root = apply_critical_line_flags(cache.graph_root, cache.repertoire_color);
+            cache
+        })
+    })
 }
 
 #[tauri::command]
@@ -3714,6 +3836,7 @@ pub fn variant_coverage_critical_line_report(
 ) -> VariantCoverageCriticalLineReportDto {
     let mut nodes = Vec::new();
     let mut path = Vec::new();
+    let root = apply_critical_line_flags(root, active_color);
     let dismissed_keys = dismissed_keys
         .unwrap_or_default()
         .into_iter()
@@ -3731,6 +3854,15 @@ pub fn variant_coverage_critical_line_report(
         active_color,
         nodes,
     }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn variant_coverage_apply_critical_line_flags(
+    root: VariantCoverageGraphNodeDto,
+    active_color: VariantCoverageColorDto,
+) -> VariantCoverageGraphNodeDto {
+    apply_critical_line_flags(root, active_color)
 }
 
 #[tauri::command]
@@ -3813,9 +3945,8 @@ pub async fn variant_coverage_apply_profile_position_flags(
 ) -> Result<VariantCoverageGraphNodeDto> {
     let _ = app;
     let Some(db_path) = db_path.filter(|value| !value.trim().is_empty()) else {
-        return Ok(apply_profile_flags_to_node(
-            root,
-            &HashMap::new(),
+        return Ok(apply_critical_line_flags(
+            apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color),
             repertoire_color,
         ));
     };
@@ -3823,9 +3954,8 @@ pub async fn variant_coverage_apply_profile_position_flags(
     unique_player_ids.sort_unstable();
     unique_player_ids.dedup();
     if unique_player_ids.is_empty() {
-        return Ok(apply_profile_flags_to_node(
-            root,
-            &HashMap::new(),
+        return Ok(apply_critical_line_flags(
+            apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color),
             repertoire_color,
         ));
     }
@@ -3836,9 +3966,8 @@ pub async fn variant_coverage_apply_profile_position_flags(
     fen_keys.sort();
     fen_keys.dedup();
     if fen_keys.is_empty() {
-        return Ok(apply_profile_flags_to_node(
-            root,
-            &HashMap::new(),
+        return Ok(apply_critical_line_flags(
+            apply_profile_flags_to_node(root, &HashMap::new(), repertoire_color),
             repertoire_color,
         ));
     }
@@ -3859,9 +3988,8 @@ pub async fn variant_coverage_apply_profile_position_flags(
         profile_positions.insert(fen_key, profile_entry);
     }
 
-    Ok(apply_profile_flags_to_node(
-        root,
-        &profile_positions,
+    Ok(apply_critical_line_flags(
+        apply_profile_flags_to_node(root, &profile_positions, repertoire_color),
         repertoire_color,
     ))
 }
@@ -3873,7 +4001,10 @@ pub fn variant_coverage_apply_position_flags(
     positions: HashMap<String, VariantCoveragePositionDto>,
     repertoire_color: VariantCoverageColorDto,
 ) -> VariantCoverageGraphNodeDto {
-    apply_position_flags_to_node(root, &positions, repertoire_color)
+    apply_critical_line_flags(
+        apply_position_flags_to_node(root, &positions, repertoire_color),
+        repertoire_color,
+    )
 }
 
 #[tauri::command]
@@ -3882,4 +4013,111 @@ pub fn variant_coverage_apply_node_visibility_rules(
     root: VariantCoverageGraphNodeDto,
 ) -> Option<VariantCoverageGraphNodeDto> {
     apply_node_visibility_rules_node(root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn critical_test_node(
+        id: &str,
+        label: &str,
+        active_moves_used: i64,
+        win_rate: f64,
+        loss_rate: f64,
+        draw_rate: f64,
+    ) -> VariantCoverageGraphNodeDto {
+        let mut node = coverage_node(
+            id.to_string(),
+            label.to_string(),
+            VariantCoverageTierDto::Root,
+            Some("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1".to_string()),
+        );
+        node.active_moves_used = Some(active_moves_used);
+        node.active_win_rate = Some(win_rate);
+        node.active_loss_rate = Some(loss_rate);
+        node.active_draw_rate = Some(draw_rate);
+        node
+    }
+
+    #[test]
+    fn critical_line_report_requires_new_active_move_context() {
+        let mut root = critical_test_node("root", "root", 0, 20.0, 60.0, 20.0);
+        let child = critical_test_node("child", "e4", 1, 20.0, 60.0, 20.0);
+        root.children.push(child);
+
+        let report = variant_coverage_critical_line_report(
+            root,
+            VariantCoverageColorDto::White,
+            Some(false),
+            None,
+        );
+
+        assert_eq!(report.nodes.len(), 1);
+        assert_eq!(report.nodes[0].id, "child");
+    }
+
+    #[test]
+    fn critical_line_report_ignores_same_active_move_context() {
+        let mut root = critical_test_node("root", "root", 0, 20.0, 60.0, 20.0);
+        let child = critical_test_node("child", "e4", 0, 20.0, 60.0, 20.0);
+        root.children.push(child);
+
+        let report = variant_coverage_critical_line_report(
+            root,
+            VariantCoverageColorDto::White,
+            Some(false),
+            None,
+        );
+
+        assert!(report.nodes.is_empty());
+    }
+
+    #[test]
+    fn critical_line_report_counts_draws_as_black_source_safety() {
+        let mut root = critical_test_node("root", "root", 0, 0.0, 0.0, 0.0);
+        let safe_child = critical_test_node("safe", "e5", 1, 47.5, 48.8, 3.7);
+        let risky_child = critical_test_node("risky", "c5", 1, 45.0, 50.0, 4.0);
+        root.children.push(safe_child);
+        root.children.push(risky_child);
+
+        let report = variant_coverage_critical_line_report(
+            root,
+            VariantCoverageColorDto::Black,
+            Some(false),
+            None,
+        );
+
+        assert_eq!(report.nodes.len(), 1);
+        assert_eq!(report.nodes[0].id, "risky");
+        assert_eq!(
+            report.nodes[0].reasons,
+            vec![VariantCoverageCriticalLineReasonDto::Source]
+        );
+    }
+
+    #[test]
+    fn critical_line_report_requires_black_engine_threshold() {
+        let mut root = critical_test_node("root", "root", 0, 0.0, 0.0, 0.0);
+        let mut slight_edge = critical_test_node("slight", "e5", 1, 60.0, 20.0, 20.0);
+        slight_edge.engine_advantage = Some("+0.7".to_string());
+        let mut clear_edge = critical_test_node("clear", "c5", 1, 60.0, 20.0, 20.0);
+        clear_edge.engine_advantage = Some("+0.8".to_string());
+        root.children.push(slight_edge);
+        root.children.push(clear_edge);
+
+        let report = variant_coverage_critical_line_report(
+            root,
+            VariantCoverageColorDto::Black,
+            Some(false),
+            None,
+        );
+
+        assert_eq!(report.nodes.len(), 1);
+        assert_eq!(report.nodes[0].id, "clear");
+        assert_eq!(
+            report.nodes[0].reasons,
+            vec![VariantCoverageCriticalLineReasonDto::Engine]
+        );
+    }
 }

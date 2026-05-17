@@ -19,9 +19,9 @@ use vampirc_uci::parse_one;
 
 use crate::error::Error;
 use crate::variant_coverage_graph::{
-    get_next_fen_from_san, variant_coverage_graph_cache_path, variant_coverage_read_graph_cache,
-    variant_coverage_write_graph_cache, VariantCoverageGraphNodeDto,
-    VariantCoverageResponseRarityDto, VariantCoverageTierDto,
+    apply_critical_line_flags, get_next_fen_from_san, variant_coverage_graph_cache_path,
+    variant_coverage_read_graph_cache, variant_coverage_write_graph_cache,
+    VariantCoverageGraphNodeDto, VariantCoverageResponseRarityDto, VariantCoverageTierDto,
 };
 use crate::variant_positions::{fetch_variant_position, upsert_variant_position_entry};
 use crate::AppState;
@@ -1345,6 +1345,14 @@ pub async fn run_coverage_engine_analysis(
                 }
             }
         });
+    let graph_repertoire_color = resolved_graph_cache_path
+        .as_deref()
+        .and_then(|cache_path| {
+            variant_coverage_read_graph_cache(cache_path.to_string())
+                .ok()
+                .flatten()
+        })
+        .map(|cache| cache.repertoire_color);
     let mut results = Vec::with_capacity(targets.len());
     let mut engine_info_by_fen: HashMap<String, CoverageEngineGraphInfo> = HashMap::new();
     let mut completed = 0_u32;
@@ -1580,7 +1588,14 @@ pub async fn run_coverage_engine_analysis(
     let updated_graph_root = if engine_info_by_fen.is_empty() {
         None
     } else {
-        graph_root.map(|root| apply_coverage_engine_info_to_graph(root, &engine_info_by_fen))
+        graph_root.map(|root| {
+            let updated = apply_coverage_engine_info_to_graph(root, &engine_info_by_fen);
+            if let Some(color) = graph_repertoire_color {
+                apply_critical_line_flags(updated, color)
+            } else {
+                updated
+            }
+        })
     };
     let updated_action_node = updated_graph_root
         .as_ref()
@@ -1591,8 +1606,10 @@ pub async fn run_coverage_engine_analysis(
         if let Some(cache_path) = resolved_graph_cache_path.as_deref() {
             match variant_coverage_read_graph_cache(cache_path.to_string()) {
                 Ok(Some(mut cache)) => {
-                    cache.graph_root =
-                        apply_coverage_engine_info_to_graph(cache.graph_root, &engine_info_by_fen);
+                    cache.graph_root = apply_critical_line_flags(
+                        apply_coverage_engine_info_to_graph(cache.graph_root, &engine_info_by_fen),
+                        cache.repertoire_color,
+                    );
                     cache.generated_at = Utc::now().to_rfc3339();
                     match variant_coverage_write_graph_cache(cache_path.to_string(), cache) {
                         Ok(()) => {

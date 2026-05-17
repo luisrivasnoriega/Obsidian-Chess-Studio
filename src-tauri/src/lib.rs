@@ -131,13 +131,14 @@ use crate::tab_state_storage::{
     tab_state_clear_all, tab_state_read, tab_state_remove, tab_state_write,
 };
 use crate::variant_coverage_graph::{
-    variant_coverage_apply_node_visibility_rules, variant_coverage_apply_position_flags,
-    variant_coverage_apply_profile_position_flags, variant_coverage_build_graph,
-    variant_coverage_build_source_signature, variant_coverage_classify_position,
-    variant_coverage_critical_line_report, variant_coverage_get_cached_position,
-    variant_coverage_get_profile_position, variant_coverage_graph_cache_path,
-    variant_coverage_parse_build_config_tags, variant_coverage_read_graph_cache,
-    variant_coverage_trim_graph_by_depth, variant_coverage_write_graph_cache,
+    variant_coverage_apply_critical_line_flags, variant_coverage_apply_node_visibility_rules,
+    variant_coverage_apply_position_flags, variant_coverage_apply_profile_position_flags,
+    variant_coverage_build_graph, variant_coverage_build_source_signature,
+    variant_coverage_classify_position, variant_coverage_critical_line_report,
+    variant_coverage_get_cached_position, variant_coverage_get_profile_position,
+    variant_coverage_graph_cache_path, variant_coverage_parse_build_config_tags,
+    variant_coverage_read_graph_cache, variant_coverage_trim_graph_by_depth,
+    variant_coverage_write_graph_cache,
 };
 use crate::variant_positions::{
     get_variant_position, get_variant_position_engine_eval, upsert_variant_position,
@@ -268,6 +269,7 @@ pub async fn run() {
             variant_coverage_classify_position,
             variant_coverage_get_cached_position,
             variant_coverage_get_profile_position,
+            variant_coverage_apply_critical_line_flags,
             variant_coverage_apply_position_flags,
             variant_coverage_apply_profile_position_flags,
             variant_coverage_apply_node_visibility_rules,

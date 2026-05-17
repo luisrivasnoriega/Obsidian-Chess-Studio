@@ -8,6 +8,7 @@ const MAINLINE_TAG_PREFIX = "mainline:";
 const COVERAGE_NODE_TAG_PREFIX = "coverageNode:";
 const COVERAGE_TIER_TAG_PREFIX = "coverageTier:";
 const ECO_VARIANT_TAG_PREFIX = "ecoVariant:";
+const ORIENTATION_TAG_PREFIX = "orientation:";
 
 export type PuzzleVariantTagInfo = {
   profileId: string | null;
@@ -18,6 +19,7 @@ export type PuzzleVariantTagInfo = {
   coverageNode: string | null;
   coverageTier: "mainline" | "secondary" | "alternative" | null;
   ecoVariant: string | null;
+  orientation: "white" | "black" | null;
 };
 
 function tagValue(tags: string[], prefix: string): string | null {
@@ -91,6 +93,8 @@ export function parsePuzzleVariantTags(tags: string[]): PuzzleVariantTagInfo {
     coverageTierRaw === "mainline" || coverageTierRaw === "secondary" || coverageTierRaw === "alternative"
       ? coverageTierRaw
       : null;
+  const orientationRaw = tagValue(tags, ORIENTATION_TAG_PREFIX)?.toLowerCase() ?? null;
+  const orientation = orientationRaw === "white" || orientationRaw === "black" ? orientationRaw : null;
 
   return {
     profileId: tagValue(tags, PROFILE_ID_TAG_PREFIX),
@@ -101,6 +105,7 @@ export function parsePuzzleVariantTags(tags: string[]): PuzzleVariantTagInfo {
     coverageNode: tagValue(tags, COVERAGE_NODE_TAG_PREFIX),
     coverageTier,
     ecoVariant: tagValue(tags, ECO_VARIANT_TAG_PREFIX),
+    orientation,
   };
 }
 

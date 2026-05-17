@@ -226,6 +226,7 @@ type CoverageMoveEntry = {
   nextFen: string | null;
   activeWinRate?: number | null;
   activeLossRate?: number | null;
+  activeDrawRate?: number | null;
 };
 
 type CoveragePositionCacheEntry = {
@@ -413,6 +414,7 @@ type CriticalLineReportItem = {
   fen: string | null;
   sourceWinRate: number | null;
   sourceLossRate: number | null;
+  sourceDrawRate?: number | null;
   profileWinRate: number | null;
   profileLossRate: number | null;
   engineAdvantage: string | null;
@@ -863,6 +865,16 @@ async function applyProfileFlagsToCoverageGraph(
   });
 }
 
+async function applyCriticalLineFlagsToCoverageGraph(
+  root: CoverageGraphNode,
+  activeColor: "white" | "black",
+): Promise<CoverageGraphNode> {
+  return await invoke<CoverageGraphNode>("variant_coverage_apply_critical_line_flags", {
+    root,
+    activeColor,
+  });
+}
+
 async function getCoverageCriticalLineReport(
   root: CoverageGraphNode,
   activeColor: "white" | "black",
@@ -1061,11 +1073,14 @@ function applyCollapsedCoverageNodes(
         activeMovesUsed: forcedReply?.activeMovesUsed ?? node.activeMovesUsed,
         activeWinRate: forcedReply ? forcedReply.activeWinRate : node.activeWinRate,
         activeLossRate: forcedReply ? forcedReply.activeLossRate : node.activeLossRate,
+        activeDrawRate: forcedReply ? forcedReply.activeDrawRate : node.activeDrawRate,
         profileWinRate: forcedReply ? forcedReply.profileWinRate : node.profileWinRate,
         profileLossRate: forcedReply ? forcedReply.profileLossRate : node.profileLossRate,
         engineAdvantage: forcedReply ? forcedReply.engineAdvantage : node.engineAdvantage,
         engineName: forcedReply ? forcedReply.engineName : node.engineName,
         engineMs: forcedReply ? forcedReply.engineMs : node.engineMs,
+        criticalLine: forcedReply ? forcedReply.criticalLine : node.criticalLine,
+        criticalLineReasons: forcedReply ? forcedReply.criticalLineReasons : node.criticalLineReasons,
         unmappedResponse: forcedReplies.length > 0 ? false : node.unmappedResponse,
         collapsed: true,
         hiddenChildrenCount: forcedReply ? forcedReply.children.length : node.children.length,
@@ -1355,7 +1370,7 @@ function formatCoverageWinLoss(winRate: number | null | undefined, lossRate: num
 function getCoveragePositionWinLossRates(
   entry: CoveragePositionCacheEntry | null | undefined,
   repertoireColor: "white" | "black",
-): { winRate?: number; lossRate?: number } {
+): { winRate?: number; lossRate?: number; drawRate?: number } {
   if (!entry) return {};
   const hasPositionTotals =
     typeof entry.white === "number" &&
@@ -1378,6 +1393,7 @@ function getCoveragePositionWinLossRates(
   return {
     winRate: Math.round((wins / total) * 1000) / 10,
     lossRate: Math.round((losses / total) * 1000) / 10,
+    drawRate: Math.round((draw / total) * 1000) / 10,
   };
 }
 
@@ -1385,7 +1401,7 @@ function getCoveragePositionWinLossRatesForResultFen(
   entry: CoveragePositionCacheEntry | null | undefined,
   resultFen: string | null | undefined,
   fallbackColor: "white" | "black",
-): { winRate?: number; lossRate?: number } {
+): { winRate?: number; lossRate?: number; drawRate?: number } {
   const sideToMove = getFenSideToMove(resultFen);
   const moveColor = sideToMove ? (sideToMove === "white" ? "black" : "white") : fallbackColor;
   return getCoveragePositionWinLossRates(entry, moveColor);
@@ -1403,6 +1419,7 @@ function normalizeCoverageGraphSourceRatesByResultFen(
     ...node,
     activeWinRate: rates.winRate ?? node.activeWinRate,
     activeLossRate: rates.lossRate ?? node.activeLossRate,
+    activeDrawRate: rates.drawRate ?? node.activeDrawRate,
     children: node.children.map((child) =>
       normalizeCoverageGraphSourceRatesByResultFen(child, positions, fallbackColor),
     ),
@@ -3622,9 +3639,12 @@ export default function VariantsPage() {
         selectedProfileTimeControls,
       );
       coverageGraphPositionsRef.current = existingCache.positions;
-      setCoverageGraphRoot(
-        normalizeCoverageGraphSourceRatesByResultFen(nextGraph, existingCache.positions, coverageGraphOrientation),
+      const normalizedGraph = normalizeCoverageGraphSourceRatesByResultFen(
+        nextGraph,
+        existingCache.positions,
+        coverageGraphOrientation,
       );
+      setCoverageGraphRoot(await applyCriticalLineFlagsToCoverageGraph(normalizedGraph, coverageGraphOrientation));
     } finally {
       setCoverageProfileStatsRefreshing(false);
     }
@@ -4364,9 +4384,15 @@ export default function VariantsPage() {
         failedDetails.push(...(backendResult.failedDetails ?? []));
 
         if (backendResult.updatedGraphRoot) {
-          setCoverageGraphRoot(backendResult.updatedGraphRoot);
-        }
-        if (backendResult.updatedActionNode) {
+          const flaggedGraph = await applyCriticalLineFlagsToCoverageGraph(
+            backendResult.updatedGraphRoot,
+            coverageGraphOrientation,
+          );
+          setCoverageGraphRoot(flaggedGraph);
+          setCoverageActionNode(
+            findCoverageNodeById(flaggedGraph, sourceNode.id) ?? backendResult.updatedActionNode ?? null,
+          );
+        } else if (backendResult.updatedActionNode) {
           setCoverageActionNode(backendResult.updatedActionNode);
         }
         if (backendResult.graphCacheWritten && backendResult.resolvedGraphCachePath) {
@@ -4500,6 +4526,7 @@ export default function VariantsPage() {
     setCoverageEngineAnalysisActive,
     t,
     variantLinkGraph.variantByKey,
+    coverageGraphOrientation,
   ]);
 
   const runCoverageActionPrimary = useCallback(async () => {

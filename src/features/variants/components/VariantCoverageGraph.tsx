@@ -29,12 +29,15 @@ export type CoverageGraphNode = {
   hiddenChildrenCount?: number;
   activeWinRate?: number | null;
   activeLossRate?: number | null;
+  activeDrawRate?: number | null;
   profileWinRate?: number | null;
   profileLossRate?: number | null;
   completeLine?: boolean;
   engineAdvantage?: string | null;
   engineMs?: number | null;
   engineName?: string | null;
+  criticalLine?: boolean;
+  criticalLineReasons?: Array<"source" | "engine">;
   children: CoverageGraphNode[];
 };
 
@@ -167,73 +170,14 @@ function clampGraphTransform(transform: ZoomTransform): ZoomTransform {
   return zoomIdentity.translate(safeX, safeY).scale(safeScale);
 }
 
-function parseEngineAdvantageDirection(value: string | null | undefined): "white" | "black" | "equal" | null {
-  const text = `${value ?? ""}`.trim();
-  if (!text) return null;
-  const mateMatch = text.match(/^M([+-]?\d+)/i);
-  if (mateMatch) {
-    const mateValue = Number.parseInt(mateMatch[1], 10);
-    if (!Number.isFinite(mateValue) || mateValue === 0) return null;
-    return mateValue > 0 ? "white" : "black";
-  }
-  const scoreMatch = text.match(/^([+-]?\d+(?:\.\d+)?)/);
-  if (!scoreMatch) return null;
-  const score = Number.parseFloat(scoreMatch[1]);
-  if (!Number.isFinite(score)) return null;
-  if (Math.abs(score) < 0.01) return "equal";
-  return score > 0 ? "white" : "black";
-}
-
-function fenSideToMove(fen: string | null | undefined): "white" | "black" | null {
-  const turn = `${fen ?? ""}`.trim().split(/\s+/)[1];
-  if (turn === "w") return "white";
-  if (turn === "b") return "black";
-  return null;
-}
-
-export function nodeIsCriticalLine(
-  node: CoverageGraphNode,
-  activeSide: "white" | "black",
-  parentActiveMovesUsed?: number | null,
-): boolean {
-  if (node.unmappedResponse === true) return false;
-  if (node.lowSample === true) return false;
-  const sideToMove = fenSideToMove(node.fen);
-  const opponentSide = activeSide === "white" ? "black" : "white";
-  const activeMovesUsed = hasFiniteNumber(node.activeMovesUsed) ? (node.activeMovesUsed ?? 0) : 0;
-  const parentMovesUsed = hasFiniteNumber(parentActiveMovesUsed) ? (parentActiveMovesUsed ?? 0) : 0;
-  const nodeEndsAfterActiveMove = sideToMove === opponentSide;
-  const isActivePlayerNode =
-    (activeMovesUsed > 0 || nodeEndsAfterActiveMove) &&
-    (node.tier === "root" || activeMovesUsed > parentMovesUsed || nodeEndsAfterActiveMove);
-  if (!isActivePlayerNode) return false;
-
-  const sourceLosesMoreThanWins =
-    hasFiniteNumber(node.activeWinRate) &&
-    hasFiniteNumber(node.activeLossRate) &&
-    (node.activeLossRate ?? 0) > (node.activeWinRate ?? 0);
-  if (sourceLosesMoreThanWins) return true;
-
-  const engineAdvantageSide = parseEngineAdvantageDirection(node.engineAdvantage);
-  return engineAdvantageSide === opponentSide;
-}
-
-function edgeColor(
-  target: CoverageGraphNode,
-  activeSide: "white" | "black",
-  parentActiveMovesUsed?: number | null,
-): string {
-  if (nodeIsCriticalLine(target, activeSide, parentActiveMovesUsed)) return NODE_VISUALS.criticalLine.accent;
+function edgeColor(target: CoverageGraphNode): string {
+  if (target.criticalLine === true) return NODE_VISUALS.criticalLine.accent;
   if (target.unmappedResponse) return COVERAGE_UNMAPPED_COLOR;
   return COVERAGE_TIER_COLORS[target.tier] ?? "#64748b";
 }
 
-function getNodeVisualKey(
-  node: CoverageGraphNode,
-  activeSide: "white" | "black",
-  parentActiveMovesUsed?: number | null,
-): CoverageVisualKey {
-  if (nodeIsCriticalLine(node, activeSide, parentActiveMovesUsed)) return "criticalLine";
+function getNodeVisualKey(node: CoverageGraphNode): CoverageVisualKey {
+  if (node.criticalLine === true) return "criticalLine";
   return node.unmappedResponse ? "unmapped" : node.tier;
 }
 
@@ -534,11 +478,14 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
           activeMovesUsed: forcedReply.activeMovesUsed ?? normalizedNode.activeMovesUsed,
           activeWinRate: forcedReply.activeWinRate,
           activeLossRate: forcedReply.activeLossRate,
+          activeDrawRate: forcedReply.activeDrawRate,
           profileWinRate: forcedReply.profileWinRate,
           profileLossRate: forcedReply.profileLossRate,
           engineAdvantage: forcedReply.engineAdvantage,
           engineName: forcedReply.engineName,
           engineMs: forcedReply.engineMs,
+          criticalLine: forcedReply.criticalLine,
+          criticalLineReasons: forcedReply.criticalLineReasons,
           unmappedResponse: false,
           hiddenChildrenCount: forcedReply.children.length,
           children: [],
@@ -569,11 +516,14 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
         activeMovesUsed: forcedReply.activeMovesUsed ?? normalizedNode.activeMovesUsed,
         activeWinRate: forcedReply.activeWinRate,
         activeLossRate: forcedReply.activeLossRate,
+        activeDrawRate: forcedReply.activeDrawRate,
         profileWinRate: forcedReply.profileWinRate,
         profileLossRate: forcedReply.profileLossRate,
         engineAdvantage: forcedReply.engineAdvantage,
         engineName: forcedReply.engineName,
         engineMs: forcedReply.engineMs,
+        criticalLine: forcedReply.criticalLine,
+        criticalLineReasons: forcedReply.criticalLineReasons,
         unmappedResponse: false,
         children: forcedReply.children,
       };
@@ -591,7 +541,6 @@ function normalizeCoverageNode(node: CoverageGraphNode): CoverageGraphNode | nul
 
 export function VariantCoverageGraph({
   root,
-  activeSide = "white",
   onNodeClick,
   onNodeToggleCollapse,
   onNodeExpandAllChildren,
@@ -888,9 +837,7 @@ export function VariantCoverageGraph({
       .data(renderedLinks)
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) =>
-        edgeColor(d.target.hierarchyNode.data, activeSide, d.source.hierarchyNode.data.activeMovesUsed),
-      )
+      .attr("stroke", (d) => edgeColor(d.target.hierarchyNode.data))
       .attr("stroke-width", DIMS.strokeWidth.link + 4)
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
@@ -904,9 +851,7 @@ export function VariantCoverageGraph({
       .data(renderedLinks)
       .join("path")
       .attr("fill", "none")
-      .attr("stroke", (d) =>
-        edgeColor(d.target.hierarchyNode.data, activeSide, d.source.hierarchyNode.data.activeMovesUsed),
-      )
+      .attr("stroke", (d) => edgeColor(d.target.hierarchyNode.data))
       .attr("stroke-width", DIMS.strokeWidth.link)
       .attr("stroke-linecap", "round")
       .attr("stroke-linejoin", "round")
@@ -934,9 +879,8 @@ export function VariantCoverageGraph({
     nodes.each(function (d) {
       if (!(this instanceof SVGGElement)) return;
       const nodeData = d.hierarchyNode.data;
-      const parentActiveMovesUsed = d.hierarchyNode.parent?.data.activeMovesUsed ?? 0;
-      const isCriticalLine = nodeIsCriticalLine(nodeData, activeSide, parentActiveMovesUsed);
-      const visualKey = getNodeVisualKey(nodeData, activeSide, parentActiveMovesUsed);
+      const isCriticalLine = nodeData.criticalLine === true;
+      const visualKey = getNodeVisualKey(nodeData);
       const visual = NODE_VISUALS[visualKey];
       const nodeGroup = select(this);
       const x = -DIMS.nodeWidth / 2;
@@ -1620,7 +1564,7 @@ export function VariantCoverageGraph({
         });
       }
     }
-  }, [activeSide, onNodeClick, onNodeExpandAllChildren, onNodeToggleCollapse, svgIdPrefix, t, visualRoot]);
+  }, [onNodeClick, onNodeExpandAllChildren, onNodeToggleCollapse, svgIdPrefix, t, visualRoot]);
 
   return (
     <Paper

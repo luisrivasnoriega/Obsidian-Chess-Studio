@@ -465,6 +465,26 @@ fn find_first_path_by_fen(root: &SimpleNode, fen: &str) -> Option<Vec<u32>> {
     None
 }
 
+fn find_all_paths_by_fen(root: &SimpleNode, fen: &str) -> Vec<Vec<u32>> {
+    let target = normalize_fen_key(fen);
+    let mut out = Vec::new();
+    let mut queue = VecDeque::from([(root, Vec::<u32>::new())]);
+    while let Some((node, path)) = queue.pop_front() {
+        if normalize_fen_key(&node.fen) == target {
+            out.push(path.clone());
+        }
+        for (index, child) in node.children.iter().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                continue;
+            };
+            let mut child_path = path.clone();
+            child_path.push(index);
+            queue.push_back((child, child_path));
+        }
+    }
+    out
+}
+
 fn path_ply(path: &[u32]) -> u32 {
     u32::try_from(path.len()).unwrap_or(u32::MAX)
 }
@@ -490,6 +510,23 @@ fn merge_children(target_parent: &mut SimpleNode, source_children: &[SimpleNode]
             target_parent.children.push(source_child.clone());
         }
     }
+}
+
+fn merge_children_at_paths(
+    root: &mut SimpleNode,
+    paths: &[Vec<u32>],
+    source_children: &[SimpleNode],
+) -> Result<()> {
+    for path in paths {
+        let path_usize = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
+        let Some(node) = get_simple_node_mut(root, &path_usize) else {
+            return Err(Error::InvalidInput(
+                "Resolved an invalid PGN tree path while merging variants".to_string(),
+            ));
+        };
+        merge_children(node, source_children);
+    }
+    Ok(())
 }
 
 fn compare_paths(a: &[u32], b: &[u32]) -> std::cmp::Ordering {
@@ -808,7 +845,13 @@ fn child_indexes_by_parent(variants: &[VariantInfoDto]) -> HashMap<String, Vec<S
                 continue;
             }
             let linked_child_key = resolve_link_path(Path::new(&variant.path), &child.path);
-            if linked_child_key == child_key || !by_key.contains_key(&linked_child_key) {
+            if linked_child_key == child_key {
+                continue;
+            }
+            let Some(linked_child) = by_key.get(&linked_child_key) else {
+                continue;
+            };
+            if linked_child.parent_link.is_some() {
                 continue;
             }
             let entry = children.entry(child_key.clone()).or_default();
@@ -844,20 +887,26 @@ fn ordered_subtree_keys(root_key: &str, variants: &[VariantInfoDto]) -> Vec<Stri
     out
 }
 
-fn resolve_attach_path(
+fn resolve_attach_paths(
     aggregate_root: &SimpleNode,
     parent_base: Option<&Vec<u32>>,
     parent_link: Option<&VariantLinkRefDto>,
     source_fen: &str,
-) -> Option<Vec<u32>> {
+) -> Vec<Vec<u32>> {
+    let paths = find_all_paths_by_fen(aggregate_root, source_fen);
+    if !paths.is_empty() {
+        return paths;
+    }
+
     if let (Some(parent_base), Some(parent)) = (parent_base, parent_link) {
         let mut path = parent_base.clone();
         path.extend(parent.anchor_path.iter().copied());
         if path_matches_fen(aggregate_root, &path, source_fen) {
-            return Some(path);
+            return vec![path];
         }
     }
-    find_first_path_by_fen(aggregate_root, source_fen)
+
+    Vec::new()
 }
 
 fn aggregate_variant_family_tree(
@@ -873,16 +922,16 @@ fn aggregate_variant_family_tree(
     for game in root_games.iter().skip(1) {
         if normalize_fen_key(&game.root.fen) == normalize_fen_key(&aggregate_root.fen) {
             merge_children(&mut aggregate_root, &game.root.children);
-        } else if let Some(path) = find_first_path_by_fen(&aggregate_root, &game.root.fen) {
-            let path = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
-            if let Some(node) = get_simple_node_mut(&mut aggregate_root, &path) {
-                merge_children(node, &game.root.children);
-            }
         } else {
-            return Err(Error::InvalidInput(format!(
-                "Could not attach root PGN game at FEN '{}'",
-                game.root.fen
-            )));
+            let paths = find_all_paths_by_fen(&aggregate_root, &game.root.fen);
+            if !paths.is_empty() {
+                merge_children_at_paths(&mut aggregate_root, &paths, &game.root.children)?;
+            } else {
+                return Err(Error::InvalidInput(format!(
+                    "Could not attach root PGN game at FEN '{}'",
+                    game.root.fen
+                )));
+            }
         }
     }
 
@@ -908,33 +957,33 @@ fn aggregate_variant_family_tree(
             parent_base = base_path_by_key.get(&parent_key);
             parent_label = Some(parent.name.as_str());
         }
-        let path = resolve_attach_path(
+        let paths = resolve_attach_paths(
             &aggregate_root,
             parent_base,
             variant.parent_link.as_ref(),
             source_fen,
-        )
-        .ok_or_else(|| {
+        );
+        if paths.is_empty() {
             let parent = parent_label.unwrap_or("unknown parent");
-            Error::InvalidInput(format!(
-                "Could not attach variant '{}' from {parent} at FEN '{source_fen}'",
-                variant.name
-            ))
-        })?;
-        if !path_matches_fen(&aggregate_root, &path, source_fen) {
             return Err(Error::InvalidInput(format!(
-                "Variant '{}' resolved to an unexpected FEN while aggregating",
+                "Could not attach variant '{}' from {parent} at FEN '{source_fen}'",
                 variant.name
             )));
         }
-        let path_usize = path.iter().map(|value| *value as usize).collect::<Vec<_>>();
-        let Some(node) = get_simple_node_mut(&mut aggregate_root, &path_usize) else {
-            return Err(Error::InvalidInput(format!(
-                "Variant '{}' resolved to an invalid aggregate path",
-                variant.name
-            )));
+        let canonical_path = if let (Some(parent_base), Some(parent)) =
+            (parent_base, variant.parent_link.as_ref())
+        {
+            let mut path = parent_base.clone();
+            path.extend(parent.anchor_path.iter().copied());
+            if path_matches_fen(&aggregate_root, &path, source_fen) {
+                path
+            } else {
+                paths[0].clone()
+            }
+        } else {
+            paths[0].clone()
         };
-        base_path_by_key.insert(key.clone(), path);
+        base_path_by_key.insert(key.clone(), canonical_path);
         for game in games {
             if normalize_fen_key(&game.root.fen) != normalize_fen_key(source_fen) {
                 return Err(Error::InvalidInput(format!(
@@ -942,7 +991,7 @@ fn aggregate_variant_family_tree(
                     variant.name
                 )));
             }
-            merge_children(node, &game.root.children);
+            merge_children_at_paths(&mut aggregate_root, &paths, &game.root.children)?;
         }
     }
 
@@ -1091,7 +1140,7 @@ pub fn variants_create_opening_variants(
         groups_by_key: &mut HashMap<String, usize>,
         boundary_by_fen: &mut HashMap<String, String>,
     ) -> String {
-        let key = normalize_opening_variant_key(&title);
+        let key = normalize_fen_key(&node.fen);
         if let Some(index) = groups_by_key.get(&key).copied() {
             let group_id = groups[index].id.clone();
             let should_add_parent_link = parent_id
@@ -1145,6 +1194,39 @@ pub fn variants_create_opening_variants(
         id
     }
 
+    fn attach_existing_group_source(
+        group_id: &str,
+        title_candidates: Vec<String>,
+        node: &SimpleNode,
+        parent_id: Option<String>,
+        groups: &mut [OpeningGroup],
+    ) {
+        let Some(index) = groups.iter().position(|group| group.id == group_id) else {
+            return;
+        };
+        let child_id = groups[index].id.clone();
+        {
+            let group = &mut groups[index];
+            group.source_nodes.push(node.clone());
+            for candidate in title_candidates {
+                if !group.title_candidates.iter().any(|item| {
+                    normalize_opening_variant_key(item) == normalize_opening_variant_key(&candidate)
+                }) {
+                    group.title_candidates.push(candidate);
+                }
+            }
+        }
+        if parent_id.as_deref().is_some_and(|id| id != child_id) {
+            if let Some(parent_id) = parent_id {
+                if let Some(parent) = groups.iter_mut().find(|group| group.id == parent_id) {
+                    if !parent.children.contains(&child_id) {
+                        parent.children.push(child_id);
+                    }
+                }
+            }
+        }
+    }
+
     fn walk_openings(
         node: &SimpleNode,
         current_group_id: Option<String>,
@@ -1166,40 +1248,62 @@ pub fn variants_create_opening_variants(
         if can_start_group_here {
             let title_candidates = resolve_titles(&node.fen, cache);
             if !title_candidates.is_empty() {
-                let current_key = current_title.as_deref().map(normalize_opening_variant_key);
-                let current_index = current_key.as_ref().and_then(|key| {
-                    title_candidates
-                        .iter()
-                        .position(|candidate| normalize_opening_variant_key(candidate) == *key)
-                });
-                let title = if let Some(index) = current_index {
-                    title_candidates
-                        .iter()
-                        .skip(index.saturating_add(1))
-                        .find(|candidate| {
-                            Some(normalize_opening_variant_key(candidate)) != current_key
-                        })
-                        .cloned()
-                } else {
-                    title_candidates
-                        .iter()
-                        .find(|candidate| {
-                            Some(normalize_opening_variant_key(candidate)) != current_key
-                        })
-                        .cloned()
-                };
-                if let Some(title) = title {
-                    let group_id = get_or_create_group(
-                        title.clone(),
+                let existing_boundary_id = boundary_by_fen.get(&normalize_fen_key(&node.fen));
+                if let Some(existing_boundary_id) = existing_boundary_id.cloned().filter(|id| {
+                    active_group_id
+                        .as_deref()
+                        .map(|current_id| current_id != id)
+                        .unwrap_or(true)
+                }) {
+                    attach_existing_group_source(
+                        &existing_boundary_id,
                         title_candidates.clone(),
                         node,
                         active_group_id.clone(),
                         groups,
-                        groups_by_key,
-                        boundary_by_fen,
                     );
-                    active_group_id = Some(group_id);
-                    active_title = Some(title);
+                    active_group_id = Some(existing_boundary_id.clone());
+                    active_title = groups
+                        .iter()
+                        .find(|group| group.id == existing_boundary_id)
+                        .map(|group| group.title.clone())
+                        .or_else(|| title_candidates.first().cloned());
+                } else {
+                    let current_key = current_title.as_deref().map(normalize_opening_variant_key);
+                    let current_index = current_key.as_ref().and_then(|key| {
+                        title_candidates
+                            .iter()
+                            .position(|candidate| normalize_opening_variant_key(candidate) == *key)
+                    });
+                    let title = if let Some(index) = current_index {
+                        title_candidates
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .find(|candidate| {
+                                Some(normalize_opening_variant_key(candidate)) != current_key
+                            })
+                            .cloned()
+                    } else {
+                        title_candidates
+                            .iter()
+                            .find(|candidate| {
+                                Some(normalize_opening_variant_key(candidate)) != current_key
+                            })
+                            .cloned()
+                    };
+                    if let Some(title) = title {
+                        let group_id = get_or_create_group(
+                            title.clone(),
+                            title_candidates.clone(),
+                            node,
+                            active_group_id.clone(),
+                            groups,
+                            groups_by_key,
+                            boundary_by_fen,
+                        );
+                        active_group_id = Some(group_id);
+                        active_title = Some(title);
+                    }
                 }
             }
         }
@@ -1344,6 +1448,67 @@ pub fn variants_create_opening_variants(
         );
     }
 
+    fn canonical_parent_id_for_group(
+        group: &OpeningGroup,
+        root_replacement_id: &str,
+        groups: &[OpeningGroup],
+        anchors: &HashMap<String, OpeningAnchor>,
+    ) -> Option<String> {
+        let mut candidates = groups
+            .iter()
+            .filter(|candidate| candidate.id != group.id)
+            .filter(|candidate| anchors.contains_key(&edge_key(&candidate.id, &group.id)))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
+            let left_anchor = anchors
+                .get(&edge_key(&left.id, &group.id))
+                .expect("candidate anchor exists");
+            let right_anchor = anchors
+                .get(&edge_key(&right.id, &group.id))
+                .expect("candidate anchor exists");
+            compare_paths(&left_anchor.anchor_path, &right_anchor.anchor_path)
+                .then_with(|| left.file_stem.cmp(&right.file_stem))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        if let Some(parent) = candidates.first() {
+            return Some(parent.id.clone());
+        }
+        group
+            .parent_id
+            .clone()
+            .or_else(|| (group.id != root_replacement_id).then(|| root_replacement_id.to_string()))
+    }
+
+    fn anchor_child_ids_for_group(
+        group_id: &str,
+        group_by_id: &HashMap<String, OpeningGroup>,
+        anchors: &HashMap<String, OpeningAnchor>,
+    ) -> Vec<String> {
+        let prefix = format!("{group_id}->");
+        let mut candidates = anchors
+            .iter()
+            .filter_map(|(key, anchor)| {
+                let child_id = key.strip_prefix(&prefix)?;
+                if child_id == group_id {
+                    return None;
+                }
+                let child = group_by_id.get(child_id)?;
+                Some((child_id.to_string(), child, anchor))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(
+            |(left_id, left_group, left_anchor), (right_id, right_group, right_anchor)| {
+                compare_paths(&left_anchor.anchor_path, &right_anchor.anchor_path)
+                    .then_with(|| left_group.file_stem.cmp(&right_group.file_stem))
+                    .then_with(|| left_id.cmp(right_id))
+            },
+        );
+        candidates
+            .into_iter()
+            .map(|(child_id, _, _)| child_id)
+            .collect()
+    }
+
     fn clone_for_group(
         node: &SimpleNode,
         owner_id: &str,
@@ -1357,19 +1522,11 @@ pub fn variants_create_opening_variants(
         if let Some(boundary_id) = boundary_id {
             if boundary_id != owner_id {
                 if let Some(boundary_group) = group_by_id.get(boundary_id) {
-                    let is_child = group_by_id
-                        .get(owner_id)
-                        .map(|owner| owner.children.contains(boundary_id))
-                        .unwrap_or(false);
-                    let is_root_level_child =
-                        owner_id == root_replacement_id && boundary_group.parent_id.is_none();
-                    if is_child || is_root_level_child {
-                        record_anchor(anchors, owner_id, boundary_group, node, path);
-                        return SimpleNode {
-                            children: Vec::new(),
-                            ..node.clone()
-                        };
-                    }
+                    record_anchor(anchors, owner_id, boundary_group, node, path);
+                    return SimpleNode {
+                        children: Vec::new(),
+                        ..node.clone()
+                    };
                 }
             }
         }
@@ -1575,6 +1732,11 @@ pub fn variants_create_opening_variants(
             group.fen.clone()
         };
         let mut child_ids = group.children.clone();
+        for child_id in anchor_child_ids_for_group(&group.id, &group_by_id, &anchors) {
+            if !child_ids.contains(&child_id) {
+                child_ids.push(child_id);
+            }
+        }
         if group.id == root_replacement_id {
             for candidate in groups.iter().filter(|candidate| {
                 candidate.id != root_replacement_id && candidate.parent_id.is_none()
@@ -1607,9 +1769,12 @@ pub fn variants_create_opening_variants(
                 .and_then(|links| links.get("parent"))
                 .cloned()
         } else {
-            let parent_group = group.parent_id.as_ref().and_then(|id| group_by_id.get(id));
-            let parent_id = group.parent_id.as_deref().unwrap_or(&root_replacement_id);
-            let parent_anchor = anchors.get(&edge_key(parent_id, &group.id));
+            let parent_id =
+                canonical_parent_id_for_group(group, &root_replacement_id, &groups, &anchors);
+            let parent_group = parent_id.as_ref().and_then(|id| group_by_id.get(id));
+            let parent_anchor = parent_id
+                .as_deref()
+                .and_then(|id| anchors.get(&edge_key(id, &group.id)));
             parent_anchor.map(|anchor| {
                 let parent_path = parent_group
                     .and_then(|parent| parent.file_path.as_ref().map(|path| file_name(path)))
@@ -1724,6 +1889,65 @@ pub fn variants_create_opening_variants(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn write_root_metadata(path: &Path, opening: &str, fen: &str) {
+        fs::write(
+            path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": [format!("opening:{opening}"), format!("fen:{fen}")],
+                "schemaVersion": 2,
+                "links": { "children": [] }
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    fn assert_child_links_anchor_existing_parent_fens(dir: &Path) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("info"))
+            {
+                continue;
+            }
+            let metadata: Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let Some(children) = metadata
+                .get("links")
+                .and_then(|links| links.get("children"))
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            if children.is_empty() {
+                continue;
+            }
+            let pgn_path = path.with_extension("pgn");
+            let games = read_all_games(&pgn_path).unwrap_or_else(|error| {
+                panic!(
+                    "failed to read parent PGN '{}': {error}",
+                    pgn_path.display()
+                )
+            });
+            for child in children {
+                let anchor_fen = child
+                    .get("anchorFen")
+                    .and_then(Value::as_str)
+                    .expect("child link has anchorFen");
+                assert!(
+                    games
+                        .iter()
+                        .any(|game| find_first_path_by_fen(&game.root, anchor_fen).is_some()),
+                    "child link anchor FEN '{anchor_fen}' is absent from parent PGN '{}'",
+                    pgn_path.display()
+                );
+            }
+        }
+    }
 
     #[test]
     fn compress_variant_family_merges_descendants_into_parent_and_removes_children() {
@@ -1965,6 +2189,184 @@ mod tests {
         let merged_pgn = fs::read_to_string(&root_path).unwrap();
         assert!(merged_pgn.contains("2.e5 Nd5"));
         assert!(!merged_pgn.contains("1...Nd5"));
+    }
+
+    #[test]
+    fn compress_variant_family_merges_transposition_children_by_fen() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let child_path = dir.path().join("child.pgn");
+        let root_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let shared_fen = "r1bqkb1r/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQKB1R w KQkq - 4 3";
+
+        fs::write(
+            &root_path,
+            "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n\n1. Nf3 (1. Nc3 Nc6 2. Nf3 Nf6) Nf6 2. Nc3 Nc6 *\n",
+        )
+        .unwrap();
+        fs::write(
+            root_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Root", format!("fen:{root_fen}")],
+                "schemaVersion": 2,
+                "links": {
+                    "children": [{
+                        "path": "child.pgn",
+                        "name": "child",
+                        "anchorFen": shared_fen,
+                        "anchorPath": [0, 0, 0, 0],
+                        "anchorPly": 4,
+                        "label": "Nc6"
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        fs::write(
+            &child_path,
+            format!(
+                "[Event \"Child\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"white\"]\n[SetUp \"1\"]\n[FEN \"{shared_fen}\"]\n\n3. e4 *\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            child_path.with_extension("info"),
+            json!({
+                "type": "variants",
+                "tags": ["opening:Child", format!("fen:{shared_fen}")],
+                "schemaVersion": 2,
+                "links": {
+                    "parent": {
+                        "path": "root.pgn",
+                        "name": "root",
+                        "anchorFen": shared_fen,
+                        "anchorPath": [0, 0, 0, 0],
+                        "anchorPly": 4,
+                        "label": "Nc6"
+                    },
+                    "children": []
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let result = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.merged, 2);
+        assert_eq!(result.removed, 1);
+        assert!(!child_path.exists());
+        assert!(!child_path.with_extension("info").exists());
+
+        let compressed_root = fs::read_to_string(&root_path).unwrap();
+        validate_rendered_pgn(&compressed_root, "compressed transposition PGN").unwrap();
+        let games = read_all_games(&root_path).unwrap();
+        let paths = find_all_paths_by_fen(&games[0].root, shared_fen);
+        assert_eq!(paths.len(), 2);
+        for path in paths {
+            let node = get_simple_node(&games[0].root, &path).unwrap();
+            assert!(
+                node.children
+                    .iter()
+                    .any(|child| child.san.as_deref() == Some("e4")),
+                "missing transposition continuation at path {path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_opening_variants_shares_identical_fen_transpositions() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let root_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let modern_fen = "rnbqk1nr/ppppppbp/6p1/8/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - 1 3";
+
+        fs::write(
+            &root_path,
+            "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"black\"]\n\n1. d4 (1. e4 g6 2. d4 Bg7 3. Nc3 d6) g6 2. e4 Bg7 3. Nf3 d6 *\n",
+        )
+        .unwrap();
+        write_root_metadata(&root_path, "Root", root_fen);
+
+        let create_result = variants_create_opening_variants(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(create_result.created > 0);
+        assert_child_links_anchor_existing_parent_fens(dir.path());
+
+        let variants = variants_list_fast(dir.path().to_string_lossy().to_string()).unwrap();
+        let modern_key = normalize_fen_key(modern_fen);
+        let modern_variants = variants
+            .iter()
+            .filter(|variant| {
+                variant.fen.as_deref().map(normalize_fen_key).as_deref()
+                    == Some(modern_key.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            modern_variants.len(),
+            1,
+            "identical FEN transpositions must share one generated variant"
+        );
+
+        let modern_pgn = fs::read_to_string(&modern_variants[0].path).unwrap();
+        assert!(modern_pgn.contains("3.Nf3"));
+        assert!(modern_pgn.contains("3.Nc3"));
+
+        let compress_result = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(compress_result.removed, create_result.created);
+        let compressed_root = fs::read_to_string(&root_path).unwrap();
+        validate_rendered_pgn(&compressed_root, "compressed transposition PGN").unwrap();
+        assert!(compressed_root.contains("3.Nf3"));
+        assert!(compressed_root.contains("3.Nc3"));
+    }
+
+    #[test]
+    fn create_then_compress_opening_variants_with_gruenfeld_transposition_links() {
+        let dir = tempdir().unwrap();
+        let root_path = dir.path().join("root.pgn");
+        let root_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+        fs::write(
+            &root_path,
+            "[Event \"Root\"]\n[Site \"Obsidian Chess Studio\"]\n[Date \"2026.01.01\"]\n[Round \"?\"]\n[White \"?\"]\n[Black \"?\"]\n[Result \"*\"]\n[Orientation \"black\"]\n\n1. d4 g6 2. c4 Nf6 3. Nc3 d5 4. cxd5 (4. Nf3 Bg7 5. cxd5 Nxd5 6. e4 Nxc3 7. bxc3 c5) Nxd5 5. e4 Nxc3 6. bxc3 Bg7 *\n",
+        )
+        .unwrap();
+        write_root_metadata(&root_path, "Root", root_fen);
+
+        let create_result = variants_create_opening_variants(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert!(create_result.created > 0);
+        assert_child_links_anchor_existing_parent_fens(dir.path());
+
+        let compress_result = variants_compress_variant_family(
+            dir.path().to_string_lossy().to_string(),
+            root_path.to_string_lossy().to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(compress_result.removed, create_result.created);
+        let compressed_root = fs::read_to_string(&root_path).unwrap();
+        validate_rendered_pgn(&compressed_root, "compressed Gruenfeld PGN").unwrap();
     }
 
     #[test]

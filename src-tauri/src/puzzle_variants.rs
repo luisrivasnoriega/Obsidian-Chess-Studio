@@ -1033,12 +1033,15 @@ mod tests {
             hidden_children_count: None,
             active_win_rate: None,
             active_loss_rate: None,
+            active_draw_rate: None,
             profile_win_rate: None,
             profile_loss_rate: None,
             complete_line: None,
             engine_advantage: None,
             engine_ms: None,
             engine_name: None,
+            critical_line: None,
+            critical_line_reasons: None,
             children,
         }
     }
