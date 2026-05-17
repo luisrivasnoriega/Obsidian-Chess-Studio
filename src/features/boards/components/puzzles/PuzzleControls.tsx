@@ -1,7 +1,7 @@
 import { ActionIcon, Button, Group, Input, Select, Text, Tooltip } from "@mantine/core";
 import { IconPlus, IconX, IconZoomCheck } from "@tabler/icons-react";
-import { Chess, parseUci } from "chessops";
-import { parseFen } from "chessops/fen";
+import { useNavigate } from "@tanstack/react-router";
+import { parseUci } from "chessops";
 import { useAtom, useSetAtom } from "jotai";
 import { useContext, useId } from "react";
 import { useTranslation } from "react-i18next";
@@ -47,33 +47,39 @@ export const PuzzleControls = ({
   isShowingSolutionRef,
 }: PuzzleControlsProps) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const jumpToNextId = useId();
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) throw new Error("TreeStateContext not found");
   const goToStart = useStore(store, (s) => s.goToStart);
   const makeMove = useStore(store, (s) => s.makeMove);
   const reset = useStore(store, (s) => s.reset);
+  const currentFen = useStore(store, (s) => s.currentNode().fen);
 
   const [, setTabs] = useAtom(tabsAtom);
   const setActiveTab = useSetAtom(activeTabAtom);
 
-  const handleAnalyzePosition = () => {
+  const handleAnalyzePosition = async () => {
     if (!currentPuzzle) return;
+    const fen = currentFen?.trim() || currentPuzzle.fen.trim();
+    if (!fen) return;
 
-    createTab({
+    await createTab({
       tab: {
         name: t("features.puzzle.analysisTabName"),
         type: "analysis",
       },
       setTabs,
       setActiveTab,
-      pgn: currentPuzzle.moves.join(" "),
+      pgn: `[SetUp "1"]\n[FEN "${fen.replaceAll('"', '\\"')}"]\n\n*`,
       headers: {
         ...defaultTree().headers,
-        fen: currentPuzzle.fen,
-        orientation:
-          Chess.fromSetup(parseFen(currentPuzzle.fen).unwrap()).unwrap().turn === "white" ? "black" : "white",
+        fen,
       },
+      initialAnalysisTab: "analysis",
+      initialNotationView: "variations",
     });
+    navigate({ to: "/analysis" });
   };
 
   const handleViewSolution = async () => {
