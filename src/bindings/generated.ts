@@ -596,6 +596,41 @@ async generateProfileMissedForkPuzzles(profileId: string, filters: PlayerStatsFi
     else return { status: "error", error: e  as any };
 }
 },
+async profileCloudSyncStatus() : Promise<ProfileCloudSyncStatusDto> {
+    return await TAURI_INVOKE("profile_cloud_sync_status");
+},
+async profileCloudSyncSync(targetUserId: string, profileId: string, packageJson: string) : Promise<Result<ProfileCloudSyncResultDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("profile_cloud_sync_sync", { targetUserId, profileId, packageJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async profileCloudSyncUpload(targetUserId: string, profileId: string, packageJson: string) : Promise<Result<ProfileCloudRemoteStateDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("profile_cloud_sync_upload", { targetUserId, profileId, packageJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async profileCloudSyncDownload(targetUserId: string) : Promise<Result<ProfileCloudDownloadedDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("profile_cloud_sync_download", { targetUserId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async profileCloudSyncSaveLocalState(targetUserId: string, profileId: string, state: ProfileCloudRemoteStateDto) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("profile_cloud_sync_save_local_state", { targetUserId, profileId, state }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getProfileMissedForkGames(profileId: string, filters: PlayerStatsFilters, piece: string, limit: number, offset: number) : Promise<Result<MissedForkGameRow[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_profile_missed_fork_games", { profileId, filters, piece, limit, offset }) };
@@ -2351,6 +2386,10 @@ export type PositionQueryJs = { fen: string; type_: string }
 export type PositionStats = { move: string; white: number; draw: number; black: number }
 export type PostGameReviewVariantsInput = { documentDir: string; initialFen: string; moves: string[]; humanColor: string | null }
 export type PostGameReviewVariantsResult = { detected: boolean; variantDeviationPly: bigint | null; newLineAdded: boolean; variantsBookPath: string | null; variantsBookName: string | null; addedVariantLine: string | null; openVariantsAfterReview: boolean; kind: string; bookMatchPlies: bigint[]; bookErrors: BookErrorEntry[]; bookUnknowns: BookUnknownEntry[] }
+export type ProfileCloudDownloadedDto = { state: ProfileCloudRemoteStateDto; packageJson: string }
+export type ProfileCloudRemoteStateDto = { userId: string; currentRevision: string; objectKey: string; sha256: string; sizeBytes: bigint; updatedAt: string; updatedByDevice: string }
+export type ProfileCloudSyncResultDto = { status: "uploaded"; state: ProfileCloudRemoteStateDto } | { status: "downloaded"; state: ProfileCloudRemoteStateDto; package_json: string } | { status: "unchanged"; state: ProfileCloudRemoteStateDto } | { status: "conflict"; state: ProfileCloudRemoteStateDto; local_sha256: string; local_revision: string | null }
+export type ProfileCloudSyncStatusDto = { configured: boolean; missing: string[] }
 export type ProfileSidebarStats = { sidebar_model: PlayerSidebarModel; elo_buckets: EloBucket[] }
 export type ProfileWeaknessModel = { snapshotKey: string; modelVersion: number; generatedAt: string; totalGames: number; scoredGames: number; backfilledGames: number; signals: ProfileWeaknessSignal[]; signalsByColor: ProfileWeaknessSignalsByColor }
 export type ProfileWeaknessSignal = { signalKey: string; title: string; triggerText: string; attackPlan: string; score: number; severity: number; confidence: number; controllability: number; recency: number; support: number; nEff: number | null; impactJson: string; triggerJson: string; evidence: ProfileWeaknessSignalEvidence[] }

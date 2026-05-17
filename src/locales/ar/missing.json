@@ -98,6 +98,7 @@
   "profiles.cloud.authToken": "Worker auth token",
   "profiles.cloud.authTokenDescription": "Only required if SYNC_AUTH_TOKEN is configured in the Worker.",
   "profiles.cloud.targetOnly": "Cloud sync is currently limited to {{target}}.",
+  "profiles.cloud.backendConfigured": "Worker endpoint, sync key, and auth token are configured in the backend build environment.",
   "profiles.cloud.fixedUserId": "Fixed for the selected hardcoded profile sync.",
   "profiles.cloud.settingsSaved": "Cloud sync settings saved.",
   "profiles.cloud.uploaded": "Profile uploaded to cloud.",

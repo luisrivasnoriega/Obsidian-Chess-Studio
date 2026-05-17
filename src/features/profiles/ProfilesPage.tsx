@@ -11,7 +11,6 @@ import {
   Modal,
   Pagination,
   Paper,
-  PasswordInput,
   ScrollArea,
   Select,
   Stack,
@@ -88,14 +87,10 @@ import { parseDate } from "@/utils/format";
 import { getLichessAccount } from "@/utils/lichess/api";
 import { isFailedToFetchError } from "@/utils/networkCooldown";
 import {
-  configForProfileCloudSyncTarget,
   describeProfileCloudSyncTarget,
   downloadProfilePackageFromCloud,
   getProfileCloudSyncTarget,
-  loadProfileCloudSyncConfig,
-  type ProfileCloudSyncConfig,
   saveProfileCloudLocalState,
-  saveProfileCloudSyncConfig,
   syncProfilePackageWithCloud,
   uploadProfilePackageToCloud,
 } from "@/utils/profileCloudSync";
@@ -344,7 +339,6 @@ export default function ProfilesPage() {
   const [convertLoading, setConvertLoading] = useState(false);
   const [profileTransferBusy, setProfileTransferBusy] = useState(false);
   const [cloudSyncBusy, setCloudSyncBusy] = useState(false);
-  const [cloudConfigDraft, setCloudConfigDraft] = useState<ProfileCloudSyncConfig>(() => loadProfileCloudSyncConfig());
 
   const [modalOpened, modal] = useDisclosure(false);
   const [accountModalOpened, accountModal] = useDisclosure(false);
@@ -1996,42 +1990,23 @@ export default function ProfilesPage() {
   );
 
   const openCloudSettings = useCallback(() => {
-    setCloudConfigDraft(loadProfileCloudSyncConfig(activeProfileCloudSyncTarget));
     cloudSettings.open();
-  }, [activeProfileCloudSyncTarget, cloudSettings]);
-
-  const saveCloudSettings = useCallback(() => {
-    const config = activeProfileCloudSyncTarget
-      ? configForProfileCloudSyncTarget(cloudConfigDraft, activeProfileCloudSyncTarget)
-      : cloudConfigDraft;
-    saveProfileCloudSyncConfig(config);
-    setCloudConfigDraft(config);
-    cloudSettings.close();
-    notifications.show({
-      title: t("common.success", { defaultValue: "Success" }),
-      message: t("profiles.cloud.settingsSaved", { defaultValue: "Cloud sync settings saved." }),
-      color: "green",
-    });
-  }, [activeProfileCloudSyncTarget, cloudConfigDraft, cloudSettings, t]);
+  }, [cloudSettings]);
 
   const syncActiveProfileWithCloud = useCallback(async () => {
     if (!activeProfile || !activeProfileCloudSyncTarget || cloudSyncBusy) return;
     try {
       setCloudSyncBusy(true);
-      const config = configForProfileCloudSyncTarget(
-        loadProfileCloudSyncConfig(activeProfileCloudSyncTarget),
-        activeProfileCloudSyncTarget,
-      );
       const { packageJson } = await buildActiveProfilePackageJson();
       const result = await syncProfilePackageWithCloud({
-        config,
+        targetUserId: activeProfileCloudSyncTarget.userId,
         profileId: activeProfile.id,
         packageJson,
       });
 
       if (result.status === "downloaded") {
         const summary = await applyCloudProfilePackageJson(result.packageJson);
-        saveProfileCloudLocalState(config, summary.profileId, result.state);
+        await saveProfileCloudLocalState(activeProfileCloudSyncTarget.userId, summary.profileId, result.state);
         notifications.show({
           title: t("common.success", { defaultValue: "Success" }),
           message: t("profiles.cloud.downloaded", {
@@ -2097,12 +2072,12 @@ export default function ProfilesPage() {
     if (!activeProfile || !activeProfileCloudSyncTarget || cloudSyncBusy) return;
     try {
       setCloudSyncBusy(true);
-      const config = configForProfileCloudSyncTarget(
-        loadProfileCloudSyncConfig(activeProfileCloudSyncTarget),
-        activeProfileCloudSyncTarget,
-      );
       const { packageJson } = await buildActiveProfilePackageJson();
-      await uploadProfilePackageToCloud({ config, profileId: activeProfile.id, packageJson });
+      await uploadProfilePackageToCloud({
+        targetUserId: activeProfileCloudSyncTarget.userId,
+        profileId: activeProfile.id,
+        packageJson,
+      });
       notifications.show({
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.cloud.uploaded", { defaultValue: "Profile uploaded to cloud." }),
@@ -2129,13 +2104,9 @@ export default function ProfilesPage() {
     if (!activeProfileCloudSyncTarget || cloudSyncBusy) return;
     try {
       setCloudSyncBusy(true);
-      const config = configForProfileCloudSyncTarget(
-        loadProfileCloudSyncConfig(activeProfileCloudSyncTarget),
-        activeProfileCloudSyncTarget,
-      );
-      const result = await downloadProfilePackageFromCloud({ config });
+      const result = await downloadProfilePackageFromCloud({ targetUserId: activeProfileCloudSyncTarget.userId });
       const summary = await applyCloudProfilePackageJson(result.packageJson);
-      saveProfileCloudLocalState(config, summary.profileId, result.state);
+      await saveProfileCloudLocalState(activeProfileCloudSyncTarget.userId, summary.profileId, result.state);
       notifications.show({
         title: t("common.success", { defaultValue: "Success" }),
         message: t("profiles.cloud.downloaded", {
@@ -2268,52 +2239,18 @@ export default function ProfilesPage() {
                   : "Isabella / Lichess bethfisher94 or Kevin / Chess.com kevin09877",
               })}
             </Text>
-            <TextInput
-              label={t("profiles.cloud.endpoint", { defaultValue: "Worker endpoint" })}
-              placeholder="https://ocs-profile-sync.<account>.workers.dev"
-              value={cloudConfigDraft.endpoint}
-              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, endpoint: event.currentTarget.value }))}
-            />
-            <TextInput
-              label={t("profiles.cloud.userId", { defaultValue: "User ID" })}
-              placeholder={activeProfileCloudSyncTarget?.userId ?? ""}
-              description={t("profiles.cloud.fixedUserId", {
-                defaultValue: "Fixed for the selected hardcoded profile sync.",
+            <Text size="sm" c="dimmed">
+              {t("profiles.cloud.backendConfigured", {
+                defaultValue:
+                  "Worker endpoint, sync key, and auth token are configured in the backend build environment.",
               })}
-              value={activeProfileCloudSyncTarget?.userId ?? cloudConfigDraft.userId}
-              disabled
-            />
-            <PasswordInput
-              label={t("profiles.cloud.syncKey", { defaultValue: "Sync key" })}
-              value={cloudConfigDraft.syncSecret}
-              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, syncSecret: event.currentTarget.value }))}
-            />
-            <TextInput
-              label={t("profiles.cloud.deviceId", { defaultValue: "Device ID" })}
-              value={cloudConfigDraft.deviceId}
-              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, deviceId: event.currentTarget.value }))}
-            />
-            <PasswordInput
-              label={t("profiles.cloud.authToken", { defaultValue: "Worker auth token" })}
-              description={t("profiles.cloud.authTokenDescription", {
-                defaultValue: "Only required if SYNC_AUTH_TOKEN is configured in the Worker.",
-              })}
-              value={cloudConfigDraft.authToken ?? ""}
-              onChange={(event) => setCloudConfigDraft((prev) => ({ ...prev, authToken: event.currentTarget.value }))}
-            />
+            </Text>
             <Group justify="space-between" mt="sm">
               <Group gap="xs">
                 <Button
                   size="xs"
                   variant="light"
-                  onClick={() => {
-                    if (activeProfileCloudSyncTarget) {
-                      saveProfileCloudSyncConfig(
-                        configForProfileCloudSyncTarget(cloudConfigDraft, activeProfileCloudSyncTarget),
-                      );
-                    }
-                    void uploadActiveProfileToCloud();
-                  }}
+                  onClick={() => void uploadActiveProfileToCloud()}
                   loading={cloudSyncBusy}
                   disabled={!isActiveProfileCloudSyncTarget || cloudSyncBusy}
                 >
@@ -2322,22 +2259,15 @@ export default function ProfilesPage() {
                 <Button
                   size="xs"
                   variant="light"
-                  onClick={() => {
-                    if (activeProfileCloudSyncTarget) {
-                      saveProfileCloudSyncConfig(
-                        configForProfileCloudSyncTarget(cloudConfigDraft, activeProfileCloudSyncTarget),
-                      );
-                    }
-                    void downloadActiveProfileFromCloud();
-                  }}
+                  onClick={() => void downloadActiveProfileFromCloud()}
                   loading={cloudSyncBusy}
                   disabled={cloudSyncBusy}
                 >
                   {t("profiles.cloud.download", { defaultValue: "Download now" })}
                 </Button>
               </Group>
-              <Button size="xs" onClick={saveCloudSettings}>
-                {t("common.save", { defaultValue: "Save" })}
+              <Button size="xs" variant="default" onClick={cloudSettings.close}>
+                {t("common.close", { defaultValue: "Close" })}
               </Button>
             </Group>
           </Stack>

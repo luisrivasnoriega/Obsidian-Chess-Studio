@@ -46,6 +46,7 @@ import { autoRegisterBundledEngines } from "./utils/bundledEngines";
 import { getDocumentDir } from "./utils/documentDir";
 import { openFile } from "./utils/files";
 import { migrateLegacyGameRecordsProfileId } from "./utils/gameRecords";
+import { clearLegacyProfileCloudSyncStorage } from "./utils/profileCloudSync";
 import { ensureProfilesInitialized } from "./utils/profiles";
 import type { Session } from "./utils/session";
 import { readSharedProfileState, writeSharedProfileState } from "./utils/sharedProfileState";
@@ -414,6 +415,7 @@ export default function App() {
     localStorage.removeItem("orion-plan-api-key");
     sessionStorage.removeItem("orion-plan-api-key");
     localStorage.removeItem("welcome-card-image");
+    clearLegacyProfileCloudSyncStorage();
   }, []);
 
   useEffect(() => {

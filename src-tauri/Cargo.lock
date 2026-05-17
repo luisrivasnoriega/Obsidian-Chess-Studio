@@ -3783,7 +3783,7 @@ dependencies = [
 
 [[package]]
 name = "obsidian-chess-studio"
-version = "3.0.14"
+version = "3.0.15"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -3812,6 +3812,7 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest 0.12.28",
+ "ring",
  "rusqlite",
  "rustls 0.23.38",
  "serde",

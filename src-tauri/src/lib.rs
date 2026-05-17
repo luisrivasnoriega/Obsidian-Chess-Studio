@@ -23,6 +23,7 @@ mod pawn_structures;
 mod pgn;
 mod player_match_planner;
 mod post_game_review;
+mod profile_cloud_sync;
 mod puzzle;
 mod puzzle_variants;
 mod tab_state_storage;
@@ -118,6 +119,10 @@ use crate::pawn_structures::compute_pawn_structures;
 use crate::pgn::{count_pgn_games, delete_game, read_games, write_game};
 use crate::player_match_planner::{planner_build_variant_book, planner_build_variant_pgn};
 use crate::post_game_review::post_game_review_variants;
+use crate::profile_cloud_sync::{
+    profile_cloud_sync_download, profile_cloud_sync_save_local_state, profile_cloud_sync_status,
+    profile_cloud_sync_sync, profile_cloud_sync_upload,
+};
 use crate::puzzle::{
     check_puzzle_db_columns, download_puzzle_database, get_puzzle, get_puzzle_batch,
     get_puzzle_db_info, get_puzzle_dependent_filters_metadata, get_puzzle_filters_metadata,
@@ -286,6 +291,11 @@ pub async fn run() {
             get_profile_outcome_accuracy,
             get_profile_fork_stats,
             generate_profile_missed_fork_puzzles,
+            profile_cloud_sync_status,
+            profile_cloud_sync_sync,
+            profile_cloud_sync_upload,
+            profile_cloud_sync_download,
+            profile_cloud_sync_save_local_state,
             get_profile_missed_fork_games,
             get_profile_outcome_reason_breakdown,
             get_profile_intensity_breakdown,

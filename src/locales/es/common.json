@@ -2771,6 +2771,7 @@
       "authToken": "Token de auth del Worker",
       "authTokenDescription": "Solo se requiere si SYNC_AUTH_TOKEN está configurado en el Worker.",
       "targetOnly": "Cloud sync actualmente solo está habilitado para {{target}}.",
+      "backendConfigured": "El endpoint del Worker, la clave de sync y el token de auth se configuran en el entorno de build del backend.",
       "fixedUserId": "Fijo para el perfil hardcodeado seleccionado.",
       "settingsSaved": "Configuración de cloud sync guardada.",
       "uploaded": "Perfil subido a cloud.",

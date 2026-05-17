@@ -131,6 +131,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          OCS_CLOUD_SYNC_ENDPOINT: ${{ vars.OCS_CLOUD_SYNC_ENDPOINT }}
+          OCS_CLOUD_SYNC_KEY: ${{ secrets.OCS_CLOUD_SYNC_KEY }}
+          OCS_CLOUD_SYNC_AUTH_TOKEN: ${{ secrets.OCS_CLOUD_SYNC_AUTH_TOKEN }}
           CI: false
         with:
           tagName: ${{ github.ref_name }}
@@ -255,6 +258,9 @@ jobs:
         env:
           CI: true
           TAURI_CLI_VERBOSITY: "2"
+          OCS_CLOUD_SYNC_ENDPOINT: ${{ vars.OCS_CLOUD_SYNC_ENDPOINT }}
+          OCS_CLOUD_SYNC_KEY: ${{ secrets.OCS_CLOUD_SYNC_KEY }}
+          OCS_CLOUD_SYNC_AUTH_TOKEN: ${{ secrets.OCS_CLOUD_SYNC_AUTH_TOKEN }}
         run: |
           set +e
           mkdir -p dist/logs

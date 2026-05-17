@@ -75,9 +75,7 @@ import {
   updateGameRecord,
 } from "@/utils/gameRecords";
 import {
-  configForProfileCloudSyncTarget,
   getProfileCloudSyncTarget,
-  loadProfileCloudSyncConfig,
   saveProfileCloudLocalState,
   syncProfilePackageWithCloud,
 } from "@/utils/profileCloudSync";
@@ -640,14 +638,6 @@ export default function DashboardPage() {
     if (!activeProfile || !activeProfileCloudSyncTarget || !isActiveProfileCloudSyncTarget) return;
     if (autoCloudSyncProfileRef.current === activeProfile.id) return;
 
-    const config = configForProfileCloudSyncTarget(
-      loadProfileCloudSyncConfig(activeProfileCloudSyncTarget),
-      activeProfileCloudSyncTarget,
-    );
-    if (!config.endpoint.trim() || !config.syncSecret.trim() || !config.deviceId.trim()) {
-      return;
-    }
-
     autoCloudSyncProfileRef.current = activeProfile.id;
     let cancelled = false;
 
@@ -660,7 +650,7 @@ export default function DashboardPage() {
           profilePawnUiStateByProfile,
         });
         const result = await syncProfilePackageWithCloud({
-          config,
+          targetUserId: activeProfileCloudSyncTarget.userId,
           profileId: activeProfile.id,
           packageJson: JSON.stringify(pkg),
         });
@@ -679,7 +669,7 @@ export default function DashboardPage() {
           });
           if (cancelled) return;
 
-          saveProfileCloudLocalState(config, summary.profileId, result.state);
+          await saveProfileCloudLocalState(activeProfileCloudSyncTarget.userId, summary.profileId, result.state);
           await queryClient.invalidateQueries();
           window.dispatchEvent(new Event("dashboard:games-history:refresh"));
           window.dispatchEvent(new Event("puzzles:updated"));
