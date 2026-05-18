@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Box,
   Button,
   Card,
@@ -7,6 +8,7 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Menu,
   Progress,
   Select,
   SimpleGrid,
@@ -17,10 +19,13 @@ import {
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import {
+  IconAlertTriangle,
   IconChartBar,
+  IconCheck,
   IconChess,
   IconFlame,
   IconRefresh,
+  IconSettings,
   IconStar,
   IconTargetArrow,
   IconTrophy,
@@ -43,6 +48,8 @@ import { detectProfileBookReview } from "@/features/boards/utils/postGameReview"
 import {
   activeProfileIdAtom,
   activeTabAtom,
+  dashboardOpeningAccuracyPreferencesByProfileAtom,
+  defaultDashboardOpeningAccuracyPreferences,
   enginesAtom,
   profilePawnStructuresUiStateByProfileAtom,
   profileStatsUiStateByProfileAtom,
@@ -88,7 +95,6 @@ import {
   importProfileTransferPackage,
   validateProfileTransferPackage,
 } from "@/utils/profileTransfer";
-import { getPuzzleStats, type PuzzleStats } from "@/utils/puzzleStreak";
 import type { Session } from "@/utils/session";
 import {
   type AnalysisNavigationContext,
@@ -121,11 +127,16 @@ const DEFAULT_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 
 const KPI_SAMPLE_SIZE = 100;
 const KPI_FETCH_LIMIT = 5000;
 const QUALITY_TREND_WEEKS = 4;
-const DEFAULT_PUZZLE_STATS: PuzzleStats = {
-  currentStreak: 0,
-  target: 30,
-  history: [],
-};
+const OPENING_ACCURACY_TIME_CONTROL_OPTIONS: TimeControlCategory[] = [
+  "ultra_bullet",
+  "bullet",
+  "blitz",
+  "rapid",
+  "classical",
+  "correspondence",
+  "daily",
+];
+type DashboardOpeningAccuracySortMode = "accuracy" | "frequency" | "winRate";
 type DashboardGameSource = "local" | "lichess" | "chesscom";
 
 const dashboardQueryKeys = {
@@ -141,54 +152,25 @@ const dashboardQueryKeys = {
     ["dashboard", "profile", profileId ?? "none", "games", source] as const,
   profileOverview: (profileId: string | null | undefined, profileUsernamesKey: string) =>
     ["dashboard", "profile", profileId ?? "none", "overview", profileUsernamesKey] as const,
+  profileOpeningAccuracy: (
+    profileId: string | null | undefined,
+    profileUsernamesKey: string,
+    timeControlCategoriesKey: string,
+    sortMode: DashboardOpeningAccuracySortMode,
+  ) =>
+    [
+      "dashboard",
+      "profile",
+      profileId ?? "none",
+      "overview",
+      profileUsernamesKey,
+      "opening-accuracy",
+      timeControlCategoriesKey || "all",
+      sortMode,
+    ] as const,
   profileOverviewRoot: (profileId: string | null | undefined) =>
     ["dashboard", "profile", profileId ?? "none", "overview"] as const,
 };
-
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "then" in value &&
-    typeof (value as { then?: unknown }).then === "function"
-  );
-}
-
-function normalizePuzzleStats(raw: unknown): PuzzleStats {
-  if (!raw || typeof raw !== "object") return DEFAULT_PUZZLE_STATS;
-  const candidate = raw as {
-    currentStreak?: unknown;
-    streak?: unknown;
-    target?: unknown;
-    history?: unknown;
-  };
-  const currentStreakSource =
-    typeof candidate.currentStreak === "number"
-      ? candidate.currentStreak
-      : typeof candidate.streak === "number"
-        ? candidate.streak
-        : 0;
-  const currentStreak = Number.isFinite(currentStreakSource) ? Math.max(0, currentStreakSource) : 0;
-  const targetSource =
-    typeof candidate.target === "number" && Number.isFinite(candidate.target) ? candidate.target : 30;
-  const target = Math.max(1, targetSource);
-  const history = Array.isArray(candidate.history)
-    ? candidate.history
-        .map((entry) => {
-          if (!entry || typeof entry !== "object") return null;
-          const row = entry as { day?: unknown; solved?: unknown };
-          const day = typeof row.day === "string" ? row.day : "";
-          const solved = typeof row.solved === "number" && Number.isFinite(row.solved) ? row.solved : 0;
-          return { day, solved };
-        })
-        .filter((entry): entry is { day: string; solved: number } => entry !== null)
-    : [];
-  return {
-    currentStreak,
-    target,
-    history,
-  };
-}
 
 type DashboardOverviewMetrics = {
   weekStartMs: number;
@@ -248,6 +230,18 @@ type DashboardOverviewMetrics = {
     whitePercent: number;
     blackPercent: number;
   };
+};
+
+type DashboardOpeningAccuracyTopItem = {
+  family: string;
+  games: number;
+  avgAccuracy: number;
+  winRate: number;
+};
+
+type DashboardOpeningAccuracyTop = {
+  white: DashboardOpeningAccuracyTopItem[];
+  black: DashboardOpeningAccuracyTopItem[];
 };
 
 type DashboardQualityInsights = {
@@ -540,6 +534,25 @@ async function loadDashboardOverviewMetrics(input: {
   });
 }
 
+async function loadDashboardOpeningAccuracyTop(input: {
+  activeProfileId: string | null;
+  profileUsernames: string[];
+  timeControlCategories: TimeControlCategory[];
+  sortMode: DashboardOpeningAccuracySortMode;
+}): Promise<DashboardOpeningAccuracyTop | null> {
+  if (!input.activeProfileId) return null;
+
+  return await invoke<DashboardOpeningAccuracyTop>("dashboard_get_opening_accuracy_top", {
+    req: {
+      profileId: input.activeProfileId,
+      profileUsernames: input.profileUsernames,
+      gameHistoryLimit: KPI_FETCH_LIMIT,
+      timeControlCategories: input.timeControlCategories,
+      sortMode: input.sortMode === "winRate" ? "win_rate" : input.sortMode,
+    },
+  });
+}
+
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const [isFirstOpen, setIsFirstOpen] = useState(false);
@@ -573,6 +586,9 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useAtom(sessionsAtom);
   const [profiles, setProfiles] = useAtom(profilesAtom);
   const [activeProfileId, setActiveProfileId] = useAtom(activeProfileIdAtom);
+  const [dashboardOpeningAccuracyPreferencesByProfile, setDashboardOpeningAccuracyPreferencesByProfile] = useAtom(
+    dashboardOpeningAccuracyPreferencesByProfileAtom,
+  );
   const [profileStatsUiStateByProfile, setProfileStatsUiStateByProfile] = useAtom(profileStatsUiStateByProfileAtom);
   const [profilePawnUiStateByProfile, setProfilePawnUiStateByProfile] = useAtom(
     profilePawnStructuresUiStateByProfileAtom,
@@ -1240,9 +1256,44 @@ export default function DashboardPage() {
   const [selectedOpponentName, setSelectedOpponentName] = useState<string | null>(null);
   const [selectedOpponentId, setSelectedOpponentId] = useState<number | null>(null);
   const [timeControlCategory, setTimeControlCategory] = useState<TimeControlCategory | null>(null);
+  const openingAccuracyPreferences = activeProfileId
+    ? (dashboardOpeningAccuracyPreferencesByProfile[activeProfileId] ?? defaultDashboardOpeningAccuracyPreferences)
+    : defaultDashboardOpeningAccuracyPreferences;
+  const openingAccuracyTimeControlCategories = openingAccuracyPreferences.timeControlCategories;
+  const openingAccuracySortMode = openingAccuracyPreferences.sortMode;
+  const setOpeningAccuracyTimeControlCategories = useCallback(
+    (timeControlCategories: TimeControlCategory[]) => {
+      if (!activeProfileId) return;
+      setDashboardOpeningAccuracyPreferencesByProfile((prev) => ({
+        ...prev,
+        [activeProfileId]: {
+          ...(prev[activeProfileId] ?? defaultDashboardOpeningAccuracyPreferences),
+          timeControlCategories,
+        },
+      }));
+    },
+    [activeProfileId, setDashboardOpeningAccuracyPreferencesByProfile],
+  );
+  const setOpeningAccuracySortMode = useCallback(
+    (sortMode: DashboardOpeningAccuracySortMode) => {
+      if (!activeProfileId) return;
+      setDashboardOpeningAccuracyPreferencesByProfile((prev) => ({
+        ...prev,
+        [activeProfileId]: {
+          ...(prev[activeProfileId] ?? defaultDashboardOpeningAccuracyPreferences),
+          sortMode,
+        },
+      }));
+    },
+    [activeProfileId, setDashboardOpeningAccuracyPreferencesByProfile],
+  );
   const lichessUsernamesKey = useMemo(() => [...lichessUsernames].sort().join("|"), [lichessUsernames]);
   const chessComUsernamesKey = useMemo(() => [...chessComUsernames].sort().join("|"), [chessComUsernames]);
   const profileUsernamesKey = useMemo(() => [...profileUsernames].sort().join("|"), [profileUsernames]);
+  const openingAccuracyTimeControlCategoriesKey = useMemo(
+    () => [...openingAccuracyTimeControlCategories].sort().join("|"),
+    [openingAccuracyTimeControlCategories],
+  );
   const localGamesQueryKey = dashboardQueryKeys.profileGames(activeProfileId, "local", gameHistoryLimit);
   const lichessGamesQueryKey = dashboardQueryKeys.profileGames(
     activeProfileId,
@@ -1257,6 +1308,12 @@ export default function DashboardPage() {
     chessComUsernamesKey,
   );
   const dashboardOverviewQueryKey = dashboardQueryKeys.profileOverview(activeProfileId, profileUsernamesKey);
+  const openingAccuracyQueryKey = dashboardQueryKeys.profileOpeningAccuracy(
+    activeProfileId,
+    profileUsernamesKey,
+    openingAccuracyTimeControlCategoriesKey,
+    openingAccuracySortMode,
+  );
 
   const recentGamesQuery = useQuery({
     queryKey: localGamesQueryKey,
@@ -1281,10 +1338,23 @@ export default function DashboardPage() {
     enabled: !!activeProfileId,
     staleTime: 15_000,
   });
+  const openingAccuracyQuery = useQuery({
+    queryKey: openingAccuracyQueryKey,
+    queryFn: () =>
+      loadDashboardOpeningAccuracyTop({
+        activeProfileId,
+        profileUsernames,
+        timeControlCategories: openingAccuracyTimeControlCategories,
+        sortMode: openingAccuracySortMode,
+      }),
+    enabled: !!activeProfileId,
+    staleTime: 15_000,
+  });
   const recentGames = recentGamesQuery.data ?? [];
   const lichessGames = lichessGamesQuery.data ?? [];
   const chessComGames = chessComGamesQuery.data ?? [];
   const dashboardOverview = dashboardOverviewQuery.data ?? null;
+  const openingAccuracyTop = openingAccuracyQuery.data ?? { white: [], black: [] };
   const isLoadingLichessGames = lichessGamesQuery.isFetching;
   const isLoadingChessComGames = chessComGamesQuery.isFetching;
 
@@ -1489,10 +1559,6 @@ export default function DashboardPage() {
     [getOrientationFromFen],
   );
 
-  const [puzzleStats, setPuzzleStats] = useState<PuzzleStats>(() => {
-    const initial = getPuzzleStats();
-    return normalizePuzzleStats(initial);
-  });
   const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
   const [isDashboardLoadGateTimedOut, setIsDashboardLoadGateTimedOut] = useState(false);
 
@@ -1774,34 +1840,6 @@ export default function DashboardPage() {
     };
   }, [invalidateDashboardSourceQueries]);
 
-  useEffect(() => {
-    const update = () => {
-      const nextStats = getPuzzleStats();
-      if (isPromiseLike(nextStats)) {
-        void Promise.resolve(nextStats)
-          .then((resolved) => {
-            setPuzzleStats(normalizePuzzleStats(resolved));
-          })
-          .catch(() => {
-            setPuzzleStats(DEFAULT_PUZZLE_STATS);
-          });
-        return;
-      }
-      setPuzzleStats(normalizePuzzleStats(nextStats));
-    };
-    const onVisibility = () => {
-      if (!document.hidden) update();
-    };
-    window.addEventListener("storage", update);
-    window.addEventListener("focus", update);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("storage", update);
-      window.removeEventListener("focus", update);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, []);
-
   const PLAY_CHESS = {
     icon: <IconChess size={50} />,
     title: t("features.dashboard.cards.playChess.title"),
@@ -1857,8 +1895,6 @@ export default function DashboardPage() {
   }, [dashboardOverview]);
 
   const dashboardSummary = useMemo(() => {
-    const weeklyPuzzleSolved = puzzleStats.history.reduce((acc, row) => acc + row.solved, 0);
-
     return {
       wins: dashboardOverview?.weekWins ?? 0,
       losses: dashboardOverview?.weekLosses ?? 0,
@@ -1868,8 +1904,6 @@ export default function DashboardPage() {
       winRate: dashboardOverview?.weekWinRate ?? 0,
       previousGamesCount: dashboardOverview?.previousWeekGamesCount ?? 0,
       previousWinRate: dashboardOverview?.previousWeekWinRate ?? 0,
-      weeklyPuzzleSolved,
-      linkedAccounts: activeProfileSessions.length,
       weekAvgElo: dashboardOverview?.weekAvgEstimatedElo ?? null,
       previousWeekAvgElo: dashboardOverview?.previousWeekAvgEstimatedElo ?? null,
       weekAcplByTimeControl: dashboardOverview?.weekAcplByTimeControl ?? {
@@ -1890,7 +1924,7 @@ export default function DashboardPage() {
         blackPercent: 0,
       },
     };
-  }, [dashboardOverview, puzzleStats.history, activeProfileSessions.length]);
+  }, [dashboardOverview]);
 
   const previousWeekLabel = t("features.dashboard.previousWeek", { defaultValue: "Previous" });
   const formatPercent = (value: number | null | undefined, decimals = 0): string => {
@@ -1905,6 +1939,61 @@ export default function DashboardPage() {
   };
   const buildWeekHint = (previousValue: string | number) =>
     `${t("features.dashboard.thisWeek")}\n${previousWeekLabel}: ${previousValue}`;
+  const openingAccuracyTimeControlLabels = useMemo<Record<TimeControlCategory, string>>(
+    () => ({
+      ultra_bullet: t("chess.timeControl.ultraBullet", { defaultValue: "UltraBullet" }),
+      bullet: t("chess.timeControl.bullet", { defaultValue: "Bullet" }),
+      blitz: t("chess.timeControl.blitz", { defaultValue: "Blitz" }),
+      rapid: t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+      classical: t("chess.timeControl.classical", { defaultValue: "Classical" }),
+      correspondence: t("chess.timeControl.correspondence", { defaultValue: "Correspondence" }),
+      daily: t("chess.timeControl.daily", { defaultValue: "Daily" }),
+    }),
+    [t],
+  );
+  const openingAccuracyTimeControlFilterLabel =
+    openingAccuracyTimeControlCategories.length === 0
+      ? t("features.dashboard.openingsAccuracy.filterAll")
+      : openingAccuracyTimeControlCategories.length === 1
+        ? openingAccuracyTimeControlLabels[openingAccuracyTimeControlCategories[0]]
+        : t("features.dashboard.openingsAccuracy.filterSelected", {
+            count: openingAccuracyTimeControlCategories.length,
+          });
+  const openingAccuracySortLabel =
+    openingAccuracySortMode === "winRate"
+      ? t("features.dashboard.openingsAccuracy.sortWinRate")
+      : openingAccuracySortMode === "frequency"
+        ? t("features.dashboard.openingsAccuracy.sortFrequency")
+        : t("features.dashboard.openingsAccuracy.sortAccuracy");
+  const openingAccuracySettingsLabel = `${openingAccuracyTimeControlFilterLabel} / ${openingAccuracySortLabel}`;
+  const openingAccuracyTitle =
+    openingAccuracySortMode === "winRate"
+      ? t("features.dashboard.openingsAccuracy.titleWinRate")
+      : openingAccuracySortMode === "frequency"
+        ? t("features.dashboard.openingsAccuracy.titleFrequency")
+        : t("features.dashboard.openingsAccuracy.title");
+  const openingAccuracyMetricLabel =
+    openingAccuracySortMode === "winRate"
+      ? t("features.dashboard.openingsAccuracy.winRate")
+      : t("features.dashboard.openingsAccuracy.averageAccuracy");
+  const openingAccuracyTimeControlOptions = useMemo(
+    () =>
+      OPENING_ACCURACY_TIME_CONTROL_OPTIONS.map((value) => ({
+        value,
+        label: openingAccuracyTimeControlLabels[value],
+      })),
+    [openingAccuracyTimeControlLabels],
+  );
+  const toggleOpeningAccuracyTimeControl = useCallback(
+    (value: TimeControlCategory) => {
+      setOpeningAccuracyTimeControlCategories(
+        openingAccuracyTimeControlCategories.includes(value)
+          ? openingAccuracyTimeControlCategories.filter((item) => item !== value)
+          : [...openingAccuracyTimeControlCategories, value],
+      );
+    },
+    [openingAccuracyTimeControlCategories, setOpeningAccuracyTimeControlCategories],
+  );
 
   const kpiCards = [
     {
@@ -1924,12 +2013,12 @@ export default function DashboardPage() {
       icon: <IconTrophy size={18} />,
     },
     {
-      key: "elo",
-      label: t("dashboard.estimatedElo"),
-      value: dashboardSummary.weekAvgElo ?? "--",
-      hint: buildWeekHint(dashboardSummary.previousWeekAvgElo ?? "--"),
-      color: "cyan",
-      icon: <IconStar size={18} />,
+      key: "blunder-rate",
+      label: t("features.dashboard.blunderRateLabel", { defaultValue: "Blunder rate" }),
+      value: formatPercent(qualityInsights.weekBlunderRate, 1),
+      hint: buildWeekHint(formatPercent(qualityInsights.previousWeekBlunderRate, 1)),
+      color: "red",
+      icon: <IconAlertTriangle size={18} />,
     },
     {
       key: "brilliant-rate",
@@ -1964,11 +2053,71 @@ export default function DashboardPage() {
       icon: <IconFlame size={18} />,
     },
   ] as const;
-  const resultTotal = dashboardSummary.outcomeCount;
-  const winPercent = resultTotal > 0 ? Math.round((dashboardSummary.wins / resultTotal) * 100) : 0;
-  const drawPercent = resultTotal > 0 ? Math.round((dashboardSummary.draws / resultTotal) * 100) : 0;
-  const lossPercent = resultTotal > 0 ? Math.max(0, 100 - winPercent - drawPercent) : 0;
-  const focusProgress = Math.min(100, Math.max(0, Math.round((dashboardSummary.weeklyPuzzleSolved / 35) * 100)));
+
+  const renderOpeningAccuracyRows = (rows: DashboardOpeningAccuracyTopItem[], color: "white" | "black") => {
+    const progressColor = color === "white" ? "var(--mantine-color-gray-1)" : "var(--mantine-color-blue-5)";
+    const progressTrackColor =
+      color === "white"
+        ? "color-mix(in srgb, var(--mantine-color-gray-5) 30%, transparent)"
+        : "color-mix(in srgb, var(--mantine-color-blue-5) 22%, var(--mantine-color-dark-4))";
+
+    if (openingAccuracyQuery.isFetching && rows.length === 0) {
+      return (
+        <Center h={126}>
+          <Loader size="sm" type="dots" color={color === "white" ? "gray" : "blue"} />
+        </Center>
+      );
+    }
+
+    if (rows.length === 0) {
+      return (
+        <Center h={126}>
+          <Text size="xs" c="dimmed" ta="center">
+            {t("features.dashboard.openingsAccuracy.empty")}
+          </Text>
+        </Center>
+      );
+    }
+
+    return (
+      <Stack gap={7}>
+        {rows.map((row, index) => {
+          const metricValue = openingAccuracySortMode === "winRate" ? row.winRate : row.avgAccuracy;
+          const progressValue = Math.max(0, Math.min(100, metricValue));
+          return (
+            <Stack key={`${color}-${row.family}`} gap={3}>
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Group gap={7} wrap="nowrap" style={{ minWidth: 0 }}>
+                  <Text size="xs" c="dimmed" fw={700} w={18} ta="right">
+                    {index + 1}
+                  </Text>
+                  <Text size="xs" fw={700} truncate="end" style={{ minWidth: 0 }}>
+                    {row.family}
+                  </Text>
+                </Group>
+                <Text size="xs" fw={700} style={{ whiteSpace: "nowrap" }}>
+                  {formatPercent(metricValue, 1)}
+                </Text>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Progress
+                  value={progressValue}
+                  color={progressColor}
+                  radius="xl"
+                  size={5}
+                  style={{ flex: 1, backgroundColor: progressTrackColor }}
+                />
+                <Text size="xs" c="dimmed" w={58} ta="right">
+                  {t("features.dashboard.openingsAccuracy.games", { count: row.games })}
+                </Text>
+              </Group>
+            </Stack>
+          );
+        })}
+      </Stack>
+    );
+  };
+
   const handleProfileCardUpdate = async (
     newFideId: string,
     newFidePlayer: {
@@ -2155,8 +2304,8 @@ export default function DashboardPage() {
                     fidePlayer={fidePlayer}
                     currentFideId={activeProfile?.fideId || undefined}
                     currentLichessToken={lichessToken}
-                    weekBlunderRate={qualityInsights.weekBlunderRate}
-                    previousWeekBlunderRate={qualityInsights.previousWeekBlunderRate}
+                    weekEstimatedElo={dashboardSummary.weekAvgElo}
+                    previousWeekEstimatedElo={dashboardSummary.previousWeekAvgElo}
                     weekAccuracy={qualityInsights.weekAccuracy}
                     previousWeekAccuracy={qualityInsights.previousWeekAccuracy}
                     weekAcpl={qualityInsights.weekAcpl}
@@ -2179,85 +2328,130 @@ export default function DashboardPage() {
                       <Group justify="space-between" align="flex-start" wrap="nowrap">
                         <Stack gap={4}>
                           <Text size="xs" tt="uppercase" c="dimmed">
-                            {t("features.dashboard.dailyGoals")}
+                            {t("features.dashboard.openingsAccuracy.eyebrow")}
                           </Text>
                           <Text fz={{ base: "lg", md: "xl" }} fw={800}>
-                            {t("features.dashboard.suggestedForYou")}
+                            {openingAccuracyTitle}
                           </Text>
                           <Text size="sm" c="dimmed">
-                            {t("features.dashboard.keepStreak")}
+                            {t("features.dashboard.openingsAccuracy.description")}
                           </Text>
                         </Stack>
-                        <ThemeIcon size={42} radius="md" color="blue" variant="light">
-                          <IconTargetArrow size={22} />
-                        </ThemeIcon>
+                        <Group gap={6} wrap="nowrap">
+                          <Menu position="bottom-end" width={210} shadow="md" withinPortal>
+                            <Menu.Target>
+                              <ActionIcon
+                                size={34}
+                                radius="md"
+                                color="blue"
+                                variant={
+                                  openingAccuracyTimeControlCategories.length === 0 &&
+                                  openingAccuracySortMode === "accuracy"
+                                    ? "subtle"
+                                    : "light"
+                                }
+                                aria-label={t("features.dashboard.openingsAccuracy.filterSettings")}
+                                title={openingAccuracySettingsLabel}
+                              >
+                                <IconSettings size={18} />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              <Menu.Label>{t("features.dashboard.openingsAccuracy.filterLabel")}</Menu.Label>
+                              <Menu.Item
+                                color={openingAccuracyTimeControlCategories.length === 0 ? "blue" : undefined}
+                                fw={openingAccuracyTimeControlCategories.length === 0 ? 700 : 500}
+                                rightSection={
+                                  openingAccuracyTimeControlCategories.length === 0 ? (
+                                    <IconCheck size={14} />
+                                  ) : undefined
+                                }
+                                onClick={() => setOpeningAccuracyTimeControlCategories([])}
+                              >
+                                {t("features.dashboard.openingsAccuracy.filterAll")}
+                              </Menu.Item>
+                              {openingAccuracyTimeControlOptions.map((option) => (
+                                <Menu.Item
+                                  key={option.value}
+                                  closeMenuOnClick={false}
+                                  color={
+                                    openingAccuracyTimeControlCategories.includes(option.value) ? "blue" : undefined
+                                  }
+                                  fw={openingAccuracyTimeControlCategories.includes(option.value) ? 700 : 500}
+                                  rightSection={
+                                    openingAccuracyTimeControlCategories.includes(option.value) ? (
+                                      <IconCheck size={14} />
+                                    ) : undefined
+                                  }
+                                  onClick={() => toggleOpeningAccuracyTimeControl(option.value)}
+                                >
+                                  {option.label}
+                                </Menu.Item>
+                              ))}
+                              <Menu.Divider />
+                              <Menu.Label>{t("features.dashboard.openingsAccuracy.sortLabel")}</Menu.Label>
+                              <Menu.Item
+                                color={openingAccuracySortMode === "accuracy" ? "blue" : undefined}
+                                fw={openingAccuracySortMode === "accuracy" ? 700 : 500}
+                                rightSection={
+                                  openingAccuracySortMode === "accuracy" ? <IconCheck size={14} /> : undefined
+                                }
+                                onClick={() => setOpeningAccuracySortMode("accuracy")}
+                              >
+                                {t("features.dashboard.openingsAccuracy.sortAccuracy")}
+                              </Menu.Item>
+                              <Menu.Item
+                                color={openingAccuracySortMode === "frequency" ? "blue" : undefined}
+                                fw={openingAccuracySortMode === "frequency" ? 700 : 500}
+                                rightSection={
+                                  openingAccuracySortMode === "frequency" ? <IconCheck size={14} /> : undefined
+                                }
+                                onClick={() => setOpeningAccuracySortMode("frequency")}
+                              >
+                                {t("features.dashboard.openingsAccuracy.sortFrequency")}
+                              </Menu.Item>
+                              <Menu.Item
+                                color={openingAccuracySortMode === "winRate" ? "blue" : undefined}
+                                fw={openingAccuracySortMode === "winRate" ? 700 : 500}
+                                rightSection={
+                                  openingAccuracySortMode === "winRate" ? <IconCheck size={14} /> : undefined
+                                }
+                                onClick={() => setOpeningAccuracySortMode("winRate")}
+                              >
+                                {t("features.dashboard.openingsAccuracy.sortWinRate")}
+                              </Menu.Item>
+                            </Menu.Dropdown>
+                          </Menu>
+                          <ThemeIcon size={42} radius="md" color="blue" variant="light">
+                            <IconChartBar size={22} />
+                          </ThemeIcon>
+                        </Group>
                       </Group>
 
-                      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
-                        <Stack gap={6}>
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+                        <Stack gap="xs">
                           <Group justify="space-between" wrap="nowrap">
-                            <Text size="xs" c="dimmed">
-                              {t("features.dashboard.win")}
+                            <Text size="sm" fw={800}>
+                              {t("chess.white")}
                             </Text>
-                            <Text size="sm" fw={700}>
-                              {winPercent}%
+                            <Text size="xs" c="dimmed">
+                              {openingAccuracyMetricLabel}
                             </Text>
                           </Group>
-                          <Progress value={winPercent} color="teal" radius="xl" size="sm" />
+                          {renderOpeningAccuracyRows(openingAccuracyTop.white, "white")}
                         </Stack>
-                        <Stack gap={6}>
+                        <Stack gap="xs">
                           <Group justify="space-between" wrap="nowrap">
-                            <Text size="xs" c="dimmed">
-                              {t("chess.draw")}
+                            <Text size="sm" fw={800}>
+                              {t("chess.black")}
                             </Text>
-                            <Text size="sm" fw={700}>
-                              {drawPercent}%
+                            <Text size="xs" c="dimmed">
+                              {openingAccuracyMetricLabel}
                             </Text>
                           </Group>
-                          <Progress value={drawPercent} color="gray" radius="xl" size="sm" />
-                        </Stack>
-                        <Stack gap={6}>
-                          <Group justify="space-between" wrap="nowrap">
-                            <Text size="xs" c="dimmed">
-                              {t("features.dashboard.loss")}
-                            </Text>
-                            <Text size="sm" fw={700}>
-                              {lossPercent}%
-                            </Text>
-                          </Group>
-                          <Progress value={lossPercent} color="red" radius="xl" size="sm" />
+                          {renderOpeningAccuracyRows(openingAccuracyTop.black, "black")}
                         </Stack>
                       </SimpleGrid>
-
-                      <Stack gap={6}>
-                        <Group justify="space-between" wrap="nowrap">
-                          <Text size="xs" c="dimmed">
-                            {t("features.dashboard.startPuzzleStreak")}
-                          </Text>
-                          <Text size="xs" fw={700}>
-                            {focusProgress}%
-                          </Text>
-                        </Group>
-                        <Progress value={focusProgress} color="blue" radius="xl" size="md" />
-                      </Stack>
-
-                      <Group gap="xs" wrap="wrap">
-                        <Button
-                          size="xs"
-                          variant="light"
-                          color="blue"
-                          onClick={() => {
-                            createTab({
-                              tab: { name: t("features.tabs.puzzle.title"), type: "puzzles" },
-                              setTabs,
-                              setActiveTab,
-                            });
-                            navigate({ to: "/puzzles" });
-                          }}
-                        >
-                          {t("features.tabs.puzzle.button")}
-                        </Button>
-                      </Group>
                     </Stack>
                   </Card>
                 </Grid.Col>

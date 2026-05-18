@@ -76,9 +76,9 @@ use crate::coverage_explorer_cache::{coverage_cache_get, coverage_cache_set};
 use crate::dashboard_games_history::{
     dashboard_decode_profile_game_blob_moves, dashboard_get_analyze_all_counts,
     dashboard_get_analyze_all_counts_bulk, dashboard_get_games_history_filter_meta,
-    dashboard_get_games_history_rows, dashboard_get_overview_metrics,
-    dashboard_resolve_chesscom_game_url, dashboard_resolve_profile_db_game_id,
-    dashboard_search_profile_opponents,
+    dashboard_get_games_history_rows, dashboard_get_opening_accuracy_top,
+    dashboard_get_overview_metrics, dashboard_resolve_chesscom_game_url,
+    dashboard_resolve_profile_db_game_id, dashboard_search_profile_opponents,
 };
 use crate::db::{
     add_event_games_from_pgn, add_profile_games_from_pgn, calculate_earliest_date_from_range,
@@ -385,6 +385,7 @@ pub async fn run() {
             dashboard_get_games_history_rows,
             dashboard_get_games_history_filter_meta,
             dashboard_get_overview_metrics,
+            dashboard_get_opening_accuracy_top,
             dashboard_decode_profile_game_blob_moves,
             dashboard_search_profile_opponents,
             dashboard_resolve_chesscom_game_url,

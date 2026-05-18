@@ -236,6 +236,41 @@ export const profilePawnStructuresUiStateByProfileAtom = atomWithStorage<Record<
   { getOnInit: true },
 );
 
+const dashboardOpeningAccuracyTimeControlSchema = z.enum([
+  "ultra_bullet",
+  "bullet",
+  "blitz",
+  "rapid",
+  "classical",
+  "correspondence",
+  "daily",
+]);
+
+const dashboardOpeningAccuracyPreferencesSchema = z.object({
+  timeControlCategories: z.array(dashboardOpeningAccuracyTimeControlSchema).catch([]),
+  sortMode: z.enum(["accuracy", "frequency", "winRate"]).catch("accuracy"),
+});
+
+export type DashboardOpeningAccuracyPreferences = z.infer<typeof dashboardOpeningAccuracyPreferencesSchema>;
+
+export const defaultDashboardOpeningAccuracyPreferences: DashboardOpeningAccuracyPreferences = {
+  timeControlCategories: [],
+  sortMode: "accuracy",
+};
+
+const dashboardOpeningAccuracyPreferencesByProfileSchema = z
+  .record(z.string(), dashboardOpeningAccuracyPreferencesSchema)
+  .catch({});
+
+export const dashboardOpeningAccuracyPreferencesByProfileAtom = atomWithStorage<
+  Record<string, DashboardOpeningAccuracyPreferences>
+>(
+  "dashboard-opening-accuracy-preferences-by-profile",
+  {},
+  createZodStorage(dashboardOpeningAccuracyPreferencesByProfileSchema, localStorage),
+  { getOnInit: true },
+);
+
 export const activeProfileHasPremiumAccessAtom = atom((get) => {
   const activeProfileId = get(activeProfileIdAtom);
   if (!activeProfileId) return false;

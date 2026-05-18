@@ -4,6 +4,7 @@
 //! including game stats, ratings, openings, and ELO buckets.
 
 use crate::db::{GameOutcome, SiteStatsData, StatsData};
+use crate::opening::normalize_opening_family_name;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -413,6 +414,38 @@ pub fn aggregate_openings(
 
     for game in data.iter().filter(|d| d.is_player_white == color) {
         let entry = opening_map.entry(game.opening.clone()).or_insert((0, 0, 0));
+        match game.result {
+            GameOutcome::Won => entry.0 += 1,
+            GameOutcome::Drawn => entry.1 += 1,
+            GameOutcome::Lost => entry.2 += 1,
+        }
+    }
+
+    opening_map
+        .into_iter()
+        .map(|(name, (won, draw, lost))| OpeningStats {
+            name,
+            games: won + draw + lost,
+            won,
+            draw,
+            lost,
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+pub fn aggregate_opening_families(
+    data: &[StatsData],
+    color: bool, /* true white, false black */
+) -> Vec<OpeningStats> {
+    let mut opening_map: HashMap<String, (usize, usize, usize)> = HashMap::new();
+
+    for game in data.iter().filter(|d| d.is_player_white == color) {
+        let Some(family) = normalize_opening_family_name(&game.opening) else {
+            continue;
+        };
+
+        let entry = opening_map.entry(family).or_insert((0, 0, 0));
         match game.result {
             GameOutcome::Won => entry.0 += 1,
             GameOutcome::Drawn => entry.1 += 1,
@@ -1380,6 +1413,65 @@ mod tests {
         let black = aggregate_openings(&data, false);
         assert_eq!(black.len(), 1);
         assert_eq!(black[0].name, "Sicilian");
+    }
+
+    #[test]
+    fn test_aggregate_opening_families_normalizes_names() {
+        let data = vec![
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "Sicilian Defense: Najdorf Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-02",
+                GameOutcome::Lost,
+                true,
+                "Sicilian: Dragon Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-03",
+                GameOutcome::Drawn,
+                true,
+                "Queen's Pawn Game: Colle System",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-04",
+                GameOutcome::Won,
+                false,
+                "Spanish: Morphy Defense",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+        ];
+
+        let white = aggregate_opening_families(&data, true);
+        let mut map: HashMap<String, OpeningStats> =
+            white.into_iter().map(|o| (o.name.clone(), o)).collect();
+
+        let sicilian = map.remove("Sicilian").unwrap();
+        assert_eq!(sicilian.games, 2);
+        assert_eq!(sicilian.won, 1);
+        assert_eq!(sicilian.lost, 1);
+
+        let colle = map.remove("Colle").unwrap();
+        assert_eq!(colle.games, 1);
+        assert_eq!(colle.draw, 1);
+
+        let black = aggregate_opening_families(&data, false);
+        assert_eq!(black.len(), 1);
+        assert_eq!(black[0].name, "Ruy Lopez");
     }
 
     #[test]

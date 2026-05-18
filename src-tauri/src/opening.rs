@@ -151,6 +151,259 @@ fn split_opening_name(full_name: &str) -> (String, String) {
     }
 }
 
+#[allow(dead_code)]
+fn opening_name_family_seed(full_name: &str) -> String {
+    let trimmed = full_name.trim();
+    let split_at = [trimmed.find(':'), trimmed.find(',')]
+        .into_iter()
+        .flatten()
+        .min();
+
+    match split_at {
+        Some(index) => trimmed[..index].trim().to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn normalize_opening_match_text(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_space = false;
+
+    for ch in value.trim().chars() {
+        let mapped = match ch {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'Á' | 'À' | 'Â' | 'Ä' | 'Ã' | 'Å' => {
+                'a'
+            }
+            'é' | 'è' | 'ê' | 'ë' | 'É' | 'È' | 'Ê' | 'Ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'Ó' | 'Ò' | 'Ô' | 'Ö' | 'Õ' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' | 'Ú' | 'Ù' | 'Û' | 'Ü' => 'u',
+            'ñ' | 'Ñ' => 'n',
+            'ç' | 'Ç' => 'c',
+            'ý' | 'ÿ' | 'Ý' => 'y',
+            '’' | '‘' | '`' | '´' => '\'',
+            '–' | '—' | '‑' => '-',
+            _ => ch,
+        };
+
+        if mapped.is_whitespace() {
+            if !last_was_space {
+                normalized.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            normalized.extend(mapped.to_lowercase());
+            last_was_space = false;
+        }
+    }
+
+    normalized.trim().replace("gruenfeld", "grunfeld")
+}
+
+#[allow(dead_code)]
+fn canonical_opening_family_from_key(key: &str) -> Option<&'static str> {
+    let bare = key.replace('\'', "");
+
+    if matches!(bare.as_str(), "qgd" | "queens gambit declined") {
+        return Some("Queen's Gambit Declined");
+    }
+    if matches!(bare.as_str(), "qga" | "queens gambit accepted") {
+        return Some("Queen's Gambit Accepted");
+    }
+    if matches!(bare.as_str(), "kga" | "kings gambit accepted") {
+        return Some("King's Gambit Accepted");
+    }
+    if matches!(bare.as_str(), "kgd" | "kings gambit declined") {
+        return Some("King's Gambit Declined");
+    }
+
+    if bare.starts_with("sicilian") || bare.ends_with(" sicilian") {
+        return Some("Sicilian");
+    }
+    if bare.starts_with("ruy lopez") || matches!(bare.as_str(), "spanish" | "spanish game") {
+        return Some("Ruy Lopez");
+    }
+    if bare.starts_with("italian") || bare.starts_with("giuoco") {
+        return Some("Italian");
+    }
+    if bare.starts_with("scotch") {
+        return Some("Scotch");
+    }
+    if bare.starts_with("vienna") {
+        return Some("Vienna");
+    }
+    if bare.starts_with("reti") {
+        return Some("Reti");
+    }
+    if bare.starts_with("colle") {
+        return Some("Colle");
+    }
+    if bare.starts_with("grunfeld") {
+        return Some("Grunfeld");
+    }
+    if bare.starts_with("neo-grunfeld") {
+        return Some("Neo-Grunfeld");
+    }
+    if bare.starts_with("caro-kann") || bare.starts_with("caro kann") {
+        return Some("Caro-Kann");
+    }
+    if bare.starts_with("french") {
+        return Some("French");
+    }
+    if bare.starts_with("english") || bare.starts_with("symmetrical english") {
+        return Some("English");
+    }
+    if bare.starts_with("kings indian attack") {
+        return Some("King's Indian Attack");
+    }
+    if bare.starts_with("kings indian") {
+        return Some("King's Indian");
+    }
+    if bare.starts_with("queens indian") || bare.starts_with("pseudo queens indian") {
+        return Some("Queen's Indian");
+    }
+    if bare.starts_with("nimzo-indian") {
+        return Some("Nimzo-Indian");
+    }
+    if bare.starts_with("bogo-indian") {
+        return Some("Bogo-Indian");
+    }
+    if bare.starts_with("old indian") {
+        return Some("Old Indian");
+    }
+    if bare.starts_with("queens pawn") || bare.starts_with("queen pawn") {
+        return Some("Queen's Pawn");
+    }
+    if bare.starts_with("queens gambit") {
+        return Some("Queen's Gambit");
+    }
+    if bare.starts_with("kings gambit") {
+        return Some("King's Gambit");
+    }
+    if bare.starts_with("slav") {
+        return Some("Slav");
+    }
+    if bare.starts_with("semi-slav") {
+        return Some("Semi-Slav");
+    }
+    if bare.starts_with("catalan") {
+        return Some("Catalan");
+    }
+    if bare.starts_with("benoni") {
+        return Some("Benoni");
+    }
+    if bare.starts_with("benko") {
+        return Some("Benko Gambit");
+    }
+    if bare.starts_with("dutch") {
+        return Some("Dutch");
+    }
+    if bare.starts_with("alekhine") {
+        return Some("Alekhine");
+    }
+    if bare.starts_with("scandinavian") {
+        return Some("Scandinavian");
+    }
+    if bare.starts_with("pirc") {
+        return Some("Pirc");
+    }
+    if bare.starts_with("modern") {
+        return Some("Modern");
+    }
+    if bare.starts_with("philidor") {
+        return Some("Philidor");
+    }
+    if bare.starts_with("petrov") || bare.starts_with("russian") {
+        return Some("Petrov");
+    }
+    if bare.starts_with("four knights") {
+        return Some("Four Knights");
+    }
+    if bare.starts_with("two knights") {
+        return Some("Two Knights");
+    }
+    if bare.starts_with("bishops") {
+        return Some("Bishop's");
+    }
+    if bare.starts_with("bird") {
+        return Some("Bird");
+    }
+    if bare.starts_with("polish") {
+        return Some("Polish");
+    }
+    if bare.starts_with("nimzowitsch") {
+        return Some("Nimzowitsch");
+    }
+    if bare.starts_with("trompowsky") {
+        return Some("Trompowsky");
+    }
+    if bare.starts_with("torre") {
+        return Some("Torre");
+    }
+    if bare.starts_with("london") {
+        return Some("London");
+    }
+
+    None
+}
+
+#[allow(dead_code)]
+fn trim_opening_family_suffixes(value: &str) -> String {
+    let mut family = value.trim().to_string();
+
+    for suffix in [" Opening", " Defense", " Defence", " Game", " System"] {
+        if family.ends_with(suffix) && family.len() > suffix.len() {
+            family.truncate(family.len() - suffix.len());
+            break;
+        }
+    }
+
+    family
+}
+
+#[allow(dead_code)]
+pub fn normalize_opening_family_name(full_name: &str) -> Option<String> {
+    let trimmed = full_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let full_key = normalize_opening_match_text(trimmed);
+    for (needle, family) in [
+        ("colle system", "Colle"),
+        ("london system", "London"),
+        ("torre attack", "Torre"),
+        ("stonewall attack", "Stonewall"),
+        ("rapport-jobava", "Rapport-Jobava"),
+        ("nimzo-larsen", "Nimzo-Larsen Attack"),
+        ("king's indian attack", "King's Indian Attack"),
+        ("smith-morra", "Smith-Morra Gambit"),
+        ("blackmar-diemer", "Blackmar-Diemer Gambit"),
+        ("fried liver", "Fried Liver Attack"),
+        ("evans gambit", "Evans Gambit"),
+        ("danish gambit", "Danish Gambit"),
+        ("latvian gambit", "Latvian Gambit"),
+    ] {
+        if full_key.contains(needle) {
+            return Some(family.to_string());
+        }
+    }
+
+    let seed = opening_name_family_seed(trimmed);
+    let seed_key = normalize_opening_match_text(&seed);
+    if let Some(family) = canonical_opening_family_from_key(&seed_key) {
+        return Some(family.to_string());
+    }
+
+    let family = trim_opening_family_suffixes(&seed);
+    if family.is_empty() {
+        None
+    } else {
+        Some(family)
+    }
+}
+
 fn get_opening_info_from_fen_in(fen: &str, openings: &[Opening]) -> Result<OpeningInfo, Error> {
     let fen_str = fen.to_string();
     let setup = normalize_fen_to_setup(fen)?;
@@ -375,6 +628,86 @@ mod tests {
         let (o, v) = split_opening_name("Catalan Opening");
         assert_eq!(o, "Catalan Opening");
         assert_eq!(v, "");
+    }
+
+    #[test]
+    fn normalize_opening_family_name_handles_catalog_aliases() {
+        let cases = [
+            ("Sicilian Defense: Najdorf Variation", "Sicilian"),
+            ("Sicilian: Dragon Variation", "Sicilian"),
+            ("Spanish: Morphy Defense", "Ruy Lopez"),
+            ("Ruy Lopez: Closed", "Ruy Lopez"),
+            ("Italian Game: Giuoco Piano", "Italian"),
+            ("Scotch Game: Classical Variation", "Scotch"),
+            ("Vienna Game: Max Lange Defense", "Vienna"),
+            ("Queen's Pawn Game: Colle System", "Colle"),
+            (
+                "Indian Defense: Colle System, King's Indian Variation",
+                "Colle",
+            ),
+            ("Reti Opening", "Reti"),
+            ("Réti Opening", "Reti"),
+            ("Gruenfeld Defense: Exchange Variation", "Grunfeld"),
+            ("Grünfeld Defense", "Grunfeld"),
+            ("Caro–Kann Defense: Advance Variation", "Caro-Kann"),
+            ("Queen's Gambit, Accepted", "Queen's Gambit"),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_opening_family_name(input),
+                Some(expected.to_string()),
+                "input: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_opening_family_name_handles_empty_input() {
+        assert_eq!(normalize_opening_family_name("  "), None);
+    }
+
+    #[test]
+    fn normalize_opening_family_name_covers_embedded_catalog() {
+        let mut checked = 0usize;
+        let mut families = BTreeMap::<String, usize>::new();
+        let mut missing = Vec::<String>::new();
+
+        for json_data in ECO_JSON_DATA.iter() {
+            let eco_map: BTreeMap<String, EcoOpeningRecord> =
+                serde_json::from_slice(json_data).unwrap();
+
+            for record in eco_map.values() {
+                let name = record.name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+
+                checked += 1;
+                match normalize_opening_family_name(name) {
+                    Some(family) if !family.trim().is_empty() => {
+                        *families.entry(family).or_insert(0) += 1;
+                    }
+                    _ => missing.push(name.to_string()),
+                }
+            }
+        }
+
+        assert!(checked > 15_000);
+        assert_eq!(missing, Vec::<String>::new());
+
+        for family in [
+            "Sicilian",
+            "Ruy Lopez",
+            "Italian",
+            "Scotch",
+            "Vienna",
+            "Colle",
+            "Reti",
+            "Grunfeld",
+        ] {
+            assert!(families.contains_key(family), "missing family: {family}");
+        }
     }
 
     #[test]

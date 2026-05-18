@@ -688,7 +688,7 @@ function MainRootLayout() {
   const menuActions: MenuGroup[] = useMemo(
     () => [
       {
-        label: t("features.menu.pawnAppetit"),
+        label: t("features.menu.obsidianChessStudio"),
         options: [
           {
             label: t("features.menu.about"),

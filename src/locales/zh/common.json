@@ -299,7 +299,7 @@
       "promoteVariation": "升为变着",
       "copyVariationPGN": "复制变着 PGN",
       "deleteMove": "删除走法",
-      "pawnAppetit": "Obsidian Chess Studio",
+      "obsidianChessStudio": "Obsidian Chess Studio",
       "quit": "退出 Obsidian Chess Studio",
       "newAnalysisBoard": "新建分析棋盘",
       "newPlayBoard": "新建对弈棋盘",

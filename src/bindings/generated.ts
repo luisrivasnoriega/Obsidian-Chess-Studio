@@ -1489,6 +1489,14 @@ async dashboardGetOverviewMetrics(req: DashboardOverviewRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
+async dashboardGetOpeningAccuracyTop(req: DashboardOpeningAccuracyTopRequest) : Promise<Result<DashboardOpeningAccuracyTopResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dashboard_get_opening_accuracy_top", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async dashboardDecodeProfileGameBlobMoves(profileId: string, gameId: number) : Promise<Result<DecodedGameMovesResponse | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("dashboard_decode_profile_game_blob_moves", { profileId, gameId }) };
@@ -2017,6 +2025,9 @@ export type DashboardAccuracyByColor = { white: number | null; black: number | n
 export type DashboardAcplByTimeControl = { classical: number | null; rapid: number | null; blitz: number | null; bullet: number | null }
 export type DashboardAnalyzeAllJobInput = { jobId: string; fen: string | null; moves: string[] | null; pgn: string | null }
 export type DashboardAnalyzeAllRunRequest = { runId: string; engine: string; goMode: GoMode; uciOptions: EngineOption[]; jobs: DashboardAnalyzeAllJobInput[] }
+export type DashboardOpeningAccuracyTopItem = { family: string; games: number; avgAccuracy: number; winRate: number }
+export type DashboardOpeningAccuracyTopRequest = { profileId: string; gameHistoryLimit: number; profileUsernames: string[]; timeControlCategories?: string[]; sortMode: string | null }
+export type DashboardOpeningAccuracyTopResponse = { white: DashboardOpeningAccuracyTopItem[]; black: DashboardOpeningAccuracyTopItem[] }
 export type DashboardOverviewRequest = { profileId: string; gameHistoryLimit: number; profileUsernames: string[]; sampleSize: number | null; trendWeeks: number | null }
 export type DashboardOverviewResponse = { weekStartMs: bigint; weekEndMs: bigint; weekGamesCount: number; weekWins: number; weekLosses: number; weekDraws: number; weekOutcomeCount: number; weekWinRate: number; previousWeekGamesCount: number; previousWeekWins: number; previousWeekLosses: number; previousWeekDraws: number; previousWeekOutcomeCount: number; previousWeekWinRate: number; sampleGamesCount: number; sampleSize: number; sampleAvgEstimatedElo: bigint | null; weekAvgEstimatedElo: bigint | null; previousWeekAvgEstimatedElo: bigint | null; weekBlunderRate: number | null; previousWeekBlunderRate: number | null; blunderDeltaPp: number | null; weekBrilliantRate: number | null; previousWeekBrilliantRate: number | null; brilliantDeltaPp: number | null; weekMistakeRate: number | null; previousWeekMistakeRate: number | null; mistakeDeltaPp: number | null; weekInaccuracyRate: number | null; previousWeekInaccuracyRate: number | null; inaccuracyDeltaPp: number | null; weekAccuracy: number | null; previousWeekAccuracy: number | null; accuracyDelta: number | null; weekAcpl: number | null; previousWeekAcpl: number | null; acplDelta: number | null; weekAnalyzedGames: number; previousWeekAnalyzedGames: number; blunderRateTrend: (number | null)[]; weekAcplByTimeControl: DashboardAcplByTimeControl; weekAccuracyByColor: DashboardAccuracyByColor; puzzleVariantsColorCoverage: DashboardPuzzleVariantsColorCoverage }
 export type DashboardPuzzleVariantsColorCoverage = { whitePuzzles: number; blackPuzzles: number; totalPuzzles: number; whitePercent: number; blackPercent: number }

@@ -17,8 +17,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -81,8 +79,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -155,8 +151,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -206,6 +200,38 @@ jobs:
 
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Cache Android Stockfish
+        id: cache_android_stockfish
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/assets/engines/android/aarch64/stockfish
+          key: stockfish-sf18-android-armv8
+
+      - name: Download Android Stockfish
+        if: steps.cache_android_stockfish.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          stockfish_version="sf_18"
+          stockfish_asset="stockfish-android-armv8.tar"
+          stockfish_url="https://github.com/official-stockfish/Stockfish/releases/download/${stockfish_version}/${stockfish_asset}"
+          extract_dir="$RUNNER_TEMP/stockfish-android"
+          output_path="src-tauri/assets/engines/android/aarch64/stockfish"
+
+          mkdir -p "$extract_dir" "$(dirname "$output_path")"
+          curl -fsSL "$stockfish_url" -o "$RUNNER_TEMP/$stockfish_asset"
+          tar -xf "$RUNNER_TEMP/$stockfish_asset" -C "$extract_dir"
+
+          stockfish_bin="$(find "$extract_dir" -type f -name "stockfish-android-armv8" | head -n 1)"
+          if [ -z "$stockfish_bin" ]; then
+            echo "ERROR: Stockfish binary not found in $stockfish_asset"
+            find "$extract_dir" -maxdepth 3 -type f | sed 's/^/ - /'
+            exit 1
+          fi
+
+          install -m 755 "$stockfish_bin" "$output_path"
 
       - name: Setup Rust toolchain (Android)
         uses: dtolnay/rust-toolchain@stable

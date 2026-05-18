@@ -1,16 +1,20 @@
 use crate::db::{
-    encoding::extract_main_line_moves, get_players, pgn::GameTree, PlayerQuery, PlayerSort,
-    QueryOptions, SortDirection,
+    encoding::extract_main_line_moves,
+    get_players,
+    pgn::{GameTree, GameTreeNode, Importer},
+    PlayerQuery, PlayerSort, QueryOptions, SortDirection,
 };
 use crate::error::{Error, Result};
+use crate::opening::{get_opening_from_setup, normalize_opening_family_name};
 use crate::AppState;
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
     TimeZone, Utc,
 };
+use pgn_reader::BufferedReader;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use shakmaty::{fen::Fen, CastlingMode, Chess};
+use shakmaty::{fen::Fen, CastlingMode, Chess, EnPassantMode, Move, Position};
 use specta::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -124,6 +128,33 @@ pub struct DashboardOverviewRequest {
     pub profile_usernames: Vec<String>,
     pub sample_size: Option<i32>,
     pub trend_weeks: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOpeningAccuracyTopRequest {
+    pub profile_id: String,
+    pub game_history_limit: i32,
+    pub profile_usernames: Vec<String>,
+    #[serde(default)]
+    pub time_control_categories: Vec<String>,
+    pub sort_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOpeningAccuracyTopItem {
+    pub family: String,
+    pub games: i32,
+    pub avg_accuracy: f64,
+    pub win_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOpeningAccuracyTopResponse {
+    pub white: Vec<DashboardOpeningAccuracyTopItem>,
+    pub black: Vec<DashboardOpeningAccuracyTopItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -269,6 +300,7 @@ pub struct DecodedGameMovesResponse {
 const DASHBOARD_OVERVIEW_DEFAULT_SAMPLE_SIZE: i32 = 100;
 const DASHBOARD_OVERVIEW_DEFAULT_TREND_WEEKS: i32 = 4;
 const DASHBOARD_OVERVIEW_MAX_LIMIT: i32 = 5000;
+const DASHBOARD_OPENING_ACCURACY_MIN_SHARE: f64 = 0.05;
 const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Default)]
@@ -1724,6 +1756,461 @@ fn resolve_profile_player_ids(
     }
 
     (resolved, inferred_profile_player_id)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct OpeningAccuracyAccumulator {
+    games: i32,
+    accuracy_sum: f64,
+    wins: i32,
+    outcome_games: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpeningAccuracySortMode {
+    Accuracy,
+    Frequency,
+    WinRate,
+}
+
+impl OpeningAccuracySortMode {
+    fn from_request(value: Option<&str>) -> Self {
+        match value.map(str::trim).map(str::to_lowercase).as_deref() {
+            Some("frequency") => Self::Frequency,
+            Some("win_rate") | Some("winrate") | Some("wr") => Self::WinRate,
+            _ => Self::Accuracy,
+        }
+    }
+}
+
+fn extract_dashboard_main_line_moves(moves_blob: &[u8]) -> Option<Vec<Move>> {
+    let start = Chess::default();
+    if let Ok(moves) = extract_main_line_moves(moves_blob, Some(start.clone())) {
+        if !moves.is_empty() {
+            return Some(moves);
+        }
+    }
+
+    let mut reader = BufferedReader::new_cursor(moves_blob);
+    let mut importer = Importer::new(None);
+    let game = reader.read_game(&mut importer).ok().flatten().flatten()?;
+    let mut position = game.position;
+    let mut moves = Vec::new();
+
+    for node in game.tree.nodes() {
+        if let GameTreeNode::Move(san_plus) = node {
+            if let Ok(mv) = san_plus.san.to_move(&position) {
+                moves.push(mv.clone());
+                position.play_unchecked(&mv);
+            }
+        }
+    }
+
+    if moves.is_empty() {
+        None
+    } else {
+        Some(moves)
+    }
+}
+
+fn opening_family_from_moves_blob(moves_blob: &[u8]) -> Option<String> {
+    let mut setups = Vec::new();
+    let mut chess = Chess::default();
+    let main_moves = extract_dashboard_main_line_moves(moves_blob)?;
+
+    for (i, mv) in main_moves.iter().enumerate() {
+        if i > 54 {
+            break;
+        }
+        chess.play_unchecked(mv);
+        setups.push(chess.clone().into_setup(EnPassantMode::Legal));
+    }
+
+    setups.reverse();
+    setups
+        .iter()
+        .find_map(|setup| get_opening_from_setup(setup.clone()).ok())
+        .and_then(|name| normalize_opening_family_name(&name))
+}
+
+fn opening_accuracy_top_items(
+    map: HashMap<String, OpeningAccuracyAccumulator>,
+    total_games: i32,
+    sort_mode: OpeningAccuracySortMode,
+) -> Vec<DashboardOpeningAccuracyTopItem> {
+    let min_games = ((total_games.max(0) as f64) * DASHBOARD_OPENING_ACCURACY_MIN_SHARE)
+        .ceil()
+        .max(1.0) as i32;
+
+    let mut rows = map
+        .into_iter()
+        .filter_map(|(family, acc)| {
+            if acc.games < min_games {
+                return None;
+            }
+
+            let avg_accuracy = acc.accuracy_sum / acc.games as f64;
+            if !avg_accuracy.is_finite() {
+                return None;
+            }
+            let win_rate = if acc.outcome_games > 0 {
+                (acc.wins as f64 / acc.outcome_games as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            Some(DashboardOpeningAccuracyTopItem {
+                family,
+                games: acc.games,
+                avg_accuracy,
+                win_rate,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    match sort_mode {
+        OpeningAccuracySortMode::Accuracy => {
+            rows.sort_by(|a, b| {
+                b.avg_accuracy
+                    .partial_cmp(&a.avg_accuracy)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.games.cmp(&a.games))
+                    .then_with(|| a.family.cmp(&b.family))
+            });
+        }
+        OpeningAccuracySortMode::Frequency => {
+            rows.sort_by(|a, b| {
+                b.games
+                    .cmp(&a.games)
+                    .then_with(|| {
+                        b.avg_accuracy
+                            .partial_cmp(&a.avg_accuracy)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| a.family.cmp(&b.family))
+            });
+        }
+        OpeningAccuracySortMode::WinRate => {
+            rows.sort_by(|a, b| {
+                b.win_rate
+                    .partial_cmp(&a.win_rate)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.games.cmp(&a.games))
+                    .then_with(|| {
+                        b.avg_accuracy
+                            .partial_cmp(&a.avg_accuracy)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| a.family.cmp(&b.family))
+            });
+        }
+    }
+    rows.truncate(5);
+    rows
+}
+
+fn dashboard_get_opening_accuracy_top_for_connection(
+    conn: &Connection,
+    analysis_db_path: &Path,
+    req: &DashboardOpeningAccuracyTopRequest,
+) -> Result<DashboardOpeningAccuracyTopResponse> {
+    let profile_id = req.profile_id.trim().to_string();
+    if profile_id.is_empty() {
+        return Ok(DashboardOpeningAccuracyTopResponse {
+            white: vec![],
+            black: vec![],
+        });
+    }
+
+    let usernames_lower = usernames_lower_set(&req.profile_usernames);
+    let (profile_player_ids, _) = resolve_profile_player_ids(conn, &usernames_lower);
+    if profile_player_ids.is_empty() && usernames_lower.is_empty() {
+        return Ok(DashboardOpeningAccuracyTopResponse {
+            white: vec![],
+            black: vec![],
+        });
+    }
+
+    attach_analysis_db(conn, analysis_db_path)?;
+
+    let source_limit = if req.game_history_limit <= 0 {
+        DASHBOARD_OVERVIEW_MAX_LIMIT
+    } else {
+        req.game_history_limit.min(DASHBOARD_OVERVIEW_MAX_LIMIT)
+    };
+    let sort_mode = OpeningAccuracySortMode::from_request(req.sort_mode.as_deref());
+
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+    let make_match_expr = |column: &str,
+                           name_column: &str,
+                           params_vec: &mut Vec<rusqlite::types::Value>|
+     -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if !profile_player_ids.is_empty() {
+            let placeholders = sql_placeholders(profile_player_ids.len());
+            parts.push(format!("{column} IN ({placeholders})"));
+            for id in profile_player_ids.iter() {
+                push_i64_param(params_vec, *id as i64);
+            }
+        }
+        if !usernames_lower.is_empty() {
+            let placeholders = sql_placeholders(usernames_lower.len());
+            parts.push(format!(
+                "(lower(trim({name_column})) IN ({placeholders}) OR replace(replace(lower(trim({name_column})), 'lichess:', ''), 'chesscom:', '') IN ({placeholders}))"
+            ));
+            for name in usernames_lower.iter() {
+                push_text_param(params_vec, name.clone());
+            }
+            for name in usernames_lower.iter() {
+                push_text_param(params_vec, name.clone());
+            }
+        }
+        if parts.is_empty() {
+            "0".to_string()
+        } else {
+            parts.join(" OR ")
+        }
+    };
+
+    let white_match_expr = make_match_expr("g.WhiteID", "pw.Name", &mut params_vec);
+    let black_match_expr = make_match_expr("g.BlackID", "pb.Name", &mut params_vec);
+    push_text_param(&mut params_vec, profile_id);
+    let mut seen_time_controls = HashSet::new();
+    let time_control_filters = req
+        .time_control_categories
+        .iter()
+        .filter_map(|value| {
+            let category = value.trim().to_lowercase();
+            if matches!(
+                category.as_str(),
+                "ultra_bullet"
+                    | "bullet"
+                    | "blitz"
+                    | "rapid"
+                    | "classical"
+                    | "correspondence"
+                    | "daily"
+            ) && seen_time_controls.insert(category.clone())
+            {
+                Some(category)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let time_control_where = if time_control_filters.is_empty() {
+        String::new()
+    } else {
+        for category in time_control_filters.iter() {
+            push_text_param(&mut params_vec, category.clone());
+        }
+        format!(
+            "AND time_category IN ({})",
+            sql_placeholders(time_control_filters.len())
+        )
+    };
+    push_i64_param(&mut params_vec, source_limit as i64);
+
+    let sql = format!(
+        r#"
+        WITH raw AS (
+            SELECT
+                g.ID AS id,
+                g.Moves AS moves_blob,
+                g.FEN AS fen,
+                COALESCE(g.Result, '*') AS result,
+                g.TimeControl AS time_control,
+                COALESCE(g.Date, '') AS date_sort,
+                COALESCE(g.UTCTime, '') AS time_sort,
+                a.accuracy AS accuracy,
+                CASE
+                    WHEN lower(CAST(g.Moves AS TEXT)) LIKE '%lichess.org%'
+                      OR lower(COALESCE(s.Name, '')) LIKE '%lichess.org%'
+                      OR lower(COALESCE(s.Name, '')) LIKE '%lichess%' THEN 'lichess'
+                    WHEN lower(CAST(g.Moves AS TEXT)) LIKE '%chess.com%'
+                      OR lower(COALESCE(s.Name, '')) LIKE '%chess.com%' THEN 'chesscom'
+                    ELSE 'chessbase'
+                END AS kind_key,
+                CASE WHEN ({white_match_expr}) THEN 1 ELSE 0 END AS white_is_profile,
+                CASE WHEN ({black_match_expr}) THEN 1 ELSE 0 END AS black_is_profile
+            FROM Games g
+            LEFT JOIN Players pw ON pw.ID = g.WhiteID
+            LEFT JOIN Players pb ON pb.ID = g.BlackID
+            LEFT JOIN Sites s ON s.ID = g.SiteID
+            INNER JOIN analysis_db.game_analysis a
+                ON a.profile_id = ? AND a.game_id = CAST(g.ID AS TEXT)
+        ),
+        base AS (
+            SELECT
+                moves_blob,
+                fen,
+                result,
+                date_sort,
+                time_sort,
+                id,
+                accuracy,
+                CASE
+                    WHEN white_is_profile = 1 THEN 1
+                    WHEN black_is_profile = 1 THEN 0
+                    ELSE 1
+                END AS user_is_white,
+                white_is_profile,
+                black_is_profile,
+                CASE
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%ultra%' THEN 'ultra_bullet'
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%bullet%' THEN 'bullet'
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%blitz%' THEN 'blitz'
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%rapid%' THEN 'rapid'
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%classical%' THEN 'classical'
+                    WHEN lower(trim(COALESCE(time_control, ''))) LIKE '%correspondence%' THEN 'correspondence'
+                    WHEN kind_key = 'chesscom' AND trim(COALESCE(time_control, '')) LIKE '1/%' THEN 'daily'
+                    WHEN kind_key = 'lichess' AND trim(COALESCE(time_control, '')) = '-' THEN 'correspondence'
+                    WHEN (
+                        CASE
+                            WHEN time_control IS NULL OR trim(time_control) = '' OR trim(time_control) = '-' OR trim(time_control) LIKE '1/%' THEN NULL
+                            WHEN instr(time_control, '+') > 0 THEN
+                                CAST(substr(time_control, 1, instr(time_control, '+') - 1) AS INTEGER)
+                                + CAST(substr(time_control, instr(time_control, '+') + 1) AS INTEGER) * 40
+                            ELSE CAST(time_control AS INTEGER)
+                        END
+                    ) < 30 THEN 'ultra_bullet'
+                    WHEN (
+                        CASE
+                            WHEN time_control IS NULL OR trim(time_control) = '' OR trim(time_control) = '-' OR trim(time_control) LIKE '1/%' THEN NULL
+                            WHEN instr(time_control, '+') > 0 THEN
+                                CAST(substr(time_control, 1, instr(time_control, '+') - 1) AS INTEGER)
+                                + CAST(substr(time_control, instr(time_control, '+') + 1) AS INTEGER) * 40
+                            ELSE CAST(time_control AS INTEGER)
+                        END
+                    ) < 180 THEN 'bullet'
+                    WHEN (
+                        CASE
+                            WHEN time_control IS NULL OR trim(time_control) = '' OR trim(time_control) = '-' OR trim(time_control) LIKE '1/%' THEN NULL
+                            WHEN instr(time_control, '+') > 0 THEN
+                                CAST(substr(time_control, 1, instr(time_control, '+') - 1) AS INTEGER)
+                                + CAST(substr(time_control, instr(time_control, '+') + 1) AS INTEGER) * 40
+                            ELSE CAST(time_control AS INTEGER)
+                        END
+                    ) < 480 THEN 'blitz'
+                    WHEN (
+                        CASE
+                            WHEN time_control IS NULL OR trim(time_control) = '' OR trim(time_control) = '-' OR trim(time_control) LIKE '1/%' THEN NULL
+                            WHEN instr(time_control, '+') > 0 THEN
+                                CAST(substr(time_control, 1, instr(time_control, '+') - 1) AS INTEGER)
+                                + CAST(substr(time_control, instr(time_control, '+') + 1) AS INTEGER) * 40
+                            ELSE CAST(time_control AS INTEGER)
+                        END
+                    ) < 1500 THEN 'rapid'
+                    WHEN (
+                        CASE
+                            WHEN time_control IS NULL OR trim(time_control) = '' OR trim(time_control) = '-' OR trim(time_control) LIKE '1/%' THEN NULL
+                            WHEN instr(time_control, '+') > 0 THEN
+                                CAST(substr(time_control, 1, instr(time_control, '+') - 1) AS INTEGER)
+                                + CAST(substr(time_control, instr(time_control, '+') + 1) AS INTEGER) * 40
+                            ELSE CAST(time_control AS INTEGER)
+                        END
+                    ) >= 1500 THEN 'classical'
+                    ELSE NULL
+                END AS time_category
+            FROM raw
+        ),
+        filtered AS (
+            SELECT moves_blob, accuracy, user_is_white, result
+            FROM base
+            WHERE accuracy IS NOT NULL
+              AND accuracy > 0
+              AND moves_blob IS NOT NULL
+              AND (
+                  fen IS NULL
+                  OR trim(fen) = ''
+                  OR trim(fen) = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+              )
+              AND (white_is_profile = 1 OR black_is_profile = 1)
+              {time_control_where}
+            ORDER BY date_sort DESC, time_sort DESC, id DESC
+            LIMIT ?
+        )
+        SELECT moves_blob, accuracy, user_is_white, result
+        FROM filtered
+        "#
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params_vec.iter()), |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, i64>(2)? != 0,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut white = HashMap::<String, OpeningAccuracyAccumulator>::new();
+    let mut black = HashMap::<String, OpeningAccuracyAccumulator>::new();
+    let mut total_filtered_games = 0;
+    for (moves_blob, accuracy, user_is_white, result) in rows {
+        if !accuracy.is_finite() || accuracy <= 0.0 {
+            continue;
+        }
+        total_filtered_games += 1;
+        let Some(family) = opening_family_from_moves_blob(&moves_blob) else {
+            continue;
+        };
+        let target = if user_is_white {
+            &mut white
+        } else {
+            &mut black
+        };
+        let entry = target.entry(family).or_default();
+        entry.games += 1;
+        entry.accuracy_sum += accuracy;
+        match result.trim() {
+            "1-0" => {
+                entry.outcome_games += 1;
+                if user_is_white {
+                    entry.wins += 1;
+                }
+            }
+            "0-1" => {
+                entry.outcome_games += 1;
+                if !user_is_white {
+                    entry.wins += 1;
+                }
+            }
+            "1/2-1/2" => {
+                entry.outcome_games += 1;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(DashboardOpeningAccuracyTopResponse {
+        white: opening_accuracy_top_items(white, total_filtered_games, sort_mode),
+        black: opening_accuracy_top_items(black, total_filtered_games, sort_mode),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn dashboard_get_opening_accuracy_top(
+    app: AppHandle,
+    _state: State<'_, AppState>,
+    req: DashboardOpeningAccuracyTopRequest,
+) -> Result<DashboardOpeningAccuracyTopResponse> {
+    let profile_id = req.profile_id.trim();
+    if profile_id.is_empty() {
+        return Ok(DashboardOpeningAccuracyTopResponse {
+            white: vec![],
+            black: vec![],
+        });
+    }
+
+    let db_path = parse_profile_db_path(&app, profile_id)?;
+    let conn = open_profile_db_connection(&db_path)?;
+    let analysis_db_path = resolve_analysis_db_path(&app)?;
+    dashboard_get_opening_accuracy_top_for_connection(&conn, &analysis_db_path, &req)
 }
 
 #[tauri::command]
@@ -3494,6 +3981,318 @@ mod tests {
         assert_eq!(legacy_row.accuracy, None);
         assert!(legacy_row.pgn.as_deref().unwrap().contains("Ba1r"));
         assert!(!legacy_row.pgn.as_deref().unwrap().contains("[%eval -0.20]"));
+    }
+
+    #[test]
+    fn dashboard_opening_accuracy_top_groups_analyzed_games_by_family_and_color() {
+        let temp = TempDir::new().unwrap();
+        let profile_conn = Connection::open_in_memory().unwrap();
+        create_dashboard_profile_db(&profile_conn);
+        let analysis_path = temp.path().join("analysis.db3");
+        create_analysis_db(&analysis_path);
+
+        let black_sicilian_pgn = r#"[Event "Rated Rapid game"]
+[Site "https://lichess.org/BlackSicilian"]
+[Date "2026.05.12"]
+[White "JoseCortes11"]
+[Black "currentuser"]
+[Result "0-1"]
+
+1. e4 c5 0-1"#;
+        profile_conn
+            .execute(
+                r#"
+                INSERT INTO Games (
+                    ID, EventID, SiteID, Date, UTCTime, Round, WhiteID, WhiteElo, BlackID, BlackElo,
+                    Result, TimeControl, PlyCount, FEN, Moves
+                )
+                VALUES (?1, 1, 1, ?2, ?3, 1, 2, 1900, 1, 2000, '0-1', '600+0', 2, NULL, ?4)
+                "#,
+                params![303, "2026.05.12", "10:00:00", black_sicilian_pgn.as_bytes()],
+            )
+            .unwrap();
+
+        let analysis_conn = Connection::open(&analysis_path).unwrap();
+        analysis_conn
+            .execute(
+                r#"
+                INSERT INTO game_analysis (
+                    profile_id, game_id, analyzed_pgn, accuracy, acpl, estimated_elo
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+                params!["profile-a", "303", black_sicilian_pgn, 88.0, 42.0, 2050],
+            )
+            .unwrap();
+        drop(analysis_conn);
+
+        let response = dashboard_get_opening_accuracy_top_for_connection(
+            &profile_conn,
+            &analysis_path,
+            &DashboardOpeningAccuracyTopRequest {
+                profile_id: "profile-a".to_string(),
+                game_history_limit: 100,
+                profile_usernames: vec!["currentuser".to_string()],
+                time_control_categories: vec![],
+                sort_mode: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.white.len(), 1);
+        assert_eq!(response.white[0].family, "Sicilian");
+        assert_eq!(response.white[0].games, 1);
+        assert!((response.white[0].avg_accuracy - 90.0).abs() < 1e-9);
+
+        assert_eq!(response.black.len(), 1);
+        assert_eq!(response.black[0].family, "Sicilian");
+        assert_eq!(response.black[0].games, 1);
+        assert!((response.black[0].avg_accuracy - 88.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn dashboard_opening_accuracy_top_filters_by_time_control_categories() {
+        let temp = TempDir::new().unwrap();
+        let profile_conn = Connection::open_in_memory().unwrap();
+        create_dashboard_profile_db(&profile_conn);
+        let analysis_path = temp.path().join("analysis.db3");
+        create_analysis_db(&analysis_path);
+
+        let italian_pgn = r#"[Event "Rated Classical game"]
+[Site "https://lichess.org/ItalianClassical"]
+[Date "2026.05.13"]
+[White "currentuser"]
+[Black "JoseCortes11"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 1-0"#;
+        profile_conn
+            .execute(
+                r#"
+                INSERT INTO Games (
+                    ID, EventID, SiteID, Date, UTCTime, Round, WhiteID, WhiteElo, BlackID, BlackElo,
+                    Result, TimeControl, PlyCount, FEN, Moves
+                )
+                VALUES (?1, 2, 1, ?2, ?3, 1, 1, 2000, 2, 1900, '1-0', '1800+0', 6, NULL, ?4)
+                "#,
+                params![404, "2026.05.13", "10:00:00", italian_pgn.as_bytes()],
+            )
+            .unwrap();
+
+        let analysis_conn = Connection::open(&analysis_path).unwrap();
+        analysis_conn
+            .execute(
+                r#"
+                INSERT INTO game_analysis (
+                    profile_id, game_id, analyzed_pgn, accuracy, acpl, estimated_elo
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+                params!["profile-a", "404", italian_pgn, 76.0, 64.0, 1880],
+            )
+            .unwrap();
+        drop(analysis_conn);
+
+        let rapid_response = dashboard_get_opening_accuracy_top_for_connection(
+            &profile_conn,
+            &analysis_path,
+            &DashboardOpeningAccuracyTopRequest {
+                profile_id: "profile-a".to_string(),
+                game_history_limit: 100,
+                profile_usernames: vec!["currentuser".to_string()],
+                time_control_categories: vec!["rapid".to_string()],
+                sort_mode: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(rapid_response.white.len(), 1);
+        assert_eq!(rapid_response.white[0].family, "Sicilian");
+        assert_eq!(rapid_response.white[0].games, 1);
+
+        profile_conn
+            .execute_batch("DETACH DATABASE analysis_db")
+            .unwrap();
+
+        let classical_response = dashboard_get_opening_accuracy_top_for_connection(
+            &profile_conn,
+            &analysis_path,
+            &DashboardOpeningAccuracyTopRequest {
+                profile_id: "profile-a".to_string(),
+                game_history_limit: 100,
+                profile_usernames: vec!["currentuser".to_string()],
+                time_control_categories: vec!["classical".to_string()],
+                sort_mode: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(classical_response.white.len(), 1);
+        assert_eq!(classical_response.white[0].family, "Italian");
+        assert_eq!(classical_response.white[0].games, 1);
+
+        profile_conn
+            .execute_batch("DETACH DATABASE analysis_db")
+            .unwrap();
+
+        let combined_response = dashboard_get_opening_accuracy_top_for_connection(
+            &profile_conn,
+            &analysis_path,
+            &DashboardOpeningAccuracyTopRequest {
+                profile_id: "profile-a".to_string(),
+                game_history_limit: 100,
+                profile_usernames: vec!["currentuser".to_string()],
+                time_control_categories: vec!["rapid".to_string(), "classical".to_string()],
+                sort_mode: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(combined_response.white.len(), 2);
+        assert_eq!(combined_response.white[0].family, "Sicilian");
+        assert_eq!(combined_response.white[1].family, "Italian");
+    }
+
+    #[test]
+    fn opening_accuracy_top_items_requires_five_percent_sample() {
+        let rows = HashMap::from([
+            (
+                "Sicilian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 4,
+                    accuracy_sum: 380.0,
+                    wins: 4,
+                    outcome_games: 4,
+                },
+            ),
+            (
+                "Italian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 5,
+                    accuracy_sum: 450.0,
+                    wins: 3,
+                    outcome_games: 5,
+                },
+            ),
+            (
+                "Ruy Lopez".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 6,
+                    accuracy_sum: 510.0,
+                    wins: 4,
+                    outcome_games: 6,
+                },
+            ),
+        ]);
+
+        let ranked = opening_accuracy_top_items(rows, 100, OpeningAccuracySortMode::Accuracy);
+
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].family, "Italian");
+        assert_eq!(ranked[0].games, 5);
+        assert_eq!(ranked[1].family, "Ruy Lopez");
+        assert_eq!(ranked[1].games, 6);
+    }
+
+    #[test]
+    fn opening_accuracy_top_items_uses_combined_filtered_game_total() {
+        let rows = HashMap::from([(
+            "English".to_string(),
+            OpeningAccuracyAccumulator {
+                games: 2,
+                accuracy_sum: 173.2,
+                wins: 2,
+                outcome_games: 2,
+            },
+        )]);
+
+        let ranked = opening_accuracy_top_items(rows, 100, OpeningAccuracySortMode::Accuracy);
+
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn opening_accuracy_top_items_can_sort_by_frequency() {
+        let rows = HashMap::from([
+            (
+                "Sicilian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 7,
+                    accuracy_sum: 490.0,
+                    wins: 3,
+                    outcome_games: 7,
+                },
+            ),
+            (
+                "Italian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 5,
+                    accuracy_sum: 475.0,
+                    wins: 5,
+                    outcome_games: 5,
+                },
+            ),
+            (
+                "Ruy Lopez".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 6,
+                    accuracy_sum: 510.0,
+                    wins: 4,
+                    outcome_games: 6,
+                },
+            ),
+        ]);
+
+        let ranked = opening_accuracy_top_items(rows, 100, OpeningAccuracySortMode::Frequency);
+
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].family, "Sicilian");
+        assert_eq!(ranked[0].games, 7);
+        assert_eq!(ranked[1].family, "Ruy Lopez");
+        assert_eq!(ranked[1].games, 6);
+        assert_eq!(ranked[2].family, "Italian");
+        assert_eq!(ranked[2].games, 5);
+    }
+
+    #[test]
+    fn opening_accuracy_top_items_can_sort_by_win_rate() {
+        let rows = HashMap::from([
+            (
+                "Sicilian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 7,
+                    accuracy_sum: 630.0,
+                    wins: 3,
+                    outcome_games: 7,
+                },
+            ),
+            (
+                "Italian".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 5,
+                    accuracy_sum: 350.0,
+                    wins: 5,
+                    outcome_games: 5,
+                },
+            ),
+            (
+                "Ruy Lopez".to_string(),
+                OpeningAccuracyAccumulator {
+                    games: 6,
+                    accuracy_sum: 540.0,
+                    wins: 4,
+                    outcome_games: 6,
+                },
+            ),
+        ]);
+
+        let ranked = opening_accuracy_top_items(rows, 100, OpeningAccuracySortMode::WinRate);
+
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].family, "Italian");
+        assert!((ranked[0].win_rate - 100.0).abs() < 1e-9);
+        assert_eq!(ranked[1].family, "Ruy Lopez");
+        assert_eq!(ranked[2].family, "Sicilian");
     }
 
     #[test]

@@ -534,7 +534,7 @@
       "removeLink": "リンクを削除"
     },
     "menu": {
-      "pawnAppetit": "Obsidian Chess Studio",
+      "obsidianChessStudio": "Obsidian Chess Studio",
       "quit": "Obsidian Chess Studio を終了",
       "file": "ファイル",
       "newTab": "新しいタブ",

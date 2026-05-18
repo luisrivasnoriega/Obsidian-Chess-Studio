@@ -98,6 +98,9 @@ target_tmp*/
 local.properties
 .gradle/
 build/
+src-tauri/assets/engines/android/aarch64/stockfish
+src-tauri/gen/android/app/src/main/assets/engines/stockfish
+stockfish-android-*.tar
 
 # Other package managers (if not used)
 yarn.lock

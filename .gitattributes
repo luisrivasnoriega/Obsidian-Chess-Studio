@@ -13,5 +13,3 @@ Dockerfile text
 *.png -text
 # Leave .bat files as crlf for Windows
 *.bat text eol=crlf
-src-tauri/assets/engines/android/aarch64/stockfish filter=lfs diff=lfs merge=lfs -text
-src-tauri/gen/android/app/src/main/assets/engines/stockfish filter=lfs diff=lfs merge=lfs -text

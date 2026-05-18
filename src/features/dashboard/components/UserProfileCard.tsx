@@ -14,11 +14,11 @@ import {
   ThemeIcon,
 } from "@mantine/core";
 import {
-  IconAlertTriangle,
   IconBolt,
   IconEdit,
   IconGauge,
   IconRocket,
+  IconStar,
   IconStopwatch,
   IconSun,
   IconTargetArrow,
@@ -77,8 +77,8 @@ interface UserProfileCardProps {
   platform?: "lichess" | "chesscom" | null; // Platform of the main account
   linkedAccounts?: Array<{ platform: "lichess" | "chesscom"; username: string }>;
   currentLichessToken?: string;
-  weekBlunderRate?: number | null;
-  previousWeekBlunderRate?: number | null;
+  weekEstimatedElo?: number | null;
+  previousWeekEstimatedElo?: number | null;
   weekAccuracy?: number | null;
   previousWeekAccuracy?: number | null;
   weekAcpl?: number | null;
@@ -108,8 +108,8 @@ export function UserProfileCard({
   platform,
   linkedAccounts = [],
   currentLichessToken,
-  weekBlunderRate = null,
-  previousWeekBlunderRate = null,
+  weekEstimatedElo = null,
+  previousWeekEstimatedElo = null,
   weekAccuracy = null,
   previousWeekAccuracy = null,
   weekAcpl = null,
@@ -237,12 +237,12 @@ export function UserProfileCard({
 
   const profileMetrics = [
     {
-      key: "blunder-rate",
-      label: t("features.dashboard.blunderRateLabel", { defaultValue: "Blunder rate" }),
-      value: formatPercent(weekBlunderRate, 1),
-      hint: buildWeekHint(formatPercent(previousWeekBlunderRate, 1)),
-      icon: <IconAlertTriangle size={14} />,
-      color: "red",
+      key: "estimated-elo",
+      label: t("dashboard.estimatedElo", { defaultValue: "Est. Elo" }),
+      value: formatNumber(weekEstimatedElo, 0),
+      hint: buildWeekHint(formatNumber(previousWeekEstimatedElo, 0)),
+      icon: <IconStar size={14} />,
+      color: "cyan",
     },
     {
       key: "accuracy",

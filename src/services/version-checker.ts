@@ -57,7 +57,7 @@ async function fetchVersionInfo(url: string, timeout = 10000): Promise<VersionIn
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": "PawnAppetit-VersionChecker/1.0",
+        "User-Agent": "ObsidianChessStudio-VersionChecker/1.0",
       },
     });
 
