@@ -7,6 +7,8 @@
 //! - builds concrete GM-style comments from board evidence
 //! - keeps engine guardrails and human strategic selector compatibility
 
+mod strategy_commentary;
+
 use serde::{Deserialize, Serialize};
 use shakmaty::{
     fen::Fen,
@@ -883,6 +885,7 @@ fn build_annotated_pgn_and_narratives(
             &concrete_bundle,
             is_sacrifice,
             played_matches_strategic,
+            played_candidate,
         );
 
         let emit_variation = should_comment && !suggested_variation_uci.is_empty();
@@ -969,6 +972,7 @@ fn should_comment_move(
     concrete_bundle: &ConcreteCommentBundle,
     is_sacrifice: bool,
     played_matches_strategic: bool,
+    played_candidate: Option<&HumanStrategicCandidate>,
 ) -> bool {
     let quiet_or_positive = matches!(
         verdict,
@@ -979,8 +983,18 @@ fn should_comment_move(
     );
     let cp_loss_value = cp_loss.unwrap_or(0);
     let low_eval_swing = cp_loss_value < 90;
-    let opening_plan_signal =
-        ply >= 8 && has_opening_plan_signal(strategic_score, motifs, concrete_bundle, is_sacrifice);
+    let strategy_candidate_signal = strategy_commentary::should_comment_from_candidate(
+        played_candidate,
+        verdict,
+        played_matches_strategic,
+        is_sacrifice,
+    );
+    let opening_plan_signal = ply >= 8
+        && (has_opening_plan_signal(strategic_score, motifs, concrete_bundle, is_sacrifice)
+            || strategy_commentary::has_opening_plan_signal_from_candidate(
+                played_candidate,
+                played_matches_strategic,
+            ));
 
     // Never annotate the first pure development/book plies unless there is a real
     // tactic or sacrifice. This keeps 1.e4/1...c5 quiet, while still allowing
@@ -1085,6 +1099,10 @@ fn should_comment_move(
     }
 
     if is_sacrifice {
+        return true;
+    }
+
+    if strategy_candidate_signal {
         return true;
     }
 
@@ -1238,6 +1256,16 @@ fn has_opening_plan_signal(
                 | StrategicMotif::CentralKingPressure
                 | StrategicMotif::PieceRestriction
                 | StrategicMotif::WingClamp
+                | StrategicMotif::OutpostControl
+                | StrategicMotif::ColorComplexPressure
+                | StrategicMotif::Prophylaxis
+                | StrategicMotif::FavorableTrade
+                | StrategicMotif::PassedPawnConversion
+                | StrategicMotif::InitiativeSacrifice
+                | StrategicMotif::Counterplay
+                | StrategicMotif::KingNet
+                | StrategicMotif::PieceCoordination
+                | StrategicMotif::TensionManagement
         )
     });
 
@@ -1609,6 +1637,8 @@ fn build_concrete_comment_bundle(
     add_candidate_pv_plan_atoms(&mut atoms, before.clone(), mv, mover, candidate);
 
     if let Some(c) = candidate {
+        strategy_commentary::add_candidate_strategy_atoms(&mut atoms, c);
+
         if c.components.pawn_structure_damage >= 0.35 {
             add_atom_once(
                 &mut atoms,
@@ -3241,6 +3271,16 @@ fn motifs_to_text(motifs: &[StrategicMotif]) -> String {
             StrategicMotif::CentralKingPressure => "presión sobre el rey",
             StrategicMotif::PieceRestriction => "restricción de piezas",
             StrategicMotif::WingClamp => "fijación en un flanco",
+            StrategicMotif::OutpostControl => "outpost control",
+            StrategicMotif::ColorComplexPressure => "color-complex pressure",
+            StrategicMotif::Prophylaxis => "prophylaxis",
+            StrategicMotif::FavorableTrade => "favorable trade",
+            StrategicMotif::PassedPawnConversion => "passed-pawn conversion",
+            StrategicMotif::InitiativeSacrifice => "initiative sacrifice",
+            StrategicMotif::Counterplay => "active counterplay",
+            StrategicMotif::KingNet => "king net",
+            StrategicMotif::PieceCoordination => "piece coordination",
+            StrategicMotif::TensionManagement => "tension management",
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -3746,6 +3786,16 @@ fn motif_to_key(motif: StrategicMotif) -> &'static str {
         StrategicMotif::CentralKingPressure => "centralKingPressure",
         StrategicMotif::PieceRestriction => "pieceRestriction",
         StrategicMotif::WingClamp => "wingClamp",
+        StrategicMotif::OutpostControl => "outpostControl",
+        StrategicMotif::ColorComplexPressure => "colorComplexPressure",
+        StrategicMotif::Prophylaxis => "prophylaxis",
+        StrategicMotif::FavorableTrade => "favorableTrade",
+        StrategicMotif::PassedPawnConversion => "passedPawnConversion",
+        StrategicMotif::InitiativeSacrifice => "initiativeSacrifice",
+        StrategicMotif::Counterplay => "counterplay",
+        StrategicMotif::KingNet => "kingNet",
+        StrategicMotif::PieceCoordination => "pieceCoordination",
+        StrategicMotif::TensionManagement => "tensionManagement",
     }
 }
 
@@ -4580,6 +4630,7 @@ fn clean_spaces(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chess::human_strategy::StrategicRiskFlag;
 
     fn narrative_with(
         verdict: HumanMoveVerdict,
@@ -4608,6 +4659,74 @@ mod tests {
             suggested_variation_uci: vec![],
             suggested_variation_san: vec![],
         }
+    }
+
+    fn strategic_candidate_with(
+        strategic_score: f32,
+        motifs: Vec<StrategicMotif>,
+        risk_flags: Vec<StrategicRiskFlag>,
+    ) -> HumanStrategicCandidate {
+        HumanStrategicCandidate {
+            uci: "e2e4".to_string(),
+            san: "e4".to_string(),
+            pv_uci_line: vec!["e2e4".to_string(), "e7e5".to_string()],
+            engine_rank: 0,
+            engine_cp: 20,
+            engine_drop_cp: 0,
+            strategic_score,
+            macro_strategic_score: strategic_score,
+            final_score: strategic_score,
+            passes_guardrail: true,
+            is_last_resort: false,
+            risk_flags,
+            motifs,
+            components: HumanStrategicComponents::default(),
+            macro_components: HumanStrategicMacroComponents {
+                initiative: strategic_score,
+                attack: strategic_score,
+                practical_pressure: strategic_score,
+                plan_coherence: strategic_score,
+                ..HumanStrategicMacroComponents::default()
+            },
+        }
+    }
+
+    #[test]
+    fn strategy_candidate_atoms_are_used_for_comments() {
+        let candidate = strategic_candidate_with(
+            0.72,
+            vec![StrategicMotif::KingNet, StrategicMotif::Counterplay],
+            vec![StrategicRiskFlag::MaterialInvestment],
+        );
+        let mut atoms = Vec::new();
+
+        strategy_commentary::add_candidate_strategy_atoms(&mut atoms, &candidate);
+
+        assert!(atoms.iter().any(|atom| atom.short.contains("king")));
+        assert!(atoms.iter().any(|atom| atom.short.contains("initiative")));
+    }
+
+    #[test]
+    fn strategic_candidate_signal_can_drive_opening_comment() {
+        let candidate =
+            strategic_candidate_with(0.64, vec![StrategicMotif::Counterplay], Vec::new());
+        let should_comment = should_comment_move(
+            12,
+            true,
+            true,
+            false,
+            false,
+            HumanMoveVerdict::Practical,
+            Some(12),
+            Some(candidate.strategic_score),
+            &candidate.motifs,
+            &ConcreteCommentBundle::default(),
+            false,
+            true,
+            Some(&candidate),
+        );
+
+        assert!(should_comment);
     }
 
     #[test]

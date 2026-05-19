@@ -132,11 +132,12 @@ export function PuzzleVariantsPanel({
   const { t } = useTranslation();
   const [info, setInfo] = useState<PuzzleVariantsInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  const [_progressVersion, setProgressVersion] = useState(0);
+  const [progressVersion, setProgressVersion] = useState(0);
   const [solutionHeaders, setSolutionHeaders] = useState<string[]>([]);
   const [openingHeaders, setOpeningHeaders] = useState<string[]>([]);
 
   const isPgn = selectedDb?.toLowerCase().endsWith(".pgn") ?? false;
+  void progressVersion;
 
   useEffect(() => {
     const handleProgress = () => setProgressVersion((v) => v + 1);
@@ -268,15 +269,10 @@ export function PuzzleVariantsPanel({
     };
   }, [info, selectedDb]);
 
-  const solvedCount = useMemo(() => (selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0), [info, selectedDb]);
-  const firstAttemptStats = useMemo(
-    () => (selectedDb && info ? getFirstAttemptPgnPuzzleStats(selectedDb) : { attempted: 0, correct: 0 }),
-    [info, selectedDb],
-  );
-  const solveTimeStats = useMemo(
-    () => (selectedDb && info ? getPgnPuzzleSolveTimeStats(selectedDb) : { count: 0, averageMs: null }),
-    [info, selectedDb],
-  );
+  const solvedCount = selectedDb && info ? getSolvedPgnPuzzleCount(selectedDb) : 0;
+  const firstAttemptStats =
+    selectedDb && info ? getFirstAttemptPgnPuzzleStats(selectedDb) : { attempted: 0, correct: 0 };
+  const solveTimeStats = selectedDb && info ? getPgnPuzzleSolveTimeStats(selectedDb) : { count: 0, averageMs: null };
   const clampedSolvedCount = useMemo(() => {
     if (!info) return 0;
     return Math.min(solvedCount, Math.max(0, info.puzzleCount));
@@ -406,8 +402,8 @@ export function PuzzleVariantsPanel({
               </Text>
             ) : (
               <Stack gap={2}>
-                {recentIncorrectSubvariants.map((line, index) => (
-                  <Text key={`${index}:${line}`} size="xs" c="dimmed" lineClamp={1}>
+                {recentIncorrectSubvariants.map((line) => (
+                  <Text key={line} size="xs" c="dimmed" lineClamp={1}>
                     {line}
                   </Text>
                 ))}

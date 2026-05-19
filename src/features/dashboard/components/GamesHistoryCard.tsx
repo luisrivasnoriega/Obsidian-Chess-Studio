@@ -5,7 +5,12 @@ import { useTranslation } from "react-i18next";
 import type { Event } from "@/bindings";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
-import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
+import type {
+  ChessComGameWithEvent,
+  DashboardLichessGame,
+  DashboardSingleAnalysisTarget,
+  TimeControlCategory,
+} from "../types";
 import { FavoriteGamesTab } from "./FavoriteGamesTab";
 import { ProfileGamesTab } from "./ProfileGamesTab";
 
@@ -30,6 +35,7 @@ interface GamesHistoryCardProps {
     game: DashboardLichessGame,
     meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
+  onRequestAnalyzeGame?: (target: DashboardSingleAnalysisTarget) => void;
   onAnalyzeAll?: (payload: {
     type: "local" | "chesscom" | "lichess" | "chessbase" | "all";
     opponentContains: string | null;
@@ -71,6 +77,7 @@ export function GamesHistoryCard({
   onAnalyzeLocalGame,
   onAnalyzeChessComGame,
   onAnalyzeLichessGame,
+  onRequestAnalyzeGame,
   onAnalyzeAll,
   onDeleteLocalGame,
   onToggleFavoriteLocal,
@@ -294,6 +301,7 @@ export function GamesHistoryCard({
             onAnalyzeLocalGame={onAnalyzeLocalGame}
             onAnalyzeChessComGame={onAnalyzeChessComGame}
             onAnalyzeLichessGame={onAnalyzeLichessGame}
+            onRequestAnalyzeGame={onRequestAnalyzeGame}
             onAnalyzeAll={onAnalyzeAll}
             onDeleteLocalGame={onDeleteLocalGame}
             onToggleFavoriteLocal={onToggleFavoriteLocal}

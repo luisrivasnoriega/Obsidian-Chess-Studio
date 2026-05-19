@@ -275,7 +275,7 @@ export function PuzzleVariantsCard() {
 
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<PuzzleVariantFile[]>([]);
-  const [_progressVersion, setProgressVersion] = useState(0);
+  const [progressVersion, setProgressVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
   const [completionFilter, setCompletionFilter] = useState<CompletionFilter>("all");
@@ -330,6 +330,7 @@ export function PuzzleVariantsCard() {
   }, [reloadFiles]);
 
   const rows = useMemo(() => {
+    void progressVersion;
     return files
       .map((file) => {
         const solvedCount = getSolvedPgnPuzzleCount(file.path);
@@ -363,7 +364,7 @@ export function PuzzleVariantsCard() {
         }
         return a.displayName.localeCompare(b.displayName);
       });
-  }, [files, t]);
+  }, [files, progressVersion, t]);
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = normalizeSearchText(searchQuery);

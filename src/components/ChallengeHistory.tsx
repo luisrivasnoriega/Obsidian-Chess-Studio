@@ -9,6 +9,7 @@ type Challenge = {
   completion: Completion;
   label?: string;
   index?: number;
+  id?: string;
 };
 
 function ChallengeHistory({
@@ -30,7 +31,7 @@ function ChallengeHistory({
       {visibleChallenges.map((p, i) => {
         const challengeIndex = typeof p.index === "number" ? p.index : i;
         const isCurrent = challengeIndex === current;
-        const uniqueKey = `${challengeIndex}-${p.label ?? ""}-${p.completion}`;
+        const uniqueKey = p.id ?? `${challengeIndex}-${p.label ?? ""}-${p.completion}`;
         return match(p.completion)
           .with("correct", () => (
             <Stack key={uniqueKey} gap={0}>

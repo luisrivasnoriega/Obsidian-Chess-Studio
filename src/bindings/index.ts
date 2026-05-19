@@ -20,12 +20,43 @@ export type BestMoves = Omit<BestMovesT, "score"> & {
   score: Score;
 };
 
+export type StrategicProfile = "solid" | "positional" | "dynamic" | "attacking" | "conversion";
+
+export type StrategicRiskFlag =
+  | "materialInvestment"
+  | "undefendedLandingSquare"
+  | "lowDepthCandidate"
+  | "forcedTacticalLine"
+  | "mateRisk"
+  | "unstableScore"
+  | "wdlDrop";
+
+export type StrategicMotif =
+  | "damagedPawnStructure"
+  | "weakPawnPressure"
+  | "spaceGain"
+  | "openFilePressure"
+  | "centralKingPressure"
+  | "pieceRestriction"
+  | "wingClamp"
+  | "outpostControl"
+  | "colorComplexPressure"
+  | "prophylaxis"
+  | "favorableTrade"
+  | "passedPawnConversion"
+  | "initiativeSacrifice"
+  | "counterplay"
+  | "kingNet"
+  | "pieceCoordination"
+  | "tensionManagement";
+
 export type HumanStrategicConfig = {
   maxEngineDropCp: number;
   maxAbsoluteDisadvantageCp: number;
   lastResortDisadvantageCp: number;
   minStrategicScore: number;
   highConvictionThreshold: number;
+  profile?: StrategicProfile | null;
 };
 
 export type HumanStrategicRequest = {
@@ -44,6 +75,23 @@ export type HumanStrategicSelection = {
   selectedIsLastResort: boolean;
   bestEngineUci: string;
   bestEngineCp: number;
+  candidates: HumanStrategicCandidate[];
+};
+
+export type HumanStrategicCandidate = {
+  uci: string;
+  san: string;
+  pvUciLine: string[];
+  engineRank: number | bigint;
+  engineCp: number;
+  engineDropCp: number;
+  strategicScore: number;
+  macroStrategicScore: number;
+  finalScore: number;
+  passesGuardrail: boolean;
+  isLastResort: boolean;
+  riskFlags: StrategicRiskFlag[];
+  motifs: StrategicMotif[];
 };
 
 export type HumanStrategicAxisNarrative = {
@@ -112,7 +160,7 @@ export type HumanStrategicLiveLine = {
   finalScore: number;
   isSelected: boolean;
   isEngineBest: boolean;
-  motifs: string[];
+  motifs: StrategicMotif[];
   strategicAxes: HumanStrategicAxisNarrative[];
   strategicPlan: string;
   commentShort: string;

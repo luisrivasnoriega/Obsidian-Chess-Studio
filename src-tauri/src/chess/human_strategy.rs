@@ -12,6 +12,10 @@
 //! engine evaluation and applies guardrails so selected moves remain objectively
 //! playable (not strategically pretty but tactically lost).
 
+mod features;
+mod risk;
+mod weights;
+
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +28,11 @@ use specta::Type;
 use crate::error::Error;
 
 use super::types::{BestMoves, ScoreValue};
+use features::{coords_to_square_fast, square_to_coords_fast, CandidateFeatures};
+pub use risk::StrategicRiskFlag;
+use risk::{risk_flags_for_candidate, RiskEvaluationInput};
+pub use weights::StrategicProfile;
+use weights::StrategicWeights;
 
 /// Runtime knobs for the strategic selector.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
@@ -39,6 +48,9 @@ pub struct HumanStrategicConfig {
     pub min_strategic_score: f32,
     /// Higher threshold required to allow "last resort" concessions.
     pub high_conviction_threshold: f32,
+    /// Strategic style profile used to blend human heuristics with engine quality.
+    #[serde(default)]
+    pub profile: Option<StrategicProfile>,
 }
 
 impl Default for HumanStrategicConfig {
@@ -50,7 +62,14 @@ impl Default for HumanStrategicConfig {
             last_resort_disadvantage_cp: 70,
             min_strategic_score: 0.45,
             high_conviction_threshold: 0.82,
+            profile: Some(StrategicProfile::Dynamic),
         }
+    }
+}
+
+impl HumanStrategicConfig {
+    fn resolved_profile(self) -> StrategicProfile {
+        self.profile.unwrap_or_default()
     }
 }
 
@@ -77,6 +96,16 @@ pub enum StrategicMotif {
     CentralKingPressure,
     PieceRestriction,
     WingClamp,
+    OutpostControl,
+    ColorComplexPressure,
+    Prophylaxis,
+    FavorableTrade,
+    PassedPawnConversion,
+    InitiativeSacrifice,
+    Counterplay,
+    KingNet,
+    PieceCoordination,
+    TensionManagement,
 }
 
 /// Component scores used to build the final strategic score.
@@ -125,9 +154,20 @@ pub struct HumanStrategicCandidate {
     pub final_score: f32,
     pub passes_guardrail: bool,
     pub is_last_resort: bool,
+    pub risk_flags: Vec<StrategicRiskFlag>,
     pub motifs: Vec<StrategicMotif>,
     pub components: HumanStrategicComponents,
     pub macro_components: HumanStrategicMacroComponents,
+}
+
+#[derive(Debug, Clone)]
+struct EngineCandidateLine {
+    uci: String,
+    cp_white: i32,
+    cp_mover: i32,
+    pv: Vec<String>,
+    wdl: Option<(u32, u32, u32)>,
+    depth: u32,
 }
 
 /// Final selection plus full ranked candidate list.
@@ -150,6 +190,7 @@ pub fn pick_human_strategic_move(
     request: HumanStrategicRequest,
 ) -> Result<HumanStrategicSelection, Error> {
     let cfg = request.config.unwrap_or_default();
+    let weights = StrategicWeights::for_profile(cfg.resolved_profile());
 
     let root = build_position(&request.fen, &request.moves)?;
     let mover = root.turn();
@@ -162,7 +203,7 @@ pub fn pick_human_strategic_move(
     }
 
     // Deduplicate by first UCI move and keep the strongest score per move.
-    let mut by_move: HashMap<String, (i32, i32, Vec<String>)> = HashMap::new(); // uci -> (cp_white, cp_from_mover, pv)
+    let mut by_move: HashMap<String, EngineCandidateLine> = HashMap::new();
     for line in &request.candidates {
         let Some(uci) = line.uci_moves.first() else {
             continue;
@@ -179,14 +220,22 @@ pub fn pick_human_strategic_move(
             .take(10)
             .cloned()
             .collect::<Vec<_>>();
+        let candidate_line = EngineCandidateLine {
+            uci: uci.clone(),
+            cp_white,
+            cp_mover,
+            pv,
+            wdl: line.score.wdl,
+            depth: line.depth,
+        };
         by_move
             .entry(uci.clone())
             .and_modify(|prev| {
-                if cp_mover > prev.1 {
-                    *prev = (cp_white, cp_mover, pv.clone());
+                if cp_mover > prev.cp_mover {
+                    *prev = candidate_line.clone();
                 }
             })
-            .or_insert((cp_white, cp_mover, pv));
+            .or_insert(candidate_line);
     }
 
     if by_move.is_empty() {
@@ -195,31 +244,41 @@ pub fn pick_human_strategic_move(
         ));
     }
 
-    let mut ranked_engine: Vec<(String, i32, i32, Vec<String>)> = by_move
+    let mut ranked_engine: Vec<EngineCandidateLine> = by_move
         .into_iter()
-        .map(|(uci, (cp_white, cp_mover, pv))| (uci, cp_white, cp_mover, pv))
+        .map(|(_, candidate)| candidate)
         .collect();
-    ranked_engine.sort_by(|a, b| b.2.cmp(&a.2));
+    ranked_engine.sort_by(|a, b| b.cp_mover.cmp(&a.cp_mover));
 
     let best_engine_uci = ranked_engine
         .first()
-        .map(|x| x.0.clone())
+        .map(|x| x.uci.clone())
         .ok_or_else(|| Error::InvalidInput("No ranked engine move found".to_string()))?;
     let best_engine_cp_white = ranked_engine
         .first()
-        .map(|x| x.1)
+        .map(|x| x.cp_white)
         .ok_or_else(|| Error::InvalidInput("No ranked engine score found".to_string()))?;
     let best_engine_cp_mover = ranked_engine
         .first()
-        .map(|x| x.2)
+        .map(|x| x.cp_mover)
         .ok_or_else(|| Error::InvalidInput("No ranked engine score found".to_string()))?;
+    let best_engine_wdl_mover = ranked_engine
+        .first()
+        .and_then(|x| wdl_expectation_milli(x.wdl, mover));
+    let best_engine_depth = ranked_engine.first().map(|x| x.depth).unwrap_or(0);
 
     let mut candidates: Vec<HumanStrategicCandidate> = Vec::new();
     let mut seen_ucis: HashSet<String> = HashSet::new();
 
-    for (engine_rank, (uci, engine_cp_white, engine_cp_mover, pv_line)) in
-        ranked_engine.into_iter().enumerate()
-    {
+    for (engine_rank, candidate_line) in ranked_engine.into_iter().enumerate() {
+        let EngineCandidateLine {
+            uci,
+            cp_white: engine_cp_white,
+            cp_mover: engine_cp_mover,
+            pv: pv_line,
+            wdl,
+            depth,
+        } = candidate_line;
         if !seen_ucis.insert(uci.clone()) {
             continue;
         }
@@ -229,10 +288,13 @@ pub fn pick_human_strategic_move(
         let mut after = root.clone();
         let san = SanPlus::from_move_and_play_unchecked(&mut after, &mv).to_string();
 
+        let immediate_features =
+            CandidateFeatures::new(root.board(), after.board(), mover, opponent, &mv);
         let components = score_components(&root, &after, &mv);
         let macro_components = score_macro_components(&root, &after, &mv, &components);
-        let base_strategic_score = aggregate_strategic_score(&components);
-        let macro_strategic_score = aggregate_macro_strategic_score(&macro_components);
+        let base_strategic_score = aggregate_strategic_score_with_weights(&components, &weights);
+        let macro_strategic_score =
+            aggregate_macro_strategic_score_with_weights(&macro_components, &weights);
         let pv_tail: &[String] = if pv_line.len() > 1 {
             &pv_line[1..]
         } else {
@@ -256,12 +318,28 @@ pub fn pick_human_strategic_move(
             &mv,
             pv_projection.plies_applied,
         );
-        let strategic_score = (base_strategic_score * 0.62
-            + macro_strategic_score * 0.38
-            + transition_to_endgame * 0.08
-            + tension_management * 0.07)
+        let pv_plan_coherence =
+            score_pv_plan_coherence(&after, &pv_projection.snapshots, mover, opponent);
+        let strategic_score = (base_strategic_score * weights.base_strategic
+            + macro_strategic_score * weights.macro_strategic
+            + transition_to_endgame * weights.pv_endgame
+            + tension_management * weights.pv_tension
+            + pv_plan_coherence * weights.pv_plan_coherence)
             .clamp(0.0, 1.0);
         let engine_drop_cp = (best_engine_cp_mover - engine_cp_mover).max(0);
+        let candidate_wdl_mover = wdl_expectation_milli(wdl, mover);
+        let wdl_drop_milli = match (best_engine_wdl_mover, candidate_wdl_mover) {
+            (Some(best), Some(candidate)) => Some((best - candidate).max(0)),
+            _ => None,
+        };
+        let risk_flags = risk_flags_for_candidate(RiskEvaluationInput {
+            candidate_features: &immediate_features,
+            engine_cp_mover,
+            engine_drop_cp,
+            depth,
+            best_depth: best_engine_depth,
+            wdl_drop_milli,
+        });
 
         let (passes_guardrail, is_last_resort) = passes_guardrail(
             engine_cp_mover,
@@ -269,6 +347,8 @@ pub fn pick_human_strategic_move(
             engine_drop_cp,
             engine_rank,
             strategic_score,
+            wdl_drop_milli,
+            &risk_flags,
             cfg,
         );
 
@@ -292,10 +372,11 @@ pub fn pick_human_strategic_move(
                 0.0
             };
         // Keep objective eval slightly dominant, but allow strategic profile to steer practical choices.
-        let mut final_score = strategic_score * 0.45
-            + engine_quality * 0.55
+        let mut final_score = strategic_score * weights.final_strategic
+            + engine_quality * weights.final_engine_quality
             + practical_bonus
             + aggressive_break_bonus;
+        final_score -= (risk_flags.len() as f32 * weights.risk_penalty).min(0.16);
         if !passes_guardrail {
             final_score -= 1.0;
         }
@@ -312,7 +393,15 @@ pub fn pick_human_strategic_move(
             final_score,
             passes_guardrail,
             is_last_resort,
-            motifs: motifs_from_components(&components),
+            risk_flags: risk_flags.clone(),
+            motifs: motifs_from_strategy(
+                &components,
+                &macro_components,
+                transition_to_endgame,
+                tension_management,
+                pv_plan_coherence,
+                &risk_flags,
+            ),
             components,
             macro_components,
         });
@@ -373,6 +462,7 @@ pub fn pick_human_strategic_move(
 struct PvProjection {
     end: Chess,
     plies_applied: usize,
+    snapshots: Vec<Chess>,
 }
 
 fn build_position(fen: &str, moves: &[String]) -> Result<Chess, Error> {
@@ -402,9 +492,20 @@ fn score_value_to_cp(value: &ScoreValue) -> i32 {
     }
 }
 
+fn wdl_expectation_milli(wdl: Option<(u32, u32, u32)>, mover: Color) -> Option<i32> {
+    let (white_win, draw, white_loss) = wdl?;
+    let expectation = if mover == Color::White {
+        white_win as f32 + draw as f32 * 0.5
+    } else {
+        white_loss as f32 + draw as f32 * 0.5
+    };
+    Some(expectation.round() as i32)
+}
+
 fn project_pv_from_after(start: &Chess, pv_tail: &[String]) -> PvProjection {
     let mut pos = start.clone();
     let mut plies_applied = 0usize;
+    let mut snapshots = Vec::new();
 
     for uci_txt in pv_tail.iter().take(8) {
         let Ok(uci) = UciMove::from_ascii(uci_txt.as_bytes()) else {
@@ -415,11 +516,13 @@ fn project_pv_from_after(start: &Chess, pv_tail: &[String]) -> PvProjection {
         };
         pos.play_unchecked(&mv);
         plies_applied += 1;
+        snapshots.push(pos.clone());
     }
 
     PvProjection {
         end: pos,
         plies_applied,
+        snapshots,
     }
 }
 
@@ -537,17 +640,81 @@ fn score_tension_management_pv(
     normalize(value, 1.2)
 }
 
+fn score_pv_plan_coherence(
+    after_first: &Chess,
+    snapshots: &[Chess],
+    mover: Color,
+    opponent: Color,
+) -> f32 {
+    if snapshots.len() < 2 {
+        return 0.0;
+    }
+
+    let start = after_first.board();
+    let start_own_files = pawn_file_counts(start, mover);
+    let start_opp_files = pawn_file_counts(start, opponent);
+    let start_pressure = king_ring_pressure(start, mover, opponent);
+    let start_file_pressure =
+        heavy_piece_file_pressure(start, mover, &start_own_files, &start_opp_files);
+    let start_mobility_edge =
+        (pseudo_mobility(start, mover) - pseudo_mobility(start, opponent)) as f32;
+    let start_passed = passed_pawns(start, mover, opponent);
+    let start_passed_score = passed_advance_score(&start_passed, mover);
+
+    let mut best = 0.0f32;
+    for (idx, pos) in snapshots.iter().take(8).enumerate() {
+        // The first PV tail move is normally the opponent reply. Reward positions
+        // after the candidate side has had at least one chance to continue the plan.
+        if idx % 2 == 0 {
+            continue;
+        }
+
+        let board = pos.board();
+        let own_files = pawn_file_counts(board, mover);
+        let opp_files = pawn_file_counts(board, opponent);
+        let pressure_gain = (king_ring_pressure(board, mover, opponent) - start_pressure).max(0.0);
+        let file_gain = (heavy_piece_file_pressure(board, mover, &own_files, &opp_files)
+            - start_file_pressure)
+            .max(0.0);
+        let mobility_edge =
+            (pseudo_mobility(board, mover) - pseudo_mobility(board, opponent)) as f32;
+        let mobility_gain = (mobility_edge - start_mobility_edge).max(0.0);
+        let passers = passed_pawns(board, mover, opponent);
+        let passer_gain = (passed_advance_score(&passers, mover) - start_passed_score).max(0.0)
+            + passers.len().saturating_sub(start_passed.len()) as f32 * 0.25;
+
+        let value = normalize(pressure_gain, 1.2) * 0.34
+            + normalize(file_gain, 1.6) * 0.24
+            + normalize(mobility_gain, 10.0) * 0.18
+            + normalize(passer_gain, 1.3) * 0.18
+            + normalize(idx as f32 + 1.0, 8.0) * 0.06;
+        best = best.max(value);
+    }
+
+    best.clamp(0.0, 1.0)
+}
+
 fn passes_guardrail(
     engine_cp_mover: i32,
     best_engine_cp_mover: i32,
     engine_drop_cp: i32,
     engine_rank: usize,
     strategic_score: f32,
+    wdl_drop_milli: Option<i32>,
+    risk_flags: &[StrategicRiskFlag],
     cfg: HumanStrategicConfig,
 ) -> (bool, bool) {
     // Always keep top-engine move available as a safe baseline.
     if engine_rank == 0 {
         return (true, false);
+    }
+
+    if risk_flags.contains(&StrategicRiskFlag::MateRisk) {
+        return (false, false);
+    }
+
+    if wdl_drop_milli.unwrap_or(0) >= 140 {
+        return (false, false);
     }
 
     // Never pick lines that are clearly much worse than the top candidate.
@@ -588,6 +755,8 @@ fn passes_guardrail(
         && engine_cp_mover >= -dynamic_disadv_limit
         && strategic_score >= cfg.min_strategic_score
         && engine_rank <= normal_rank_limit
+        && wdl_drop_milli.unwrap_or(0) <= 80
+        && !risk_flags.contains(&StrategicRiskFlag::LowDepthCandidate)
     {
         return (true, false);
     }
@@ -596,6 +765,8 @@ fn passes_guardrail(
         && engine_cp_mover >= -cfg.last_resort_disadvantage_cp
         && strategic_score >= cfg.high_conviction_threshold
         && engine_rank <= 2
+        && wdl_drop_milli.unwrap_or(0) <= 105
+        && !risk_flags.contains(&StrategicRiskFlag::ForcedTacticalLine)
     {
         return (true, true);
     }
@@ -612,30 +783,52 @@ fn mover_perspective_sign(mover: Color) -> i32 {
     }
 }
 
+#[cfg(test)]
 fn aggregate_strategic_score(c: &HumanStrategicComponents) -> f32 {
-    (0.25 * c.pawn_structure_damage
-        + 0.15 * c.weak_pawn_pressure
-        + 0.10 * c.space_gain
-        + 0.13 * c.open_file_pressure
-        + 0.28 * c.central_king_pressure
-        + 0.07 * c.piece_restriction
-        + 0.02 * c.wing_clamp)
+    aggregate_strategic_score_with_weights(
+        c,
+        &StrategicWeights::for_profile(StrategicProfile::Dynamic),
+    )
+}
+
+fn aggregate_strategic_score_with_weights(
+    c: &HumanStrategicComponents,
+    weights: &StrategicWeights,
+) -> f32 {
+    (weights.pawn_structure_damage * c.pawn_structure_damage
+        + weights.weak_pawn_pressure * c.weak_pawn_pressure
+        + weights.space_gain * c.space_gain
+        + weights.open_file_pressure * c.open_file_pressure
+        + weights.central_king_pressure * c.central_king_pressure
+        + weights.piece_restriction * c.piece_restriction
+        + weights.wing_clamp * c.wing_clamp)
         .clamp(0.0, 1.0)
 }
 
+#[cfg(test)]
 fn aggregate_macro_strategic_score(c: &HumanStrategicMacroComponents) -> f32 {
-    (0.09 * c.pawn_structure
-        + 0.07 * c.space
-        + 0.11 * c.piece_quality
-        + 0.15 * c.king_safety
-        + 0.11 * c.initiative
-        + 0.15 * c.attack
-        + 0.08 * c.counterplay
-        + 0.07 * c.prophylaxis
-        + 0.06 * c.conversion
-        + 0.05 * c.endgame_transition
-        + 0.05 * c.practical_pressure
-        + 0.01 * c.plan_coherence)
+    aggregate_macro_strategic_score_with_weights(
+        c,
+        &StrategicWeights::for_profile(StrategicProfile::Dynamic),
+    )
+}
+
+fn aggregate_macro_strategic_score_with_weights(
+    c: &HumanStrategicMacroComponents,
+    weights: &StrategicWeights,
+) -> f32 {
+    (weights.macro_pawn_structure * c.pawn_structure
+        + weights.macro_space * c.space
+        + weights.macro_piece_quality * c.piece_quality
+        + weights.macro_king_safety * c.king_safety
+        + weights.macro_initiative * c.initiative
+        + weights.macro_attack * c.attack
+        + weights.macro_counterplay * c.counterplay
+        + weights.macro_prophylaxis * c.prophylaxis
+        + weights.macro_conversion * c.conversion
+        + weights.macro_endgame_transition * c.endgame_transition
+        + weights.macro_practical_pressure * c.practical_pressure
+        + weights.macro_plan_coherence * c.plan_coherence)
         .clamp(0.0, 1.0)
 }
 
@@ -776,6 +969,58 @@ fn motifs_from_components(c: &HumanStrategicComponents) -> Vec<StrategicMotif> {
     if c.wing_clamp >= 0.25 {
         motifs.push(StrategicMotif::WingClamp);
     }
+    motifs
+}
+
+fn motifs_from_strategy(
+    c: &HumanStrategicComponents,
+    macro_c: &HumanStrategicMacroComponents,
+    transition_to_endgame: f32,
+    tension_management: f32,
+    pv_plan_coherence: f32,
+    risk_flags: &[StrategicRiskFlag],
+) -> Vec<StrategicMotif> {
+    let mut motifs = motifs_from_components(c);
+
+    let mut add = |motif: StrategicMotif| {
+        if !motifs.contains(&motif) {
+            motifs.push(motif);
+        }
+    };
+
+    if macro_c.piece_quality >= 0.32 && c.piece_restriction >= 0.20 {
+        add(StrategicMotif::OutpostControl);
+    }
+    if macro_c.king_safety >= 0.34 && c.central_king_pressure >= 0.16 {
+        add(StrategicMotif::ColorComplexPressure);
+    }
+    if macro_c.prophylaxis >= 0.24 {
+        add(StrategicMotif::Prophylaxis);
+    }
+    if macro_c.conversion >= 0.30 || transition_to_endgame >= 0.28 {
+        add(StrategicMotif::FavorableTrade);
+    }
+    if macro_c.conversion >= 0.38 && c.space_gain >= 0.18 {
+        add(StrategicMotif::PassedPawnConversion);
+    }
+    if risk_flags.contains(&StrategicRiskFlag::MaterialInvestment)
+        && (macro_c.initiative >= 0.24 || macro_c.attack >= 0.24)
+    {
+        add(StrategicMotif::InitiativeSacrifice);
+    }
+    if macro_c.counterplay >= 0.24 {
+        add(StrategicMotif::Counterplay);
+    }
+    if macro_c.attack >= 0.30 && macro_c.king_safety >= 0.24 {
+        add(StrategicMotif::KingNet);
+    }
+    if macro_c.plan_coherence >= 0.24 || pv_plan_coherence >= 0.28 {
+        add(StrategicMotif::PieceCoordination);
+    }
+    if tension_management >= 0.24 {
+        add(StrategicMotif::TensionManagement);
+    }
+
     motifs
 }
 
@@ -2733,25 +2978,11 @@ fn is_diagonal_path_clear(board: &Board, from: (usize, usize), to: (usize, usize
 }
 
 fn coords_to_square(file: usize, rank: usize) -> Option<Square> {
-    if file > 7 || rank > 7 {
-        return None;
-    }
-    let file_c = b'a'.checked_add(file as u8)? as char;
-    let rank_c = b'1'.checked_add(rank as u8)? as char;
-    let name = format!("{file_c}{rank_c}");
-    name.parse::<Square>().ok()
+    coords_to_square_fast(file, rank)
 }
 
 fn square_to_coords(square: Square) -> Option<(usize, usize)> {
-    let s = square.to_string();
-    let b = s.as_bytes();
-    if b.len() != 2 {
-        return None;
-    }
-    if !(b'a'..=b'h').contains(&b[0]) || !(b'1'..=b'8').contains(&b[1]) {
-        return None;
-    }
-    Some(((b[0] - b'a') as usize, (b[1] - b'1') as usize))
+    Some(square_to_coords_fast(square))
 }
 
 fn pawn_file_counts(board: &Board, color: Color) -> [u8; 8] {
@@ -3081,17 +3312,25 @@ mod tests {
     use super::*;
     use crate::chess::types::{BestMoves, Score, ScoreValue};
     use shakmaty::san::San;
+    use std::time::Instant;
 
     fn line(uci: &str, cp_white: i32, multipv: u16) -> BestMoves {
+        line_with_score(uci, ScoreValue::Cp(cp_white), multipv, 20, None)
+    }
+
+    fn line_with_score(
+        uci: &str,
+        value: ScoreValue,
+        multipv: u16,
+        depth: u32,
+        wdl: Option<(u32, u32, u32)>,
+    ) -> BestMoves {
         BestMoves {
-            score: Score {
-                value: ScoreValue::Cp(cp_white),
-                wdl: None,
-            },
+            score: Score { value, wdl },
             uci_moves: vec![uci.to_string()],
             san_moves: Vec::new(),
             multipv,
-            depth: 20,
+            depth,
             nodes: 100_000,
             nps: 1_000_000,
         }
@@ -3117,6 +3356,80 @@ mod tests {
         pos
     }
 
+    fn benchmark_candidates(fen: &str) -> Vec<BestMoves> {
+        let root = build_position(fen, &[]).expect("valid benchmark position");
+        root.legal_moves()
+            .iter()
+            .take(6)
+            .enumerate()
+            .map(|(idx, mv)| {
+                let mut pos = root.clone();
+                let mut pv = vec![UciMove::from_move(mv, CastlingMode::Standard).to_string()];
+                SanPlus::from_move_and_play_unchecked(&mut pos, mv);
+
+                for ply in 1..8 {
+                    let legal_moves = pos.legal_moves();
+                    if legal_moves.is_empty() {
+                        break;
+                    }
+                    let Some(next_move) = legal_moves.iter().nth((idx + ply) % legal_moves.len())
+                    else {
+                        break;
+                    };
+                    pv.push(UciMove::from_move(next_move, CastlingMode::Standard).to_string());
+                    SanPlus::from_move_and_play_unchecked(&mut pos, next_move);
+                }
+
+                BestMoves {
+                    score: Score {
+                        value: ScoreValue::Cp(30 - idx as i32 * 6),
+                        wdl: Some((420 - idx as u32 * 18, 260, 320 + idx as u32 * 18)),
+                    },
+                    uci_moves: pv,
+                    san_moves: Vec::new(),
+                    multipv: idx as u16 + 1,
+                    depth: 20,
+                    nodes: 100_000,
+                    nps: 1_000_000,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    #[ignore]
+    fn benchmark_human_strategy_six_multipv_midgame_and_endgame() {
+        let cases = [
+            "r1b1r1k1/pp3ppp/2n1p3/2b2q2/1PPpN3/P3PN2/2Q2PPP/R3KB1R b KQ b3 0 13",
+            "8/8/3k4/2p2p2/2P2P2/3K4/8/8 w - - 0 1",
+        ];
+        let prepared = cases
+            .iter()
+            .map(|fen| ((*fen).to_string(), benchmark_candidates(fen)))
+            .collect::<Vec<_>>();
+        let iterations = 100;
+        let started = Instant::now();
+
+        for _ in 0..iterations {
+            for (fen, candidates) in &prepared {
+                let selection = pick_human_strategic_move(HumanStrategicRequest {
+                    fen: fen.clone(),
+                    moves: Vec::new(),
+                    candidates: candidates.clone(),
+                    config: None,
+                })
+                .expect("benchmark selection should succeed");
+                assert!(!selection.selected_uci.is_empty());
+            }
+        }
+
+        eprintln!(
+            "human_strategy benchmark: {} selections in {:?}",
+            iterations * prepared.len(),
+            started.elapsed()
+        );
+    }
+
     #[test]
     fn strategic_profile_prefers_nxb4_break_plan_in_reference_position() {
         let fen = "r1b1r1k1/pp3ppp/2n1p3/2b2q2/1PPpN3/P3PN2/2Q2PPP/R3KB1R b KQ b3 0 13";
@@ -3137,11 +3450,176 @@ mod tests {
                 last_resort_disadvantage_cp: 80,
                 min_strategic_score: 0.40,
                 high_conviction_threshold: 0.78,
+                profile: Some(StrategicProfile::Dynamic),
             }),
         };
 
         let selection = pick_human_strategic_move(request).expect("selector should return a move");
         assert_eq!(selection.selected_uci, "c6b4");
+    }
+
+    #[test]
+    fn all_profiles_return_guardrail_safe_selection() {
+        let fen = "r1b1r1k1/pp3ppp/2n1p3/2b2q2/1PPpN3/P3PN2/2Q2PPP/R3KB1R b KQ b3 0 13";
+
+        for profile in [
+            StrategicProfile::Solid,
+            StrategicProfile::Positional,
+            StrategicProfile::Dynamic,
+            StrategicProfile::Attacking,
+            StrategicProfile::Conversion,
+        ] {
+            let selection = pick_human_strategic_move(HumanStrategicRequest {
+                fen: fen.to_string(),
+                moves: Vec::new(),
+                candidates: vec![
+                    line("c5f8", 20, 1),
+                    line("c6b4", 59, 2),
+                    line("c5e7", 38, 3),
+                    line("c5b6", 44, 4),
+                ],
+                config: Some(HumanStrategicConfig {
+                    max_engine_drop_cp: 65,
+                    max_absolute_disadvantage_cp: 65,
+                    last_resort_disadvantage_cp: 80,
+                    min_strategic_score: 0.40,
+                    high_conviction_threshold: 0.78,
+                    profile: Some(profile),
+                }),
+            })
+            .expect("selector should return a move for every profile");
+
+            let selected = selection
+                .candidates
+                .iter()
+                .find(|candidate| candidate.uci == selection.selected_uci)
+                .expect("selected candidate should be included");
+            assert!(selected.passes_guardrail);
+        }
+    }
+
+    #[test]
+    fn candidate_features_cache_material_and_position_signals() {
+        let fen = "1rbr2k1/3n1ppp/ppp1p3/2P5/1P1PB3/q3PN2/3B1PPP/3Q1RK1 w - - 1 17";
+        let root = build_position(fen, &[]).expect("valid position");
+        let uci_move = UciMove::from_ascii(b"e4h7").expect("valid uci");
+        let mv = uci_move.to_move(&root).expect("legal move");
+        let mut after = root.clone();
+        SanPlus::from_move_and_play_unchecked(&mut after, &mv);
+
+        let candidate_features = features::CandidateFeatures::new(
+            root.board(),
+            after.board(),
+            root.turn(),
+            root.turn().other(),
+            &mv,
+        );
+
+        assert!(candidate_features.material_investment_cp >= 200);
+        assert!(candidate_features.after.king(root.turn().other()).is_some());
+        assert!(!candidate_features.after.attacks(root.turn()).is_empty());
+        assert!(candidate_features.feature_balance_signal().is_finite());
+    }
+
+    #[test]
+    fn wdl_drop_marks_and_rejects_practical_concession() {
+        let selection = pick_human_strategic_move(HumanStrategicRequest {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            moves: Vec::new(),
+            candidates: vec![
+                line_with_score("e2e4", ScoreValue::Cp(12), 1, 20, Some((480, 260, 260))),
+                line_with_score("d2d4", ScoreValue::Cp(8), 2, 20, Some((250, 200, 550))),
+            ],
+            config: Some(HumanStrategicConfig {
+                max_engine_drop_cp: 65,
+                max_absolute_disadvantage_cp: 65,
+                last_resort_disadvantage_cp: 80,
+                min_strategic_score: 0.0,
+                high_conviction_threshold: 0.78,
+                profile: Some(StrategicProfile::Dynamic),
+            }),
+        })
+        .expect("selector should return a move");
+
+        let d4 = selection
+            .candidates
+            .iter()
+            .find(|candidate| candidate.uci == "d2d4")
+            .expect("d4 should be included");
+        assert!(d4.risk_flags.contains(&StrategicRiskFlag::WdlDrop));
+        assert!(!d4.passes_guardrail);
+    }
+
+    #[test]
+    fn low_depth_and_mate_risks_are_exposed_on_candidates() {
+        let selection = pick_human_strategic_move(HumanStrategicRequest {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            moves: Vec::new(),
+            candidates: vec![
+                line_with_score("e2e4", ScoreValue::Cp(20), 1, 22, None),
+                line_with_score("d2d4", ScoreValue::Cp(18), 2, 8, None),
+                line_with_score("g2g4", ScoreValue::Mate(-1), 3, 20, None),
+            ],
+            config: Some(HumanStrategicConfig {
+                max_engine_drop_cp: 65,
+                max_absolute_disadvantage_cp: 65,
+                last_resort_disadvantage_cp: 80,
+                min_strategic_score: 0.0,
+                high_conviction_threshold: 0.78,
+                profile: Some(StrategicProfile::Dynamic),
+            }),
+        })
+        .expect("selector should return a move");
+
+        let d4 = selection
+            .candidates
+            .iter()
+            .find(|candidate| candidate.uci == "d2d4")
+            .expect("d4 should be included");
+        let g4 = selection
+            .candidates
+            .iter()
+            .find(|candidate| candidate.uci == "g2g4")
+            .expect("g4 should be included");
+        assert!(d4
+            .risk_flags
+            .contains(&StrategicRiskFlag::LowDepthCandidate));
+        assert!(g4.risk_flags.contains(&StrategicRiskFlag::MateRisk));
+        assert!(!g4.passes_guardrail);
+    }
+
+    #[test]
+    fn new_motifs_are_derived_from_macro_axes_and_risk_context() {
+        let components = HumanStrategicComponents {
+            space_gain: 0.22,
+            central_king_pressure: 0.30,
+            piece_restriction: 0.28,
+            ..HumanStrategicComponents::default()
+        };
+        let macro_components = HumanStrategicMacroComponents {
+            piece_quality: 0.36,
+            king_safety: 0.36,
+            attack: 0.34,
+            counterplay: 0.28,
+            prophylaxis: 0.26,
+            conversion: 0.40,
+            plan_coherence: 0.26,
+            ..HumanStrategicMacroComponents::default()
+        };
+        let motifs = motifs_from_strategy(
+            &components,
+            &macro_components,
+            0.30,
+            0.26,
+            0.30,
+            &[StrategicRiskFlag::MaterialInvestment],
+        );
+
+        assert!(aggregate_macro_strategic_score(&macro_components) > 0.0);
+        assert!(motifs.contains(&StrategicMotif::OutpostControl));
+        assert!(motifs.contains(&StrategicMotif::Prophylaxis));
+        assert!(motifs.contains(&StrategicMotif::InitiativeSacrifice));
+        assert!(motifs.contains(&StrategicMotif::TensionManagement));
     }
 
     #[test]

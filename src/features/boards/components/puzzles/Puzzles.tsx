@@ -22,7 +22,7 @@ import {
   puzzleUnsolvedOnlyDbAtom,
 } from "@/state/atoms";
 import { positionFromFen } from "@/utils/chessops";
-import { getAdaptivePuzzleRange, getPuzzleDatabases } from "@/utils/puzzles";
+import { type Completion, getAdaptivePuzzleRange, getPuzzleDatabases } from "@/utils/puzzles";
 import { AddPuzzle } from "./AddPuzzle";
 import PuzzleBoard from "./PuzzleBoard";
 import { PuzzleControls } from "./PuzzleControls";
@@ -59,7 +59,14 @@ function Puzzles({ id }: { id: string }) {
   const { t } = useTranslation();
   const [addPuzzleModalOpened, setAddPuzzleModalOpened] = useState(false);
 
-  const { puzzles, currentPuzzle, changeCompletion, addPuzzle, clearSession, selectPuzzle } = usePuzzleSession(id);
+  const {
+    puzzles,
+    currentPuzzle,
+    changeCompletion: updatePuzzleCompletion,
+    addPuzzle,
+    clearSession,
+    selectPuzzle,
+  } = usePuzzleSession(id);
 
   // Local state
   const [adaptiveOffset, setAdaptiveOffset] = useAtom(puzzleAdaptiveOffsetAtom);
@@ -73,6 +80,9 @@ function Puzzles({ id }: { id: string }) {
   const [showingSolution, setShowingSolution] = useState(false);
   const isShowingSolutionRef = useRef<boolean>(false);
   const autoStartedPuzzleVariantDbRef = useRef<string | null>(null);
+  const [completionStack, setCompletionStack] = useState<
+    Array<{ id: string; completion: Completion; index: number; label?: string }>
+  >([]);
   const [isGeneratingPuzzle, setIsGeneratingPuzzle] = useState(false);
   const [isLoadingFilterOptions, setIsLoadingFilterOptions] = useState(false);
   const [selectedDbIsPuzzleVariants, setSelectedDbIsPuzzleVariants] = useState(false);
@@ -134,18 +144,24 @@ function Puzzles({ id }: { id: string }) {
     };
   }, [selectedDb]);
 
-  const challengeItems = useMemo(
-    () =>
-      puzzles
-        .map((p, index) => ({
-          ...p,
-          index,
-          label: selectedDbIsPuzzleVariants ? undefined : p.rating.toString(),
-        }))
-        .filter((p) => p.completion !== "incomplete")
-        .slice(-10),
-    [puzzles, selectedDbIsPuzzleVariants],
+  const changeCompletion = useCallback(
+    (completion: Completion, options?: { affectRating?: boolean }) => {
+      const puzzle = puzzles[currentPuzzle];
+      if (puzzle && completion !== "incomplete" && puzzle.completion !== completion) {
+        const entry = {
+          id: `${Date.now()}-${currentPuzzle}-${completion}-${Math.random().toString(36).slice(2)}`,
+          completion,
+          index: currentPuzzle,
+          label: selectedDbIsPuzzleVariants ? undefined : puzzle.rating.toString(),
+        };
+        setCompletionStack((current) => [...current, entry].slice(-10));
+      }
+      updatePuzzleCompletion(completion, options);
+    },
+    [currentPuzzle, puzzles, selectedDbIsPuzzleVariants, updatePuzzleCompletion],
   );
+
+  const challengeItems = useMemo(() => completionStack.slice(-10), [completionStack]);
 
   const calculateAdaptiveRange = useCallback((): [number, number] => {
     const completedResults = puzzles
@@ -257,6 +273,7 @@ function Puzzles({ id }: { id: string }) {
 
   const handleClearSession = () => {
     clearSession();
+    setCompletionStack([]);
     if (selectedDb) {
       clearPuzzleCache(selectedDb);
     }
@@ -270,6 +287,7 @@ function Puzzles({ id }: { id: string }) {
 
   const handleDatabaseChange = (value: string | null) => {
     setSelectedDb(value);
+    setCompletionStack([]);
     if (!value || puzzleUnsolvedOnlyDb !== value) {
       setPuzzleUnsolvedOnlyDb(null);
     }

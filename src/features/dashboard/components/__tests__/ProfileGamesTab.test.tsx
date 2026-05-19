@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { ProfileGamesTab } from "../../components/ProfileGamesTab";
-import { render } from "./test-utils";
+import { act, render, waitFor } from "./test-utils";
 
-vi.mock("@tauri-apps/api/core", () => ({
+const mocks = vi.hoisted(() => ({
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === "dashboard_search_profile_opponents") return [];
     if (cmd === "dashboard_get_games_history_rows") return { rows: [], totalCount: 0 };
@@ -19,13 +19,17 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: mocks.invoke,
+}));
+
 beforeAll(() => {
   if (!globalThis.ResizeObserver) {
     globalThis.ResizeObserver = class ResizeObserver {
       observe() {}
       unobserve() {}
       disconnect() {}
-    } as any;
+    } as typeof ResizeObserver;
   }
 });
 
@@ -42,6 +46,7 @@ describe("ProfileGamesTab", () => {
   const profileUsernames = ["player1", "player2"];
 
   test("renders without crashing", () => {
+    mocks.invoke.mockClear();
     render(
       <ProfileGamesTab
         profileId={"p1"}
@@ -68,5 +73,46 @@ describe("ProfileGamesTab", () => {
       />,
     );
     expect(document.body).toBeTruthy();
+  });
+
+  test("refetches games history when the dashboard refresh event fires", async () => {
+    mocks.invoke.mockClear();
+    render(
+      <ProfileGamesTab
+        profileId={"p1"}
+        selectedOpponentId={null}
+        gameHistoryLimit={100}
+        localGames={[]}
+        chessComGames={[]}
+        lichessGames={[]}
+        profileUsernames={profileUsernames}
+        onAnalyzeLocalGame={mockOnAnalyzeLocalGame}
+        onAnalyzeChessComGame={mockOnAnalyzeChessComGame}
+        onAnalyzeLichessGame={mockOnAnalyzeLichessGame}
+        isLoadingOnline={false}
+        eventFilterId={null}
+        onEventFilterChange={() => {}}
+        eventOptions={[]}
+        isLoadingEventOptions={false}
+        onEventSearchChange={() => {}}
+        eventSearchValue=""
+        profileDbPath={null}
+        onOpponentSelected={() => {}}
+        timeControlCategory={null}
+        onTimeControlCategoryChange={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mocks.invoke.mock.calls.filter(([cmd]) => cmd === "dashboard_get_games_history_rows")).toHaveLength(1);
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+    });
+
+    await waitFor(() => {
+      expect(mocks.invoke.mock.calls.filter(([cmd]) => cmd === "dashboard_get_games_history_rows")).toHaveLength(2);
+    });
   });
 });

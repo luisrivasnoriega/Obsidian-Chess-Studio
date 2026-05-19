@@ -110,7 +110,12 @@ import { GamesHistoryCard } from "./components/GamesHistoryCard";
 import { PuzzleVariantsCard } from "./components/PuzzleVariantsCard";
 import { UserProfileCard } from "./components/UserProfileCard";
 import { WelcomeCard } from "./components/WelcomeCard";
-import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "./types";
+import type {
+  ChessComGameWithEvent,
+  DashboardLichessGame,
+  DashboardSingleAnalysisTarget,
+  TimeControlCategory,
+} from "./types";
 import { calculateOnlineRating } from "./utils/calculateOnlineRating";
 import { getChessTitle } from "./utils/chessTitle";
 import {
@@ -928,6 +933,8 @@ export default function DashboardPage() {
 
   const [activeGamesTab, setActiveGamesTab] = useState<string | null>("games");
   const [analyzeAllModalOpened, setAnalyzeAllModalOpened] = useState(false);
+  const [singleAnalysisModalOpened, setSingleAnalysisModalOpened] = useState(false);
+  const [singleAnalysisTarget, setSingleAnalysisTarget] = useState<DashboardSingleAnalysisTarget | null>(null);
   const [analyzeAllGameType, setAnalyzeAllGameType] = useState<AnalyzeAllType | null>(null);
   const [analyzeAllScopeFilters, setAnalyzeAllScopeFilters] = useState<AnalyzeAllScopeFilters>({
     opponentContains: null,
@@ -1557,6 +1564,498 @@ export default function DashboardPage() {
       return getOrientationFromFen(match?.[1]);
     },
     [getOrientationFromFen],
+  );
+
+  const openSingleAnalyzedTarget = useCallback(
+    async (target: DashboardSingleAnalysisTarget, analyzedPgn?: string) => {
+      if (target.type === "local") {
+        const game = { ...target.game, ...(analyzedPgn ? { pgn: analyzedPgn } : {}) };
+        const headers = createLocalGameHeaders(game);
+        const pgn = game.pgn || createPGNFromMoves(game.moves, game.result, game.initialFen);
+        const isUserWhite = game.white.type === "human";
+        const isUserBlack = game.black.type === "human";
+        headers.orientation = isUserWhite
+          ? "white"
+          : isUserBlack
+            ? "black"
+            : getOrientationFromFen(game.initialFen) || getOrientationFromPgn(pgn) || "white";
+        await createTab({
+          tab: {
+            name: `${headers.white} - ${headers.black}`,
+            type: "analysis",
+          },
+          setTabs,
+          setActiveTab,
+          pgn,
+          headers,
+          initialAnalysisTab: "analysis",
+          initialAnalysisSubTab: "report",
+          initialNotationView: "report",
+          analysisContext: {
+            source: "local",
+            localGameId: game.id,
+            profileId: game.profileId ?? activeProfileId ?? null,
+          },
+        });
+        navigate({ to: "/analysis" });
+        return;
+      }
+
+      if (target.type === "chessbase") {
+        const row = target.row;
+        const pgn = analyzedPgn || row.pgn || "";
+        const white = (pgn.match(/\[White\s+"([^"]+)"/i)?.[1] ?? "White").trim();
+        const black = (pgn.match(/\[Black\s+"([^"]+)"/i)?.[1] ?? "Black").trim();
+        const result = (pgn.match(/\[Result\s+"([^"]+)"/i)?.[1] ?? "*").trim();
+        target = {
+          type: "lichess",
+          game: {
+            id: `chessbase:${row.analysisGameId}`,
+            players: {
+              white: { user: { name: white } },
+              black: { user: { name: black } },
+            },
+            speed: row.timeControlCategory ?? "rapid",
+            timeControl: row.timeControl,
+            createdAt: row.timestampMs,
+            winner: result === "1-0" ? "white" : result === "0-1" ? "black" : undefined,
+            status: "finished",
+            pgn,
+            lastFen: row.initialFen ?? DEFAULT_START_FEN,
+            eventId: row.eventId ?? 0,
+            eventName: row.eventName ?? null,
+          },
+          meta: target.meta,
+        };
+      }
+
+      if (target.type === "chesscom") {
+        const game = { ...target.game, ...(analyzedPgn ? { pgn: analyzedPgn } : {}) };
+        if (!game.pgn) return;
+        const headers = createChessComGameHeaders(game);
+        const accountUsername =
+          chessComUsernames.find(
+            (u) =>
+              u.toLowerCase() === game.white.username.toLowerCase() ||
+              u.toLowerCase() === game.black.username.toLowerCase(),
+          ) || game.white.username;
+        headers.orientation = target.meta.playerColor;
+        const resolvedProfileId = target.meta.profileId ?? activeProfileId ?? null;
+        const resolvedDbGameId =
+          target.meta.profileDbGameId ??
+          (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`chesscom:${game.url}`) : undefined);
+        const tabId = await createTab({
+          tab: {
+            name: `${game.white.username} - ${game.black.username}`,
+            type: "analysis",
+          },
+          setTabs,
+          setActiveTab,
+          pgn: game.pgn,
+          headers,
+          initialAnalysisTab: "analysis",
+          initialAnalysisSubTab: "report",
+          initialNotationView: "report",
+          analysisContext: {
+            source: "chesscom",
+            gameKey: game.url,
+            accountUsername,
+            profileId: resolvedProfileId,
+            profileDbGameId: resolvedDbGameId ?? null,
+          },
+        });
+        if (tabId && resolvedProfileId && !resolvedDbGameId) {
+          invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+            profileId: resolvedProfileId,
+            kind: "chesscom",
+            gameKey: game.url,
+          })
+            .then((id) => {
+              const v = (id ?? "").trim();
+              if (!v) return;
+              profileDbIdByExternalKeyRef.current.set(`chesscom:${game.url}`, v);
+              updateAnalysisContextProfileGameIds(tabId, resolvedProfileId, v);
+            })
+            .catch(() => {});
+        }
+        navigate({ to: "/analysis" });
+        return;
+      }
+
+      const game = { ...target.game, ...(analyzedPgn ? { pgn: analyzedPgn } : {}) };
+      if (!game.pgn) return;
+      const headers = createLichessGameHeaders(game);
+      const gameWhiteName = game.players.white.user?.name || "";
+      const gameBlackName = game.players.black.user?.name || "";
+      const accountUsername =
+        lichessUsernames.find(
+          (u) => u.toLowerCase() === gameWhiteName.toLowerCase() || u.toLowerCase() === gameBlackName.toLowerCase(),
+        ) || gameWhiteName;
+      headers.orientation = target.meta.playerColor;
+      const resolvedProfileId = target.meta.profileId ?? activeProfileId ?? null;
+      const resolvedDbGameId =
+        target.meta.profileDbGameId ??
+        (resolvedProfileId ? profileDbIdByExternalKeyRef.current.get(`lichess:${game.id}`) : undefined);
+      const tabId = await createTab({
+        tab: {
+          name: `${headers.white} - ${headers.black}`,
+          type: "analysis",
+        },
+        setTabs,
+        setActiveTab,
+        pgn: game.pgn,
+        headers,
+        initialAnalysisTab: "analysis",
+        initialAnalysisSubTab: "report",
+        initialNotationView: "report",
+        analysisContext: {
+          source: "lichess",
+          gameKey: game.id,
+          accountUsername,
+          profileId: resolvedProfileId,
+          profileDbGameId: resolvedDbGameId ?? null,
+        },
+      });
+      if (tabId && resolvedProfileId && !resolvedDbGameId) {
+        invoke<string | null>("dashboard_resolve_profile_db_game_id", {
+          profileId: resolvedProfileId,
+          kind: "lichess",
+          gameKey: game.id,
+        })
+          .then((id) => {
+            const v = (id ?? "").trim();
+            if (!v) return;
+            profileDbIdByExternalKeyRef.current.set(`lichess:${game.id}`, v);
+            updateAnalysisContextProfileGameIds(tabId, resolvedProfileId, v);
+          })
+          .catch(() => {});
+      }
+      navigate({ to: "/analysis" });
+    },
+    [
+      activeProfileId,
+      chessComUsernames,
+      getOrientationFromFen,
+      getOrientationFromPgn,
+      lichessUsernames,
+      navigate,
+      setActiveTab,
+      setTabs,
+      updateAnalysisContextProfileGameIds,
+    ],
+  );
+
+  const runSingleGameAnalysis = useCallback(
+    async (
+      target: DashboardSingleAnalysisTarget,
+      config: { enginePath: string; timeMs: number },
+      onProgress: (current: number, total: number) => void,
+      isCancelled: () => boolean,
+    ) => {
+      const selectedEngine = localEngines.find((e) => e.path === config.enginePath) ?? defaultEngine ?? null;
+      if (!selectedEngine) {
+        notifications.show({
+          title: t("features.dashboard.noEngineAvailable"),
+          message: t("features.dashboard.noEngineAvailableMessage"),
+          color: "red",
+        });
+        return;
+      }
+
+      const goMode: GoMode = { t: "Time", c: Math.max(1, Math.round(config.timeMs)) };
+      const engineSettings = (selectedEngine.settings ?? []).map((setting) => ({
+        ...setting,
+        value: setting.value?.toString() ?? "",
+      }));
+      const threadsSetting = engineSettings.find((setting) => setting.name.toLowerCase() === "threads");
+      if (threadsSetting) {
+        threadsSetting.value = "1";
+      } else {
+        engineSettings.push({ name: "Threads", value: "1" });
+      }
+
+      const analysisId = `dashboard_single_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+      let analyzedPgn: string | null = null;
+
+      const openingFenCache = new Map<string, boolean>();
+      const isOpeningFen = async (fen: string): Promise<boolean> => {
+        const cached = openingFenCache.get(fen);
+        if (cached !== undefined) return cached;
+        try {
+          const res = await commands.getOpeningFromFen(fen);
+          if (res.status === "ok" && !!res.data) {
+            openingFenCache.set(fen, true);
+            return true;
+          }
+        } catch {}
+        try {
+          const resInfo = await commands.getOpeningInfoFromFen(fen);
+          if (resInfo.status === "ok" && !!resInfo.data) {
+            openingFenCache.set(fen, true);
+            return true;
+          }
+        } catch {}
+        openingFenCache.set(fen, false);
+        return false;
+      };
+      const collectOpeningFensFromMainline = async (root: TreeState["root"]): Promise<Set<string>> => {
+        const out = new Set<string>();
+        let node = root;
+        while (node.children.length > 0) {
+          node = node.children[0];
+          if (await isOpeningFen(node.fen)) {
+            out.add(node.fen);
+          }
+        }
+        return out;
+      };
+
+      let tree: TreeState;
+      let moves: string[];
+      let initialFen: string;
+      let gameHeaders: ReturnType<
+        typeof createLocalGameHeaders | typeof createChessComGameHeaders | typeof createLichessGameHeaders
+      >;
+      let userColor: "white" | "black";
+
+      if (target.type === "local") {
+        const gameRecord = target.game;
+        const pgn = gameRecord.pgn || createPGNFromMoves(gameRecord.moves, gameRecord.result, gameRecord.initialFen);
+        tree = await parsePGN(pgn, gameRecord.initialFen);
+        moves = getMainLine(tree.root, tree.headers?.variant === "Chess960");
+        initialFen = tree.headers?.fen || gameRecord.initialFen || DEFAULT_START_FEN;
+        gameHeaders = createLocalGameHeaders(gameRecord);
+        userColor = gameRecord.white.type === "human" ? "white" : "black";
+        gameHeaders.orientation = userColor;
+      } else if (target.type === "chesscom") {
+        const game = target.game;
+        if (!game.pgn) return;
+        tree = await parsePGN(game.pgn);
+        moves = getMainLine(tree.root, tree.headers?.variant === "Chess960");
+        initialFen = tree.headers?.fen || DEFAULT_START_FEN;
+        gameHeaders = createChessComGameHeaders(game);
+        userColor = target.meta.playerColor;
+        gameHeaders.orientation = userColor;
+      } else if (target.type === "lichess") {
+        const game = target.game;
+        if (!game.pgn) return;
+        tree = await parsePGN(game.pgn);
+        moves = getMainLine(tree.root, tree.headers?.variant === "Chess960");
+        initialFen = tree.headers?.fen || DEFAULT_START_FEN;
+        gameHeaders = createLichessGameHeaders(game);
+        userColor = target.meta.playerColor;
+        gameHeaders.orientation = userColor;
+      } else {
+        const row = target.row;
+        const rowInitialFen = (row.initialFen ?? "").trim() || undefined;
+        const pgn = (row.pgn ?? "").trim();
+        if (!pgn) return;
+        tree = await parsePGN(pgn, rowInitialFen);
+        moves = getMainLine(tree.root, tree.headers?.variant === "Chess960");
+        initialFen = tree.headers?.fen || rowInitialFen || DEFAULT_START_FEN;
+        gameHeaders = {
+          id: 0,
+          event: tree.headers?.event || row.eventName || "ChessBase",
+          site: "ChessBase",
+          date: tree.headers?.date || "",
+          white: tree.headers?.white || "White",
+          black: tree.headers?.black || "Black",
+          result: (tree.headers?.result || "*") as ReturnType<typeof createLocalGameHeaders>["result"],
+          fen: initialFen,
+          orientation: row.color,
+        } as ReturnType<typeof createLocalGameHeaders>;
+        userColor = row.color;
+      }
+
+      if (isCancelled()) return;
+      onProgress(0, 1);
+
+      try {
+        const analysis = unwrap(
+          await commands.analyzeGame(
+            analysisId,
+            selectedEngine.path,
+            goMode,
+            {
+              annotateNovelties: false,
+              fen: initialFen,
+              referenceDb: null,
+              reversed: false,
+              moves,
+            },
+            engineSettings,
+          ),
+        );
+        if (isCancelled()) return;
+
+        const openingFens = await collectOpeningFensFromMainline(tree.root);
+        addAnalysis(tree, analysis, { openingFens });
+        tree.headers = {
+          ...tree.headers,
+          ...gameHeaders,
+          fen: tree.headers.fen || gameHeaders.fen,
+        };
+
+        try {
+          const bookReview = await detectProfileBookReview({
+            profileId: target.type === "local" ? (target.game.profileId ?? activeProfileId ?? null) : activeProfileId,
+            initialFen,
+            moves,
+            humanColor: userColor,
+          });
+          clearBookErrorAnnotations(tree.root);
+          applyProfileBookPriorityToMainline(tree.root, {
+            matchedPlies: bookReview.matchedPlies,
+            errors: bookReview.errors.map((item) => ({
+              ply: item.ply,
+              expectedMove: item.expectedMove,
+              expectedMoves: item.expectedMoves,
+              playedMove: item.playedMove,
+            })),
+            unknowns: bookReview.unknowns.map((item) => ({
+              ply: item.ply,
+              expectedMove: item.expectedMove,
+              expectedMoves: item.expectedMoves,
+              playedMove: item.playedMove,
+            })),
+          });
+        } catch {}
+
+        analyzedPgn = getPGN(tree.root, {
+          headers: tree.headers,
+          comments: true,
+          extraMarkups: true,
+          glyphs: true,
+          variations: true,
+        });
+        if (!analyzedPgn || analyzedPgn.trim().length === 0) return;
+        const hasResult = /\[Result\s+"[^"]+"\]/.test(analyzedPgn) || /\s+(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(analyzedPgn);
+        if (!hasResult) {
+          analyzedPgn = `${analyzedPgn.trim()} ${tree.headers?.result || "*"}`;
+        }
+
+        const reportStats = getGameStats(tree.root);
+        const stats = buildStatsPayloadForBackend(reportStats, userColor, tree);
+        const profileIdForSave =
+          target.type === "local" ? (target.game.profileId ?? activeProfileId ?? null) : (activeProfileId ?? null);
+
+        if (target.type === "local") {
+          if (stats) {
+            await updateGameRecord(target.game.id, { pgn: analyzedPgn, stats });
+          } else {
+            await updateGameRecord(target.game.id, { pgn: analyzedPgn });
+          }
+          await saveAnalyzedGame(target.game.id, analyzedPgn, profileIdForSave);
+          void queryClient.invalidateQueries({ queryKey: localGamesQueryKey });
+        } else if (target.type === "chesscom") {
+          const internalId = target.meta.profileDbGameId ?? null;
+          const gameIdToSave = internalId ?? target.game.url;
+          await saveAnalyzedGame(gameIdToSave, analyzedPgn, profileIdForSave);
+          if (stats) {
+            await saveGameStats(gameIdToSave, stats, profileIdForSave);
+          }
+          if (profileIdForSave && internalId) {
+            const gameIdNumber = Number.parseInt(internalId, 10);
+            if (Number.isFinite(gameIdNumber)) {
+              await saveProfileGameAnalysisStats({
+                profileId: profileIdForSave,
+                gameId: gameIdNumber,
+                initialFen,
+                moves,
+                analysis,
+              }).catch(() => {});
+            }
+          }
+          queryClient.setQueryData<ChessComGameWithEvent[]>(chessComGamesQueryKey, (prev) => {
+            const updated = [...(prev ?? [])];
+            const index = updated.findIndex((game) => game.url === target.game.url);
+            if (index >= 0) {
+              updated[index] = { ...updated[index], pgn: analyzedPgn ?? updated[index].pgn };
+            }
+            return updated;
+          });
+          window.dispatchEvent(new Event("chesscom:games:updated"));
+        } else if (target.type === "lichess") {
+          const internalId = target.meta.profileDbGameId ?? null;
+          const gameIdToSave = internalId ?? target.game.id;
+          await saveAnalyzedGame(gameIdToSave, analyzedPgn, profileIdForSave);
+          if (stats) {
+            await saveGameStats(gameIdToSave, stats, profileIdForSave);
+          }
+          if (profileIdForSave && internalId) {
+            const gameIdNumber = Number.parseInt(internalId, 10);
+            if (Number.isFinite(gameIdNumber)) {
+              await saveProfileGameAnalysisStats({
+                profileId: profileIdForSave,
+                gameId: gameIdNumber,
+                initialFen,
+                moves,
+                analysis,
+              }).catch(() => {});
+            }
+          }
+          queryClient.setQueryData<DashboardLichessGame[]>(lichessGamesQueryKey, (prev) => {
+            const updated = [...(prev ?? [])];
+            const index = updated.findIndex((game) => game.id === target.game.id);
+            if (index >= 0) {
+              updated[index] = { ...updated[index], pgn: analyzedPgn ?? updated[index].pgn };
+            }
+            return updated;
+          });
+          window.dispatchEvent(new Event("lichess:games:updated"));
+        } else {
+          const gameIdToSave = profileIdForSave
+            ? String(target.row.analysisGameId)
+            : `chessbase:${target.row.analysisGameId}`;
+          await saveAnalyzedGame(gameIdToSave, analyzedPgn, profileIdForSave);
+          if (stats) {
+            await saveGameStats(gameIdToSave, stats, profileIdForSave);
+          }
+          if (profileIdForSave) {
+            const gameIdNumber = Number.parseInt(String(target.row.analysisGameId), 10);
+            if (Number.isFinite(gameIdNumber)) {
+              await saveProfileGameAnalysisStats({
+                profileId: profileIdForSave,
+                gameId: gameIdNumber,
+                initialFen,
+                moves,
+                analysis,
+              }).catch(() => {});
+            }
+          }
+        }
+
+        window.dispatchEvent(new Event("dashboard:games-history:refresh"));
+        window.dispatchEvent(new Event("games:updated"));
+        onProgress(1, 1);
+        notifications.show({
+          title: t("features.dashboard.analysisComplete"),
+          message: t("features.dashboard.singleAnalysisCompleteMessage", {
+            defaultValue: "Analysis completed. Opening the game.",
+          }),
+          color: "green",
+        });
+      } finally {
+        await commands.stopEngine(selectedEngine.path, analysisId).catch(() => {});
+      }
+
+      if (analyzedPgn && !isCancelled()) {
+        setSingleAnalysisModalOpened(false);
+        await openSingleAnalyzedTarget(target, analyzedPgn);
+        setSingleAnalysisTarget(null);
+      }
+    },
+    [
+      activeProfileId,
+      chessComGamesQueryKey,
+      defaultEngine,
+      lichessGamesQueryKey,
+      localEngines,
+      localGamesQueryKey,
+      openSingleAnalyzedTarget,
+      queryClient,
+      t,
+    ],
   );
 
   const [favoriteGames, setFavoriteGames] = useState<FavoriteGame[]>([]);
@@ -2504,6 +3003,10 @@ export default function DashboardPage() {
                 gameHistoryLimit={gameHistoryLimit}
                 onGameHistoryLimitChange={setGameHistoryLimit}
                 onAnalyzeAll={handleAnalyzeAll}
+                onRequestAnalyzeGame={(target) => {
+                  setSingleAnalysisTarget(target);
+                  setSingleAnalysisModalOpened(true);
+                }}
                 onDeleteLocalGame={async (gameId: string) => {
                   await deleteGameRecord(activeProfileId, gameId);
                   queryClient.setQueryData<GameRecord[]>(localGamesQueryKey, (prev) =>
@@ -2714,6 +3217,25 @@ export default function DashboardPage() {
               <PuzzleVariantsCard />
             </Grid.Col>
           </Grid>
+
+          <AnalyzeAllModal
+            opened={singleAnalysisModalOpened}
+            onClose={() => {
+              setSingleAnalysisModalOpened(false);
+              setSingleAnalysisTarget(null);
+            }}
+            title={t("features.dashboard.analyze", { defaultValue: "Analyze" })}
+            hideAnalyzeMode
+            engineOptions={localEngines.map((e) => ({ value: e.path, label: e.name }))}
+            initialEnginePath={defaultEngine?.path ?? null}
+            analyzeMode="all"
+            gameCount={1}
+            unanalyzedGameCount={1}
+            onAnalyze={async (config, onProgress, isCancelled) => {
+              if (!singleAnalysisTarget) return;
+              await runSingleGameAnalysis(singleAnalysisTarget, config, onProgress, isCancelled);
+            }}
+          />
 
           <AnalyzeAllModal
             opened={analyzeAllModalOpened}
@@ -3667,7 +4189,6 @@ export default function DashboardPage() {
 
                   // Update notifications less frequently
                   if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
-                    emitGamesHistoryRefresh();
                     notifications.show({
                       title: t("features.dashboard.analysisProgress"),
                       message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,
@@ -3789,7 +4310,6 @@ export default function DashboardPage() {
                         completedCount++;
                         onProgress(completedCount, gamesToAnalyze.length);
                         if (completedCount % 10 === 0 || completedCount === gamesToAnalyze.length) {
-                          emitGamesHistoryRefresh();
                           notifications.show({
                             title: t("features.dashboard.analysisProgress"),
                             message: `Analyzed ${completedCount}/${gamesToAnalyze.length} games (${successCount} success, ${failCount} failed)`,

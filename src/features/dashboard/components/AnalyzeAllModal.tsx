@@ -13,6 +13,8 @@ export interface AnalyzeAllConfig {
 interface AnalyzeAllModalProps {
   opened: boolean;
   onClose: () => void;
+  title?: React.ReactNode;
+  hideAnalyzeMode?: boolean;
   onAnalyze: (
     config: AnalyzeAllConfig,
     onProgress: (current: number, total: number) => void,
@@ -38,6 +40,8 @@ export function AnalyzeAllModal({
   initialEnginePath,
   missingBalancedStatsCount = 0,
   onBackfillMissingStats,
+  title,
+  hideAnalyzeMode = false,
 }: AnalyzeAllModalProps) {
   const { t } = useTranslation();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -220,7 +224,7 @@ export function AnalyzeAllModal({
   }, [opened, isAnalyzing, analyzeMode, initialEnginePath, engineOptions, clearCloseTimeout, form.setValues]);
 
   return (
-    <Modal opened={opened} onClose={onClose} title={t("features.dashboard.analyzeAllGames")} size="md">
+    <Modal opened={opened} onClose={onClose} title={title ?? t("features.dashboard.analyzeAllGames")} size="md">
       <form onSubmit={form.onSubmit(handleSubmit)}>
         <Stack gap="md">
           <Text size="sm" c="dimmed">
@@ -253,23 +257,25 @@ export function AnalyzeAllModal({
             </Text>
           )}
 
-          <Radio.Group
-            label={t("features.dashboard.analyze")}
-            {...form.getInputProps("analyzeMode")}
-            disabled={isAnalyzing}
-          >
-            <Stack gap="xs">
-              <Radio
-                value="unanalyzed"
-                label={t("features.dashboard.onlyUnanalyzedGamesWithCounts", {
-                  defaultValue: "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
-                  unanalyzed: counts.unanalyzed,
-                  analyzed: counts.analyzed,
-                })}
-              />
-              <Radio value="all" label={t("features.dashboard.allGamesReanalyze")} />
-            </Stack>
-          </Radio.Group>
+          {!hideAnalyzeMode && (
+            <Radio.Group
+              label={t("features.dashboard.analyze")}
+              {...form.getInputProps("analyzeMode")}
+              disabled={isAnalyzing}
+            >
+              <Stack gap="xs">
+                <Radio
+                  value="unanalyzed"
+                  label={t("features.dashboard.onlyUnanalyzedGamesWithCounts", {
+                    defaultValue: "Only unanalyzed games ({{unanalyzed}} to analyze, {{analyzed}} already analyzed)",
+                    unanalyzed: counts.unanalyzed,
+                    analyzed: counts.analyzed,
+                  })}
+                />
+                <Radio value="all" label={t("features.dashboard.allGamesReanalyze")} />
+              </Stack>
+            </Radio.Group>
+          )}
 
           <NumberInput
             withAsterisk

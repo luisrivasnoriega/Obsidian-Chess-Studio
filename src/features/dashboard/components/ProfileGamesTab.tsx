@@ -37,37 +37,18 @@ import { AnalysisPreview } from "@/components/AnalysisPreview";
 import { stripAccountKey } from "@/utils/accountKeys";
 import type { FavoriteGame } from "@/utils/favoriteGames";
 import type { GameRecord } from "@/utils/gameRecords";
-import type { ChessComGameWithEvent, DashboardLichessGame, TimeControlCategory } from "../types";
+import type {
+  ChessComGameWithEvent,
+  DashboardGamesHistoryRow,
+  DashboardLichessGame,
+  DashboardSingleAnalysisTarget,
+  GamesHistoryKind,
+  TimeControlCategory,
+} from "../types";
 import { formatRelativeTimeAgo } from "../utils/relativeTime";
 
-type GamesHistoryKind = "local" | "chesscom" | "lichess" | "chessbase";
-
-type GamesHistoryRow = {
-  kind: GamesHistoryKind;
-  gameKey: string;
-  analysisGameId: string;
-  externalUrl: string | null;
-  opponent: string;
-  color: "white" | "black";
-  outcome: "win" | "loss" | "draw" | "unknown";
-  pgn: string | null;
-  initialFen: string | null;
-  accuracy: number | null;
-  acpl: number | null;
-  estimatedElo: number | null;
-  resistance: number | null;
-  eloEstimatedBalanced: number | null;
-  moves: number;
-  timeControl: string | null;
-  timeControlCategory: TimeControlCategory | null;
-  timestampMs: number;
-  eventId: number | null;
-  eventName: string | null;
-  isAnalyzed: boolean;
-};
-
 type GamesHistoryResponse = {
-  rows: GamesHistoryRow[];
+  rows: DashboardGamesHistoryRow[];
   totalCount: number;
 };
 
@@ -114,6 +95,64 @@ const _hasPgnHeaders = (pgn?: string | null): boolean => {
 };
 
 const _getResultFromPgn = (pgn: string): string | null => _getTagFromPgn(pgn, "Result");
+
+const _escapePgnTagValue = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+const _dateTagFromTimestamp = (timestampMs: number): string => {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return "????.??.??";
+  return new Date(timestampMs).toISOString().slice(0, 10).replace(/-/g, ".");
+};
+
+const _resultFromRowOutcome = (row: DashboardGamesHistoryRow): string => {
+  if (row.outcome === "draw") return "1/2-1/2";
+  if (row.outcome === "win") return row.color === "white" ? "1-0" : "0-1";
+  if (row.outcome === "loss") return row.color === "white" ? "0-1" : "1-0";
+  return "*";
+};
+
+const _ensurePgnHeadersForAnalysis = (
+  row: DashboardGamesHistoryRow,
+  pgn: string | null,
+  profileName: string,
+): string | null => {
+  const trimmed = pgn?.trim();
+  if (!trimmed) return null;
+  if (_hasPgnHeaders(trimmed)) return trimmed;
+
+  const white = row.color === "white" ? profileName : row.opponent || "?";
+  const black = row.color === "white" ? row.opponent || "?" : profileName;
+  const result = _resultFromRowOutcome(row);
+  const site =
+    row.externalUrl ??
+    (row.kind === "chesscom"
+      ? "Chess.com"
+      : row.kind === "lichess"
+        ? "Lichess"
+        : row.kind === "local"
+          ? "Local"
+          : "ChessBase");
+  const event = row.eventName?.trim() || site;
+  const initialFen = row.initialFen?.trim();
+  const headers = [
+    ["Event", event],
+    ["Site", site],
+    ["Date", _dateTagFromTimestamp(row.timestampMs)],
+    ...(row.timeControl?.trim() ? ([["TimeControl", row.timeControl.trim()]] as const) : []),
+    ...(initialFen
+      ? ([
+          ["SetUp", "1"],
+          ["FEN", initialFen],
+        ] as const)
+      : []),
+    ["White", stripAccountKey(white)],
+    ["Black", stripAccountKey(black)],
+    ["Result", result],
+  ];
+  const headerText = headers.map(([key, value]) => `[${key} "${_escapePgnTagValue(value)}"]`).join("\n");
+  const separator = trimmed.startsWith("\n") ? "" : "\n\n";
+  const suffix = trimmed.endsWith(result) ? "" : ` ${result}`;
+  return `${headerText}${separator}${trimmed}${suffix}`.trim();
+};
 
 const _winnerFromResult = (result: string | null | undefined): "white" | "black" | undefined => {
   const r = (result ?? "").trim();
@@ -218,6 +257,7 @@ export function ProfileGamesTab({
   onAnalyzeLocalGame,
   onAnalyzeChessComGame,
   onAnalyzeLichessGame,
+  onRequestAnalyzeGame,
   onDeleteLocalGame,
   onToggleFavoriteLocal,
   onToggleFavoriteChessCom,
@@ -252,6 +292,7 @@ export function ProfileGamesTab({
     game: DashboardLichessGame,
     meta: { playerColor: "white" | "black"; profileId?: string; profileDbGameId?: string },
   ) => void;
+  onRequestAnalyzeGame?: (target: DashboardSingleAnalysisTarget) => void;
   onDeleteLocalGame?: (gameId: string) => void;
   onToggleFavoriteLocal?: (gameId: string) => Promise<void>;
   onToggleFavoriteChessCom?: (gameId: string) => Promise<void>;
@@ -279,11 +320,11 @@ export function ProfileGamesTab({
   const { t } = useTranslation();
   const isMobile = useMediaQuery("(max-width: 48em)");
 
-  const [rows, setRows] = useState<GamesHistoryRow[]>([]);
+  const [rows, setRows] = useState<DashboardGamesHistoryRow[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
   const itemsPerPage = Math.max(1, gameHistoryLimit);
-  const [_refreshTick, setRefreshTick] = useState(0);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [sortBy, setSortBy] = useState<"elo" | "date" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [opponentFilter, setOpponentFilter] = useState("");
@@ -361,6 +402,7 @@ export function ProfileGamesTab({
   }, []);
 
   useEffect(() => {
+    void refreshTick;
     if (!profileId) {
       setRows([]);
       setTotalCount(0);
@@ -420,6 +462,7 @@ export function ProfileGamesTab({
     sortDirection,
     selectedOpponentId,
     itemsPerPage,
+    refreshTick,
   ]);
 
   useEffect(() => {
@@ -488,6 +531,7 @@ export function ProfileGamesTab({
   ]);
 
   useEffect(() => {
+    void refreshTick;
     if (!profileId) {
       setAnalyzeAllTypeCounts(null);
       return;
@@ -541,6 +585,7 @@ export function ProfileGamesTab({
     resultFilter,
     playerColorFilter,
     minMovesFilter,
+    refreshTick,
   ]);
 
   const handleSort = (field: "elo" | "date") => {
@@ -737,7 +782,7 @@ export function ProfileGamesTab({
   };
 
   const resolveChessComUrlFromProfileData = async (
-    row: Pick<GamesHistoryRow, "analysisGameId" | "kind">,
+    row: Pick<DashboardGamesHistoryRow, "analysisGameId" | "kind">,
   ): Promise<string | null> => {
     if (row.kind !== "chesscom" || !profileId) return null;
     const gameId = Number.parseInt(String(row.analysisGameId), 10);
@@ -753,13 +798,16 @@ export function ProfileGamesTab({
     }
   };
 
-  const handleAnalyzeRow = async (row: GamesHistoryRow, pgn: string | null) => {
-    const rowPgn = pgn?.trim() ? pgn.trim() : null;
-    if (!rowPgn || !_hasPgnHeaders(rowPgn)) {
-      return;
+  const buildAnalysisTargetFromRow = (
+    row: DashboardGamesHistoryRow,
+    pgn: string | null,
+  ): DashboardSingleAnalysisTarget | null => {
+    const profileDisplayName = (profileUsernames?.[0] ?? "").trim() || t("common.player", { defaultValue: "Player" });
+    const rowPgn = _ensurePgnHeadersForAnalysis(row, pgn, profileDisplayName);
+    if (!rowPgn) {
+      return null;
     }
 
-    const profileDisplayName = (profileUsernames?.[0] ?? "").trim() || t("common.player", { defaultValue: "Player" });
     const inferredWhite = row.color === "white" ? profileDisplayName : row.opponent;
     const inferredBlack = row.color === "white" ? row.opponent : profileDisplayName;
     const whiteFromPgn = (_getTagFromPgn(rowPgn, "White") ?? "").trim();
@@ -784,8 +832,7 @@ export function ProfileGamesTab({
         initialFen,
         pgn: rowPgn,
       };
-      onAnalyzeLocalGame(localGame);
-      return;
+      return { type: "local", game: localGame };
     }
 
     if (row.kind === "chesscom") {
@@ -807,42 +854,32 @@ export function ProfileGamesTab({
         eventName: row.eventName ?? null,
       };
 
-      onAnalyzeChessComGame(stub, {
-        profileId: profileId ?? undefined,
-        profileDbGameId: row.analysisGameId,
-        playerColor: row.color,
-      });
-      return;
+      return {
+        type: "chesscom",
+        game: stub,
+        meta: {
+          profileId: profileId ?? undefined,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        },
+      };
     }
 
     if (row.kind === "chessbase") {
-      const winner = _winnerFromResult(result);
-
-      const stub: DashboardLichessGame = {
-        id: `chessbase:${row.analysisGameId}`,
-        players: {
-          white: { user: { name: stripAccountKey(white) } },
-          black: { user: { name: stripAccountKey(black) } },
+      return {
+        type: "chessbase",
+        row: {
+          ...row,
+          pgn: rowPgn,
+          initialFen,
+          timeControl,
         },
-        speed: row.timeControlCategory
-          ? getTimeControlLabel(t, row.timeControlCategory)
-          : t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
-        timeControl,
-        createdAt: row.timestampMs,
-        winner,
-        status: "finished",
-        pgn: rowPgn,
-        lastFen: initialFen,
-        eventId: row.eventId ?? 0,
-        eventName: row.eventName ?? null,
+        meta: {
+          profileId: profileId ?? undefined,
+          profileDbGameId: row.analysisGameId,
+          playerColor: row.color,
+        },
       };
-
-      onAnalyzeLichessGame(stub, {
-        profileId: profileId ?? undefined,
-        profileDbGameId: row.analysisGameId,
-        playerColor: row.color,
-      });
-      return;
     }
 
     // Lichess
@@ -867,11 +904,92 @@ export function ProfileGamesTab({
       eventName: row.eventName ?? null,
     };
 
-    onAnalyzeLichessGame(stub, {
-      profileId: profileId ?? undefined,
-      profileDbGameId: row.analysisGameId,
-      playerColor: row.color,
-    });
+    return {
+      type: "lichess",
+      game: stub,
+      meta: {
+        profileId: profileId ?? undefined,
+        profileDbGameId: row.analysisGameId,
+        playerColor: row.color,
+      },
+    };
+  };
+
+  const openAnalysisTarget = (target: DashboardSingleAnalysisTarget) => {
+    if (target.type === "local") {
+      onAnalyzeLocalGame(target.game);
+      return;
+    }
+    if (target.type === "chesscom") {
+      onAnalyzeChessComGame(target.game, target.meta);
+      return;
+    }
+    if (target.type === "lichess") {
+      onAnalyzeLichessGame(target.game, target.meta);
+      return;
+    }
+
+    const row = target.row;
+    const rowPgn = row.pgn ?? "";
+    const white = (_getTagFromPgn(rowPgn, "White") ?? "").trim() || "White";
+    const black = (_getTagFromPgn(rowPgn, "Black") ?? "").trim() || "Black";
+    const result = _getResultFromPgn(rowPgn) ?? (row.outcome === "draw" ? "1/2-1/2" : "*");
+    const winner = _winnerFromResult(result);
+    const stub: DashboardLichessGame = {
+      id: `chessbase:${row.analysisGameId}`,
+      players: {
+        white: { user: { name: stripAccountKey(white) } },
+        black: { user: { name: stripAccountKey(black) } },
+      },
+      speed: row.timeControlCategory
+        ? getTimeControlLabel(t, row.timeControlCategory)
+        : t("chess.timeControl.rapid", { defaultValue: "Rapid" }),
+      timeControl: row.timeControl,
+      createdAt: row.timestampMs,
+      winner,
+      status: "finished",
+      pgn: rowPgn,
+      lastFen: row.initialFen ?? INITIAL_FEN,
+      eventId: row.eventId ?? 0,
+      eventName: row.eventName ?? null,
+    };
+    onAnalyzeLichessGame(stub, target.meta);
+  };
+
+  const handleAnalyzeRow = async (row: DashboardGamesHistoryRow, pgn: string | null) => {
+    const target = buildAnalysisTargetFromRow(row, pgn);
+    if (!target) {
+      notifications.show({
+        title: t("features.dashboard.analysisPgnUnavailable", "Analysis unavailable"),
+        message: t(
+          "features.dashboard.analysisPgnUnavailableMessage",
+          "This game does not have enough PGN data to start analysis.",
+        ),
+        color: "red",
+      });
+      return;
+    }
+    openAnalysisTarget(target);
+  };
+
+  const handleRequestAnalyzeRow = async (row: DashboardGamesHistoryRow, pgn: string | null) => {
+    const target = buildAnalysisTargetFromRow(row, pgn);
+    if (!target) {
+      notifications.show({
+        title: t("features.dashboard.analysisPgnUnavailable", "Analysis unavailable"),
+        message: t(
+          "features.dashboard.analysisPgnUnavailableMessage",
+          "This game does not have enough PGN data to start analysis.",
+        ),
+        color: "red",
+      });
+      return;
+    }
+    if (onRequestAnalyzeGame) {
+      onRequestAnalyzeGame(target);
+      return;
+    }
+    openAnalysisTarget(target);
   };
 
   // Favorite toggling & analyzed detection are handled per-row using backend-provided fields.
@@ -1406,7 +1524,7 @@ export function ProfileGamesTab({
                             }}
                             leftSection={<IconChess size={16} />}
                             onClick={async () => {
-                              await handleAnalyzeRow(row, pgn);
+                              await handleRequestAnalyzeRow(row, pgn);
                             }}
                           >
                             {t("features.dashboard.analyze") || "Analyze"}

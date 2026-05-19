@@ -9,7 +9,10 @@ import type { Completion, Puzzle } from "@/utils/puzzles";
 import { updateElo } from "@/utils/puzzles";
 
 export const usePuzzleSession = (id: string) => {
-  const store = useContext(TreeStateContext)!;
+  const store = useContext(TreeStateContext);
+  if (!store) {
+    throw new Error("TreeStateContext not found");
+  }
   const setFen = useStore(store, (s) => s.setFen);
   const makeMove = useStore(store, (s) => s.makeMove);
 
@@ -56,9 +59,11 @@ export const usePuzzleSession = (id: string) => {
   };
 
   const addPuzzle = (puzzle: Puzzle) => {
-    const nextPuzzles = [...puzzles, puzzle];
-    setPuzzles(nextPuzzles);
-    setCurrentPuzzle(nextPuzzles.length - 1);
+    setPuzzles((currentPuzzles) => {
+      const nextPuzzles = [...currentPuzzles, puzzle];
+      setCurrentPuzzle(nextPuzzles.length - 1);
+      return nextPuzzles;
+    });
     setPuzzle(puzzle);
   };
 

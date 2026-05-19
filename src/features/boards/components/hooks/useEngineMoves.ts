@@ -99,6 +99,7 @@ export function useEngineMoves(
             lastResortDisadvantageCp: 80,
             minStrategicScore: 0.4,
             highConvictionThreshold: 0.78,
+            profile: "dynamic",
           },
         });
 

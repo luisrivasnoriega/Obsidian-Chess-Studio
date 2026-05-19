@@ -1,0 +1,166 @@
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum StrategicProfile {
+    Solid,
+    Positional,
+    #[default]
+    Dynamic,
+    Attacking,
+    Conversion,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct StrategicWeights {
+    pub pawn_structure_damage: f32,
+    pub weak_pawn_pressure: f32,
+    pub space_gain: f32,
+    pub open_file_pressure: f32,
+    pub central_king_pressure: f32,
+    pub piece_restriction: f32,
+    pub wing_clamp: f32,
+    pub macro_pawn_structure: f32,
+    pub macro_space: f32,
+    pub macro_piece_quality: f32,
+    pub macro_king_safety: f32,
+    pub macro_initiative: f32,
+    pub macro_attack: f32,
+    pub macro_counterplay: f32,
+    pub macro_prophylaxis: f32,
+    pub macro_conversion: f32,
+    pub macro_endgame_transition: f32,
+    pub macro_practical_pressure: f32,
+    pub macro_plan_coherence: f32,
+    pub base_strategic: f32,
+    pub macro_strategic: f32,
+    pub pv_endgame: f32,
+    pub pv_tension: f32,
+    pub pv_plan_coherence: f32,
+    pub final_strategic: f32,
+    pub final_engine_quality: f32,
+    pub risk_penalty: f32,
+}
+
+impl StrategicWeights {
+    pub(super) fn for_profile(profile: StrategicProfile) -> Self {
+        match profile {
+            StrategicProfile::Solid => Self {
+                central_king_pressure: 0.20,
+                macro_king_safety: 0.11,
+                macro_attack: 0.09,
+                macro_counterplay: 0.06,
+                macro_prophylaxis: 0.13,
+                macro_conversion: 0.10,
+                macro_endgame_transition: 0.09,
+                macro_practical_pressure: 0.03,
+                base_strategic: 0.56,
+                macro_strategic: 0.36,
+                pv_endgame: 0.10,
+                pv_tension: 0.05,
+                pv_plan_coherence: 0.04,
+                final_strategic: 0.36,
+                final_engine_quality: 0.64,
+                risk_penalty: 0.045,
+                ..Self::dynamic()
+            },
+            StrategicProfile::Positional => Self {
+                pawn_structure_damage: 0.27,
+                weak_pawn_pressure: 0.17,
+                space_gain: 0.13,
+                open_file_pressure: 0.13,
+                central_king_pressure: 0.22,
+                piece_restriction: 0.08,
+                macro_pawn_structure: 0.13,
+                macro_space: 0.10,
+                macro_piece_quality: 0.15,
+                macro_prophylaxis: 0.09,
+                macro_plan_coherence: 0.03,
+                final_strategic: 0.44,
+                final_engine_quality: 0.56,
+                risk_penalty: 0.035,
+                ..Self::dynamic()
+            },
+            StrategicProfile::Dynamic => Self::dynamic(),
+            StrategicProfile::Attacking => Self {
+                pawn_structure_damage: 0.21,
+                weak_pawn_pressure: 0.13,
+                space_gain: 0.08,
+                open_file_pressure: 0.15,
+                central_king_pressure: 0.35,
+                piece_restriction: 0.06,
+                wing_clamp: 0.02,
+                macro_king_safety: 0.18,
+                macro_initiative: 0.13,
+                macro_attack: 0.21,
+                macro_counterplay: 0.09,
+                macro_prophylaxis: 0.04,
+                macro_practical_pressure: 0.08,
+                base_strategic: 0.58,
+                macro_strategic: 0.39,
+                pv_endgame: 0.03,
+                pv_tension: 0.09,
+                pv_plan_coherence: 0.08,
+                final_strategic: 0.49,
+                final_engine_quality: 0.51,
+                risk_penalty: 0.030,
+                ..Self::dynamic()
+            },
+            StrategicProfile::Conversion => Self {
+                pawn_structure_damage: 0.24,
+                weak_pawn_pressure: 0.15,
+                space_gain: 0.09,
+                open_file_pressure: 0.15,
+                central_king_pressure: 0.22,
+                piece_restriction: 0.10,
+                macro_pawn_structure: 0.11,
+                macro_piece_quality: 0.13,
+                macro_conversion: 0.12,
+                macro_endgame_transition: 0.12,
+                macro_practical_pressure: 0.03,
+                base_strategic: 0.58,
+                macro_strategic: 0.35,
+                pv_endgame: 0.13,
+                pv_tension: 0.04,
+                pv_plan_coherence: 0.05,
+                final_strategic: 0.42,
+                final_engine_quality: 0.58,
+                risk_penalty: 0.040,
+                ..Self::dynamic()
+            },
+        }
+    }
+
+    fn dynamic() -> Self {
+        Self {
+            pawn_structure_damage: 0.25,
+            weak_pawn_pressure: 0.15,
+            space_gain: 0.10,
+            open_file_pressure: 0.13,
+            central_king_pressure: 0.28,
+            piece_restriction: 0.07,
+            wing_clamp: 0.02,
+            macro_pawn_structure: 0.09,
+            macro_space: 0.07,
+            macro_piece_quality: 0.11,
+            macro_king_safety: 0.15,
+            macro_initiative: 0.11,
+            macro_attack: 0.15,
+            macro_counterplay: 0.08,
+            macro_prophylaxis: 0.07,
+            macro_conversion: 0.06,
+            macro_endgame_transition: 0.05,
+            macro_practical_pressure: 0.05,
+            macro_plan_coherence: 0.01,
+            base_strategic: 0.62,
+            macro_strategic: 0.38,
+            pv_endgame: 0.08,
+            pv_tension: 0.07,
+            pv_plan_coherence: 0.05,
+            final_strategic: 0.45,
+            final_engine_quality: 0.55,
+            risk_penalty: 0.035,
+        }
+    }
+}

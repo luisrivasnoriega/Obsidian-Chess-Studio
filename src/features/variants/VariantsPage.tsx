@@ -87,7 +87,7 @@ import {
 } from "@/state/atoms";
 import { premiumActionButtonStyles, premiumMutedPanelStyle } from "@/styles/premiumSurface";
 import { getAccountKey, stripAccountKey } from "@/utils/accountKeys";
-import { defaultPGN, getMoveText, getPGNFromReportView, parsePGN } from "@/utils/chess";
+import { defaultPGN, getPGNFromReportView, parsePGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import { getDatabases, query_players } from "@/utils/db";
 import { createFile, openFile, readInfoMetadata, writeInfoMetadata } from "@/utils/files";
@@ -95,13 +95,8 @@ import { formatDateToPGN, parseDate } from "@/utils/format";
 import type { LichessGameSpeed, LichessRating } from "@/utils/lichess/explorer";
 import { getProfileDbPath } from "@/utils/profileDb";
 import { buildPuzzleVariantSourceTags, PUZZLE_VARIANTS_TAG } from "@/utils/puzzleVariantMetadata";
-import {
-  generatePuzzleVariantsFromCoverageNode,
-  generatePuzzleVariantsFromTree,
-  type PuzzleTreeNodeDto,
-} from "@/utils/puzzleVariants";
+import { generatePuzzleVariantsFromCoverageNode } from "@/utils/puzzleVariants";
 import type { TreeNode } from "@/utils/treeReducer";
-import { PuzzleVariantsModal } from "../boards/components/PuzzleVariantsModal";
 import {
   COVERAGE_TIER_COLORS,
   COVERAGE_UNMAPPED_COLOR,
@@ -1574,10 +1569,7 @@ export default function VariantsPage() {
     () => new Set(readPersistedVariantsTableState().expandedKeys ?? []),
   );
   const [transferBusy, setTransferBusy] = useState(false);
-  const [puzzleModalOpened, setPuzzleModalOpened] = useState(false);
-  const [puzzleDepth, setPuzzleDepth] = useState(1);
-  const [maxPuzzleDepth, setMaxPuzzleDepth] = useState(24);
-  const [puzzleTargetKey, setPuzzleTargetKey] = useState<string | null>(null);
+  const [coveragePuzzleSetupTargetKey, setCoveragePuzzleSetupTargetKey] = useState<string | null>(null);
   const [generatingPuzzles, setGeneratingPuzzles] = useState(false);
   const [openingVariantsTargetKey, setOpeningVariantsTargetKey] = useState<string | null>(null);
   const [compressVariantsTargetKey, setCompressVariantsTargetKey] = useState<string | null>(null);
@@ -4612,193 +4604,135 @@ export default function VariantsPage() {
 
   const handleOpenGeneratePuzzles = useCallback(
     async (row: VariantTableRow) => {
+      if (generatingPuzzles || coverageGraphLoading || coveragePuzzleGenerating) return;
+
       const key = row.canonicalKey ?? row.key;
       const variant = variantLinkGraph.variantByKey.get(key);
       if (!variant) return;
       const canContinue = await validateVariantConsistencyBeforeAction(variant);
       if (!canContinue) return;
 
-      setPuzzleTargetKey(key);
-      setMaxPuzzleDepth(24);
-      const initialDepth = variant.depth && variant.depth > 0 ? Math.min(variant.depth, 24) : 1;
-      setPuzzleDepth(initialDepth);
-      setPuzzleModalOpened(true);
-    },
-    [validateVariantConsistencyBeforeAction, variantLinkGraph.variantByKey],
-  );
+      const requestedDepth =
+        typeof coverageGraphDepth === "number" && Number.isFinite(coverageGraphDepth)
+          ? Math.max(1, Math.min(20, Math.floor(coverageGraphDepth)))
+          : Math.max(1, Math.min(20, variant.lineDepth ?? variant.depth ?? 5));
+      const selectedProfileTimeControls =
+        coverageProfileTimeControlFilters.length > 0
+          ? coverageProfileTimeControlFilters
+          : coverageProfileTimeControlOptions;
+      const runId =
+        globalThis.crypto?.randomUUID?.() ??
+        `coverage-puzzles-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
-  const generatePuzzlesForVariantTree = useCallback(
-    async (selectedDepth: number) => {
-      if (!puzzleTargetKey || generatingPuzzles) return;
+      setCoveragePuzzleSetupTargetKey(key);
       setGeneratingPuzzles(true);
-
+      setCoverageGraphLoading(true);
+      setCoverageBuildProgress({
+        phase: "preparing",
+        variantsDone: 0,
+        variantsTotal: 0,
+        positionsProcessed: 0,
+        positionsPending: 0,
+      });
+      coverageGraphBuildRunIdRef.current = runId;
       try {
-        const puzzleVariantsDir = await getPuzzleVariantsDirectory(activeProfileId);
-        const variantsDir = await getVariantsDirectory(activeProfileId);
+        coverageGraphResumeSnapshot = null;
+        coverageGraphPositionsRef.current = {};
+        setCoverageGraphTargetKey(key);
+        setCoverageGraphDepth(requestedDepth);
+        setCoverageGraphRoot(null);
+        setCoverageCollapsedNodeIds(new Set());
+        setCoverageGraphCachePath(null);
+        setCoverageGraphSourceSignature(null);
+        setCoverageActionNode(null);
+        setCoverageActionTab("puzzles");
+        setCoveragePuzzleTierFilter("mainline");
+        setCoveragePuzzleIncludeLowSample(true);
+        setCoveragePuzzleName(sanitizeFileStem(`coverage-${variant.name}`));
+        setCoverageEngineMs(variant.engineMs && variant.engineMs > 0 ? variant.engineMs : 1000);
+        setCoveragePrioritySyncing(false);
 
-        const { commands } = await import("@/bindings");
-        const { unwrap } = await import("@/utils/unwrap");
-
-        const targetVariant = variantLinkGraph.variantByKey.get(puzzleTargetKey);
-        if (!targetVariant) {
-          notifications.show({
-            title: t("common.error"),
-            message: t("common.noRecordsFound", { defaultValue: "No records found" }),
-            color: "red",
-          });
-          return;
-        }
-
-        const subtreeKeys = collectSubtreeKeys(puzzleTargetKey);
-        const seenFensGlobal = new Set<string>();
-
-        let totalPuzzles = 0;
-        let generatedFromVariants = 0;
-        let failedVariants = 0;
-
-        for (let variantIndex = 0; variantIndex < subtreeKeys.length; variantIndex += 1) {
-          const key = subtreeKeys[variantIndex];
-          const variant = variantLinkGraph.variantByKey.get(key);
-          if (!variant) continue;
-
-          try {
-            const count = unwrap(await commands.countPgnGames(variant.path));
-            if (count <= 0) {
-              failedVariants += 1;
-              continue;
-            }
-
-            const games = unwrap(await commands.readGames(variant.path, 0, 0));
-            const firstGame = games[0];
-            if (!firstGame) {
-              failedVariants += 1;
-              continue;
-            }
-
-            const tree = await parsePGN(firstGame);
-            const orientation: "white" | "black" = tree.headers.orientation === "black" ? "black" : "white";
-
-            const toDedupedDto = (node: TreeNode): PuzzleTreeNodeDto => {
-              const children: PuzzleTreeNodeDto[] = [];
-              for (const child of node.children) {
-                const fenKey = normalizeFenKey(child.fen);
-                if (seenFensGlobal.has(fenKey)) {
-                  continue;
-                }
-                seenFensGlobal.add(fenKey);
-                children.push(toDedupedDto(child));
-              }
-              return {
-                fen: node.fen,
-                san: node.san ?? null,
-                children,
-              };
-            };
-
-            const dedupedRoot = toDedupedDto(tree.root);
-            if (dedupedRoot.children.length === 0) {
-              continue;
-            }
-
-            const result = await generatePuzzleVariantsFromTree({
-              root: dedupedRoot,
-              orientation,
-              selectedDepth,
-            });
-
-            if (result.count <= 0 || result.pgn.trim().length === 0) {
-              continue;
-            }
-
-            const now = formatFileTimestamp(new Date());
-            const fileStemBase = sanitizeFileStem(
-              `${variant.name}-puzzles-d${selectedDepth}-${now}-${variantIndex + 1}`,
-            );
-            const fileStem = await resolveAvailablePgnFileStem(puzzleVariantsDir, fileStemBase);
-
-            const mainlineNodes: TreeNode[] = [];
-            let currentNode: TreeNode = tree.root;
-            const maxMainlinePlies = 80;
-            while (mainlineNodes.length < maxMainlinePlies && currentNode.children.length > 0) {
-              const child = currentNode.children.find((c) => c.san) ?? currentNode.children[0];
-              if (!child?.san) break;
-              mainlineNodes.push(child);
-              currentNode = child;
-            }
-
-            const mainline = mainlineNodes
-              .map((move, index) =>
-                getMoveText(move, {
-                  glyphs: false,
-                  comments: false,
-                  extraMarkups: false,
-                  isFirst: index === 0 || move.halfMoves % 2 === 0,
-                }),
-              )
-              .join("")
-              .trim();
-
-            const tags = [
-              PUZZLE_VARIANTS_TAG,
-              ...buildPuzzleVariantSourceTags({
-                profileId: activeProfileId,
-                variantsDir,
-                variantPath: variant.path,
-              }),
-              `variant:${variant.name}`,
-              `depth:${selectedDepth}`,
-              `orientation:${orientation}`,
-            ];
-            if (mainline) {
-              tags.push(`mainline:${mainline}`);
-            }
-
-            const createResult = await createFile({
-              filename: fileStem,
-              filetype: "puzzle",
-              tags,
-              pgn: result.pgn,
-              dir: puzzleVariantsDir,
-            });
-            if (createResult.isErr) {
-              failedVariants += 1;
-              continue;
-            }
-
-            totalPuzzles += result.count;
-            generatedFromVariants += 1;
-          } catch {
-            failedVariants += 1;
-          }
-        }
-
-        try {
-          window.dispatchEvent(new Event("puzzles:updated"));
-          window.dispatchEvent(new Event("puzzle-variants:updated"));
-        } catch {}
-
-        notifications.show({
-          title: generatedFromVariants > 0 ? t("common.success") : t("common.error"),
-          message: t("features.board.variants.generatePuzzlesDone", {
-            defaultValue: "Generated {{puzzles}} puzzles from {{variants}} variants (failed: {{failed}}).",
-            puzzles: totalPuzzles,
-            variants: generatedFromVariants,
-            failed: failedVariants,
-          }),
-          color: generatedFromVariants > 0 ? "green" : "red",
+        const backendResult = await invoke<CoverageGraphBackendBuildResult>("variant_coverage_build_graph", {
+          request: {
+            targetKey: key,
+            variants,
+            buildConfig: {
+              dbType: buildConfig.dbType,
+              localDatabasePath: buildConfig.localDatabasePath,
+              lichessSpeeds: buildConfig.lichessSpeeds,
+              lichessRatings: buildConfig.lichessRatings,
+              lichessSince: formatMonthTag(buildConfig.lichessSince),
+              lichessUntil: formatMonthTag(buildConfig.lichessUntil),
+              lichessPlayer: buildConfig.lichessPlayer,
+              lichessColor: buildConfig.lichessColor,
+              masterSince: formatMonthTag(buildConfig.masterSince),
+              masterUntil: formatMonthTag(buildConfig.masterUntil),
+              includeChildren: buildConfig.includeChildren,
+            },
+            requestedDepth,
+            forceRebuild: false,
+            bypassPositionCache: false,
+            persistResults: true,
+            mappedOnly: false,
+            lichessToken: lichessAuthToken ?? null,
+            activeProfileId: activeProfileId ?? null,
+            profileIdentityNames: activeProfileCoverageIdentityNames,
+            profileTimeControlCategories: selectedProfileTimeControls,
+            runId,
+          },
         });
-      } catch {
+
+        coverageGraphPositionsRef.current = backendResult.positions;
+        setCoverageGraphRoot(backendResult.graphRoot);
+        setCoverageCollapsedNodeIds(
+          buildCoverageDefaultCollapsedIds(backendResult.graphRoot, COVERAGE_GRAPH_INITIAL_EXPANDED_LEVELS),
+        );
+        setCoverageGraphOrientation(backendResult.repertoireColor);
+        setCoverageGraphCachePath(backendResult.cachePath ?? null);
+        setCoverageGraphSourceSignature(backendResult.sourceSignature);
+        setCriticalLineDismissedFenKeys(new Set(backendResult.criticalLineDismissedFenKeys ?? []));
+        setCoverageActionNode(backendResult.graphRoot);
+
+        if (backendResult.cacheWritten || backendResult.priorityMetadataUpdated) {
+          try {
+            window.dispatchEvent(new Event("variants:updated"));
+          } catch {}
+          await refetch();
+        }
+      } catch (error) {
         notifications.show({
           title: t("common.error"),
-          message: t("common.failedToGeneratePuzzles"),
+          message: t("features.board.variants.coverageGraphFailedWithReason", {
+            defaultValue: "Failed to build coverage graph: {{reason}}",
+            reason: getErrorMessage(error),
+          }),
           color: "red",
         });
       } finally {
+        coverageGraphBuildRunIdRef.current = null;
+        setCoverageGraphLoading(false);
+        setCoverageBuildProgress(null);
         setGeneratingPuzzles(false);
-        setPuzzleTargetKey(null);
+        setCoveragePuzzleSetupTargetKey(null);
       }
     },
-    [activeProfileId, collectSubtreeKeys, generatingPuzzles, puzzleTargetKey, t, variantLinkGraph],
+    [
+      activeProfileCoverageIdentityNames,
+      activeProfileId,
+      buildConfig,
+      coverageGraphDepth,
+      coverageGraphLoading,
+      coverageProfileTimeControlFilters,
+      coverageProfileTimeControlOptions,
+      coveragePuzzleGenerating,
+      generatingPuzzles,
+      lichessAuthToken,
+      refetch,
+      t,
+      validateVariantConsistencyBeforeAction,
+      variantLinkGraph.variantByKey,
+      variants,
+    ],
   );
 
   const handleValidateVariantTree = useCallback(
@@ -5089,9 +5023,11 @@ export default function VariantsPage() {
   };
 
   const renderVariantActions = (row: VariantTableRow) => {
-    const isBusyCriticalLine = criticalLineReportRequestKey === (row.canonicalKey ?? row.key);
-    const isBusyOpeningVariants = openingVariantsTargetKey === (row.canonicalKey ?? row.key);
-    const isBusyCompressVariants = compressVariantsTargetKey === (row.canonicalKey ?? row.key);
+    const rowKey = row.canonicalKey ?? row.key;
+    const isBusyCriticalLine = criticalLineReportRequestKey === rowKey;
+    const isBusyGeneratePuzzles = generatingPuzzles && coveragePuzzleSetupTargetKey === rowKey;
+    const isBusyOpeningVariants = openingVariantsTargetKey === rowKey;
+    const isBusyCompressVariants = compressVariantsTargetKey === rowKey;
 
     if (useCompactVariantsTable) {
       return (
@@ -5110,9 +5046,9 @@ export default function VariantsPage() {
               {t("features.board.variants.validateConsistency", { defaultValue: "Validate consistency" })}
             </Menu.Item>
             <Menu.Item
-              leftSection={<IconPuzzle size={16} />}
+              leftSection={isBusyGeneratePuzzles ? <Loader size={14} /> : <IconPuzzle size={16} />}
               onClick={() => void handleOpenGeneratePuzzles(row)}
-              disabled={generatingPuzzles || validatingVariants}
+              disabled={generatingPuzzles || coveragePuzzleGenerating || coverageGraphLoading || validatingVariants}
             >
               {t("common.generatePuzzles", { defaultValue: "Generate Puzzles" })}
             </Menu.Item>
@@ -5186,9 +5122,9 @@ export default function VariantsPage() {
             variant="subtle"
             color="yellow"
             onClick={() => void handleOpenGeneratePuzzles(row)}
-            disabled={generatingPuzzles || validatingVariants}
+            disabled={generatingPuzzles || coveragePuzzleGenerating || coverageGraphLoading || validatingVariants}
           >
-            <IconPuzzle size={16} />
+            {isBusyGeneratePuzzles ? <Loader size={14} /> : <IconPuzzle size={16} />}
           </ActionIcon>
         </Tooltip>
         <Tooltip label={t("common.view", { defaultValue: "View" })}>
@@ -5693,15 +5629,6 @@ export default function VariantsPage() {
           </Card>
         </Stack>
       </Box>
-
-      <PuzzleVariantsModal
-        opened={puzzleModalOpened}
-        onClose={() => setPuzzleModalOpened(false)}
-        puzzleDepth={puzzleDepth}
-        maxPuzzleDepth={maxPuzzleDepth}
-        setPuzzleDepth={setPuzzleDepth}
-        onGenerate={(depth) => void generatePuzzlesForVariantTree(depth)}
-      />
 
       <Modal
         opened={configureBuildModalOpened}

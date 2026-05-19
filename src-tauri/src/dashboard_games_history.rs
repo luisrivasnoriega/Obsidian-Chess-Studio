@@ -2636,7 +2636,9 @@ fn dashboard_get_games_history_rows_for_connection(
         let base_pgn = if include_base_pgn {
             if moves_for_pgn.trim().is_empty() {
                 None
-            } else if matches!(kind, GamesHistoryKind::Chessbase | GamesHistoryKind::Local) {
+            } else if has_any_pgn_tag(&moves_for_pgn) {
+                Some(moves_for_pgn.clone())
+            } else {
                 Some(build_minimal_pgn_from_db_game(
                     &white_name,
                     &black_name,
@@ -2649,8 +2651,6 @@ fn dashboard_get_games_history_rows_for_connection(
                     &row.result,
                     &moves_for_pgn,
                 ))
-            } else {
-                Some(moves_for_pgn.clone())
             }
         } else {
             None
@@ -3948,6 +3948,24 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let profile_conn = Connection::open_in_memory().unwrap();
         create_dashboard_profile_db(&profile_conn);
+        profile_conn
+            .execute(
+                "INSERT INTO Sites (ID, Name) VALUES (3, 'https://www.chess.com/game/live/303')",
+                [],
+            )
+            .unwrap();
+        profile_conn
+            .execute(
+                r#"
+                INSERT INTO Games (
+                    ID, EventID, SiteID, Date, UTCTime, Round, WhiteID, WhiteElo, BlackID, BlackElo,
+                    Result, TimeControl, PlyCount, FEN, Moves
+                )
+                VALUES (303, 1, 3, '2026.05.12', '11:00:00', 1, 1, 2000, 2, 1900, '0-1', '60+0', 4, NULL, ?1)
+                "#,
+                params!["1. e4 e5 2. Nf3 Nc6 0-1".as_bytes()],
+            )
+            .unwrap();
         let analysis_path = temp.path().join("analysis.db3");
         create_analysis_db(&analysis_path);
 
@@ -3958,7 +3976,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(response.total_count, 2);
+        assert_eq!(response.total_count, 3);
         let jose_row = response
             .rows
             .iter()
@@ -3981,6 +3999,16 @@ mod tests {
         assert_eq!(legacy_row.accuracy, None);
         assert!(legacy_row.pgn.as_deref().unwrap().contains("Ba1r"));
         assert!(!legacy_row.pgn.as_deref().unwrap().contains("[%eval -0.20]"));
+
+        let movetext_only_row = response
+            .rows
+            .iter()
+            .find(|row| row.analysis_game_id == "303")
+            .unwrap();
+        let movetext_only_pgn = movetext_only_row.pgn.as_deref().unwrap();
+        assert!(movetext_only_pgn.contains("[White \"currentuser\"]"));
+        assert!(movetext_only_pgn.contains("[Black \"JoseCortes11\"]"));
+        assert!(movetext_only_pgn.contains("1. e4 e5 2. Nf3 Nc6 0-1"));
     }
 
     #[test]

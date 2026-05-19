@@ -2157,7 +2157,7 @@ export type HumanStrategicAxisNarrative = { axis: string; score: number; explana
 /**
  * Ranked candidate move with engine and strategic metadata.
  */
-export type HumanStrategicCandidate = { uci: string; san: string; pvUciLine: string[]; engineRank: bigint; engineCp: number; engineDropCp: number; strategicScore: number; macroStrategicScore: number; finalScore: number; passesGuardrail: boolean; isLastResort: boolean; motifs: StrategicMotif[]; components: HumanStrategicComponents; macroComponents: HumanStrategicMacroComponents }
+export type HumanStrategicCandidate = { uci: string; san: string; pvUciLine: string[]; engineRank: bigint; engineCp: number; engineDropCp: number; strategicScore: number; macroStrategicScore: number; finalScore: number; passesGuardrail: boolean; isLastResort: boolean; riskFlags: StrategicRiskFlag[]; motifs: StrategicMotif[]; components: HumanStrategicComponents; macroComponents: HumanStrategicMacroComponents }
 /**
  * Component scores used to build the final strategic score.
  */
@@ -2185,7 +2185,11 @@ minStrategicScore: number;
 /**
  * Higher threshold required to allow "last resort" concessions.
  */
-highConvictionThreshold: number }
+highConvictionThreshold: number; 
+/**
+ * Strategic style profile used to blend human heuristics with engine quality.
+ */
+profile?: StrategicProfile | null }
 /**
  * Global summary of the human strategic report.
  */
@@ -2465,7 +2469,9 @@ export type StoredGameStats = { accuracy: number; acpl: number; estimatedElo: bi
 /**
  * Recognized practical motifs for a candidate move.
  */
-export type StrategicMotif = "damagedPawnStructure" | "weakPawnPressure" | "spaceGain" | "openFilePressure" | "centralKingPressure" | "pieceRestriction" | "wingClamp"
+export type StrategicMotif = "damagedPawnStructure" | "weakPawnPressure" | "spaceGain" | "openFilePressure" | "centralKingPressure" | "pieceRestriction" | "wingClamp" | "outpostControl" | "colorComplexPressure" | "prophylaxis" | "favorableTrade" | "passedPawnConversion" | "initiativeSacrifice" | "counterplay" | "kingNet" | "pieceCoordination" | "tensionManagement"
+export type StrategicProfile = "solid" | "positional" | "dynamic" | "attacking" | "conversion"
+export type StrategicRiskFlag = "materialInvestment" | "undefendedLandingSquare" | "lowDepthCandidate" | "forcedTacticalLine" | "mateRisk" | "unstableScore" | "wdlDrop"
 /**
  * Theme group containing a category name and its themes
  */
