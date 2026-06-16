@@ -95,7 +95,7 @@ import {
   uploadProfilePackageToCloud,
 } from "@/utils/profileCloudSync";
 import { getProfileDbPath, profileDbFilename, setProfileLichessToken } from "@/utils/profileDb";
-import { syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
+import { importFideBroadcastGamesToProfileDb, syncSessionGamesToProfileDb } from "@/utils/profileGameSync";
 import { areLastActivityMapsEqual, loadProfilesLastActivityMap } from "@/utils/profileLastActivity";
 import { normalizeProfileName } from "@/utils/profiles";
 import {
@@ -342,6 +342,7 @@ export default function ProfilesPage() {
 
   const [modalOpened, modal] = useDisclosure(false);
   const [accountModalOpened, accountModal] = useDisclosure(false);
+  const [fideImportModalOpened, fideImportModal] = useDisclosure(false);
   const [verificationModalOpened, verificationModal] = useDisclosure(false);
   const [cloudSettingsOpened, cloudSettings] = useDisclosure(false);
   const [addAccountDefaultProfileId, setAddAccountDefaultProfileId] = useState<string | null>(null);
@@ -350,8 +351,10 @@ export default function ProfilesPage() {
     platform: Platform;
   } | null>(null);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [fideImportProfileId, setFideImportProfileId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftFideId, setDraftFideId] = useState("");
+  const [draftFideImportUrl, setDraftFideImportUrl] = useState("");
   const [draftLichessToken, setDraftLichessToken] = useState("");
   const [profilesPage, setProfilesPage] = useState(Math.max(1, profilesPageUiState.profilesPage));
   const profilesPerPage = 5;
@@ -517,6 +520,10 @@ export default function ProfilesPage() {
     () => profiles.find((p) => p.id === activeProfileId) ?? null,
     [profiles, activeProfileId],
   );
+  const fideImportProfile = useMemo(
+    () => profiles.find((p) => p.id === fideImportProfileId) ?? null,
+    [profiles, fideImportProfileId],
+  );
   const activeProfileCloudSyncTarget = useMemo(
     () => getProfileCloudSyncTarget(activeProfile, sessions),
     [activeProfile, sessions],
@@ -615,6 +622,16 @@ export default function ProfilesPage() {
       modal.open();
     },
     [modal],
+  );
+
+  const openFideImportModal = useCallback(
+    (profile: Profile) => {
+      if (isAccountSyncRunning) return;
+      setFideImportProfileId(profile.id);
+      setDraftFideImportUrl(profile.fideId ? `https://lichess.org/fide/${profile.fideId}` : "");
+      fideImportModal.open();
+    },
+    [fideImportModal, isAccountSyncRunning],
   );
 
   const persistProfileToken = useCallback(async (profileId: string, tokenValue: string | undefined) => {
@@ -1217,6 +1234,129 @@ export default function ProfilesPage() {
     },
     [buildSyncId, isAccountSyncRunning, sessionsByProfileId, startBackgroundSync, t, waitForSyncLifecycle],
   );
+
+  const importProfileFideBroadcasts = useCallback(
+    async (profile: Profile, fideUrl?: string) => {
+      const source = fideUrl?.trim() || profile.fideId?.trim() || "";
+      const fideId = source.match(/\/fide\/(\d+)/i)?.[1] ?? cleanFideId(source);
+      if (!source || !fideId) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.fideImport.missingLink", {
+            defaultValue: "Paste a Lichess FIDE profile link or FIDE ID before importing.",
+          }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      if (isAccountSyncRunning) {
+        notifications.show({
+          title: t("common.warning", { defaultValue: "Warning" }),
+          message: t("profiles.sync.inProgress", { defaultValue: "A profile update is already running." }),
+          color: "yellow",
+          autoClose: 3000,
+        });
+        return;
+      }
+
+      const id = `sync:${profile.id}:fide:${fideId}`;
+      syncingAccountIdsRef.current.add(id);
+      setSyncingAccountIds((prev) => new Set(prev).add(id));
+
+      notifications.show({
+        id,
+        title: t("profiles.fideImport.processing", { defaultValue: "Importing Lichess FIDE broadcasts..." }),
+        message: profile.name,
+        loading: true,
+        autoClose: false,
+      });
+      syncNotificationIdsRef.current.add(id);
+
+      try {
+        const result = await importFideBroadcastGamesToProfileDb({
+          profile,
+          fideUrl: source,
+          onBatchUpdate: (update) => {
+            const message =
+              update.totalBatches > 0
+                ? `${profile.name} - ${t("accounts.sync.batchProgress", {
+                    defaultValue: "Batch {{current}} of {{total}}",
+                    current: update.currentBatch,
+                    total: update.totalBatches,
+                  })}: ${update.batchLabel}`
+                : update.batchLabel || profile.name;
+            notifications.update({
+              id,
+              message,
+              loading: true,
+              autoClose: false,
+            });
+          },
+        });
+
+        if (result.importedGames > 0) {
+          await loadDatabases();
+          invalidateProfilePlayerStats(profile.id);
+          setLastActivityMap((prev) => {
+            const next = new Map(prev);
+            next.set(profile.id, Date.now());
+            return next;
+          });
+        }
+
+        notifications.update({
+          id,
+          title: t("common.success", { defaultValue: "Success" }),
+          message: t("profiles.fideImport.completed", {
+            defaultValue: "Imported {{games}} games from {{processed}} Lichess FIDE broadcast tournaments.",
+            games: result.importedGames,
+            processed: result.processedTournaments,
+          }),
+          color: "green",
+          loading: false,
+          autoClose: 3500,
+        });
+      } catch (error) {
+        notifications.update({
+          id,
+          title: t("common.error", { defaultValue: "Error" }),
+          message: truncateMiddle(formatSyncError(error), 600),
+          color: "red",
+          loading: false,
+          autoClose: 5000,
+        });
+      } finally {
+        syncNotificationIdsRef.current.delete(id);
+        syncingAccountIdsRef.current.delete(id);
+        setSyncingAccountIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [invalidateProfilePlayerStats, isAccountSyncRunning, loadDatabases, t],
+  );
+
+  const submitFideImport = useCallback(() => {
+    if (!fideImportProfile) return;
+    const source = draftFideImportUrl.trim();
+    if (!source) {
+      notifications.show({
+        title: t("common.warning", { defaultValue: "Warning" }),
+        message: t("profiles.fideImport.missingLink", {
+          defaultValue: "Paste a Lichess FIDE profile link or FIDE ID before importing.",
+        }),
+        color: "yellow",
+        autoClose: 3000,
+      });
+      return;
+    }
+    fideImportModal.close();
+    void importProfileFideBroadcasts(fideImportProfile, source);
+  }, [draftFideImportUrl, fideImportModal, fideImportProfile, importProfileFideBroadcasts, t]);
 
   useEffect(() => {
     try {
@@ -2530,6 +2670,18 @@ export default function ProfilesPage() {
                               </ActionIcon>
                               <ActionIcon
                                 variant="subtle"
+                                onClick={() => {
+                                  openFideImportModal(profile);
+                                }}
+                                disabled={isAccountSyncRunning}
+                                title={t("profiles.fideImport.action", {
+                                  defaultValue: "Import Lichess FIDE broadcasts",
+                                })}
+                              >
+                                <IconFileImport size={16} />
+                              </ActionIcon>
+                              <ActionIcon
+                                variant="subtle"
                                 onClick={() => openAddAccountModalForProfile(profile.id)}
                                 disabled={isAccountSyncRunning}
                                 title={t("accounts.addAccount", { defaultValue: "Add Account" })}
@@ -2750,6 +2902,41 @@ export default function ProfilesPage() {
               {t("common.cancel", { defaultValue: "Cancel" })}
             </Button>
             <Button onClick={saveProfile}>{t("common.save", { defaultValue: "Save" })}</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={fideImportModalOpened}
+        onClose={fideImportModal.close}
+        title={t("profiles.fideImport.title", { defaultValue: "Import Lichess FIDE broadcasts" })}
+        centered
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            {t("profiles.fideImport.profileTarget", {
+              defaultValue: "Destination profile database: {{profile}}",
+              profile: fideImportProfile?.name ?? "-",
+            })}
+          </Text>
+          <TextInput
+            label={t("profiles.fideImport.linkLabel", { defaultValue: "Lichess FIDE profile link or FIDE ID" })}
+            placeholder={t("profiles.fideImport.linkPlaceholder", {
+              defaultValue: "https://lichess.org/fide/29667933/Player_Name",
+            })}
+            value={draftFideImportUrl}
+            onChange={(event) => setDraftFideImportUrl(event.currentTarget.value)}
+            autoFocus
+          />
+
+          <Group justify="flex-end">
+            <Button variant="default" onClick={fideImportModal.close}>
+              {t("common.cancel", { defaultValue: "Cancel" })}
+            </Button>
+            <Button leftSection={<IconFileImport size={16} />} onClick={submitFideImport}>
+              {t("profiles.fideImport.start", { defaultValue: "Import" })}
+            </Button>
           </Group>
         </Stack>
       </Modal>

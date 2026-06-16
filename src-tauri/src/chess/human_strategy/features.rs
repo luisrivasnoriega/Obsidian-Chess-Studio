@@ -127,20 +127,31 @@ impl CandidateFeatures {
     ) -> Self {
         let before_features = PositionFeatures::new(before);
         let after_features = PositionFeatures::new(after);
+        let landing_attacked_by_opponent = is_square_attacked_by_fast(after, opponent, mv.to());
+        let landing_defended_by_mover = is_square_attacked_by_fast(after, mover, mv.to());
+        let material_drop = (before_features.material_balance_cp(mover, opponent)
+            - after_features.material_balance_cp(mover, opponent))
+        .max(0);
         let moved_value = role_value_cp(mv.role());
-        let captured_value = before
-            .piece_at(mv.to())
+        let captured_value = capture_square_for_move(before, mv, mover)
+            .and_then(|sq| before.piece_at(sq))
+            .filter(|piece| piece.color == opponent)
             .map(|piece| role_value_cp(piece.role))
             .unwrap_or(0);
+        let loose_landing_exposure = if landing_attacked_by_opponent && !landing_defended_by_mover {
+            (moved_value - captured_value).max(0)
+        } else {
+            0
+        };
 
         Self {
             before: before_features,
             after: after_features,
             mover,
             opponent,
-            material_investment_cp: (moved_value - captured_value).max(0),
-            landing_attacked_by_opponent: is_square_attacked_by_fast(after, opponent, mv.to()),
-            landing_defended_by_mover: is_square_attacked_by_fast(after, mover, mv.to()),
+            material_investment_cp: material_drop.max(loose_landing_exposure),
+            landing_attacked_by_opponent,
+            landing_defended_by_mover,
         }
     }
 
@@ -292,6 +303,32 @@ fn is_square_attacked_by_fast(board: &Board, side: Color, target: Square) -> boo
         }
     }
     false
+}
+
+fn capture_square_for_move(board: &Board, mv: &Move, mover: Color) -> Option<Square> {
+    if board.piece_at(mv.to()).is_some() {
+        return Some(mv.to());
+    }
+
+    if mv.role() != Role::Pawn {
+        return None;
+    }
+
+    let from = mv.from()?;
+    let (from_file, _) = square_to_coords_fast(from);
+    let (to_file, to_rank) = square_to_coords_fast(mv.to());
+    if from_file == to_file {
+        return None;
+    }
+
+    let captured_rank = match mover {
+        Color::White => to_rank.checked_sub(1)?,
+        Color::Black => to_rank + 1,
+    };
+    if captured_rank > 7 {
+        return None;
+    }
+    coords_to_square_fast(to_file, captured_rank)
 }
 
 fn role_value_cp(role: Role) -> i32 {

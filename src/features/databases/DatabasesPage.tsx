@@ -1080,6 +1080,14 @@ function DatabaseActions({
         >
           {t("features.databases.settings.exportPGN")}
         </Button>
+        <Button
+          rightSection={<IconArrowRight size="1rem" />}
+          variant="outline"
+          loading={exportLoading}
+          onClick={handleExport}
+        >
+          {t("features.databases.settings.exportSinglePGN", { defaultValue: "Export to single PGN" })}
+        </Button>
       </Group>
       <Button onClick={handleDelete} color="red">
         {t("common.delete")}

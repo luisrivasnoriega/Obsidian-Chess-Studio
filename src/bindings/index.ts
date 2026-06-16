@@ -163,13 +163,22 @@ export type HumanStrategicLiveLine = {
   motifs: StrategicMotif[];
   strategicAxes: HumanStrategicAxisNarrative[];
   strategicPlan: string;
+  commentKey: string;
+  commentParams: Record<string, string>;
+  detailKey?: string | null;
+  detailParams: Record<string, string>;
   commentShort: string;
   commentLong: string;
   suggestedVariationUci: string[];
   suggestedVariationSan: string[];
 };
 
+export type HumanStrategicLiveDisplay = "hidden" | "lines";
+export type HumanStrategicLiveSuppressionReason = "routineOpening" | "noStrategicSignal";
+
 export type HumanStrategicLiveResponse = {
+  display: HumanStrategicLiveDisplay;
+  suppressionReason?: HumanStrategicLiveSuppressionReason | null;
   selectedUci: string;
   selectedSan: string;
   bestEngineUci: string;

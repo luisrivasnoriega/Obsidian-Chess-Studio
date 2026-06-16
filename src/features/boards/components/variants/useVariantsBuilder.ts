@@ -35,6 +35,11 @@ import {
   type MoveSpecDto,
   type VariantsTreeNodeDto,
 } from "@/utils/variantsBuilder";
+import {
+  normalizeTreeBuilderWarnings,
+  shouldShowTreeBuilderDone,
+  translateTreeBuilderWarning,
+} from "./treeBuilderNotifications";
 import type { VariantsAnalysisMainTab, VariantsDbType } from "./types";
 
 type UseVariantsBuilderArgs = {
@@ -508,21 +513,9 @@ export function useVariantsBuilder({ store, currentTab, boardOrientation, is960 
         store.getState().goToMove([...startPath]);
       }
 
-      if (!treeBuilderCancelRef.current && !expandedAny) {
-        notifications.show({
-          title: t("common.error"),
-          message: t("features.board.variants.treeBuilder.noProgress"),
-          color: "red",
-        });
-      }
+      const backendWarnings = normalizeTreeBuilderWarnings(res?.warnings);
 
       if (!treeBuilderCancelRef.current) {
-        const backendWarnings = Array.isArray(res?.warnings)
-          ? res.warnings.filter(
-              (warning): warning is string => typeof warning === "string" && warning.trim().length > 0,
-            )
-          : [];
-
         if (currentTab?.source?.type === "file" && currentTab.source.path) {
           try {
             const { getOpening } = await import("@/utils/chess");
@@ -601,9 +594,24 @@ export function useVariantsBuilder({ store, currentTab, boardOrientation, is960 
         if (backendWarnings.length > 0) {
           notifications.show({
             title: t("common.warning"),
-            message: backendWarnings[0],
+            message: translateTreeBuilderWarning(backendWarnings[0], t),
             color: "yellow",
           });
+        }
+
+        if (!expandedAny) {
+          if (backendWarnings.length === 0) {
+            notifications.show({
+              title: t("common.warning"),
+              message: t("features.board.variants.treeBuilder.noNewVariants"),
+              color: "yellow",
+            });
+          }
+          return;
+        }
+
+        if (!shouldShowTreeBuilderDone(expandedAny)) {
+          return;
         }
 
         notifications.show({

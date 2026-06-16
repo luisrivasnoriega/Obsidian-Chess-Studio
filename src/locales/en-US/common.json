@@ -398,6 +398,10 @@
         "openings": "Openings"
       }
     },
+    "openings": {
+      "playingAsWhite": "Playing as White",
+      "playingAsBlack": "Playing as Black"
+    },
     "dateRange": {
       "allTime": "All time"
     },
@@ -471,6 +475,18 @@
       "inProgress": "A profile update is already running.",
       "noAccounts": "This profile has no linked accounts to update.",
       "completed": "Profile {{profile}} updated."
+    },
+    "fideImport": {
+      "action": "Import Lichess FIDE broadcasts",
+      "title": "Import Lichess FIDE broadcasts",
+      "linkLabel": "Lichess FIDE profile link or FIDE ID",
+      "linkPlaceholder": "https://lichess.org/fide/29667933/Player_Name",
+      "profileTarget": "Destination profile database: {{profile}}",
+      "start": "Import",
+      "processing": "Importing Lichess FIDE broadcasts...",
+      "missingFideId": "Add a FIDE ID to this profile before importing Lichess broadcasts.",
+      "missingLink": "Paste a Lichess FIDE profile link or FIDE ID before importing.",
+      "completed": "Imported {{games}} games from {{processed}} Lichess FIDE broadcast tournaments."
     },
     "cloud": {
       "settings": "Cloud settings",
@@ -2131,9 +2147,37 @@
         "consultPlanSectionMoves": "Candidate Moves",
         "consultPlanSectionRisks": "Critical Risks",
         "consultPlanSectionAdvice": "Practical Advice",
-        "gmGuardrailTitle": "GM guard-rail",
-        "gmGuardrailRecommended": "Recommended {{selected}}. Engine best: {{best}}. Strategic trade-off: {{drop}} cp.",
-        "gmGuardrailLineScore": "Strategic {{score}}"
+        "gmGuardrailTitle": "Strategic candidate check",
+        "gmGuardrailRecommended": "Recommended {{selected}}. Engine best: {{best}}. Engine trade-off: {{drop}} cp.",
+        "gmGuardrailLineScore": "Strategic {{score}}",
+        "gmGuardrail": {
+          "badges": {
+            "selected": "Selected {{score}}",
+            "engineBest": "Engine best {{score}}",
+            "strategic": "Strategic {{score}}",
+            "candidate": "Candidate {{score}}",
+            "lowSignal": "Low signal {{score}}"
+          },
+          "comments": {
+            "mateRisk": "{{move}} allows mating danger in the candidate line.",
+            "forcedTacticalLine": "{{move}} depends on a forcing tactical sequence.",
+            "undefendedLandingSquare": "{{move}} leaves the moved piece on an undefended square.",
+            "materialInvestment": "{{move}} invests material for activity or initiative.",
+            "unstable": "{{move}} carries practical risk compared with the engine's safer line.",
+            "kingPressure": "{{move}} increases pressure around the king.",
+            "openFile": "{{move}} improves activity on open or semi-open files.",
+            "pawnTargets": "{{move}} creates or fixes long-term pawn targets.",
+            "pieceRestriction": "{{move}} restricts defensive pieces or improves outpost control.",
+            "counterplay": "{{move}} creates active counterplay instead of passive defense.",
+            "conversion": "{{move}} steers the position toward a favorable conversion path.",
+            "spaceGain": "{{move}} claims space without a major tactical concession.",
+            "coherentPlan": "{{move}} fits a coherent practical plan.",
+            "quietCandidate": "{{move}} stays within the engine guardrails, but has limited strategic signal."
+          },
+          "details": {
+            "engineSafety": "Engine trade-off: {{drop}} cp. Strategic score: {{score}}."
+          }
+        }
       },
       "database": {
         "local": "Local",
@@ -2623,6 +2667,7 @@
         "actions": "Actions",
         "addGames": "Add Games",
         "exportPGN": "Export to PGN",
+        "exportSinglePGN": "Export to single PGN",
         "selected": "selected"
       },
       "delete": {
@@ -2686,6 +2731,7 @@
     },
     "gameTable": {
       "date": "Date",
+      "averageElo": "Average ELO",
       "plies": "Plies",
       "event": "Event",
       "site": "Site",

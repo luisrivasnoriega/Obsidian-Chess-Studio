@@ -55,6 +55,15 @@ export interface OpeningStats {
   lost: number;
 }
 
+export interface OpeningFamilyStats {
+  family: string;
+  games: number;
+  won: number;
+  draw: number;
+  lost: number;
+  openings: OpeningStats[];
+}
+
 export interface RatingDataPoint {
   date: number;
   chesscom: number | null;
@@ -131,6 +140,13 @@ export const playerStatsCommands = {
       color,
     });
   },
+  calculatePlayerOpeningFamiliesStats(site_stats_data: SiteStatsData[], filters: PlayerStatsFilters, color: boolean) {
+    return invoke_result<OpeningFamilyStats[]>("calculate_player_opening_families_stats", {
+      siteStatsData: site_stats_data,
+      filters,
+      color,
+    });
+  },
   calculatePlayerRatingTimeline(site_stats_data: SiteStatsData[], filters: PlayerStatsFilters) {
     return invoke_result<RatingTimeline>("calculate_player_rating_timeline", {
       siteStatsData: site_stats_data,
@@ -154,6 +170,16 @@ export const playerStatsCommands = {
   },
   getProfileGameStats(profile_id: string, filters: PlayerStatsFilters) {
     return invoke_result<GameStats>("get_profile_game_stats", { profileId: profile_id, filters });
+  },
+  getProfileOpeningsStats(profile_id: string, filters: PlayerStatsFilters, color: boolean) {
+    return invoke_result<OpeningStats[]>("get_profile_openings_stats", { profileId: profile_id, filters, color });
+  },
+  getProfileOpeningFamiliesStats(profile_id: string, filters: PlayerStatsFilters, color: boolean) {
+    return invoke_result<OpeningFamilyStats[]>("get_profile_opening_families_stats", {
+      profileId: profile_id,
+      filters,
+      color,
+    });
   },
   getProfileRatingTimeline(profile_id: string, filters: PlayerStatsFilters) {
     return invoke_result<RatingTimeline>("get_profile_rating_timeline", { profileId: profile_id, filters });

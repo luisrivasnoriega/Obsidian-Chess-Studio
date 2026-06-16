@@ -145,17 +145,49 @@ vi.mock("@/bindings/playerStats", () => ({
       status: "ok",
       data: [{ value: "1200", label: "1200-1399" }],
     })),
-    calculatePlayerOpeningsStats: vi.fn(async (_ssd: any, _filters: any, isWhite: boolean) => ({
+    calculatePlayerOpeningFamiliesStats: vi.fn(async (_ssd: any, _filters: any, isWhite: boolean) => ({
       status: "ok",
       data: isWhite
         ? [
-            { name: "Sicilian Defense", games: 2, won: 1, draw: 1, lost: 0 }, // score 0.75
-            { name: "Italian Game", games: 1, won: 1, draw: 0, lost: 0 }, // score 1.00
+            {
+              family: "Sicilian",
+              games: 2,
+              won: 1,
+              draw: 1,
+              lost: 0,
+              openings: [{ name: "Sicilian Defense", games: 2, won: 1, draw: 1, lost: 0 }],
+            }, // score 0.75
+            {
+              family: "Italian",
+              games: 1,
+              won: 1,
+              draw: 0,
+              lost: 0,
+              openings: [{ name: "Italian Game", games: 1, won: 1, draw: 0, lost: 0 }],
+            }, // score 1.00
           ]
         : [
-            { name: "French Defense", games: 1, won: 0, draw: 0, lost: 1 },
-            { name: "Caro-Kann Defense", games: 1, won: 1, draw: 0, lost: 0 },
+            {
+              family: "French",
+              games: 1,
+              won: 0,
+              draw: 0,
+              lost: 1,
+              openings: [{ name: "French Defense", games: 1, won: 0, draw: 0, lost: 1 }],
+            },
+            {
+              family: "Caro-Kann",
+              games: 1,
+              won: 1,
+              draw: 0,
+              lost: 0,
+              openings: [{ name: "Caro-Kann Defense", games: 1, won: 1, draw: 0, lost: 0 }],
+            },
           ],
+    })),
+    getProfileOpeningFamiliesStats: vi.fn(async () => ({
+      status: "ok",
+      data: [],
     })),
   },
 }));
@@ -231,21 +263,54 @@ beforeEach(async () => {
       }) as any,
   );
 
-  vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mockImplementation(
+  vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mockImplementation(
     async (_ssd: any, _filters: any, isWhite: boolean) =>
       ({
         status: "ok",
         data: isWhite
           ? [
-              { name: "Sicilian Defense", games: 2, won: 1, draw: 1, lost: 0 },
-              { name: "Italian Game", games: 1, won: 1, draw: 0, lost: 0 },
+              {
+                family: "Sicilian",
+                games: 2,
+                won: 1,
+                draw: 1,
+                lost: 0,
+                openings: [{ name: "Sicilian Defense", games: 2, won: 1, draw: 1, lost: 0 }],
+              },
+              {
+                family: "Italian",
+                games: 1,
+                won: 1,
+                draw: 0,
+                lost: 0,
+                openings: [{ name: "Italian Game", games: 1, won: 1, draw: 0, lost: 0 }],
+              },
             ]
           : [
-              { name: "French Defense", games: 1, won: 0, draw: 0, lost: 1 },
-              { name: "Caro-Kann Defense", games: 1, won: 1, draw: 0, lost: 0 },
+              {
+                family: "French",
+                games: 1,
+                won: 0,
+                draw: 0,
+                lost: 1,
+                openings: [{ name: "French Defense", games: 1, won: 0, draw: 0, lost: 1 }],
+              },
+              {
+                family: "Caro-Kann",
+                games: 1,
+                won: 1,
+                draw: 0,
+                lost: 0,
+                openings: [{ name: "Caro-Kann Defense", games: 1, won: 1, draw: 0, lost: 0 }],
+              },
             ],
       }) as any,
   );
+
+  vi.mocked(playerStatsCommands.getProfileOpeningFamiliesStats).mockResolvedValue({
+    status: "ok",
+    data: [],
+  } as any);
 });
 
 // -----------------------------
@@ -257,8 +322,8 @@ describe("OpeningsPanel", () => {
 
     expect(screen.getByTestId("sidebar")).toBeInTheDocument();
 
-    expect(await findByTextContent("Sicilian Defense")).toBeInTheDocument();
-    expect(await findByTextContent("French Defense")).toBeInTheDocument();
+    expect(await findByTextContent("Sicilian")).toBeInTheDocument();
+    expect(await findByTextContent("French")).toBeInTheDocument();
   });
 
   test("renders sort selector", async () => {
@@ -276,7 +341,7 @@ describe("OpeningsPanel", () => {
   test("displays no data message when backend returns no openings", async () => {
     const { playerStatsCommands } = await import("@/bindings/playerStats");
 
-    vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mockImplementation(
+    vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mockImplementation(
       async () =>
         ({
           status: "ok",
@@ -296,15 +361,15 @@ describe("OpeningsPanel", () => {
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
     // Wait for initial render
-    await findByTextContent("Sicilian Defense");
+    await findByTextContent("Sicilian");
 
     await user.click(screen.getByText("Change Platform"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).toHaveBeenCalled();
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).toHaveBeenCalled();
     });
 
-    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);
+    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.at(-1);
     const filters = lastCall?.[1];
     expect(filters?.platform).toBe("Lichess");
   });
@@ -315,15 +380,15 @@ describe("OpeningsPanel", () => {
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    await findByTextContent("Sicilian Defense");
+    await findByTextContent("Sicilian");
 
     await user.click(screen.getByText("Change Time Control"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).toHaveBeenCalled();
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).toHaveBeenCalled();
     });
 
-    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);
+    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.at(-1);
     const filters = lastCall?.[1];
     // The component normalizes "blitz" to "Blitz" via convertTimeControlFilterToBackend
     expect(filters?.time_control).toBe("Blitz");
@@ -335,15 +400,15 @@ describe("OpeningsPanel", () => {
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    await findByTextContent("Sicilian Defense");
+    await findByTextContent("Sicilian");
 
     await user.click(screen.getByText("Change Opponent Elo"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).toHaveBeenCalled();
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).toHaveBeenCalled();
     });
 
-    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);
+    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.at(-1);
     const filters = lastCall?.[1];
     expect(filters?.opponent_elo_bucket).toBe("1200");
   });
@@ -354,15 +419,15 @@ describe("OpeningsPanel", () => {
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    await findByTextContent("Sicilian Defense");
+    await findByTextContent("Sicilian");
 
     await user.click(screen.getByText("Change Date Range"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).toHaveBeenCalled();
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).toHaveBeenCalled();
     });
 
-    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);
+    const lastCall = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.at(-1);
     const filters = lastCall?.[1];
     expect(filters?.date_range).toBeNull();
   });
@@ -371,8 +436,8 @@ describe("OpeningsPanel", () => {
     const user = userEvent.setup();
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    const sic = await findByTextContent("Sicilian Defense");
-    const ita = await findByTextContent("Italian Game");
+    const sic = await findByTextContent("Sicilian");
+    const ita = await findByTextContent("Italian");
 
     // Default games_desc => Sicilian (2 games) should appear before Italian (1 game)
     expect(sic.compareDocumentPosition(ita) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -383,8 +448,8 @@ describe("OpeningsPanel", () => {
     await user.click(sortSelects[0]);
     await user.click(await screen.findByText("Score (high to low)"));
 
-    const sic2 = await findByTextContent("Sicilian Defense");
-    const ita2 = await findByTextContent("Italian Game");
+    const sic2 = await findByTextContent("Sicilian");
+    const ita2 = await findByTextContent("Italian");
 
     expect(ita2.compareDocumentPosition(sic2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -401,11 +466,13 @@ describe("OpeningsPanel", () => {
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    // Wait for the row to render using real timers (RTL findBy* relies on timers).
-    const opening = await findByTextContent("Sicilian Defense");
-
     // Use userEvent with real timers to allow async operations to complete
     const user = userEvent.setup();
+
+    // Wait for the row to render using real timers (RTL findBy* relies on timers).
+    const family = await findByTextContent("Sicilian");
+    await user.click(family);
+    const opening = await findByTextContent("Sicilian Defense");
     await user.click(opening);
 
     // Wait for all async operations to complete
@@ -440,6 +507,8 @@ describe("OpeningsPanel", () => {
 
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
+    const family = await findByTextContent("Sicilian");
+    await user.click(family);
     const opening = await findByTextContent("Sicilian Defense");
     await user.click(opening);
 
@@ -457,7 +526,7 @@ describe("OpeningsPanel", () => {
   test("displays opening percentage correctly (Sicilian 2/3 => 66.67%)", async () => {
     render(<OpeningsPanel playerName="Test Player" info={mockInfo} />);
 
-    await findByTextContent("Sicilian Defense");
+    await findByTextContent("Sicilian");
     // Mantine may render the "%" as a separate text node, so match by normalized textContent.
     expect(await findByTextContentNormalized("66.67%")).toBeInTheDocument();
   });
@@ -472,7 +541,7 @@ describe("OpeningsPanel", () => {
 
     // Queries are disabled when games=0
     expect(vi.mocked(playerStatsCommands.calculatePlayerEloBuckets)).not.toHaveBeenCalled();
-    expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).not.toHaveBeenCalled();
+    expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).not.toHaveBeenCalled();
   });
 
   test("passes isLoading prop to sidebar (smoke)", async () => {
@@ -490,19 +559,19 @@ describe("OpeningsPanel", () => {
 
     // Wait for the initial queries to run (we don't need the UI rows for this test).
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats)).toHaveBeenCalled();
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats)).toHaveBeenCalled();
     });
-    const beforeCalls = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.length;
+    const beforeCalls = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.length;
 
     await user.click(screen.getByText("Change Date Range"));
 
     await waitFor(() => {
-      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.length).toBeGreaterThan(
+      expect(vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.length).toBeGreaterThan(
         beforeCalls,
       );
     });
 
-    const last = vi.mocked(playerStatsCommands.calculatePlayerOpeningsStats).mock.calls.at(-1);
+    const last = vi.mocked(playerStatsCommands.calculatePlayerOpeningFamiliesStats).mock.calls.at(-1);
     const filters = last?.[1];
     expect(filters?.date_range).toBeNull();
   });

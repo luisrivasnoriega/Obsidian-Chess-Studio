@@ -59,11 +59,12 @@ use tauri_specta::Event as _;
 pub use self::models::{NewEvent, NewGame, NewPlayer, NewSite, NormalizedGame, Outcome, Puzzle};
 #[allow(unused_imports)]
 pub use self::player_stats::{
-    aggregate_openings, calculate_earliest_date, calculate_elo_buckets, calculate_elo_domain,
-    calculate_rating_timeline, compute_player_sidebar_model, extract_game_stats,
-    fill_missing_months, filter_games, get_score_rate, merge_site_stats_data, merge_years,
-    sort_openings, DateRange, EloBucket, EloDomain, GameStats, MonthData, OpeningStats,
-    PlatformFilter, PlatformInfo, PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel,
+    aggregate_opening_families_with_details, aggregate_openings, calculate_earliest_date,
+    calculate_elo_buckets, calculate_elo_domain, calculate_rating_timeline,
+    compute_player_sidebar_model, extract_game_stats, fill_missing_months, filter_games,
+    get_score_rate, merge_site_stats_data, merge_years, sort_openings, DateRange, EloBucket,
+    EloDomain, GameStats, MonthData, OpeningFamilyStats, OpeningStats, PlatformFilter,
+    PlatformInfo, PlayerSidebarEloBlock, PlayerSidebarEloRow, PlayerSidebarModel,
     PlayerStatsFilters, PlayerStyleLabel, RatingDataPoint, RatingTimeline, TimeControlFilter,
 };
 pub use self::position_cache::{
@@ -4168,6 +4169,7 @@ fn collect_player_game_info(
     db: &mut SqliteConnection,
     id: i32,
     include_opening: bool,
+    require_player_elo: bool,
     app: Option<&tauri::AppHandle>,
 ) -> Result<PlayerGameInfo> {
     type GameInfo = (
@@ -4226,9 +4228,10 @@ fn collect_player_game_info(
                 let is_black = *black_id == id;
                 let result = GameOutcome::from_str(outcome.as_deref()?, is_white);
 
+                let player_elo = if is_white { *white_elo } else { *black_elo };
+
                 if !is_white && !is_black
-                    || is_white && white_elo.is_none()
-                    || is_black && black_elo.is_none()
+                    || (require_player_elo && player_elo.is_none())
                     || result.is_none()
                     || date.is_none()
                     || site.is_none()
@@ -4294,11 +4297,7 @@ fn collect_player_game_info(
                         date: date.clone().unwrap(),
                         time: time.clone(),
                         is_player_white: is_white,
-                        player_elo: if is_white {
-                            white_elo.unwrap()
-                        } else {
-                            black_elo.unwrap()
-                        },
+                        player_elo: player_elo.unwrap_or_default(),
                         opponent_elo: if is_white { *black_elo } else { *white_elo },
                         result: result.unwrap(),
                         time_control: time_control.clone().unwrap_or_default(),
@@ -4343,7 +4342,7 @@ pub async fn get_players_game_info(
     app: tauri::AppHandle,
 ) -> Result<PlayerGameInfo> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-    collect_player_game_info(db, id, true, Some(&app))
+    collect_player_game_info(db, id, true, true, Some(&app))
 }
 
 #[tauri::command]
@@ -4413,13 +4412,42 @@ pub async fn get_profile_accounts_game_info(
 
     let mut all_site_stats = Vec::new();
     for player_id in player_ids {
-        let info = collect_player_game_info(db, player_id, true, Some(&app))?;
+        let info = collect_player_game_info(db, player_id, true, true, Some(&app))?;
         all_site_stats.extend(info.site_stats_data);
     }
 
     Ok(PlayerGameInfo {
         site_stats_data: merge_site_stats_data(&all_site_stats),
     })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_game_info(
+    profile_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<PlayerGameInfo> {
+    if profile_id.trim().is_empty() {
+        return Ok(PlayerGameInfo::default());
+    }
+
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(PlayerGameInfo::default());
+    };
+
+    collect_player_game_info(db, profile_player_id, true, false, Some(&app))
 }
 
 #[tauri::command]
@@ -4453,7 +4481,7 @@ pub async fn get_profile_sidebar_stats(
 
     // Style classification depends on opening names; without them the backend
     // falls back to `playerStyle.noData`.
-    let game_info = collect_player_game_info(db, profile_player_id, true, None)?;
+    let game_info = collect_player_game_info(db, profile_player_id, true, false, None)?;
     let site_stats = game_info.site_stats_data;
 
     Ok(ProfileSidebarStats {
@@ -4556,10 +4584,78 @@ pub async fn get_profile_game_stats(
         return Ok(extract_game_stats(&[]));
     };
 
-    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    let game_info = collect_player_game_info(db, profile_player_id, false, false, None)?;
     let filtered = filter_games(&game_info.site_stats_data, &filters);
     let games: Vec<StatsData> = filtered.into_iter().map(|(game, _)| game).collect();
     Ok(extract_game_stats(&games))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_openings_stats(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    color: bool,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<OpeningStats>> {
+    if profile_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(Vec::new());
+    };
+
+    let game_info = collect_player_game_info(db, profile_player_id, true, false, None)?;
+    let filtered = filter_games(&game_info.site_stats_data, &filters);
+    let games: Vec<StatsData> = filtered.into_iter().map(|(game, _)| game).collect();
+    Ok(aggregate_openings(&games, color))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_profile_opening_families_stats(
+    profile_id: String,
+    filters: PlayerStatsFilters,
+    color: bool,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<OpeningFamilyStats>> {
+    if profile_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let profile_db = app.path().resolve(
+        format!("db/profile_{}.db3", profile_id.trim()),
+        BaseDirectory::AppData,
+    )?;
+    let db = &mut get_db_or_create(
+        &state,
+        profile_db.to_str().unwrap(),
+        ConnectionOptions::default(),
+    )?;
+    ensure_db_initialized(db)?;
+
+    let Some(profile_player_id) = load_or_infer_profile_player_id_for_weakness(db)? else {
+        return Ok(Vec::new());
+    };
+
+    let game_info = collect_player_game_info(db, profile_player_id, true, false, None)?;
+    let filtered = filter_games(&game_info.site_stats_data, &filters);
+    let games: Vec<StatsData> = filtered.into_iter().map(|(game, _)| game).collect();
+    Ok(aggregate_opening_families_with_details(&games, color))
 }
 
 #[tauri::command]
@@ -4589,7 +4685,7 @@ pub async fn get_profile_rating_timeline(
         return Ok(empty_rating_timeline());
     };
 
-    let game_info = collect_player_game_info(db, profile_player_id, false, None)?;
+    let game_info = collect_player_game_info(db, profile_player_id, false, true, None)?;
     let filtered = filter_games(&game_info.site_stats_data, &filters);
     Ok(merge_rating_timelines_from_filtered(filtered))
 }
@@ -5233,6 +5329,59 @@ fn export_pgn_games_to_zip<W: Write + Seek>(
     Ok(())
 }
 
+fn load_pgn_games_by_ids(db: &mut SqliteConnection, game_ids: &[i32]) -> Result<Vec<PgnGame>> {
+    let (white_players, black_players) = diesel::alias!(players as white, players as black);
+    games::table
+        .inner_join(white_players.on(games::white_id.eq(white_players.field(players::id))))
+        .inner_join(black_players.on(games::black_id.eq(black_players.field(players::id))))
+        .inner_join(events::table.on(games::event_id.eq(events::id)))
+        .inner_join(sites::table.on(games::site_id.eq(sites::id)))
+        .filter(games::id.eq_any(game_ids))
+        .load_iter::<(Game, Player, Player, Event, Site), DefaultLoadingMode>(db)?
+        .flatten()
+        .map(|(game, white, black, event, site)| {
+            Ok(PgnGame {
+                event: event.name,
+                site: site.name,
+                date: game.date,
+                round: game.round,
+                white: white.name,
+                black: black.name,
+                result: game.result,
+                time_control: game.time_control,
+                eco: game.eco,
+                white_elo: game.white_elo.map(|e| e.to_string()),
+                black_elo: game.black_elo.map(|e| e.to_string()),
+                ply_count: game.ply_count.map(|e| e.to_string()),
+                fen: game.fen.clone(),
+                moves: GameTree::from_bytes(
+                    &game.moves,
+                    game.fen
+                        .map(|fen| Fen::from_ascii(fen.as_bytes()).ok())
+                        .flatten()
+                        .map(|fen| Chess::from_setup(fen.into(), CastlingMode::Chess960).ok())
+                        .flatten(),
+                )?
+                .to_string(),
+            })
+        })
+        .collect::<Result<Vec<PgnGame>>>()
+}
+
+fn write_pgn_games_to_single_file(games: Vec<PgnGame>, dest_file: PathBuf) -> Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(dest_file)?;
+
+    let mut writer = BufWriter::new(file);
+    for game in games {
+        game.write(&mut writer)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn export_to_pgn(
@@ -5290,6 +5439,23 @@ pub async fn export_to_pgn(
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn export_selected_games_to_single_pgn(
+    file: PathBuf,
+    game_ids: Vec<i32>,
+    dest_file: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    if game_ids.is_empty() {
+        return Err(Error::PackageManager("No games selected".to_string()));
+    }
+
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let pgn_games = load_pgn_games_by_ids(db, &game_ids)?;
+    write_pgn_games_to_single_file(pgn_games, dest_file)
 }
 
 #[tauri::command]
@@ -5996,6 +6162,22 @@ pub async fn calculate_player_openings_stats(
     .unwrap_or_default()
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn calculate_player_opening_families_stats(
+    site_stats_data: Vec<SiteStatsData>,
+    filters: PlayerStatsFilters,
+    color: bool, // true for white, false for black
+) -> Vec<OpeningFamilyStats> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let filtered = filter_games(&site_stats_data, &filters);
+        let games: Vec<StatsData> = filtered.into_iter().map(|(game, _)| game).collect();
+        aggregate_opening_families_with_details(&games, color)
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Calculate rating timeline
 #[tauri::command]
 #[specta::specta]
@@ -6544,6 +6726,503 @@ pub async fn import_online_tournament(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FideBroadcastImportResult {
+    pub imported_games: i32,
+    pub discovered_tournaments: i32,
+    pub processed_tournaments: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FideBroadcastLink {
+    path: String,
+    round_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FideBroadcastTour {
+    id: String,
+    name: String,
+}
+
+fn parse_lichess_fide_id(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidInput(
+            "FIDE URL or ID is required".to_string(),
+        ));
+    }
+    if trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(trimmed.to_string());
+    }
+
+    let parsed = reqwest::Url::parse(trimmed)
+        .map_err(|e| Error::InvalidInput(format!("Invalid Lichess FIDE URL: {e}")))?;
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    if host != "lichess.org" && host != "www.lichess.org" {
+        return Err(Error::InvalidInput(
+            "Only lichess.org FIDE profile URLs are supported".to_string(),
+        ));
+    }
+
+    let segments = parsed
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+    if segments.len() < 2 || segments[0] != "fide" {
+        return Err(Error::InvalidInput(
+            "Expected a Lichess FIDE profile URL".to_string(),
+        ));
+    }
+
+    let fide_id = segments[1].trim();
+    if fide_id.is_empty() || !fide_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(Error::InvalidInput(
+            "Lichess FIDE profile URL is missing a numeric FIDE ID".to_string(),
+        ));
+    }
+
+    Ok(fide_id.to_string())
+}
+
+fn build_lichess_fide_profile_url(input: &str, fide_id: &str, page: usize) -> Result<String> {
+    let mut url = if input.trim().starts_with("http://") || input.trim().starts_with("https://") {
+        let mut parsed = reqwest::Url::parse(input.trim())
+            .map_err(|e| Error::InvalidInput(format!("Invalid Lichess FIDE URL: {e}")))?;
+        parsed.set_scheme("https").ok();
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        parsed
+    } else {
+        reqwest::Url::parse(&format!("https://lichess.org/fide/{fide_id}"))
+            .map_err(|e| Error::InvalidInput(format!("Invalid Lichess FIDE URL: {e}")))?
+    };
+
+    if page > 1 {
+        url.query_pairs_mut().append_pair("page", &page.to_string());
+    }
+
+    Ok(url.to_string())
+}
+
+fn extract_lichess_fide_player_name(html: &str) -> Option<String> {
+    let re = Regex::new(r#"(?is)<h1[^>]*>\s*([^<]+?)\s*</h1>"#).ok()?;
+    let raw = re.captures(html)?.get(1)?.as_str();
+    let name = raw
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn extract_fide_broadcast_links_from_html(html: &str) -> Vec<FideBroadcastLink> {
+    let re = Regex::new(r##"href="(/broadcast/[^"#?]+)""##).expect("valid regex");
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+
+    for cap in re.captures_iter(html) {
+        let Some(path_match) = cap.get(1) else {
+            continue;
+        };
+        let path = path_match.as_str().trim_end_matches('/').to_string();
+        let segments = path
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        if segments.len() < 4 || segments[0] != "broadcast" {
+            continue;
+        }
+
+        let round_id = segments[3].to_string();
+        if round_id.is_empty() || !round_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            continue;
+        }
+
+        let api_path = format!("/broadcast/{}/{}/{}", segments[1], segments[2], segments[3]);
+        if seen.insert(api_path.clone()) {
+            out.push(FideBroadcastLink {
+                path: api_path,
+                round_id,
+            });
+        }
+    }
+
+    out
+}
+
+async fn fetch_lichess_text(client: &reqwest::Client, url: &str, accept: &str) -> Result<String> {
+    let res = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, accept)
+        .send()
+        .await?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        return Err(Error::PackageManager(format!(
+            "Lichess request failed ({status}): {}",
+            truncate_for_error(&text, 600)
+        )));
+    }
+    Ok(res.text().await?)
+}
+
+async fn fetch_fide_broadcast_tour(
+    client: &reqwest::Client,
+    link: &FideBroadcastLink,
+) -> Result<FideBroadcastTour> {
+    let url = format!("https://lichess.org/api{}", link.path);
+    let raw = fetch_lichess_text(client, &url, "application/json, */*").await?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        Error::PackageManager(format!(
+            "Lichess broadcast response is not valid JSON for {}: {e}",
+            link.round_id
+        ))
+    })?;
+
+    let tour = value.get("tour").ok_or_else(|| {
+        Error::PackageManager("Broadcast response is missing tour data".to_string())
+    })?;
+    let id = tour
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            Error::PackageManager("Broadcast response is missing tour id".to_string())
+        })?;
+    let name = tour
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(id);
+
+    Ok(FideBroadcastTour {
+        id: id.to_string(),
+        name: name.to_string(),
+    })
+}
+
+async fn download_lichess_broadcast_tour_pgn(
+    client: &reqwest::Client,
+    tour_id: &str,
+) -> Result<String> {
+    let pgn_url = format!("https://lichess.org/api/broadcast/{tour_id}.pgn");
+    fetch_lichess_text(client, &pgn_url, "application/x-chess-pgn, text/plain, */*").await
+}
+
+fn pgn_tag_value(game: &str, tag: &str) -> Option<String> {
+    let prefix = format!("[{tag} \"");
+    for line in game.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix(&prefix) {
+            let end = rest.rfind("\"]")?;
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
+fn split_pgn_games(pgn: &str) -> Vec<String> {
+    let mut games = Vec::new();
+    let mut current = String::new();
+
+    for line in pgn.trim_start_matches('\u{feff}').lines() {
+        let is_new_game = line.trim_start().starts_with("[Event ");
+        if is_new_game && !current.trim().is_empty() {
+            games.push(current.trim().to_string());
+            current.clear();
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+
+    if !current.trim().is_empty() {
+        games.push(current.trim().to_string());
+    }
+
+    games
+}
+
+fn filter_pgn_games_by_fide_id(pgn: &str, fide_id: &str) -> (String, usize) {
+    let mut out = Vec::new();
+    for game in split_pgn_games(pgn) {
+        let white_fide_id = pgn_tag_value(&game, "WhiteFideId");
+        let black_fide_id = pgn_tag_value(&game, "BlackFideId");
+        if white_fide_id.as_deref() == Some(fide_id) || black_fide_id.as_deref() == Some(fide_id) {
+            out.push(game);
+        }
+    }
+
+    let count = out.len();
+    (out.join("\n\n"), count)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn import_fide_broadcast_games_to_profile(
+    profile_id: String,
+    profile_title: String,
+    fide_url: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<FideBroadcastImportResult> {
+    let fide_id = parse_lichess_fide_id(&fide_url)?;
+    let account_key = format!("fide:{fide_id}");
+    let db_path = app.path().resolve(
+        format!("db/profile_{profile_id}.db3"),
+        BaseDirectory::AppData,
+    )?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .user_agent("Obsidian Chess Studio")
+        .build()?;
+
+    let mut links = Vec::new();
+    let mut seen_links = HashSet::new();
+    let mut player_name: Option<String> = None;
+    const MAX_FIDE_PROFILE_PAGES: usize = 500;
+
+    for page in 1..=MAX_FIDE_PROFILE_PAGES {
+        let url = build_lichess_fide_profile_url(&fide_url, &fide_id, page)?;
+        let html = fetch_lichess_text(&client, &url, "text/html, */*").await?;
+        if player_name.is_none() {
+            player_name = extract_lichess_fide_player_name(&html);
+        }
+
+        let page_links = extract_fide_broadcast_links_from_html(&html);
+        let mut added = 0usize;
+        for link in page_links {
+            if seen_links.insert(link.path.clone()) {
+                links.push(link);
+                added += 1;
+            }
+        }
+
+        if added == 0 {
+            break;
+        }
+    }
+
+    if links.is_empty() {
+        return Ok(FideBroadcastImportResult {
+            imported_games: 0,
+            discovered_tournaments: 0,
+            processed_tournaments: 0,
+        });
+    }
+
+    let before_count: i64 = {
+        let db = &mut get_db_or_create(
+            &state,
+            db_path.to_str().unwrap(),
+            ConnectionOptions::default(),
+        )?;
+        ensure_db_initialized(db)?;
+        upsert_info_value(db, "ProfileFideId", &fide_id)?;
+        if let Some(name) = player_name.as_deref().filter(|s| !s.trim().is_empty()) {
+            upsert_info_value(db, "ProfileFideName", name.trim())?;
+        }
+        games::table.count().get_result(db).unwrap_or(0)
+    };
+    let mut tours = Vec::new();
+    let mut seen_tours = HashSet::new();
+
+    for link in &links {
+        let tour = fetch_fide_broadcast_tour(&client, link).await?;
+        if seen_tours.insert(tour.id.clone()) {
+            tours.push(tour);
+        }
+    }
+
+    let total_tournaments = tours.len() as i64;
+    let mut processed_tournaments = 0i64;
+    let mut filtered_games_total = 0usize;
+
+    let _ = AccountSyncProgress {
+        profile_id: profile_id.clone(),
+        account_key: account_key.clone(),
+        platform: "fide".to_string(),
+        total_batches: total_tournaments,
+        completed_batches: 0,
+        current_batch: 0,
+        batch_label: "Found Lichess FIDE broadcasts".to_string(),
+        cooldown_seconds: None,
+    }
+    .emit(&app);
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let temp_pgn_path = std::env::temp_dir().join(format!(
+        "ocs_fide_broadcast_{}_{}_{}.pgn",
+        profile_id, fide_id, ts
+    ));
+
+    for tour in &tours {
+        let current_batch = processed_tournaments + 1;
+        let _ = AccountSyncProgress {
+            profile_id: profile_id.clone(),
+            account_key: account_key.clone(),
+            platform: "fide".to_string(),
+            total_batches: total_tournaments,
+            completed_batches: processed_tournaments,
+            current_batch,
+            batch_label: tour.name.clone(),
+            cooldown_seconds: None,
+        }
+        .emit(&app);
+
+        let pgn = download_lichess_broadcast_tour_pgn(&client, &tour.id).await?;
+        let (filtered_pgn, filtered_games) = filter_pgn_games_by_fide_id(&pgn, &fide_id);
+        if filtered_games > 0 {
+            std::fs::write(&temp_pgn_path, filtered_pgn.as_bytes())?;
+            convert_pgn_impl(
+                temp_pgn_path.clone(),
+                db_path.clone(),
+                None,
+                app.clone(),
+                profile_title.clone(),
+                Some(format!(
+                    "Lichess FIDE broadcast games for FIDE ID {fide_id}"
+                )),
+                &state,
+            )?;
+            filtered_games_total += filtered_games;
+        }
+
+        processed_tournaments += 1;
+    }
+
+    let _ = std::fs::remove_file(&temp_pgn_path);
+    let _ = delete_duplicated_games(db_path.clone(), state.clone()).await;
+
+    let after_count: i64 = {
+        let db = &mut get_db_or_create(
+            &state,
+            db_path.to_str().unwrap(),
+            ConnectionOptions::default(),
+        )?;
+        let _ = db.batch_execute(ADDITIONAL_INDEXES_SQL);
+        let _ = db.batch_execute("ANALYZE Games; ANALYZE Players; ANALYZE Events; ANALYZE Sites;");
+        let _ = db.batch_execute(PRAGMA_PERFORMANCE);
+        games::table.count().get_result(db).unwrap_or(before_count)
+    };
+    let imported_games = (after_count - before_count).max(0) as i32;
+
+    let _ = AccountSyncProgress {
+        profile_id: profile_id.clone(),
+        account_key,
+        platform: "fide".to_string(),
+        total_batches: total_tournaments,
+        completed_batches: processed_tournaments,
+        current_batch: processed_tournaments,
+        batch_label: format!(
+            "Imported {imported_games} games from {filtered_games_total} matched broadcast games"
+        ),
+        cooldown_seconds: None,
+    }
+    .emit(&app);
+
+    Ok(FideBroadcastImportResult {
+        imported_games,
+        discovered_tournaments: total_tournaments as i32,
+        processed_tournaments: processed_tournaments as i32,
+    })
+}
+
+#[cfg(test)]
+mod fide_broadcast_import_tests {
+    use super::*;
+
+    #[test]
+    fn parse_lichess_fide_id_accepts_id_and_profile_url() {
+        assert_eq!(parse_lichess_fide_id("29667933").unwrap(), "29667933");
+        assert_eq!(
+            parse_lichess_fide_id(
+                "https://lichess.org/fide/29667933/Rivas_Rangel_Isabella_Roxanne"
+            )
+            .unwrap(),
+            "29667933"
+        );
+    }
+
+    #[test]
+    fn extract_fide_broadcast_links_reads_round_links_and_dedupes() {
+        let html = r#"
+            <a href="/broadcast/event-one/round-7/Wj4PYuOJ" class="relay-card paginated">One</a>
+            <a href="/broadcast/event-one/round-7/Wj4PYuOJ" class="relay-card paginated">Duplicate</a>
+            <a href="/broadcast/event-two/ronda-3/Q7eV3iA0" class="relay-card paginated">Two</a>
+        "#;
+
+        let links = extract_fide_broadcast_links_from_html(html);
+        assert_eq!(
+            links,
+            vec![
+                FideBroadcastLink {
+                    path: "/broadcast/event-one/round-7/Wj4PYuOJ".to_string(),
+                    round_id: "Wj4PYuOJ".to_string(),
+                },
+                FideBroadcastLink {
+                    path: "/broadcast/event-two/ronda-3/Q7eV3iA0".to_string(),
+                    round_id: "Q7eV3iA0".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_pgn_games_by_fide_id_keeps_only_matching_games() {
+        let pgn = r#"[Event "Tournament"]
+[White "Target"]
+[Black "Other"]
+[WhiteFideId "29667933"]
+[BlackFideId "2"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+
+[Event "Tournament"]
+[White "Other"]
+[Black "Target"]
+[WhiteFideId "3"]
+[BlackFideId "29667933"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+
+[Event "Tournament"]
+[White "Other"]
+[Black "Other 2"]
+[WhiteFideId "3"]
+[BlackFideId "4"]
+[Result "1/2-1/2"]
+
+1. c4 c5 1/2-1/2
+"#;
+
+        let (filtered, count) = filter_pgn_games_by_fide_id(pgn, "29667933");
+        assert_eq!(count, 2);
+        assert!(filtered.contains("[White \"Target\"]"));
+        assert!(filtered.contains("[Black \"Target\"]"));
+        assert!(!filtered.contains("[Black \"Other 2\"]"));
+    }
 }
 
 #[tauri::command]

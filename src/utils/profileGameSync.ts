@@ -27,6 +27,15 @@ type BackendAccountSyncResult = {
   imported_games: number;
 };
 
+type BackendFideBroadcastImportResult = {
+  imported_games?: number;
+  importedGames?: number;
+  discovered_tournaments?: number;
+  discoveredTournaments?: number;
+  processed_tournaments?: number;
+  processedTournaments?: number;
+};
+
 function parseAccountKey(accountKey: string): { platform: AccountSyncPlatform; username: string } | null {
   const match = accountKey.match(/^(lichess|chesscom):(.*)$/i);
   if (!match) return null;
@@ -61,7 +70,7 @@ export async function getAccountSyncStateFromProfileDb(profileDbPath: string, ac
 }
 
 export type SyncBatchUpdate = {
-  platform: AccountSyncPlatform;
+  platform: AccountSyncPlatform | "fide";
   totalBatches: number;
   completedBatches: number;
   currentBatch: number;
@@ -161,4 +170,52 @@ export async function syncSessionGamesToProfileDb(input: {
   }
 
   return { updatedSession: input.session, importedGames: 0 };
+}
+
+export async function importFideBroadcastGamesToProfileDb(input: {
+  profile: Profile;
+  fideUrl?: string;
+  onBatchUpdate?: (update: SyncBatchUpdate) => void;
+}) {
+  const profileId = input.profile.id;
+  const profileTitle = input.profile.name || `Profile ${profileId}`;
+  const fideUrl = input.fideUrl?.trim() || input.profile.fideId?.trim() || "";
+  const fideId = fideUrl.match(/\/fide\/(\d+)/i)?.[1] ?? fideUrl.replace(/\D/g, "");
+
+  if (!fideUrl || !fideId) {
+    throw new Error("A FIDE ID or Lichess FIDE profile URL is required.");
+  }
+
+  const accountKey = `fide:${fideId}`;
+  let unlisten: (() => void) | null = null;
+  let result: BackendFideBroadcastImportResult | null = null;
+
+  try {
+    unlisten = await listen<BackendAccountSyncProgress>("account-sync-progress", ({ payload }) => {
+      if (payload.profile_id !== profileId) return;
+      if (payload.account_key !== accountKey) return;
+      input.onBatchUpdate?.({
+        platform: "fide",
+        totalBatches: payload.total_batches,
+        completedBatches: payload.completed_batches,
+        currentBatch: payload.current_batch,
+        batchLabel: payload.batch_label,
+        cooldownSeconds: payload.cooldown_seconds ?? undefined,
+      });
+    });
+
+    result = await invoke<BackendFideBroadcastImportResult>("import_fide_broadcast_games_to_profile", {
+      profileId,
+      profileTitle,
+      fideUrl,
+    });
+  } finally {
+    unlisten?.();
+  }
+
+  return {
+    importedGames: result?.imported_games ?? result?.importedGames ?? 0,
+    discoveredTournaments: result?.discovered_tournaments ?? result?.discoveredTournaments ?? 0,
+    processedTournaments: result?.processed_tournaments ?? result?.processedTournaments ?? 0,
+  };
 }

@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -35,12 +35,12 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           run_install: false
 
       - name: Setup Node.js and pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "lts/*"
           cache: "pnpm"
@@ -78,7 +78,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -105,12 +105,12 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           run_install: false
 
       - name: Setup Node.js and pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "lts/*"
           cache: "pnpm"
@@ -150,7 +150,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -256,12 +256,12 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           run_install: false
 
       - name: Setup Node.js and pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "lts/*"
           cache: "pnpm"

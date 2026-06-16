@@ -25,7 +25,7 @@ use shakmaty::{
 };
 use specta::Type;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -67,6 +67,9 @@ const ENABLE_CHECKPOINT_TABLE_SCHEMA: bool = true;
 
 /// Checkpoint stride (every N plies).
 const CHECKPOINT_STRIDE: usize = 8;
+
+/// Position search stores at most this many game ids for display/export samples.
+const POSITION_SEARCH_SAMPLE_LIMIT: usize = 1000;
 
 /// ============================================================================
 /// ONLINE database detection
@@ -1238,7 +1241,8 @@ pub(crate) fn search_position_local_internal(
                 if let Ok(Some(m)) = get_move_after_match(game, fen, position_query) {
                     // Keep Top-K by average elo
                     let a = avg_elo(*white_elo, *black_elo);
-                    if let Ok(mut sample) = sample_games.try_lock() {
+                    {
+                        let mut sample = sample_games.lock().unwrap();
                         push_top_k(&mut sample, MAX_SAMPLE_GAMES, (a, *id));
                     }
 
@@ -1604,7 +1608,8 @@ pub(crate) fn search_position_online_internal(
 
                 match get_move_after_match(game, fen, position_query) {
                     Ok(Some(m)) => {
-                        if let Ok(mut sample) = sample_games.try_lock() {
+                        {
+                            let mut sample = sample_games.lock().unwrap();
                             if sample.len() < MAX_SAMPLE_GAMES {
                                 sample.push(*id);
                             }
@@ -2106,6 +2111,22 @@ pub async fn search_position(
             // If we cached an empty result (common when DB schema/metadata was incomplete),
             // treat it as a cache miss so we can recompute after improvements.
             if cached_stats.is_empty() && cached_game_ids.is_empty() {
+                // fall through to full search
+            } else if {
+                let cached_stats_total = cached_stats
+                    .iter()
+                    .map(|stat| stat.white + stat.draw + stat.black)
+                    .sum::<i32>()
+                    .max(0) as usize;
+                cached_stats_total <= POSITION_SEARCH_SAMPLE_LIMIT
+                    && cached_stats_total
+                        > cached_game_ids
+                            .iter()
+                            .copied()
+                            .collect::<HashSet<_>>()
+                            .len()
+            } {
+                let _ = clear_position_cache(&app, &fen, &file);
                 // fall through to full search
             } else {
                 // Apply game_details_limit

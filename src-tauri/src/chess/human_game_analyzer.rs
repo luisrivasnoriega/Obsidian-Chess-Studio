@@ -17,7 +17,7 @@ use shakmaty::{
     Board, CastlingMode, Chess, Color, EnPassantMode, Move, Position, Role, Square,
 };
 use specta::Type;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::{error::Error, opening::get_opening_info_from_fen, AppState};
@@ -27,6 +27,7 @@ use super::{
     human_strategy::{
         pick_human_strategic_move, HumanStrategicCandidate, HumanStrategicComponents,
         HumanStrategicConfig, HumanStrategicMacroComponents, HumanStrategicRequest, StrategicMotif,
+        StrategicRiskFlag,
     },
     pgn_annotator::{build_annotated_pgn, BuildAnnotatedPgnRequest, PgnMoveAnnotation},
     types::{AnalysisOptions, BestMoves, EngineOption, GoMode, MoveAnalysis, ScoreValue},
@@ -42,6 +43,7 @@ const MIN_STRATEGIC_SCORE_TO_COMMENT_BEST: f32 = 0.55;
 const MIN_ATOMS_TO_COMMENT_BEST: usize = 2;
 const MIN_SINGLE_ATOM_PRIORITY_TO_COMMENT: i32 = 84;
 const MIN_STRATEGIC_SCORE_TO_COMMENT_AFTER_OPENING: f32 = 0.42;
+const MIN_LIVE_STRATEGIC_SCORE_TO_SHOW: f32 = 0.20;
 // Do not annotate normal opening/development moves. Move 11+ can be commented if
 // the move has concrete evidence or an evaluation issue.
 const OPENING_COMMENT_SUPPRESS_PLIES: usize = 20;
@@ -201,16 +203,36 @@ pub struct HumanStrategicLiveLine {
     pub motifs: Vec<StrategicMotif>,
     pub strategic_axes: Vec<HumanStrategicAxisNarrative>,
     pub strategic_plan: String,
+    pub comment_key: String,
+    pub comment_params: BTreeMap<String, String>,
+    pub detail_key: Option<String>,
+    pub detail_params: BTreeMap<String, String>,
     pub comment_short: String,
     pub comment_long: String,
     pub suggested_variation_uci: Vec<String>,
     pub suggested_variation_san: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HumanStrategicLiveDisplay {
+    Hidden,
+    Lines,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HumanStrategicLiveSuppressionReason {
+    RoutineOpening,
+    NoStrategicSignal,
+}
+
 /// Live strategic explanation bundle for the current position.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HumanStrategicLiveResponse {
+    pub display: HumanStrategicLiveDisplay,
+    pub suppression_reason: Option<HumanStrategicLiveSuppressionReason>,
     pub selected_uci: String,
     pub selected_san: String,
     pub best_engine_uci: String,
@@ -326,6 +348,8 @@ pub fn build_human_strategic_live_report(
     let max_plies = max_variation_plies.unwrap_or(6).clamp(1, 12) as usize;
     let max_lines = max_lines.unwrap_or(4).clamp(1, 8) as usize;
     let mover = root.turn();
+    let live_ply = ply_from_position(&root);
+    let opening_phase = is_opening_phase(&root, live_ply);
 
     let selected_san = uci_line_to_san(root.clone(), &[selection.selected_uci.clone()], 1)
         .first()
@@ -368,7 +392,7 @@ pub fn build_human_strategic_live_report(
         }
     }
 
-    let mut lines = Vec::new();
+    let mut line_drafts: Vec<(HumanStrategicLiveLine, bool, bool)> = Vec::new();
 
     for candidate in &shown_candidates {
         let played_uci = normalize_move_key(&candidate.uci);
@@ -400,6 +424,10 @@ pub fn build_human_strategic_live_report(
         concrete_bundle
             .atoms
             .dedup_by(|a, b| a.short == b.short || a.sentence == b.sentence);
+        let has_live_signal = has_live_concrete_signal(candidate, &concrete_bundle.atoms);
+        let has_live_forcing_signal =
+            candidate_has_live_forcing_signal(candidate, &concrete_bundle.atoms);
+        let live_comment = build_live_comment_payload(candidate, &concrete_bundle.atoms);
 
         let strategic_axes = extract_top_macro_axes(&candidate.macro_components);
         let concrete_themes = extract_top_concrete_themes(&candidate.components);
@@ -446,39 +474,339 @@ pub fn build_human_strategic_live_report(
             join_unique_sentences(&long_parts)
         };
 
-        lines.push(HumanStrategicLiveLine {
-            uci: played_uci.clone(),
-            san: played_san,
-            engine_rank: (candidate.engine_rank as u32).saturating_add(1),
-            engine_cp: candidate.engine_cp,
-            engine_drop_cp: candidate.engine_drop_cp,
-            strategic_score: candidate.strategic_score,
-            final_score: candidate.final_score,
-            is_selected: played_uci == normalize_move_key(&selection.selected_uci),
-            is_engine_best: played_uci == normalize_move_key(&selection.best_engine_uci),
-            motifs: candidate.motifs.clone(),
-            strategic_axes,
-            strategic_plan,
-            comment_short: clean_spaces(&comment_short),
-            comment_long: clean_spaces(&comment_long),
-            suggested_variation_uci,
-            suggested_variation_san,
-        });
+        line_drafts.push((
+            HumanStrategicLiveLine {
+                uci: played_uci.clone(),
+                san: played_san,
+                engine_rank: (candidate.engine_rank as u32).saturating_add(1),
+                engine_cp: candidate.engine_cp,
+                engine_drop_cp: candidate.engine_drop_cp,
+                strategic_score: candidate.strategic_score,
+                final_score: candidate.final_score,
+                is_selected: played_uci == normalize_move_key(&selection.selected_uci),
+                is_engine_best: played_uci == normalize_move_key(&selection.best_engine_uci),
+                motifs: candidate.motifs.clone(),
+                strategic_axes,
+                strategic_plan,
+                comment_key: live_comment.comment_key,
+                comment_params: live_comment.comment_params,
+                detail_key: live_comment.detail_key,
+                detail_params: live_comment.detail_params,
+                comment_short: clean_spaces(&comment_short),
+                comment_long: clean_spaces(&comment_long),
+                suggested_variation_uci,
+                suggested_variation_san,
+            },
+            has_live_signal,
+            has_live_forcing_signal,
+        ));
     }
 
-    if lines.is_empty() {
+    if line_drafts.is_empty() {
         return Err(Error::InvalidInput(
             "No strategic lines could be explained for this position".to_string(),
         ));
     }
 
+    let has_live_signal = line_drafts.iter().any(|(_, signal, _)| *signal);
+    let has_live_forcing_signal = line_drafts.iter().any(|(_, _, signal)| *signal);
+    let max_live_score = line_drafts
+        .iter()
+        .map(|(line, _, _)| line.strategic_score)
+        .fold(0.0_f32, f32::max);
+
+    if opening_phase && live_ply < 8 && !has_live_forcing_signal {
+        return Ok(HumanStrategicLiveResponse {
+            display: HumanStrategicLiveDisplay::Hidden,
+            suppression_reason: Some(HumanStrategicLiveSuppressionReason::RoutineOpening),
+            selected_uci: normalize_move_key(&selection.selected_uci),
+            selected_san,
+            best_engine_uci: normalize_move_key(&selection.best_engine_uci),
+            best_engine_san,
+            lines: Vec::new(),
+        });
+    }
+
+    if opening_phase && !has_live_signal {
+        return Ok(HumanStrategicLiveResponse {
+            display: HumanStrategicLiveDisplay::Hidden,
+            suppression_reason: Some(HumanStrategicLiveSuppressionReason::RoutineOpening),
+            selected_uci: normalize_move_key(&selection.selected_uci),
+            selected_san,
+            best_engine_uci: normalize_move_key(&selection.best_engine_uci),
+            best_engine_san,
+            lines: Vec::new(),
+        });
+    }
+
+    if !has_live_signal && max_live_score < MIN_LIVE_STRATEGIC_SCORE_TO_SHOW {
+        return Ok(HumanStrategicLiveResponse {
+            display: HumanStrategicLiveDisplay::Hidden,
+            suppression_reason: Some(HumanStrategicLiveSuppressionReason::NoStrategicSignal),
+            selected_uci: normalize_move_key(&selection.selected_uci),
+            selected_san,
+            best_engine_uci: normalize_move_key(&selection.best_engine_uci),
+            best_engine_san,
+            lines: Vec::new(),
+        });
+    }
+
+    let lines = line_drafts
+        .into_iter()
+        .map(|(line, _, _)| line)
+        .collect::<Vec<_>>();
+
     Ok(HumanStrategicLiveResponse {
+        display: HumanStrategicLiveDisplay::Lines,
+        suppression_reason: None,
         selected_uci: normalize_move_key(&selection.selected_uci),
         selected_san,
         best_engine_uci: normalize_move_key(&selection.best_engine_uci),
         best_engine_san,
         lines,
     })
+}
+
+struct LiveCommentPayload {
+    comment_key: String,
+    comment_params: BTreeMap<String, String>,
+    detail_key: Option<String>,
+    detail_params: BTreeMap<String, String>,
+}
+
+fn build_live_comment_payload(
+    candidate: &HumanStrategicCandidate,
+    atoms: &[ConcreteCommentAtom],
+) -> LiveCommentPayload {
+    let comment_suffix = if candidate.risk_flags.contains(&StrategicRiskFlag::MateRisk) {
+        "mateRisk"
+    } else if candidate
+        .risk_flags
+        .contains(&StrategicRiskFlag::ForcedTacticalLine)
+    {
+        "forcedTacticalLine"
+    } else if candidate
+        .risk_flags
+        .contains(&StrategicRiskFlag::UndefendedLandingSquare)
+    {
+        "undefendedLandingSquare"
+    } else if candidate
+        .risk_flags
+        .contains(&StrategicRiskFlag::MaterialInvestment)
+        || candidate
+            .motifs
+            .contains(&StrategicMotif::InitiativeSacrifice)
+    {
+        "materialInvestment"
+    } else if candidate.risk_flags.contains(&StrategicRiskFlag::WdlDrop)
+        || candidate
+            .risk_flags
+            .contains(&StrategicRiskFlag::UnstableScore)
+    {
+        "unstable"
+    } else if candidate.motifs.contains(&StrategicMotif::KingNet)
+        || candidate
+            .motifs
+            .contains(&StrategicMotif::CentralKingPressure)
+        || candidate.components.central_king_pressure >= 0.30
+        || atoms.iter().any(atom_mentions_king_pressure)
+    {
+        "kingPressure"
+    } else if candidate.motifs.contains(&StrategicMotif::OpenFilePressure)
+        || candidate.components.open_file_pressure >= 0.30
+    {
+        "openFile"
+    } else if candidate.motifs.iter().any(|motif| {
+        matches!(
+            motif,
+            StrategicMotif::DamagedPawnStructure | StrategicMotif::WeakPawnPressure
+        )
+    }) || candidate.components.pawn_structure_damage >= 0.30
+        || candidate.components.weak_pawn_pressure >= 0.30
+    {
+        "pawnTargets"
+    } else if candidate.motifs.iter().any(|motif| {
+        matches!(
+            motif,
+            StrategicMotif::PieceRestriction
+                | StrategicMotif::OutpostControl
+                | StrategicMotif::ColorComplexPressure
+                | StrategicMotif::Prophylaxis
+        )
+    }) || candidate.components.piece_restriction >= 0.30
+    {
+        "pieceRestriction"
+    } else if candidate.motifs.contains(&StrategicMotif::Counterplay) {
+        "counterplay"
+    } else if candidate.motifs.iter().any(|motif| {
+        matches!(
+            motif,
+            StrategicMotif::FavorableTrade
+                | StrategicMotif::PassedPawnConversion
+                | StrategicMotif::TensionManagement
+        )
+    }) {
+        "conversion"
+    } else if candidate.motifs.contains(&StrategicMotif::SpaceGain)
+        || candidate.components.space_gain >= 0.30
+    {
+        "spaceGain"
+    } else if candidate.strategic_score >= 0.30 {
+        "coherentPlan"
+    } else {
+        "quietCandidate"
+    };
+
+    let params = live_comment_params(candidate);
+
+    LiveCommentPayload {
+        comment_key: live_comment_key("comments", comment_suffix),
+        comment_params: params.clone(),
+        detail_key: Some(live_comment_key("details", "engineSafety")),
+        detail_params: params,
+    }
+}
+
+fn live_comment_params(candidate: &HumanStrategicCandidate) -> BTreeMap<String, String> {
+    let mut params = BTreeMap::new();
+    params.insert("move".to_string(), candidate.san.clone());
+    params.insert(
+        "score".to_string(),
+        format!("{:.2}", candidate.strategic_score),
+    );
+    params.insert("drop".to_string(), candidate.engine_drop_cp.to_string());
+    params
+}
+
+fn live_comment_key(group: &str, suffix: &str) -> String {
+    format!("features.board.analysis.gmGuardrail.{group}.{suffix}")
+}
+
+fn has_live_concrete_signal(
+    candidate: &HumanStrategicCandidate,
+    atoms: &[ConcreteCommentAtom],
+) -> bool {
+    if candidate.risk_flags.iter().any(|flag| {
+        matches!(
+            flag,
+            StrategicRiskFlag::MaterialInvestment
+                | StrategicRiskFlag::UndefendedLandingSquare
+                | StrategicRiskFlag::ForcedTacticalLine
+                | StrategicRiskFlag::MateRisk
+                | StrategicRiskFlag::UnstableScore
+                | StrategicRiskFlag::WdlDrop
+        )
+    }) {
+        return true;
+    }
+
+    if candidate.components.pawn_structure_damage >= 0.35
+        || candidate.components.weak_pawn_pressure >= 0.35
+        || candidate.components.open_file_pressure >= 0.35
+        || candidate.components.central_king_pressure >= 0.35
+        || candidate.components.piece_restriction >= 0.35
+    {
+        return true;
+    }
+
+    if candidate.motifs.iter().any(|motif| {
+        matches!(
+            motif,
+            StrategicMotif::DamagedPawnStructure
+                | StrategicMotif::WeakPawnPressure
+                | StrategicMotif::OpenFilePressure
+                | StrategicMotif::CentralKingPressure
+                | StrategicMotif::PieceRestriction
+                | StrategicMotif::OutpostControl
+                | StrategicMotif::ColorComplexPressure
+                | StrategicMotif::Prophylaxis
+                | StrategicMotif::FavorableTrade
+                | StrategicMotif::PassedPawnConversion
+                | StrategicMotif::InitiativeSacrifice
+                | StrategicMotif::Counterplay
+                | StrategicMotif::KingNet
+                | StrategicMotif::TensionManagement
+        )
+    }) {
+        return true;
+    }
+
+    atoms.iter().any(is_live_signal_atom)
+}
+
+fn candidate_has_live_forcing_signal(
+    candidate: &HumanStrategicCandidate,
+    atoms: &[ConcreteCommentAtom],
+) -> bool {
+    if candidate.risk_flags.iter().any(|flag| {
+        matches!(
+            flag,
+            StrategicRiskFlag::MaterialInvestment
+                | StrategicRiskFlag::UndefendedLandingSquare
+                | StrategicRiskFlag::ForcedTacticalLine
+                | StrategicRiskFlag::MateRisk
+                | StrategicRiskFlag::WdlDrop
+        )
+    }) {
+        return true;
+    }
+
+    candidate.motifs.iter().any(|motif| {
+        matches!(
+            motif,
+            StrategicMotif::InitiativeSacrifice | StrategicMotif::KingNet
+        )
+    }) || atoms.iter().any(is_live_forcing_atom)
+}
+
+fn is_live_signal_atom(atom: &ConcreteCommentAtom) -> bool {
+    let text = format!("{} {}", atom.short, atom.sentence).to_ascii_lowercase();
+    if text.contains("avanza en el centro")
+        && !text.contains("ataca")
+        && !text.contains("rey")
+        && !text.contains("columna")
+    {
+        return false;
+    }
+
+    [
+        "jaque",
+        "mate",
+        "material",
+        "captura",
+        "columna",
+        "linea",
+        "rey",
+        "estructura",
+        "debil",
+        "sacrificio",
+        "tactic",
+        "rompe el centro",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn is_live_forcing_atom(atom: &ConcreteCommentAtom) -> bool {
+    let text = format!("{} {}", atom.short, atom.sentence).to_ascii_lowercase();
+    [
+        "jaque",
+        "mate",
+        "gana material",
+        "gana una pieza",
+        "captura favorable",
+        "sacrificio",
+        "tactica",
+        "tactico",
+        "forced",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn atom_mentions_king_pressure(atom: &ConcreteCommentAtom) -> bool {
+    let text = format!("{} {}", atom.short, atom.sentence).to_ascii_lowercase();
+    text.contains("rey") || text.contains("jaque") || text.contains("mate")
 }
 
 fn pgn_mainline_to_uci_moves(initial_fen: &str, pgn: &str) -> Result<Vec<String>, Error> {
@@ -3271,16 +3599,16 @@ fn motifs_to_text(motifs: &[StrategicMotif]) -> String {
             StrategicMotif::CentralKingPressure => "presión sobre el rey",
             StrategicMotif::PieceRestriction => "restricción de piezas",
             StrategicMotif::WingClamp => "fijación en un flanco",
-            StrategicMotif::OutpostControl => "outpost control",
-            StrategicMotif::ColorComplexPressure => "color-complex pressure",
-            StrategicMotif::Prophylaxis => "prophylaxis",
-            StrategicMotif::FavorableTrade => "favorable trade",
-            StrategicMotif::PassedPawnConversion => "passed-pawn conversion",
-            StrategicMotif::InitiativeSacrifice => "initiative sacrifice",
-            StrategicMotif::Counterplay => "active counterplay",
-            StrategicMotif::KingNet => "king net",
-            StrategicMotif::PieceCoordination => "piece coordination",
-            StrategicMotif::TensionManagement => "tension management",
+            StrategicMotif::OutpostControl => "control de puestos avanzados",
+            StrategicMotif::ColorComplexPressure => "presion sobre complejo de color",
+            StrategicMotif::Prophylaxis => "profilaxis",
+            StrategicMotif::FavorableTrade => "cambio favorable",
+            StrategicMotif::PassedPawnConversion => "conversion de peon pasado",
+            StrategicMotif::InitiativeSacrifice => "sacrificio por iniciativa",
+            StrategicMotif::Counterplay => "contrajuego activo",
+            StrategicMotif::KingNet => "red contra el rey",
+            StrategicMotif::PieceCoordination => "coordinacion de piezas",
+            StrategicMotif::TensionManagement => "gestion de la tension",
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -3820,6 +4148,16 @@ fn tactical_risk_score(board: &Board, mv: &Move, mover: Color) -> i32 {
         .map(|p| role_value(p.role))
         .unwrap_or(0);
     moved_value - captured_value
+}
+
+fn ply_from_position(position: &Chess) -> usize {
+    let fullmove = position.fullmoves().get() as usize;
+    let base = fullmove.saturating_sub(1) * 2;
+    if position.turn() == Color::Black {
+        base + 1
+    } else {
+        base
+    }
 }
 
 fn is_opening_phase(position: &Chess, ply: usize) -> bool {
@@ -4691,6 +5029,106 @@ mod tests {
         }
     }
 
+    fn live_best_line(uci: &str, cp: i32, multipv: u16) -> BestMoves {
+        BestMoves {
+            nodes: 100_000,
+            depth: 20,
+            score: crate::chess::types::Score {
+                value: ScoreValue::Cp(cp),
+                wdl: None,
+            },
+            uci_moves: vec![uci.to_string()],
+            san_moves: Vec::new(),
+            multipv,
+            nps: 0,
+        }
+    }
+
+    #[test]
+    fn live_report_hides_routine_starting_opening_moves() {
+        let response = build_human_strategic_live_report(HumanStrategicLiveRequest {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            moves: Vec::new(),
+            candidates: vec![
+                live_best_line("e2e4", 20, 1),
+                live_best_line("d2d4", 18, 2),
+                live_best_line("g1f3", 12, 3),
+            ],
+            config: None,
+            max_variation_plies: Some(4),
+            max_lines: Some(4),
+        })
+        .expect("live report should build");
+
+        assert_eq!(response.display, HumanStrategicLiveDisplay::Hidden);
+        assert_eq!(
+            response.suppression_reason,
+            Some(HumanStrategicLiveSuppressionReason::RoutineOpening)
+        );
+        assert!(response.lines.is_empty());
+    }
+
+    #[test]
+    fn live_report_hides_routine_reply_after_first_move() {
+        let response = build_human_strategic_live_report(HumanStrategicLiveRequest {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            moves: vec!["e2e4".to_string()],
+            candidates: vec![
+                live_best_line("e7e5", 20, 1),
+                live_best_line("c7c5", 18, 2),
+                live_best_line("e7e6", 12, 3),
+            ],
+            config: None,
+            max_variation_plies: Some(4),
+            max_lines: Some(4),
+        })
+        .expect("live report should build");
+
+        assert_eq!(response.display, HumanStrategicLiveDisplay::Hidden);
+        assert_eq!(
+            response.suppression_reason,
+            Some(HumanStrategicLiveSuppressionReason::RoutineOpening)
+        );
+        assert!(response.lines.is_empty());
+    }
+
+    #[test]
+    fn live_report_keeps_early_forcing_signal_visible() {
+        let response = build_human_strategic_live_report(HumanStrategicLiveRequest {
+            fen: "6k1/8/8/8/8/8/8/4R1K1 w - - 0 2".to_string(),
+            moves: Vec::new(),
+            candidates: vec![live_best_line("e1e8", 120, 1)],
+            config: None,
+            max_variation_plies: Some(4),
+            max_lines: Some(2),
+        })
+        .expect("live report should build");
+
+        assert_eq!(response.display, HumanStrategicLiveDisplay::Lines);
+        assert_eq!(response.suppression_reason, None);
+    }
+
+    #[test]
+    fn live_report_shows_non_opening_check_signal() {
+        let response = build_human_strategic_live_report(HumanStrategicLiveRequest {
+            fen: "6k1/8/8/8/8/8/8/4R1K1 w - - 0 30".to_string(),
+            moves: Vec::new(),
+            candidates: vec![live_best_line("e1e8", 120, 1)],
+            config: None,
+            max_variation_plies: Some(4),
+            max_lines: Some(2),
+        })
+        .expect("live report should build");
+
+        assert_eq!(response.display, HumanStrategicLiveDisplay::Lines);
+        assert_eq!(response.suppression_reason, None);
+        assert_eq!(response.lines.len(), 1);
+        assert_eq!(
+            response.lines[0].comment_key,
+            "features.board.analysis.gmGuardrail.comments.kingPressure"
+        );
+    }
+
     #[test]
     fn strategy_candidate_atoms_are_used_for_comments() {
         let candidate = strategic_candidate_with(
@@ -4702,8 +5140,8 @@ mod tests {
 
         strategy_commentary::add_candidate_strategy_atoms(&mut atoms, &candidate);
 
-        assert!(atoms.iter().any(|atom| atom.short.contains("king")));
-        assert!(atoms.iter().any(|atom| atom.short.contains("initiative")));
+        assert!(atoms.iter().any(|atom| atom.short.contains("rey")));
+        assert!(atoms.iter().any(|atom| atom.short.contains("iniciativa")));
     }
 
     #[test]

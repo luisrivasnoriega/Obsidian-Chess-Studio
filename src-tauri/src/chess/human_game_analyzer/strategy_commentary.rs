@@ -97,46 +97,46 @@ fn add_risk_atoms(atoms: &mut Vec<ConcreteCommentAtom>, candidate: &HumanStrateg
         let (priority, short, sentence) = match flag {
             StrategicRiskFlag::MateRisk => (
                 120,
-                "allows a mate-risk line",
-                "The strategic selector flags a mating danger in this candidate line.",
+                "permite peligro de mate",
+                "El selector estrategico detecta peligro de mate en esta linea candidata.",
             ),
             StrategicRiskFlag::ForcedTacticalLine => (
                 112,
-                "requires a forced tactical line",
-                "The move depends on concrete tactics rather than a quiet strategic edge.",
+                "requiere una linea tactica forzada",
+                "La jugada depende de tacticas concretas, no de una ventaja estrategica tranquila.",
             ),
             StrategicRiskFlag::UndefendedLandingSquare => (
                 104,
-                "leaves the moved piece undefended",
-                "The destination square is under enemy control and the moved piece lacks immediate support.",
+                "deja la pieza movida sin defensa",
+                "La casilla de destino esta bajo control rival y la pieza movida no tiene apoyo inmediato.",
             ),
             StrategicRiskFlag::WdlDrop => (
                 102,
-                "drops practical winning chances",
-                "The WDL signal shows a meaningful practical concession compared with the best engine line.",
+                "cede chances practicas",
+                "La senal WDL muestra una concesion practica relevante frente a la mejor linea del motor.",
             ),
             StrategicRiskFlag::UnstableScore => (
                 96,
-                "has an unstable evaluation",
-                "The engine and strategic signals make this candidate tactically unstable.",
+                "tiene evaluacion inestable",
+                "Las senales del motor y del modulo estrategico hacen que esta candidata sea tacticamente inestable.",
             ),
             StrategicRiskFlag::LowDepthCandidate => (
                 72,
-                "needs deeper verification",
-                "The candidate comes from a lower-depth line, so the strategic idea needs engine confirmation.",
+                "necesita verificacion mas profunda",
+                "La candidata viene de una linea con menor profundidad, asi que la idea estrategica necesita confirmacion del motor.",
             ),
             StrategicRiskFlag::MaterialInvestment => {
                 if candidate.strategic_score >= 0.45 {
                     (
                         94,
-                        "invests material for initiative",
-                        "The move accepts a material investment, but the strategic module finds compensation in activity.",
+                        "invierte material por iniciativa",
+                        "La jugada acepta una inversion material, pero el modulo estrategico encuentra compensacion en actividad.",
                     )
                 } else {
                     (
                         92,
-                        "invests material without enough compensation",
-                        "The move gives material and the strategic compensation is not yet convincing.",
+                        "invierte material sin compensacion suficiente",
+                        "La jugada entrega material y la compensacion estrategica aun no convence.",
                     )
                 }
             }
@@ -161,24 +161,24 @@ fn add_macro_axis_atoms(atoms: &mut Vec<ConcreteCommentAtom>, candidate: &HumanS
         add_atom_once(
             atoms,
             82,
-            "connects to a coherent plan",
-            "The strategic module sees this move as part of a coherent multi-move plan.",
+            "conecta con un plan coherente",
+            "El modulo estrategico ve esta jugada como parte de un plan coherente de varias jugadas.",
         );
     }
     if macro_components.practical_pressure >= 0.40 {
         add_atom_once(
             atoms,
             86,
-            "maximizes practical pressure",
-            "The move increases the defensive burden even if the engine margin is not large.",
+            "maximiza la presion practica",
+            "La jugada aumenta la carga defensiva aunque el margen del motor no sea grande.",
         );
     }
     if macro_components.endgame_transition >= 0.34 {
         add_atom_once(
             atoms,
             80,
-            "heads for a favorable transition",
-            "The line points toward an endgame or simplified structure that favors the mover.",
+            "busca una transicion favorable",
+            "La linea apunta hacia un final o estructura simplificada que favorece al bando que mueve.",
         );
     }
 }
@@ -191,53 +191,53 @@ fn motif_atom(
     match motif {
         StrategicMotif::OutpostControl => Some((
             base_priority,
-            "improves outpost control",
-            "The strategic module values the move because it improves control of stable forward squares.",
+            "mejora el control de puestos avanzados",
+            "El modulo estrategico valora la jugada porque mejora el control de casillas avanzadas estables.",
         )),
         StrategicMotif::ColorComplexPressure => Some((
             base_priority,
-            "pressures a color complex",
-            "The move increases pressure on a weakened color complex around the enemy position.",
+            "presiona un complejo de color",
+            "La jugada aumenta la presion sobre un complejo de color debilitado en la posicion rival.",
         )),
         StrategicMotif::Prophylaxis => Some((
             base_priority,
-            "stops the opponent's plan",
-            "The move is prophylactic: it restricts the opponent's main source of counterplay.",
+            "frena el plan rival",
+            "La jugada es profilactica: restringe la principal fuente de contrajuego del rival.",
         )),
         StrategicMotif::FavorableTrade => Some((
             base_priority,
-            "steers toward a favorable trade",
-            "The strategic module prefers the resulting trade or transition.",
+            "orienta hacia un cambio favorable",
+            "El modulo estrategico prefiere el cambio o la transicion resultante.",
         )),
         StrategicMotif::PassedPawnConversion => Some((
             base_priority + 4,
-            "supports passed-pawn conversion",
-            "The move helps turn a pawn advantage into a concrete conversion plan.",
+            "apoya la conversion del peon pasado",
+            "La jugada ayuda a convertir una ventaja de peon en un plan concreto.",
         )),
         StrategicMotif::InitiativeSacrifice => Some((
             base_priority + 8,
-            "sacrifices for initiative",
-            "The material investment is tied to initiative and forcing play.",
+            "sacrifica por iniciativa",
+            "La inversion material esta ligada a iniciativa y juego forzado.",
         )),
         StrategicMotif::Counterplay => Some((
             base_priority + 4,
-            "creates active counterplay",
-            "The move chooses active counterplay instead of passive defense.",
+            "crea contrajuego activo",
+            "La jugada elige contrajuego activo en vez de defensa pasiva.",
         )),
         StrategicMotif::KingNet => Some((
             base_priority + 6,
-            "builds a net around the king",
-            "The move coordinates threats around the enemy king.",
+            "construye una red contra el rey",
+            "La jugada coordina amenazas alrededor del rey rival.",
         )),
         StrategicMotif::PieceCoordination => Some((
             base_priority,
-            "improves piece coordination",
-            "The move improves how the pieces work together in the candidate line.",
+            "mejora la coordinacion de piezas",
+            "La jugada mejora la coordinacion de las piezas en la linea candidata.",
         )),
         StrategicMotif::TensionManagement => Some((
             base_priority + 2,
-            "manages the central tension",
-            "The move keeps or releases tension under favorable circumstances.",
+            "gestiona la tension central",
+            "La jugada mantiene o libera la tension bajo circunstancias favorables.",
         )),
         _ => None,
     }

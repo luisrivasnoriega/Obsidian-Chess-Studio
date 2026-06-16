@@ -199,17 +199,15 @@ describe("Databases", () => {
     });
   });
 
-  test("filters sessions by profileId when provided (calls query / load paths)", async () => {
-    renderComponent({ profileId: "profile1" });
+  test("renders profile shell without requiring account queries when profileId is provided", async () => {
+    renderComponent({ profileId: "profile1", initialPlayer: "Profile Player" });
 
-    // Wait for the query to execute and call invoke with profile account keys.
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalled();
-      expect(mockInvoke).toHaveBeenCalledWith("get_profile_accounts_game_info", {
-        profileId: "profile1",
-        accountKeys: ["lichess:player1", "chesscom:player1com"],
-      });
+      expect(screen.getByTestId("personal-card")).toBeInTheDocument();
     });
+
+    expect(screen.getByTestId("personal-card")).toHaveTextContent("Profile Player");
+    expect(mockInvoke).not.toHaveBeenCalledWith("get_profile_accounts_game_info", expect.anything());
   });
 
   test("shows no databases message when no data", async () => {

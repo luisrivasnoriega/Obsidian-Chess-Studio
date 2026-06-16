@@ -344,6 +344,14 @@ async getProfileAccountsGameInfo(profileId: string, accountKeys: string[]) : Pro
     else return { status: "error", error: e  as any };
 }
 },
+async getProfileGameInfo(profileId: string) : Promise<Result<PlayerGameInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_game_info", { profileId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getProfileSidebarStats(profileId: string) : Promise<Result<ProfileSidebarStats, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_profile_sidebar_stats", { profileId }) };
@@ -355,6 +363,22 @@ async getProfileSidebarStats(profileId: string) : Promise<Result<ProfileSidebarS
 async getProfileGameStats(profileId: string, filters: PlayerStatsFilters) : Promise<Result<GameStats, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_profile_game_stats", { profileId, filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileOpeningFamiliesStats(profileId: string, filters: PlayerStatsFilters, color: boolean) : Promise<Result<OpeningFamilyStats[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_opening_families_stats", { profileId, filters, color }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getProfileOpeningsStats(profileId: string, filters: PlayerStatsFilters, color: boolean) : Promise<Result<OpeningStats[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_profile_openings_stats", { profileId, filters, color }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -851,6 +875,14 @@ async optimizeDatabase(file: string) : Promise<Result<null, string>> {
 async exportToPgn(file: string, destFile: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("export_to_pgn", { file, destFile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async exportSelectedGamesToSinglePgn(file: string, gameIds: number[], destFile: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_selected_games_to_single_pgn", { file, gameIds, destFile }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1704,6 +1736,9 @@ async calculatePlayerEloBuckets(siteStatsData: SiteStatsData[]) : Promise<EloBuc
 async calculatePlayerSidebarModel(siteStatsData: SiteStatsData[]) : Promise<PlayerSidebarModel> {
     return await TAURI_INVOKE("calculate_player_sidebar_model", { siteStatsData });
 },
+async calculatePlayerOpeningFamiliesStats(siteStatsData: SiteStatsData[], filters: PlayerStatsFilters, color: boolean) : Promise<OpeningFamilyStats[]> {
+    return await TAURI_INVOKE("calculate_player_opening_families_stats", { siteStatsData, filters, color });
+},
 /**
  * Calculate opening statistics
  */
@@ -1794,6 +1829,14 @@ async getAccountImportStats(profileId: string, platform: string, username: strin
 async syncAccountGamesToProfileDb(profileId: string, profileTitle: string, platform: string, username: string, token: string | null) : Promise<Result<AccountSyncResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sync_account_games_to_profile_db", { profileId, profileTitle, platform, username, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async importFideBroadcastGamesToProfile(profileId: string, profileTitle: string, fideUrl: string) : Promise<Result<FideBroadcastImportResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_fide_broadcast_games_to_profile", { profileId, profileTitle, fideUrl }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2061,6 +2104,7 @@ export type EngineOption = { name: string; value: string }
 export type EngineOptions = { fen: string; moves: string[]; extraOptions: EngineOption[] }
 export type EngineRequestDto = { name: string; path: string; extraOptions?: EngineOption[] }
 export type Event = { id: number; name: string | null; event_type?: string | null; location?: string | null; start_date?: string | null; end_date?: string | null; time_control?: string | null }
+export type FideBroadcastImportResult = { importedGames: number; discoveredTournaments: number; processedTournaments: number }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
 export type ForkPuzzleGeneration = { count: number; pgn: string }
@@ -2194,10 +2238,11 @@ profile?: StrategicProfile | null }
  * Global summary of the human strategic report.
  */
 export type HumanStrategicGameSummary = { bestCount: number; greatCount: number; practicalCount: number; interestingCount: number; dubiousCount: number; mistakeCount: number; blunderCount: number; topThemes: string[] }
+export type HumanStrategicLiveDisplay = "hidden" | "lines"
 /**
  * Human strategic explanation for a single candidate move.
  */
-export type HumanStrategicLiveLine = { uci: string; san: string; engineRank: number; engineCp: number; engineDropCp: number; strategicScore: number; finalScore: number; isSelected: boolean; isEngineBest: boolean; motifs: StrategicMotif[]; strategicAxes: HumanStrategicAxisNarrative[]; strategicPlan: string; commentShort: string; commentLong: string; suggestedVariationUci: string[]; suggestedVariationSan: string[] }
+export type HumanStrategicLiveLine = { uci: string; san: string; engineRank: number; engineCp: number; engineDropCp: number; strategicScore: number; finalScore: number; isSelected: boolean; isEngineBest: boolean; motifs: StrategicMotif[]; strategicAxes: HumanStrategicAxisNarrative[]; strategicPlan: string; commentKey: string; commentParams: Partial<{ [key in string]: string }>; detailKey: string | null; detailParams: Partial<{ [key in string]: string }>; commentShort: string; commentLong: string; suggestedVariationUci: string[]; suggestedVariationSan: string[] }
 /**
  * Input payload for live strategic explanations from engine MultiPV lines.
  */
@@ -2205,7 +2250,8 @@ export type HumanStrategicLiveRequest = { fen: string; moves: string[]; candidat
 /**
  * Live strategic explanation bundle for the current position.
  */
-export type HumanStrategicLiveResponse = { selectedUci: string; selectedSan: string; bestEngineUci: string; bestEngineSan: string; lines: HumanStrategicLiveLine[] }
+export type HumanStrategicLiveResponse = { display: HumanStrategicLiveDisplay; suppressionReason: HumanStrategicLiveSuppressionReason | null; selectedUci: string; selectedSan: string; bestEngineUci: string; bestEngineSan: string; lines: HumanStrategicLiveLine[] }
+export type HumanStrategicLiveSuppressionReason = "routineOpening" | "noStrategicSignal"
 /**
  * Phase-3 macro strategic axes used for richer style explanation and ranking.
  */
@@ -2313,6 +2359,7 @@ source?: string | null;
  */
 white?: number | null; black?: number | null; draws?: number | null; total?: number | null }
 export type NormalizedGame = { id: number; fen: string; event: string; event_id: number; site: string; site_id: number; date?: string | null; time?: string | null; round?: string | null; white: string; white_id: number; white_elo?: number | null; black: string; black_id: number; black_elo?: number | null; result: Outcome; time_control?: string | null; eco?: string | null; ply_count?: number | null; moves: string }
+export type OpeningFamilyStats = { family: string; games: bigint; won: bigint; draw: bigint; lost: bigint; openings: OpeningStats[] }
 export type OpeningInfo = { eco: string; opening: string; variation: string }
 export type OpeningStats = { name: string; games: bigint; won: bigint; draw: bigint; lost: bigint }
 /**

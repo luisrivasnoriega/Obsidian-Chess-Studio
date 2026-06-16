@@ -552,9 +552,8 @@ export async function searchPosition(options: LocalOptions, tab: string, signal?
   // Convert result to wanted_result format (undefined for "any" to omit from payload)
   const wantedResult = options.result === "any" ? undefined : options.result;
 
-  // If multiple players are selected, we issue one query per player and merge the results.
-  // Note: this can over-count stats when a single game matches multiple selected players
-  // (e.g. a game between two selected players). Avoiding that requires backend OR/IN support.
+  // If multiple players are selected, we issue one query per player, merge the results,
+  // and recalculate stats from deduplicated games.
   if (selectedPlayers.length > 0) {
     const searchLimit = 1000; // backend maximum per search
     const basePayload = {
@@ -609,7 +608,6 @@ export async function searchPosition(options: LocalOptions, tab: string, signal?
       }
     }
 
-    const combinedOpenings = Array.from(openingsMap.values());
     const combinedGames = Array.from(gamesMap.values());
 
     // Re-sort combined games according to the sort criteria
@@ -661,7 +659,11 @@ export async function searchPosition(options: LocalOptions, tab: string, signal?
       return 0;
     });
 
-    return [combinedOpenings, combinedGames.slice(0, 1000)] as [Opening[], NormalizedGame[]];
+    const limitedCombinedGames = combinedGames.slice(0, 1000);
+    const recalculatedOpenings = _recalculateOpeningsFromGames(limitedCombinedGames, fen);
+    const combinedOpenings = recalculatedOpenings.length > 0 ? recalculatedOpenings : Array.from(openingsMap.values());
+
+    return [combinedOpenings, limitedCombinedGames] as [Opening[], NormalizedGame[]];
   }
 
   // Build payload matching GameQueryJs type exactly

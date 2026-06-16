@@ -52,6 +52,8 @@ export async function fetchPersonalInfoForProfile(input: {
   );
 
   if (accountKeys.length === 0) return [];
+  const firstSession = playerSessions[0];
+  if (!firstSession) return [];
 
   const info = await invoke<PlayerGameInfo>("get_profile_accounts_game_info", {
     profileId: input.effectiveProfileId,
@@ -60,7 +62,7 @@ export async function fetchPersonalInfoForProfile(input: {
 
   return [
     {
-      session: playerSessions[0]!,
+      session: firstSession,
       info,
     },
   ];
@@ -119,11 +121,15 @@ function Databases({
 
   const [name, setName] = useState("");
   useEffect(() => {
+    if (profileId) {
+      setName(initialPlayer ?? "");
+      return;
+    }
     if (sessions.length === 0) return;
     const fallback = sessions[0].player || sessions[0].lichess?.username || sessions[0].chessCom?.username || "";
     const next = initialPlayer && players.includes(initialPlayer) ? initialPlayer : fallback;
     setName(next);
-  }, [initialPlayer, players, sessions]);
+  }, [initialPlayer, players, profileId, sessions]);
 
   // Create stable session signature to avoid unnecessary re-renders
   const sessionSignature = useMemo(() => {
@@ -150,7 +156,7 @@ function Databases({
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    enabled: (profileId != null || !!name) && sessions.length > 0,
+    enabled: !profileId && !!name && sessions.length > 0,
   });
 
   // Create stable signature for merged info to avoid unnecessary re-computations
@@ -164,7 +170,7 @@ function Databases({
       if (!personalInfo || personalInfo.length === 0) return null;
       return fetchMergedPlayerInfo(personalInfo);
     },
-    enabled: !!personalInfo && personalInfo.length > 0 && personalInfoSignature !== null,
+    enabled: !profileId && !!personalInfo && personalInfo.length > 0 && personalInfoSignature !== null,
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
@@ -182,12 +188,12 @@ function Databases({
   }, []);
 
   const _hasPanelData = !!mergedInfo;
-  const showInitialPlayerShell = !!personalInfo && personalInfo.length > 0;
+  const showInitialPlayerShell = !!profileId || (!!personalInfo && personalInfo.length > 0);
   const effectiveProfileId = profileId ?? profilesByName.get(name) ?? undefined;
 
   // Only show blocking loader if we don't have personalInfo yet
   // Once we have personalInfo, PersonalPlayerCard will handle its own loading states
-  const shouldShowBlockingLoader = (isLoading || isFetching) && !showInitialPlayerShell && progress === 0;
+  const shouldShowBlockingLoader = !profileId && (isLoading || isFetching) && !showInitialPlayerShell && progress === 0;
 
   return (
     <>
@@ -207,7 +213,7 @@ function Databases({
       )}
       {shouldShowBlockingLoader ? (
         <PanelLoadingState isLoading={isLoading} isFetching={isFetching} hasData={false} />
-      ) : personalInfo && personalInfo.length === 0 ? (
+      ) : !profileId && personalInfo && personalInfo.length === 0 ? (
         <Paper
           h="100%"
           shadow="sm"
@@ -217,7 +223,7 @@ function Databases({
         >
           <Stack>
             <Text ta="center" fw="bold" my="auto" fz="lg">
-              No databases found
+              {t("accounts.noDatabasesFound", { defaultValue: "No databases found" })}
             </Text>
           </Stack>
         </Paper>
@@ -226,13 +232,13 @@ function Databases({
           name={name}
           setName={setName}
           info={{
-            site_stats_data: mergedInfo?.site_stats_data ?? [],
+            site_stats_data: profileId ? [] : (mergedInfo?.site_stats_data ?? []),
           }}
           visibleTabs={visibleTabs}
           showPlayerSelector={showPlayerSelector}
           profileId={effectiveProfileId}
           // Keep the sidebar + layout visible immediately; panels will show their own loaders.
-          isLoading={isLoading || isFetching || !mergedInfo}
+          isLoading={profileId ? false : isLoading || isFetching || !mergedInfo}
         />
       ) : null}
     </>

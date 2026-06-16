@@ -107,6 +107,39 @@ const PLAN_SECTION_ORDER: PlanSectionKey[] = [
 
 const HUMAN_STRATEGIC_CACHE_LIMIT = 48;
 
+type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
+
+export function shouldRenderHumanStrategicPanel(loading: boolean, report: HumanStrategicLiveResponse | null): boolean {
+  void loading;
+  return report?.display === "lines" && report.lines.length > 0;
+}
+
+export function getHumanStrategicLineBadgeKey(line: HumanStrategicLiveResponse["lines"][number]): string {
+  if (line.isSelected) {
+    return "features.board.analysis.gmGuardrail.badges.selected";
+  }
+  if (line.isEngineBest) {
+    return "features.board.analysis.gmGuardrail.badges.engineBest";
+  }
+  if (line.strategicScore >= 0.45) {
+    return "features.board.analysis.gmGuardrail.badges.strategic";
+  }
+  if (line.strategicScore >= 0.2) {
+    return "features.board.analysis.gmGuardrail.badges.candidate";
+  }
+  return "features.board.analysis.gmGuardrail.badges.lowSignal";
+}
+
+export function getHumanStrategicLineText(
+  line: HumanStrategicLiveResponse["lines"][number],
+  translate: TranslateFn,
+): { short: string; detail: string } {
+  return {
+    short: translate(line.commentKey, line.commentParams),
+    detail: line.detailKey ? translate(line.detailKey, line.detailParams) : "",
+  };
+}
+
 function getStrategicCacheEntry(
   cache: Map<string, HumanStrategicLiveResponse>,
   key: string,
@@ -259,6 +292,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
   );
   const [humanStrategicReport, setHumanStrategicReport] = useState<HumanStrategicLiveResponse | null>(null);
   const [humanStrategicLoading, setHumanStrategicLoading] = useState(false);
+  const showHumanStrategicPanel = shouldRenderHumanStrategicPanel(humanStrategicLoading, humanStrategicReport);
   const humanStrategicCacheRef = useRef<Map<string, HumanStrategicLiveResponse>>(new Map());
   const strategicReportRequestRef = useRef(0);
 
@@ -290,6 +324,9 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
       setHumanStrategicLoading(false);
       return;
     }
+
+    setHumanStrategicReport(null);
+    setHumanStrategicLoading(false);
 
     const timer = window.setTimeout(async () => {
       setHumanStrategicLoading(true);
@@ -807,7 +844,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
               })}
           </Table.Tbody>
         </Table>
-        {!isGameOver && !error && settings.enabled && (humanStrategicLoading || humanStrategicReport) && (
+        {!isGameOver && !error && settings.enabled && showHumanStrategicPanel && (
           <Box px="sm" pb="sm" pt="xs">
             <Divider mb="xs" />
             <Stack gap="xs">
@@ -822,7 +859,7 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
                 )}
               </Group>
 
-              {humanStrategicReport && (
+              {humanStrategicReport?.display === "lines" && (
                 <>
                   <Text size="xs" c="dimmed">
                     {t("features.board.analysis.gmGuardrailRecommended", {
@@ -832,31 +869,34 @@ function BestMovesComponent({ id, engine, fen, moves, halfMoves, dragHandleProps
                     })}
                   </Text>
                   <Stack gap="xs">
-                    {humanStrategicReport.lines.map((line) => (
-                      <Paper key={line.uci} withBorder p="xs" radius="sm">
-                        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
-                          <Text size="sm" fw={600}>
-                            {line.engineRank}. {line.san}
+                    {humanStrategicReport.lines.map((line) => {
+                      const lineText = getHumanStrategicLineText(line, (key, params) => String(t(key, params)));
+                      return (
+                        <Paper key={line.uci} withBorder p="xs" radius="sm">
+                          <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+                            <Text size="sm" fw={600}>
+                              {line.engineRank}. {line.san}
+                            </Text>
+                            <Badge
+                              variant={line.isSelected ? "filled" : "light"}
+                              color={line.isSelected ? "teal" : "gray"}
+                            >
+                              {t(getHumanStrategicLineBadgeKey(line), {
+                                score: line.strategicScore.toFixed(2),
+                              })}
+                            </Badge>
+                          </Group>
+                          <Text size="xs" mt={4}>
+                            {lineText.short}
                           </Text>
-                          <Badge
-                            variant={line.isSelected ? "filled" : "light"}
-                            color={line.isSelected ? "teal" : "gray"}
-                          >
-                            {t("features.board.analysis.gmGuardrailLineScore", {
-                              score: line.strategicScore.toFixed(2),
-                            })}
-                          </Badge>
-                        </Group>
-                        <Text size="xs" mt={4}>
-                          {line.commentShort}
-                        </Text>
-                        {line.commentLong && line.commentLong !== line.commentShort && (
-                          <Text size="xs" c="dimmed" mt={2}>
-                            {line.commentLong}
-                          </Text>
-                        )}
-                      </Paper>
-                    ))}
+                          {lineText.detail && lineText.detail !== lineText.short && (
+                            <Text size="xs" c="dimmed" mt={2}>
+                              {lineText.detail}
+                            </Text>
+                          )}
+                        </Paper>
+                      );
+                    })}
                   </Stack>
                 </>
               )}

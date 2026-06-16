@@ -3522,6 +3522,54 @@ mod tests {
     }
 
     #[test]
+    fn quiet_development_does_not_count_as_material_investment() {
+        let root = build_position(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            &[],
+        )
+        .expect("valid position");
+        let uci_move = UciMove::from_ascii(b"g1f3").expect("valid uci");
+        let mv = uci_move.to_move(&root).expect("legal move");
+        let mut after = root.clone();
+        SanPlus::from_move_and_play_unchecked(&mut after, &mv);
+
+        let candidate_features = features::CandidateFeatures::new(
+            root.board(),
+            after.board(),
+            root.turn(),
+            root.turn().other(),
+            &mv,
+        );
+
+        assert_eq!(candidate_features.material_investment_cp, 0);
+    }
+
+    #[test]
+    fn initial_nf3_candidate_has_no_material_investment_risk() {
+        let selection = pick_human_strategic_move(HumanStrategicRequest {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+            moves: Vec::new(),
+            candidates: vec![
+                line("e2e4", 20, 1),
+                line("d2d4", 18, 2),
+                line("g1f3", 12, 3),
+            ],
+            config: None,
+        })
+        .expect("selection should succeed");
+
+        let nf3 = selection
+            .candidates
+            .iter()
+            .find(|candidate| candidate.uci == "g1f3")
+            .expect("Nf3 candidate should be present");
+
+        assert!(!nf3
+            .risk_flags
+            .contains(&StrategicRiskFlag::MaterialInvestment));
+    }
+
+    #[test]
     fn wdl_drop_marks_and_rejects_practical_concession() {
         let selection = pick_human_strategic_move(HumanStrategicRequest {
             fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),

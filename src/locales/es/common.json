@@ -399,6 +399,10 @@
         "openings": "Aperturas"
       }
     },
+    "openings": {
+      "playingAsWhite": "Jugando con blancas",
+      "playingAsBlack": "Jugando con negras"
+    },
     "dateRange": {
       "allTime": "Todo el tiempo"
     },
@@ -1380,9 +1384,37 @@
         "consultPlanSectionMoves": "Jugadas candidatas",
         "consultPlanSectionRisks": "Riesgos críticos",
         "consultPlanSectionAdvice": "Consejos prácticos",
-        "gmGuardrailTitle": "Guard-rail GM",
-        "gmGuardrailRecommended": "Recomendado {{selected}}. Mejor del motor: {{best}}. Coste estratégico: {{drop}} cp.",
-        "gmGuardrailLineScore": "Estratégico {{score}}"
+        "gmGuardrailTitle": "Revisión estratégica de candidatas",
+        "gmGuardrailRecommended": "Recomendada {{selected}}. Mejor del motor: {{best}}. Coste de motor: {{drop}} cp.",
+        "gmGuardrailLineScore": "Estratégica {{score}}",
+        "gmGuardrail": {
+          "badges": {
+            "selected": "Elegida {{score}}",
+            "engineBest": "Mejor del motor {{score}}",
+            "strategic": "Estratégica {{score}}",
+            "candidate": "Candidata {{score}}",
+            "lowSignal": "Señal baja {{score}}"
+          },
+          "comments": {
+            "mateRisk": "{{move}} permite peligro de mate en la línea candidata.",
+            "forcedTacticalLine": "{{move}} depende de una secuencia táctica forzada.",
+            "undefendedLandingSquare": "{{move}} deja la pieza movida en una casilla sin defensa.",
+            "materialInvestment": "{{move}} invierte material por actividad o iniciativa.",
+            "unstable": "{{move}} tiene riesgo práctico frente a la línea más segura del motor.",
+            "kingPressure": "{{move}} aumenta la presión alrededor del rey.",
+            "openFile": "{{move}} mejora la actividad en columnas abiertas o semiabiertas.",
+            "pawnTargets": "{{move}} crea o fija objetivos de peón a largo plazo.",
+            "pieceRestriction": "{{move}} restringe piezas defensivas o mejora el control de puestos avanzados.",
+            "counterplay": "{{move}} crea contrajuego activo en vez de defender pasivamente.",
+            "conversion": "{{move}} orienta la posición hacia una conversión favorable.",
+            "spaceGain": "{{move}} gana espacio sin una concesión táctica importante.",
+            "coherentPlan": "{{move}} encaja en un plan práctico coherente.",
+            "quietCandidate": "{{move}} se mantiene dentro de los guardrails del motor, pero tiene señal estratégica limitada."
+          },
+          "details": {
+            "engineSafety": "Coste de motor: {{drop}} cp. Puntuación estratégica: {{score}}."
+          }
+        }
       },
       "database": {
         "local": "Local",
@@ -1883,6 +1915,7 @@
         "actions": "Acciones",
         "addGames": "Agregar partidas",
         "exportPGN": "Exportar a PGN",
+        "exportSinglePGN": "Exportar a un solo PGN",
         "selected": "seleccionadas"
       },
       "delete": {
@@ -1946,6 +1979,7 @@
     },
     "gameTable": {
       "date": "Fecha",
+      "averageElo": "ELO promedio",
       "plies": "Medios movimientos",
       "event": "Evento",
       "site": "Lugar",
@@ -2784,6 +2818,18 @@
       "inProgress": "Ya hay una actualización de perfil en curso.",
       "noAccounts": "Este perfil no tiene cuentas vinculadas para actualizar.",
       "completed": "Perfil {{profile}} actualizado."
+    },
+    "fideImport": {
+      "action": "Importar broadcasts FIDE de Lichess",
+      "title": "Importar broadcasts FIDE de Lichess",
+      "linkLabel": "Link del perfil FIDE de Lichess o FIDE ID",
+      "linkPlaceholder": "https://lichess.org/fide/29667933/Nombre_Jugador",
+      "profileTarget": "Base de datos destino del perfil: {{profile}}",
+      "start": "Importar",
+      "processing": "Importando broadcasts FIDE de Lichess...",
+      "missingFideId": "Agrega un FIDE ID a este perfil antes de importar broadcasts de Lichess.",
+      "missingLink": "Pega un link de perfil FIDE de Lichess o un FIDE ID antes de importar.",
+      "completed": "Se importaron {{games}} partidas de {{processed}} torneos FIDE broadcast de Lichess."
     },
     "cloud": {
       "settings": "Configuración cloud",

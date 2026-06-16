@@ -2,9 +2,10 @@ import { ActionIcon, Button, Checkbox, Group, Stack, Text, useMantineTheme } fro
 import { useForceUpdate } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconDownload, IconEye } from "@tabler/icons-react";
+import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { DataTable } from "mantine-datatable";
+import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { NormalizedGame } from "@/bindings";
@@ -15,6 +16,36 @@ import { parseDate } from "@/utils/format";
 import { createTab } from "@/utils/tabs";
 
 type GameWithAverageElo = NormalizedGame & { averageElo: number | null };
+
+function compareStrings(a: string | null | undefined, b: string | null | undefined) {
+  return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base", numeric: true });
+}
+
+function compareNullableNumbers(a: number | null | undefined, b: number | null | undefined, direction = 1) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return (a - b) * direction;
+}
+
+function compareDates(a: string | null | undefined, b: string | null | undefined, direction = 1) {
+  const left = a ? parseDate(a)?.getTime() : null;
+  const right = b ? parseDate(b)?.getTime() : null;
+  return compareNullableNumbers(left, right, direction);
+}
+
+function sortGames(games: GameWithAverageElo[], sortStatus: DataTableSortStatus<GameWithAverageElo>) {
+  const direction = sortStatus.direction === "desc" ? -1 : 1;
+  const columnAccessor = String(sortStatus.columnAccessor);
+
+  return [...games].sort((a, b) => {
+    if (columnAccessor === "white") return compareStrings(a.white, b.white) * direction;
+    if (columnAccessor === "black") return compareStrings(a.black, b.black) * direction;
+    if (columnAccessor === "averageElo") return compareNullableNumbers(a.averageElo, b.averageElo, direction);
+    if (columnAccessor === "date") return compareDates(a.date, b.date, direction);
+    return 0;
+  });
+}
 
 function GamesTable({
   games,
@@ -39,8 +70,12 @@ function GamesTable({
   const [pageSize, setPageSize] = useState(10);
   const [exporting, setExporting] = useState(false);
   const [selectedGameIds, setSelectedGameIds] = useState<Set<number>>(new Set());
+  const [sortStatus, setSortStatus] = useState<DataTableSortStatus<GameWithAverageElo>>({
+    columnAccessor: "date",
+    direction: "desc",
+  });
 
-  // Calculate average ELO for each game (for display only, sorting is done in backend)
+  // Calculate average ELO for each game before client-side sorting and pagination.
   const gamesWithAverageElo = useMemo<GameWithAverageElo[]>(
     () =>
       games.map((game) => {
@@ -61,12 +96,14 @@ function GamesTable({
     [games],
   );
 
-  // Paginate games (games are already sorted by backend)
+  const sortedGames = useMemo(() => sortGames(gamesWithAverageElo, sortStatus), [gamesWithAverageElo, sortStatus]);
+
+  // Paginate games after sorting.
   const paginatedGames = useMemo(() => {
     const start = (page - 1) * pageSize;
     const end = start + pageSize;
-    return gamesWithAverageElo.slice(start, end);
-  }, [gamesWithAverageElo, page, pageSize]);
+    return sortedGames.slice(start, end);
+  }, [sortedGames, page, pageSize]);
 
   // Check if all visible games are selected
   const allVisibleSelected = useMemo(() => {
@@ -210,6 +247,52 @@ function GamesTable({
     }
   };
 
+  const exportSinglePgn = async (gameIds: number[], defaultPath: string) => {
+    if (!databasePath || gameIds.length === 0) return;
+
+    setExporting(true);
+    try {
+      const destFile = await save({
+        filters: [{ name: "PGN", extensions: ["pgn"] }],
+        defaultPath,
+      });
+
+      if (!destFile) {
+        setExporting(false);
+        return;
+      }
+
+      await invoke("export_selected_games_to_single_pgn", {
+        file: databasePath,
+        gameIds,
+        destFile,
+      });
+    } catch (error) {
+      notifications.show({
+        title: t("common.error"),
+        message: error instanceof Error ? error.message : t("errors.unknownError"),
+        color: "red",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportSelectedSinglePgn = async () => {
+    await exportSinglePgn(Array.from(selectedGameIds), `selected-games-${selectedGameIds.size}.pgn`);
+  };
+
+  const handleExportVisibleSinglePgn = async () => {
+    const fenFilename = (fen ?? "games")
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9-]/g, "")
+      .substring(0, 50);
+    await exportSinglePgn(
+      games.map((game) => game.id),
+      `${fenFilename}-${games.length}.pgn`,
+    );
+  };
+
   const showExportButton = games.length > 0 && fen && databasePath;
   const selectedCount = selectedGameIds.size;
 
@@ -223,10 +306,15 @@ function GamesTable({
           fetching={loading}
           page={page}
           onPageChange={setPage}
-          totalRecords={gamesWithAverageElo.length}
+          totalRecords={sortedGames.length}
           recordsPerPage={pageSize}
           onRecordsPerPageChange={setPageSize}
           recordsPerPageOptions={[10, 25, 50, 100]}
+          sortStatus={sortStatus}
+          onSortStatusChange={(status) => {
+            setSortStatus(status);
+            setPage(1);
+          }}
           columns={[
             {
               accessor: "select",
@@ -285,6 +373,8 @@ function GamesTable({
             },
             {
               accessor: "white",
+              title: t("chess.white"),
+              sortable: true,
               render: ({ white, white_elo }) => (
                 <div>
                   <Text size="sm" fw={500}>
@@ -298,6 +388,8 @@ function GamesTable({
             },
             {
               accessor: "black",
+              title: t("chess.black"),
+              sortable: true,
               render: ({ black, black_elo }) => (
                 <div>
                   <Text size="sm" fw={500}>
@@ -311,11 +403,14 @@ function GamesTable({
             },
             {
               accessor: "averageElo",
-              title: "ELO Promedio",
+              title: t("features.gameTable.averageElo"),
+              sortable: true,
               render: ({ averageElo }) => <Text fw={500}>{averageElo ?? "-"}</Text>,
             },
             {
               accessor: "date",
+              title: t("features.gameTable.date"),
+              sortable: true,
               render: ({ date }) =>
                 t("formatters.dateFormat", { date: parseDate(date), interpolation: { escapeValue: false } }),
             },
@@ -333,16 +428,30 @@ function GamesTable({
           gap="xs"
         >
           {selectedCount > 0 && (
-            <Button
-              leftSection={<IconDownload size={16} />}
-              size="xs"
-              variant="light"
-              onClick={handleExportSelected}
-              loading={exporting}
-              disabled={exporting}
-            >
-              {t("features.databases.settings.exportPGN")} ({selectedCount} {t("features.databases.settings.selected")})
-            </Button>
+            <>
+              <Button
+                leftSection={<IconDownload size={16} />}
+                size="xs"
+                variant="light"
+                onClick={handleExportSelected}
+                loading={exporting}
+                disabled={exporting}
+              >
+                {t("features.databases.settings.exportPGN")} ({selectedCount}{" "}
+                {t("features.databases.settings.selected")})
+              </Button>
+              <Button
+                leftSection={<IconDownload size={16} />}
+                size="xs"
+                variant="light"
+                onClick={handleExportSelectedSinglePgn}
+                loading={exporting}
+                disabled={exporting}
+              >
+                {t("features.databases.settings.exportSinglePGN", { defaultValue: "Export to single PGN" })} (
+                {selectedCount} {t("features.databases.settings.selected")})
+              </Button>
+            </>
           )}
           <Button
             leftSection={<IconDownload size={16} />}
@@ -353,6 +462,17 @@ function GamesTable({
             disabled={exporting || games.length === 0}
           >
             {t("features.databases.settings.exportPGN")} ({games.length})
+          </Button>
+          <Button
+            leftSection={<IconDownload size={16} />}
+            size="xs"
+            variant="light"
+            onClick={handleExportVisibleSinglePgn}
+            loading={exporting}
+            disabled={exporting || games.length === 0}
+          >
+            {t("features.databases.settings.exportSinglePGN", { defaultValue: "Export to single PGN" })} ({games.length}
+            )
           </Button>
         </Group>
       )}

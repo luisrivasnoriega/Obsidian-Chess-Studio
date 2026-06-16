@@ -78,6 +78,16 @@ pub struct OpeningStats {
     pub lost: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct OpeningFamilyStats {
+    pub family: String,
+    pub games: usize,
+    pub won: usize,
+    pub draw: usize,
+    pub lost: usize,
+    pub openings: Vec<OpeningStats>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct RatingDataPoint {
     pub date: i64, // timestamp in milliseconds
@@ -463,6 +473,72 @@ pub fn aggregate_opening_families(
             lost,
         })
         .collect()
+}
+
+pub fn aggregate_opening_families_with_details(
+    data: &[StatsData],
+    color: bool, /* true white, false black */
+) -> Vec<OpeningFamilyStats> {
+    let mut families: HashMap<String, OpeningFamilyStats> = HashMap::new();
+
+    for game in data.iter().filter(|d| d.is_player_white == color) {
+        let Some(family) = normalize_opening_family_name(&game.opening) else {
+            continue;
+        };
+
+        let family_entry = families
+            .entry(family.clone())
+            .or_insert_with(|| OpeningFamilyStats {
+                family,
+                games: 0,
+                won: 0,
+                draw: 0,
+                lost: 0,
+                openings: Vec::new(),
+            });
+
+        family_entry.games += 1;
+        match game.result {
+            GameOutcome::Won => family_entry.won += 1,
+            GameOutcome::Drawn => family_entry.draw += 1,
+            GameOutcome::Lost => family_entry.lost += 1,
+        }
+
+        let opening_name = game.opening.trim();
+        if opening_name.is_empty() {
+            continue;
+        }
+
+        let opening_entry = match family_entry
+            .openings
+            .iter_mut()
+            .find(|opening| opening.name == opening_name)
+        {
+            Some(opening) => opening,
+            None => {
+                family_entry.openings.push(OpeningStats {
+                    name: opening_name.to_string(),
+                    games: 0,
+                    won: 0,
+                    draw: 0,
+                    lost: 0,
+                });
+                family_entry
+                    .openings
+                    .last_mut()
+                    .expect("opening was inserted")
+            }
+        };
+
+        opening_entry.games += 1;
+        match game.result {
+            GameOutcome::Won => opening_entry.won += 1,
+            GameOutcome::Drawn => opening_entry.draw += 1,
+            GameOutcome::Lost => opening_entry.lost += 1,
+        }
+    }
+
+    families.into_values().collect()
 }
 
 /// Calculate score rate for an opening
@@ -1472,6 +1548,74 @@ mod tests {
         let black = aggregate_opening_families(&data, false);
         assert_eq!(black.len(), 1);
         assert_eq!(black[0].name, "Ruy Lopez");
+    }
+
+    #[test]
+    fn test_aggregate_opening_families_with_details_groups_variations() {
+        let data = vec![
+            game(
+                "2024-01-01",
+                GameOutcome::Won,
+                true,
+                "Sicilian Defense: Najdorf Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-02",
+                GameOutcome::Lost,
+                true,
+                "Sicilian: Dragon Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-03",
+                GameOutcome::Drawn,
+                true,
+                "Sicilian Defense: Najdorf Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+            game(
+                "2024-01-04",
+                GameOutcome::Won,
+                false,
+                "Sicilian Defense: Najdorf Variation",
+                "blitz",
+                1500,
+                Some(1400),
+            ),
+        ];
+
+        let families = aggregate_opening_families_with_details(&data, true);
+        assert_eq!(families.len(), 1);
+
+        let sicilian = &families[0];
+        assert_eq!(sicilian.family, "Sicilian");
+        assert_eq!(sicilian.games, 3);
+        assert_eq!(sicilian.won, 1);
+        assert_eq!(sicilian.draw, 1);
+        assert_eq!(sicilian.lost, 1);
+
+        let details: HashMap<String, OpeningStats> = sicilian
+            .openings
+            .iter()
+            .cloned()
+            .map(|opening| (opening.name.clone(), opening))
+            .collect();
+        assert_eq!(details.len(), 2);
+        assert_eq!(
+            details
+                .get("Sicilian Defense: Najdorf Variation")
+                .unwrap()
+                .games,
+            2
+        );
+        assert_eq!(details.get("Sicilian: Dragon Variation").unwrap().games, 1);
     }
 
     #[test]

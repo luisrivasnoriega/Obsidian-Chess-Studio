@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlayerGameInfo } from "@/bindings";
 import { commands } from "@/bindings";
-import type { EloBucket, OpeningStats, ProfileSidebarStats } from "@/bindings/playerStats";
+import type { EloBucket, OpeningFamilyStats, OpeningStats, ProfileSidebarStats } from "@/bindings/playerStats";
 import { playerStatsCommands } from "@/bindings/playerStats";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
@@ -22,6 +22,49 @@ import PlayerSidebarCard, { type PlatformFilter, type TimeControlFilter } from "
 import ResultsChart from "./ResultsChart";
 
 type OpeningSort = "games_desc" | "score_desc" | "score_asc";
+
+function sortOpeningStats(items: OpeningStats[], sortBy: OpeningSort) {
+  const sorted = [...items];
+  switch (sortBy) {
+    case "score_asc":
+      return sorted.sort((a, b) => {
+        const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
+        const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
+        return rateA - rateB;
+      });
+    case "score_desc":
+      return sorted.sort((a, b) => {
+        const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
+        const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
+        return rateB - rateA;
+      });
+    default:
+      return sorted.sort((a, b) => b.games - a.games);
+  }
+}
+
+function sortOpeningFamilies(items: OpeningFamilyStats[], sortBy: OpeningSort) {
+  const sorted = [...items].map((family) => ({
+    ...family,
+    openings: sortOpeningStats(family.openings, sortBy),
+  }));
+  switch (sortBy) {
+    case "score_asc":
+      return sorted.sort((a, b) => {
+        const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
+        const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
+        return rateA - rateB;
+      });
+    case "score_desc":
+      return sorted.sort((a, b) => {
+        const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
+        const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
+        return rateB - rateA;
+      });
+    default:
+      return sorted.sort((a, b) => b.games - a.games);
+  }
+}
 
 function OpeningsPanel({
   playerName,
@@ -91,6 +134,10 @@ function OpeningsPanel({
   const [dateRange, setDateRange] = useState<DateRange | null>(DateRange.NinetyDays);
   const [sortBy, setSortBy] = useState<OpeningSort>("games_desc");
   const [activeColor, setActiveColor] = useState<"white" | "black">("white");
+  const [expandedFamilyByColor, setExpandedFamilyByColor] = useState<{ white: string | null; black: string | null }>({
+    white: null,
+    black: null,
+  });
 
   const { data: localSidebarModel } = useQuery({
     queryKey: ["playerSidebarModel", statsSig.key],
@@ -115,12 +162,13 @@ function OpeningsPanel({
 
   // Get openings stats from backend
   const {
-    data: whiteOpeningsData = [],
+    data: whiteFamiliesData = [],
     isLoading: isLoadingWhiteOpenings,
     isFetching: isFetchingWhiteOpenings,
-  } = useQuery<OpeningStats[]>({
+  } = useQuery<OpeningFamilyStats[]>({
     queryKey: [
       "playerOpeningsWhite",
+      profileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -128,24 +176,30 @@ function OpeningsPanel({
       filters.date_range,
     ],
     queryFn: async () => {
-      return unwrap(await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, true));
+      if (profileId) {
+        return unwrap(await playerStatsCommands.getProfileOpeningFamiliesStats(profileId, filters, true));
+      }
+      return unwrap(
+        await playerStatsCommands.calculatePlayerOpeningFamiliesStats(info?.site_stats_data ?? [], filters, true),
+      );
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !!profileId || statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
 
   const {
-    data: blackOpeningsData = [],
+    data: blackFamiliesData = [],
     isLoading: isLoadingBlackOpenings,
     isFetching: isFetchingBlackOpenings,
-  } = useQuery<OpeningStats[]>({
+  } = useQuery<OpeningFamilyStats[]>({
     queryKey: [
       "playerOpeningsBlack",
+      profileId ?? null,
       statsSig.key,
       filters.platform,
       filters.time_control,
@@ -153,14 +207,17 @@ function OpeningsPanel({
       filters.date_range,
     ],
     queryFn: async () => {
+      if (profileId) {
+        return unwrap(await playerStatsCommands.getProfileOpeningFamiliesStats(profileId, filters, false));
+      }
       return unwrap(
-        await playerStatsCommands.calculatePlayerOpeningsStats(info?.site_stats_data ?? [], filters, false),
+        await playerStatsCommands.calculatePlayerOpeningFamiliesStats(info?.site_stats_data ?? [], filters, false),
       );
     },
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
-    enabled: statsSig.games > 0,
+    enabled: !!profileId || statsSig.games > 0,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -168,50 +225,20 @@ function OpeningsPanel({
 
   // Sort openings (backend doesn't sort, so we do it here for now)
   // TODO: Add sorting to backend
-  const sortedWhiteOpenings = useMemo(() => {
-    const sorted = [...whiteOpeningsData];
-    switch (sortBy) {
-      case "score_asc":
-        return sorted.sort((a, b) => {
-          const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
-          const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
-          return rateA - rateB;
-        });
-      case "score_desc":
-        return sorted.sort((a, b) => {
-          const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
-          const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
-          return rateB - rateA;
-        });
-      default:
-        return sorted.sort((a, b) => b.games - a.games);
-    }
-  }, [whiteOpeningsData, sortBy]);
+  const sortedWhiteFamilies = useMemo(
+    () => sortOpeningFamilies(whiteFamiliesData, sortBy),
+    [whiteFamiliesData, sortBy],
+  );
 
-  const sortedBlackOpenings = useMemo(() => {
-    const sorted = [...blackOpeningsData];
-    switch (sortBy) {
-      case "score_asc":
-        return sorted.sort((a, b) => {
-          const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
-          const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
-          return rateA - rateB;
-        });
-      case "score_desc":
-        return sorted.sort((a, b) => {
-          const rateA = a.games > 0 ? (a.won + a.draw * 0.5) / a.games : 0;
-          const rateB = b.games > 0 ? (b.won + b.draw * 0.5) / b.games : 0;
-          return rateB - rateA;
-        });
-      default:
-        return sorted.sort((a, b) => b.games - a.games);
-    }
-  }, [blackOpeningsData, sortBy]);
+  const sortedBlackFamilies = useMemo(
+    () => sortOpeningFamilies(blackFamiliesData, sortBy),
+    [blackFamiliesData, sortBy],
+  );
 
-  const whiteGames = whiteOpeningsData.reduce((sum, o) => sum + o.games, 0);
-  const blackGames = blackOpeningsData.reduce((sum, o) => sum + o.games, 0);
-  const rowCount = Math.max(sortedWhiteOpenings.length, sortedBlackOpenings.length);
-  const activeOpenings = activeColor === "white" ? sortedWhiteOpenings : sortedBlackOpenings;
+  const whiteGames = whiteFamiliesData.reduce((sum, o) => sum + o.games, 0);
+  const blackGames = blackFamiliesData.reduce((sum, o) => sum + o.games, 0);
+  const rowCount = Math.max(sortedWhiteFamilies.length, sortedBlackFamilies.length);
+  const activeFamilies = activeColor === "white" ? sortedWhiteFamilies : sortedBlackFamilies;
   const activeTotalGames = activeColor === "white" ? whiteGames : blackGames;
 
   // Calculate loading state: prop from parent OR internal queries loading/fetching
@@ -223,7 +250,7 @@ function OpeningsPanel({
     isFetchingBlackOpenings ||
     isLoadingProfileSidebarStats ||
     isFetchingProfileSidebarStats;
-  const hasPanelData = (isStackedLayout ? activeOpenings.length : rowCount) > 0;
+  const hasPanelData = (isStackedLayout ? activeFamilies.length : rowCount) > 0;
   // Consider that we have "data context" if info exists (even if empty), so we don't show blocking loader
   const hasDataContext = !!info;
   const visiblePlatforms = platform === "all" ? (["Chess.com", "Lichess"] as const) : ([platform] as const);
@@ -289,8 +316,14 @@ function OpeningsPanel({
                   size="xs"
                   value={activeColor}
                   data={[
-                    { value: "white", label: t("features.dashboard.white", { defaultValue: "White" }) },
-                    { value: "black", label: t("features.dashboard.black", { defaultValue: "Black" }) },
+                    {
+                      value: "white",
+                      label: t("accounts.openings.playingAsWhite", { defaultValue: "Playing as White" }),
+                    },
+                    {
+                      value: "black",
+                      label: t("accounts.openings.playingAsBlack", { defaultValue: "Playing as Black" }),
+                    },
                   ]}
                   onChange={(value) => setActiveColor((value as "white" | "black") || "white")}
                   clearable={false}
@@ -321,20 +354,34 @@ function OpeningsPanel({
             isFetching={isFetchingWhiteOpenings || isFetchingBlackOpenings}
             hasData={hasPanelData || hasDataContext}
           >
-            {(isStackedLayout ? activeOpenings.length : rowCount) === 0 ? (
+            {(isStackedLayout ? activeFamilies.length : rowCount) === 0 ? (
               <Text size="sm" c="dimmed" p="md">
                 {t("common.noData", { defaultValue: "No data" })}
               </Text>
             ) : (
               <Stack gap="md" p="md" style={{ minWidth: 0, minHeight: 0, width: "100%" }}>
-                {(isStackedLayout ? activeOpenings : Array.from({ length: rowCount }, (_, i) => i)).map(
+                {!isStackedLayout && (
+                  <Group wrap="nowrap" gap="md" style={{ minWidth: 0 }}>
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <Text size="xs" fw={700} c="dimmed">
+                        {t("accounts.openings.playingAsWhite", { defaultValue: "Playing as White" })}
+                      </Text>
+                    </Box>
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <Text size="xs" fw={700} c="dimmed">
+                        {t("accounts.openings.playingAsBlack", { defaultValue: "Playing as Black" })}
+                      </Text>
+                    </Box>
+                  </Group>
+                )}
+                {(isStackedLayout ? activeFamilies : Array.from({ length: rowCount }, (_, i) => i)).map(
                   (item, index) => {
-                    const white = isStackedLayout ? null : sortedWhiteOpenings[index];
-                    const black = isStackedLayout ? null : sortedBlackOpenings[index];
-                    const active = isStackedLayout ? (item as OpeningStats) : null;
+                    const white = isStackedLayout ? null : sortedWhiteFamilies[index];
+                    const black = isStackedLayout ? null : sortedBlackFamilies[index];
+                    const active = isStackedLayout ? (item as OpeningFamilyStats) : null;
                     const key = isStackedLayout
-                      ? `${activeColor}:${active?.name ?? "-"}:${active?.games ?? 0}`
-                      : `${white?.name ?? "-"}:${white?.games ?? 0}|${black?.name ?? "-"}:${black?.games ?? 0}`;
+                      ? `${activeColor}:${active?.family ?? "-"}:${active?.games ?? 0}`
+                      : `${white?.family ?? "-"}:${white?.games ?? 0}|${black?.family ?? "-"}:${black?.games ?? 0}`;
 
                     return (
                       <Box key={key} style={{ minWidth: 0 }}>
@@ -342,7 +389,18 @@ function OpeningsPanel({
                           <Stack gap="sm" style={{ minWidth: 0 }}>
                             <Box style={{ minWidth: 0 }}>
                               {active ? (
-                                <OpeningDetail opening={active} totalGames={activeTotalGames} color={activeColor} />
+                                <OpeningFamilyDetail
+                                  family={active}
+                                  totalGames={activeTotalGames}
+                                  color={activeColor}
+                                  expanded={expandedFamilyByColor[activeColor] === active.family}
+                                  onToggle={() =>
+                                    setExpandedFamilyByColor((prev) => ({
+                                      ...prev,
+                                      [activeColor]: prev[activeColor] === active.family ? null : active.family,
+                                    }))
+                                  }
+                                />
                               ) : null}
                             </Box>
                           </Stack>
@@ -351,14 +409,36 @@ function OpeningsPanel({
                           <Group wrap="nowrap" align="stretch" gap="md" style={{ minWidth: 0 }}>
                             <Box style={{ flex: 1, minWidth: 0 }}>
                               {white ? (
-                                <OpeningDetail opening={white} totalGames={whiteGames} color="white" />
+                                <OpeningFamilyDetail
+                                  family={white}
+                                  totalGames={whiteGames}
+                                  color="white"
+                                  expanded={expandedFamilyByColor.white === white.family}
+                                  onToggle={() =>
+                                    setExpandedFamilyByColor((prev) => ({
+                                      ...prev,
+                                      white: prev.white === white.family ? null : white.family,
+                                    }))
+                                  }
+                                />
                               ) : (
                                 <div />
                               )}
                             </Box>
                             <Box style={{ flex: 1, minWidth: 0 }}>
                               {black ? (
-                                <OpeningDetail opening={black} totalGames={blackGames} color="black" />
+                                <OpeningFamilyDetail
+                                  family={black}
+                                  totalGames={blackGames}
+                                  color="black"
+                                  expanded={expandedFamilyByColor.black === black.family}
+                                  onToggle={() =>
+                                    setExpandedFamilyByColor((prev) => ({
+                                      ...prev,
+                                      black: prev.black === black.family ? null : black.family,
+                                    }))
+                                  }
+                                />
                               ) : (
                                 <div />
                               )}
@@ -444,10 +524,71 @@ function OpeningDetail({
           {opening.name}
         </Text>
 
-        <Text style={{ flex: "0 0 auto" }}>{(openingRate * 100).toFixed(2)}%</Text>
+        <Text style={{ flex: "0 0 auto" }}>
+          {(openingRate * 100).toFixed(2)}% ({opening.games})
+        </Text>
       </Group>
 
       <ResultsChart won={opening.won} draw={opening.draw} lost={opening.lost} size="1.5rem" />
+    </Stack>
+  );
+}
+
+function OpeningFamilyDetail({
+  family,
+  totalGames,
+  color,
+  expanded,
+  onToggle,
+}: {
+  family: OpeningFamilyStats;
+  totalGames: number;
+  color: Color;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const familyRate = family.games / Math.max(totalGames, 1);
+
+  return (
+    <Stack py="sm" gap="sm" style={{ minWidth: 0, height: "100%" }}>
+      <Box
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+        style={{ minWidth: 0, cursor: "pointer" }}
+      >
+        <Stack gap="sm" style={{ minWidth: 0 }}>
+          <Group justify="space-between" wrap="nowrap" gap="xs" style={{ minWidth: 0 }}>
+            <Text lineClamp={2} style={{ flex: 1, minWidth: 0 }} className={classes.link}>
+              {family.family}
+            </Text>
+            <Text style={{ flex: "0 0 auto" }}>
+              {(familyRate * 100).toFixed(2)}% ({family.games})
+            </Text>
+          </Group>
+
+          <ResultsChart won={family.won} draw={family.draw} lost={family.lost} size="1.5rem" />
+        </Stack>
+      </Box>
+
+      {expanded && family.openings.length > 0 && (
+        <Stack gap={4} pl="md" style={{ minWidth: 0 }}>
+          {family.openings.map((opening) => (
+            <OpeningDetail
+              key={`${family.family}:${opening.name}`}
+              opening={opening}
+              totalGames={totalGames}
+              color={color}
+            />
+          ))}
+        </Stack>
+      )}
     </Stack>
   );
 }
